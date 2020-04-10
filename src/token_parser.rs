@@ -340,10 +340,6 @@ impl TokenParser {
             }
             i = end_index_before_last_whitespace;
             if digit_count > 0 {
-                number_str[0..number_str_index]
-                    .iter()
-                    .map(|it| *it as char)
-                    .collect::<Vec<_>>();
                 let num = BigDecimal::from_str(&unsafe {
                     std::str::from_utf8_unchecked(&number_str[0..number_str_index])
                 })
