@@ -4,33 +4,28 @@ use std::ops::Neg;
 use std::str::FromStr;
 
 #[derive(Debug, Clone)]
-pub struct OperatorToken<'text_ptr, 'units> {
-    pub typ: OperatorTokenType<'units>,
-    pub ptr: &'text_ptr [char],
-}
-
-impl<'text_ptr, 'units> OperatorToken<'text_ptr, 'units> {
-    pub fn new(
-        typ: OperatorTokenType<'units>,
-        ptr: &'text_ptr [char],
-    ) -> OperatorToken<'text_ptr, 'units> {
-        OperatorToken { typ, ptr }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct NumberToken<'text_ptr> {
-    pub num: BigDecimal,
-    pub ptr: &'text_ptr [char],
-}
-
-#[derive(Debug, Clone)]
-pub enum Token<'text_ptr, 'units> {
+pub enum TokenType<'units> {
     // UnitOfMeasure(&'text_pr [char], UnitOutput<'units>),
-    StringLiteral(&'text_ptr [char]),
-    Variable(&'text_ptr [char]),
-    NumberLiteral(NumberToken<'text_ptr>),
-    Operator(OperatorToken<'text_ptr, 'units>),
+    StringLiteral,
+    Variable,
+    NumberLiteral(BigDecimal),
+    Operator(OperatorTokenType<'units>),
+}
+
+#[derive(Debug, Clone)]
+pub struct Token<'text_ptr, 'units> {
+    pub ptr: &'text_ptr [char],
+    pub typ: TokenType<'units>,
+}
+
+impl<'text_ptr, 'units> Token<'text_ptr, 'units> {
+    pub fn is_number(&self) -> bool {
+        matches!(self.typ, TokenType::NumberLiteral(..))
+    }
+
+    pub fn is_string(&self) -> bool {
+        matches!(self.typ, TokenType::StringLiteral)
+    }
 }
 
 #[derive(PartialEq, Eq, Clone, Debug)]
@@ -147,11 +142,9 @@ impl TokenParser {
                 .or_else(|| {
                     TokenParser::try_extract_operator(&line[index..]).or_else(|| {
                         TokenParser::try_extract_number_literal(&line[index..])
-                            .map(|it| {
-                                Token::NumberLiteral(NumberToken {
-                                    num: it.0,
-                                    ptr: it.1,
-                                })
+                            .map(|it| Token {
+                                typ: TokenType::NumberLiteral(it.0),
+                                ptr: it.1,
                             })
                             .or_else(|| {
                                 TokenParser::try_extract_variable_name(
@@ -163,31 +156,31 @@ impl TokenParser {
                     })
                 })
             {
-                match &token {
+                match &token.typ {
                     // Token::UnitOfMeasure(ptr, ..) => {
                     //     can_be_unit = false;
                     //     index += ptr.len()
                     // }
-                    Token::StringLiteral(ptr) => {
-                        if ptr[0].is_ascii_whitespace() {
+                    TokenType::StringLiteral => {
+                        if token.ptr[0].is_ascii_whitespace() {
                             // keep can_be_unit as it was
                         } else {
                             can_be_unit = false;
                         }
-                        index += ptr.len()
+                        index += token.ptr.len()
                     }
-                    Token::NumberLiteral(NumberToken { ptr, .. }) => {
+                    TokenType::NumberLiteral(..) => {
                         can_be_unit = true;
-                        index += ptr.len()
+                        index += token.ptr.len()
                     }
-                    Token::Operator(OperatorToken { ptr, typ }) => {
+                    TokenType::Operator(typ) => {
                         can_be_unit = matches!(typ, OperatorTokenType::ParenClose)
                             || matches!(typ, OperatorTokenType::UnitConverter);
-                        index += ptr.len()
+                        index += token.ptr.len()
                     }
-                    Token::Variable(ptr) => {
+                    TokenType::Variable => {
                         can_be_unit = true;
-                        index += ptr.len()
+                        index += token.ptr.len()
                     }
                 }
                 dst.push(token);
@@ -375,10 +368,10 @@ impl TokenParser {
             while i > 0 && str[i - 1].is_ascii_whitespace() {
                 i -= 1;
             }
-            Some(Token::Operator(OperatorToken {
-                typ: OperatorTokenType::Unit(unit),
+            Some(Token {
+                typ: TokenType::Operator(OperatorTokenType::Unit(unit)),
                 ptr: &str[0..i],
-            }))
+            })
         };
     }
 
@@ -392,7 +385,10 @@ impl TokenParser {
                     continue 'asd;
                 }
             }
-            return Some(Token::Variable(&str[0..var_name.chars().count()]));
+            return Some(Token {
+                typ: TokenType::Variable,
+                ptr: &str[0..var_name.chars().count()],
+            });
         }
         return None;
     }
@@ -409,7 +405,10 @@ impl TokenParser {
         }
         if i > 0 {
             // alphabetical literal
-            return Some(Token::StringLiteral(&str[0..i]));
+            return Some(Token {
+                typ: TokenType::StringLiteral,
+                ptr: &str[0..i],
+            });
         } else {
             for ch in &str[0..] {
                 if !ch.is_ascii_whitespace() {
@@ -419,7 +418,10 @@ impl TokenParser {
             }
             return if i > 0 {
                 // whitespace
-                Some(Token::StringLiteral(&str[0..i]))
+                Some(Token {
+                    typ: TokenType::StringLiteral,
+                    ptr: &str[0..i],
+                })
             } else {
                 None
             };
@@ -434,10 +436,10 @@ impl TokenParser {
             str: &'text_ptr [char],
             len: usize,
         ) -> Option<Token<'text_ptr, 'unit>> {
-            Some(Token::Operator(OperatorToken {
-                typ,
+            return Some(Token {
+                typ: TokenType::Operator(typ),
                 ptr: &str[0..len],
-            }))
+            });
         }
         match str[0] {
             '=' => op(OperatorTokenType::Assign, str, 1),
@@ -484,195 +486,7 @@ enum ValidationTokenType {
     Op,
 }
 
-pub fn validate_tokens(tokens: &mut Vec<Token>) {
-    let mut expect_expression = true;
-    let mut open_brackets = 0;
-    let mut open_parens = 0;
-    let mut index: isize = 0;
-    let mut prev_token_type = ValidationTokenType::Nothing;
-    dbg!(&tokens);
-    while (index as usize) < tokens.len() {
-        let i = index as usize;
-        match &tokens[i] {
-            Token::StringLiteral(ptr) => {}
-            Token::Variable(ptr) | Token::NumberLiteral(NumberToken { ptr, .. }) => {
-                if !expect_expression {
-                    // break;
-                }
-                prev_token_type = ValidationTokenType::Expr;
-                expect_expression = false;
-            }
-            Token::Operator(op) => match op.typ {
-                OperatorTokenType::Comma => {
-                    if open_brackets == 0 && open_parens == 0 {
-                        break;
-                    }
-                    prev_token_type = ValidationTokenType::Nothing;
-                    expect_expression = true;
-                }
-                OperatorTokenType::UnaryPlus | OperatorTokenType::UnaryMinus => {
-                    panic!("Token parser does not generate unary operators");
-                }
-                OperatorTokenType::Add | OperatorTokenType::Sub => {
-                    if prev_token_type == ValidationTokenType::Nothing
-                        || prev_token_type == ValidationTokenType::Op
-                    {
-                        // it is a unary op
-                        if !expect_expression {
-                            break;
-                        } else if let Some(Token::NumberLiteral(NumberToken { num, ptr })) =
-                            tokens.get(i + 1)
-                        {
-                            // if next token is a number, merge them
-                            tokens[i] = Token::NumberLiteral(NumberToken {
-                                num: if matches!(op.typ, OperatorTokenType::Add) {
-                                    // TODO somehow take ownership of the borrowed item and pass it instead of clonign
-                                    num.clone()
-                                } else {
-                                    num.neg()
-                                },
-                                ptr,
-                            });
-                            tokens.remove(i + 1);
-                            // in the next iteration we process the negated number, so the expectation will be set
-                            // accordingly and don'T have to repeat code here
-                            index -= 1;
-                        }
-                    } else {
-                        if expect_expression {
-                            break;
-                        }
-                        expect_expression = true;
-                    }
-                    prev_token_type = ValidationTokenType::Op;
-                }
-                OperatorTokenType::Mult
-                | OperatorTokenType::Div
-                | OperatorTokenType::And
-                | OperatorTokenType::Or
-                | OperatorTokenType::Xor
-                | OperatorTokenType::Not
-                | OperatorTokenType::Pow
-                | OperatorTokenType::ShiftLeft
-                | OperatorTokenType::ShiftRight
-                | OperatorTokenType::Assign => {
-                    if expect_expression {
-                        break;
-                    } else {
-                        expect_expression = true;
-                        prev_token_type = ValidationTokenType::Op;
-                    }
-                }
-
-                OperatorTokenType::ParenOpen => {
-                    open_parens += 1;
-                    prev_token_type = ValidationTokenType::Nothing;
-                }
-                OperatorTokenType::ParenClose => {
-                    if expect_expression || open_parens <= 0 {
-                        break;
-                    } else {
-                        expect_expression = false;
-                        open_parens -= 1;
-                        prev_token_type = ValidationTokenType::Expr;
-                    }
-                }
-                OperatorTokenType::BracketOpen => {
-                    open_brackets += 1;
-                    prev_token_type = ValidationTokenType::Nothing;
-                }
-                OperatorTokenType::BracketClose => {
-                    if expect_expression || open_brackets <= 0 {
-                        break;
-                    } else {
-                        expect_expression = false;
-                        open_brackets -= 1;
-                        prev_token_type = ValidationTokenType::Expr;
-                    }
-                }
-
-                OperatorTokenType::UnitConverter => {
-                    dbg!(expect_expression);
-                    prev_token_type = ValidationTokenType::Op;
-                }
-                OperatorTokenType::Matrix { arg_count: _ } => {}
-
-                OperatorTokenType::Perc => {
-                    prev_token_type = ValidationTokenType::Expr;
-                }
-                OperatorTokenType::Unit(_) => {
-                    prev_token_type = ValidationTokenType::Expr;
-                }
-            },
-        }
-        index += 1;
-    }
-    dbg!(&tokens);
-    let index = index as usize;
-    if index < tokens.len() {
-        // line is invalid, set all operators and numbers to strings
-        dbg!(&tokens[index]);
-        match &tokens[index] {
-            // invalidate all commas and the opening bracket
-            Token::Operator(OperatorToken {
-                typ: OperatorTokenType::BracketClose,
-                ptr,
-            }) if open_brackets > 0 => {
-                invalidate_open_paren(tokens, index, OperatorTokenType::BracketOpen)
-            }
-            Token::Operator(OperatorToken {
-                typ: OperatorTokenType::ParenClose,
-                ptr,
-            }) if open_parens > 0 => {
-                invalidate_open_paren(tokens, index, OperatorTokenType::ParenOpen)
-            }
-            _ => {}
-        }
-
-        for token in &mut tokens[index..] {
-            match token {
-                Token::NumberLiteral(NumberToken { ptr, .. })
-                | Token::Operator(OperatorToken { typ: _, ptr }) => {
-                    *token = Token::StringLiteral(ptr);
-                }
-                _ => {
-                    // ignore
-                }
-            }
-        }
-    }
-}
-
 fn handle_unary_shit() {}
-
-fn invalidate_open_paren(
-    tokens: &mut [Token],
-    closing_paren_index: usize,
-    open_paren_type: OperatorTokenType,
-) {
-    let mut j = closing_paren_index - 1;
-    loop {
-        match &tokens[j] {
-            Token::Operator(OperatorToken { typ, ptr }) => {
-                let br = *typ == open_paren_type;
-                tokens[j] = Token::StringLiteral(ptr);
-                if br {
-                    break;
-                }
-            }
-            Token::NumberLiteral(NumberToken { ptr, .. }) => {
-                tokens[j] = Token::StringLiteral(ptr);
-            }
-            _ => {
-                // ignore
-            }
-        }
-        if j == 0 {
-            break;
-        }
-        j -= 1;
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -689,10 +503,12 @@ mod tests {
             let mut units = Units::new();
             units.units = init_units(&units.prefixes);
             TokenParser::parse_line(&temp, &[], &[], &mut vec, &units);
-            // validate_tokens(&mut vec);
             match vec.get(0) {
-                Some(Token::NumberLiteral(num)) => {
-                    assert_eq!(num.num, expected_value.into());
+                Some(Token {
+                    ptr,
+                    typ: TokenType::NumberLiteral(num),
+                }) => {
+                    assert_eq!(*num, expected_value.into());
                 }
                 _ => panic!("'{}' failed", str),
             }
@@ -704,10 +520,12 @@ mod tests {
             let temp = str.chars().collect::<Vec<_>>();
             let units = Units::new();
             TokenParser::parse_line(&temp, &[], &[], &mut vec, &units);
-            // validate_tokens(&mut vec);
             match vec.get(0) {
-                Some(Token::NumberLiteral(num)) => {
-                    assert_eq!(BigDecimal::from(expected_value), num.num);
+                Some(Token {
+                    ptr,
+                    typ: TokenType::NumberLiteral(num),
+                }) => {
+                    assert_eq!(BigDecimal::from(expected_value), *num);
                 }
                 _ => panic!("'{}' failed", str),
             }
@@ -742,7 +560,6 @@ mod tests {
         let mut units = Units::new();
         units.units = init_units(&units.prefixes);
         TokenParser::parse_line(&temp, &[], &[], &mut vec, &units);
-        // validate_tokens(&mut vec);
         assert_eq!(
             expected_tokens.len(),
             vec.len(),
@@ -753,35 +570,25 @@ mod tests {
                 .join(" -----> ")
         );
         for (actual_token, expected_token) in vec.iter().zip(expected_tokens.iter()) {
-            match (expected_token, actual_token) {
-                (Token::NumberLiteral(expected_num), Token::NumberLiteral(actual_num)) => {
-                    assert_eq!(expected_num.num, actual_num.num)
+            match (&expected_token.typ, &actual_token.typ) {
+                (TokenType::NumberLiteral(expected_num), TokenType::NumberLiteral(actual_num)) => {
+                    assert_eq!(expected_num, actual_num)
                 }
-                (Token::Operator(expected_op), Token::Operator(actual_op)) => {
-                    match (expected_op, actual_op) {
-                        (
-                            OperatorToken {
-                                ptr: expected_op,
-                                typ: OperatorTokenType::Unit(_),
-                            },
-                            OperatorToken {
-                                ptr: actual_op,
-                                typ: OperatorTokenType::Unit(_),
-                            },
-                        ) => {
-                            //     expected_op is an &str
-                            let str_slice = unsafe { std::mem::transmute::<_, &str>(*expected_op) };
-                            let expected_chars = str_slice.chars().collect::<Vec<char>>();
-                            assert_eq!(&expected_chars, actual_op)
-                        }
-                        _ => assert_eq!(expected_op.typ, actual_op.typ),
-                    }
-                }
-                (Token::StringLiteral(expected_op), Token::StringLiteral(actual_op)) => {
-                    // expected_op is an &str
-                    let str_slice = unsafe { std::mem::transmute::<_, &str>(*expected_op) };
+                (
+                    TokenType::Operator(OperatorTokenType::Unit(_)),
+                    TokenType::Operator(OperatorTokenType::Unit(_)),
+                ) => {
+                    //     expected_op is an &str
+                    let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
                     let expected_chars = str_slice.chars().collect::<Vec<char>>();
-                    assert_eq!(&expected_chars, actual_op)
+                    assert_eq!(expected_chars.as_slice(), actual_token.ptr)
+                }
+                (TokenType::Operator(etyp), TokenType::Operator(atyp)) => assert_eq!(etyp, atyp),
+                (TokenType::StringLiteral, TokenType::StringLiteral) => {
+                    // expected_op is an &str
+                    let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
+                    let expected_chars = str_slice.chars().collect::<Vec<char>>();
+                    assert_eq!(expected_chars.as_slice(), actual_token.ptr)
                 }
                 // (Token::UnitOfMeasure(expected_op, ..), Token::UnitOfMeasure(actual_op, ..)) => {
 

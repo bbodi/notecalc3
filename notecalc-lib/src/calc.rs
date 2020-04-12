@@ -8,7 +8,7 @@ use smallvec::alloc::fmt::{Error, Formatter};
 use smallvec::SmallVec;
 
 use crate::matrix::MatrixData;
-use crate::token_parser::{OperatorToken, OperatorTokenType, Token};
+use crate::token_parser::{OperatorTokenType, Token, TokenType};
 use crate::units::units::{UnitOutput, Units};
 
 // it is limited by bigdecimal crate :(
@@ -83,7 +83,7 @@ impl<'a> std::fmt::Display for CalcResult<'a> {
 }
 
 pub fn evaluate_tokens<'text_ptr, 'units>(
-    tokens: &mut Vec<Token<'text_ptr, 'units>>,
+    tokens: &mut Vec<TokenType<'units>>,
     units: &'units Units,
 ) -> Option<(CalcResult<'units>, bool)> {
     let mut stack = vec![];
@@ -91,26 +91,23 @@ pub fn evaluate_tokens<'text_ptr, 'units>(
     let mut last_success_operation_result_index = None;
     dbg!(&tokens);
     for (i, token) in tokens.iter_mut().enumerate() {
-        match token {
-            Token::NumberLiteral(num) => stack.push(CalcResult::Number(num.num.clone())),
-            Token::Operator(op) => {
+        match &token {
+            TokenType::NumberLiteral(num) => stack.push(CalcResult::Number(num.clone())),
+            TokenType::Operator(typ) => {
                 if !stack.is_empty() {
-                    if apply_operation(&mut stack, &op, units) == true {
-                        if matches!(op.typ, OperatorTokenType::UnitConverter) {
+                    if apply_operation(&mut stack, &typ, units) == true {
+                        if matches!(typ, OperatorTokenType::UnitConverter) {
                             there_was_unit_conversion = true;
                         }
                         dbg!(&stack);
                         last_success_operation_result_index = dbg!(Some(stack.len() - 1));
                     } else {
-                        // the operation failed, it is not an operator but a string
-                        *token = Token::StringLiteral(op.ptr);
-                        // stack.clear();
-                        // break;
+                        // the operation failed, it is not an operator but a string ?
                     }
                 }
             }
-            Token::StringLiteral(_) => panic!(),
-            Token::Variable(_) => {}
+            TokenType::StringLiteral => panic!(),
+            TokenType::Variable => {}
         }
     }
     match last_success_operation_result_index {
@@ -128,10 +125,10 @@ pub fn evaluate_tokens<'text_ptr, 'units>(
 
 fn apply_operation<'text_ptr, 'units>(
     stack: &mut Vec<CalcResult<'units>>,
-    op: &OperatorToken<'text_ptr, 'units>,
+    op: &OperatorTokenType<'units>,
     units: &'units Units,
 ) -> bool {
-    let succeed = match &op.typ {
+    let succeed = match &op {
         OperatorTokenType::Mult
         | OperatorTokenType::Div
         | OperatorTokenType::Add
@@ -166,7 +163,7 @@ fn apply_operation<'text_ptr, 'units>(
                 stack.pop();
                 stack.push(result);
                 true
-            } else if let OperatorTokenType::Unit(target_unit) = &op.typ {
+            } else if let OperatorTokenType::Unit(target_unit) = &op {
                 // it is the unit operand for "in" conversion
                 // e.g. "3m in cm",
                 // put the unit name into the stack, the next operator is probably an 'in'
@@ -205,10 +202,10 @@ fn apply_operation<'text_ptr, 'units>(
 }
 
 fn unary_operation<'text_ptr, 'units>(
-    op: &OperatorToken<'text_ptr, 'units>,
+    op: &OperatorTokenType<'units>,
     top: &CalcResult<'units>,
 ) -> Option<CalcResult<'units>> {
-    return match &op.typ {
+    return match &op {
         OperatorTokenType::UnaryPlus => Some(top.clone()),
         OperatorTokenType::UnaryMinus => Some(unary_minus_op(top)),
         OperatorTokenType::Perc => percentage_operator(top),
@@ -225,12 +222,12 @@ fn unary_operation<'text_ptr, 'units>(
 }
 
 fn binary_operation<'text_ptr, 'units>(
-    op: &OperatorToken<'text_ptr, 'units>,
+    op: &OperatorTokenType<'units>,
     lhs: &CalcResult<'units>,
     rhs: &CalcResult<'units>,
     units: &'units Units<'units>,
 ) -> Option<CalcResult<'units>> {
-    let result = match &op.typ {
+    let result = match &op {
         OperatorTokenType::Mult => multiply_op(lhs, rhs, units),
         OperatorTokenType::Div => divide_op(lhs, rhs),
         OperatorTokenType::Add => add_op(lhs, rhs),
@@ -708,21 +705,15 @@ mod tests {
     fn test_tokens(text: &str, expected_tokens: &[Token]) {
         println!("===================================================");
         println!("{}", text);
-        let temp = text.chars().collect::<Vec<char>>();
         let mut units = Units::new();
         units.units = init_units(&units.prefixes);
-        // hilighting happens here after TokenParser::parse_line(&text, &vars, &[], &mut tokens, &units);
-        // (shunting yards removes the string tokens)
-        // then we just keep the tokens whose types have changed, and modify the token type for them
-        // todo asd
-        // let mut shunting_output = crate::shunting_yard::tests::do_shunting_yard(&temp, &units);
-        //
-        // {
-        //     let (mut result_stack, there_was_unit_conversion) =
-        //         evaluate_tokens(&mut shunting_output, &units);
-        // }
-        //
-        // crate::shunting_yard::tests::test_tokens(expected_tokens, &shunting_output);
+        let temp = text.chars().collect::<Vec<char>>();
+        let mut tokens = vec![];
+        let mut shunting_output =
+            crate::shunting_yard::tests::do_shunting_yard(&temp, &units, &mut tokens);
+        let mut result_stack = evaluate_tokens(&mut shunting_output, &units);
+
+        crate::shunting_yard::tests::compare_tokens(expected_tokens, &tokens);
     }
 
     fn test(text: &str, expected: &'static str) {
@@ -733,7 +724,9 @@ mod tests {
         let mut units = Units::new();
         units.units = init_units(&units.prefixes);
 
-        let mut shunting_output = crate::shunting_yard::tests::do_shunting_yard(&temp, &units);
+        let mut tokens = vec![];
+        let mut shunting_output =
+            crate::shunting_yard::tests::do_shunting_yard(&temp, &units, &mut tokens);
         let result = evaluate_tokens(&mut shunting_output, &units);
         dbg!(&result);
         if let Some((CalcResult::Quantity(num, unit), there_was_unit_conversion)) = result {

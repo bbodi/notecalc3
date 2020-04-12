@@ -1,3 +1,4 @@
+#[repr(C)]
 #[derive(Eq, PartialEq, Debug, Clone, Copy)]
 pub enum InputKey {
     Left,
@@ -15,6 +16,7 @@ pub enum InputKey {
     Char(char),
 }
 
+#[repr(C)]
 #[derive(Eq, PartialEq, Debug, Clone, Copy)]
 pub struct InputModifiers {
     shift: bool,
@@ -78,11 +80,19 @@ impl Line {
         }
     }
 
-    fn get_mut(&mut self, column_index: usize) -> &mut char {
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn get_chars(&self) -> &[char; MAX_LINE_LEN] {
+        &self.chars
+    }
+
+    pub fn get_mut(&mut self, column_index: usize) -> &mut char {
         return &mut self.chars[column_index];
     }
 
-    fn get(&self, column_index: usize) -> &char {
+    pub fn get(&self, column_index: usize) -> &char {
         return &self.chars[column_index];
     }
 
@@ -110,7 +120,7 @@ impl Line {
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Copy)]
-struct Pos {
+pub struct Pos {
     row: usize,
     column: usize,
 }
@@ -203,19 +213,27 @@ impl Selection {
     }
 }
 
-struct Editor {
+pub struct Editor {
     lines: Vec<Line>,
     selection: Selection,
     last_column_index: usize,
 }
 
+pub struct FirstModifiedRowIndex(usize);
+
 impl Editor {
     pub fn new() -> Editor {
+        let mut lines = Vec::with_capacity(128);
+        lines.push(Line::new());
         Editor {
-            lines: Vec::with_capacity(128),
+            lines,
             selection: Selection::single(0, 0),
             last_column_index: 0,
         }
+    }
+
+    pub fn get_content(&self) -> &[Line] {
+        &self.lines
     }
 
     pub fn set_cursor_pos(&mut self, row_index: usize, column_index: usize) {
@@ -235,7 +253,11 @@ impl Editor {
         self.lines[row_index].set_char(column_index, ch)
     }
 
-    pub fn handle_input(&mut self, input: &InputKey, modifiers: InputModifiers) {
+    pub fn handle_input(
+        &mut self,
+        input: InputKey,
+        modifiers: InputModifiers,
+    ) -> FirstModifiedRowIndex {
         let cur_pos = self.selection.get_cursor_pos();
         match input {
             InputKey::Home => {
@@ -449,11 +471,11 @@ impl Editor {
                     // we will insert a char at this pos
                     first.column += 1;
                     if self.remove_selection(first, second) {
-                        self.lines[first.row].set_char(first.column - 1, *ch);
+                        self.lines[first.row].set_char(first.column - 1, ch);
                     }
                     self.selection = Selection::from_pos(first);
                 } else {
-                    if self.lines[cur_pos.row].insert_char(cur_pos.column, *ch) {
+                    if self.lines[cur_pos.row].insert_char(cur_pos.column, ch) {
                         self.selection =
                             Selection::from_pos(cur_pos.with_column(cur_pos.column + 1));
                     }
@@ -461,6 +483,7 @@ impl Editor {
             }
             _ => {}
         }
+        return FirstModifiedRowIndex(0);
     }
 
     fn merge_with_next_row(
@@ -537,7 +560,6 @@ mod tests {
         expected_content: &str,
     ) {
         editor.lines.clear();
-        editor.lines.push(Line::new());
         // we can assume here that it does not contain illegal or complex input
         // so we can just set it as it is
         let mut selection_found = false;
@@ -571,7 +593,7 @@ mod tests {
         }
 
         for input in inputs {
-            editor.handle_input(input, modifiers);
+            editor.handle_input(*input, modifiers);
         }
 
         // assert

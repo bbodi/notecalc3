@@ -1,4 +1,4 @@
-use crate::token_parser::{Assoc, NumberToken, OperatorToken, OperatorTokenType, Token};
+use crate::token_parser::{Assoc, OperatorTokenType, Token, TokenType};
 use bigdecimal::*;
 use std::ops::Neg;
 
@@ -42,29 +42,34 @@ pub struct ShuntingYard {}
 
 impl ShuntingYard {
     pub fn shunting_yard<'text_ptr, 'units>(
-        mut tokens: Vec<Token<'text_ptr, 'units>>,
-        // tokens: &Vec<Token<'text_ptr, 'units>>,
+        tokens: &mut Vec<Token<'text_ptr, 'units>>,
         function_names: &[String],
-        output_stack: &mut Vec<Token<'text_ptr, 'units>>,
+        output_stack: &mut Vec<TokenType<'units>>,
     ) {
-        tokens.drain_filter(|t| match t {
-            Token::StringLiteral(_) => true,
-            _ => false,
-        });
         // TODO: into iter!!!
-        dbg!(&tokens);
-        // TODO extract out so no alloc
-        let mut operator_stack: Vec<OperatorToken> = vec![];
+        // TODO extract out so no alloc SmallVec?
+        let mut operator_stack: Vec<OperatorTokenType> = vec![];
 
         let mut last_valid_range = None;
         let mut v = ValidationState::new_from_index(0);
         let mut input_index: isize = -1;
+
+        let mut matrix_start_text_pos = None;
         while input_index + 1 < tokens.len() as isize {
             input_index += 1; // it is here so it is incremented always when "continue"
             let input_token = &tokens[input_index as usize];
-            dbg!(&input_token);
-            match input_token {
-                Token::Operator(op) => match op.typ {
+            match &input_token.typ {
+                TokenType::StringLiteral => {
+                    // it ignores strings
+                    if false {
+                        // if function_names.iter().any(|it| it == str) {
+                        //  ShuntingYardStacks((operatorStack + Token.Operator("fun " + inputToken.str)), output + inputToken)
+                    } else {
+                        // ignore it
+                        // output.push(input_token.clone());
+                    }
+                }
+                TokenType::Operator(op) => match op {
                     OperatorTokenType::ParenOpen => {
                         operator_stack.push(op.clone());
                         v.open_parens += 1;
@@ -93,8 +98,6 @@ impl ShuntingYard {
                         );
                         if v.can_be_valid_closing_token() {
                             dbg!("close");
-                            dbg!(&operator_stack);
-                            dbg!(&output_stack);
                             ShuntingYard::send_everything_to_output(
                                 &mut operator_stack,
                                 output_stack,
@@ -106,6 +109,9 @@ impl ShuntingYard {
                         v.open_brackets += 1;
                         v.prev_token_type = ValidationTokenType::Nothing;
                         operator_stack.push(op.clone());
+                        if matrix_start_text_pos.is_none() {
+                            matrix_start_text_pos = Some(input_token.ptr);
+                        }
                     }
                     OperatorTokenType::BracketClose => {
                         if v.expect_expression || v.open_brackets <= 0 {
@@ -121,33 +127,44 @@ impl ShuntingYard {
                             v.open_brackets -= 1;
                             v.prev_token_type = ValidationTokenType::Expr;
                         }
-                        if let Some((opening_bracket, comma_count)) =
-                            ShuntingYard::send_anything_until_opening_bracket(
-                                &mut operator_stack,
-                                output_stack,
-                                &OperatorTokenType::BracketOpen,
-                                0,
-                            )
-                        {
-                            // Matrix will point to the whole output,
-                            // so we can highlight only the first/last char if we want
-                            // (the brackets)
-                            unsafe {
-                                let char_count =
-                                    op.ptr.as_ptr().offset_from(opening_bracket.ptr.as_ptr())
-                                        as usize;
-                                output_stack.push(Token::Operator(OperatorToken {
-                                    typ: OperatorTokenType::Matrix {
-                                        arg_count: comma_count + 1,
-                                    },
-                                    ptr: std::mem::transmute(std::ptr::slice_from_raw_parts(
-                                        opening_bracket.ptr.as_ptr(),
-                                        char_count + 1,
-                                    )),
-                                }))
-                            }
+                        // todo számmal térjen vissza ne tokentypeal..
+                        if let Some(comma_count) = ShuntingYard::send_anything_until_opening_bracket(
+                            &mut operator_stack,
+                            output_stack,
+                            &OperatorTokenType::BracketOpen,
+                            0,
+                        ) {
+                            let matrix_token_type =
+                                TokenType::Operator(OperatorTokenType::Matrix {
+                                    arg_count: comma_count + 1,
+                                });
+                            output_stack.push(matrix_token_type.clone());
+
                             if v.can_be_valid_closing_token() {
                                 dbg!("close");
+                                // Matrix will point to the whole output,
+                                // so we can highlight only the first/last char if we want
+                                // (the brackets)
+                                unsafe {
+                                    let char_count = input_token
+                                        .ptr
+                                        .as_ptr()
+                                        .offset_from(matrix_start_text_pos.unwrap().as_ptr())
+                                        as usize;
+                                    tokens.insert(
+                                        0,
+                                        Token {
+                                            ptr: std::mem::transmute(
+                                                std::ptr::slice_from_raw_parts(
+                                                    matrix_start_text_pos.unwrap().as_ptr(),
+                                                    char_count + 1,
+                                                ),
+                                            ),
+                                            typ: matrix_token_type.clone(),
+                                        },
+                                    );
+                                    matrix_start_text_pos = None;
+                                }
                                 ShuntingYard::send_everything_to_output(
                                     &mut operator_stack,
                                     output_stack,
@@ -164,6 +181,7 @@ impl ShuntingYard {
                             || v.prev_token_type == ValidationTokenType::Op
                         {
                             // it is a unary op
+
                             if !v.expect_expression {
                                 dbg!("error3");
                                 ShuntingYard::send_everything_to_output(
@@ -172,16 +190,17 @@ impl ShuntingYard {
                                 );
                                 v = ValidationState::new_from_index(output_stack.len());
                                 continue;
-                            } else if let Some(Token::NumberLiteral(NumberToken { .. })) =
-                                tokens.get(input_index as usize + 1)
+                            } else if ShuntingYard::get_next_nonstring_token(
+                                tokens,
+                                input_index as usize + 1,
+                            )
+                            .map(|it| it.is_number())
+                            .unwrap_or(false)
                             {
                                 v.neg = true;
                             } else {
                                 // process it as a unary op
-                                operator_stack.push(OperatorToken::new(
-                                    OperatorTokenType::UnaryMinus,
-                                    op.ptr,
-                                ));
+                                operator_stack.push(OperatorTokenType::UnaryMinus);
                             }
                         } else {
                             ShuntingYard::operator_rule(op, &mut operator_stack, output_stack);
@@ -196,6 +215,7 @@ impl ShuntingYard {
                             || v.prev_token_type == ValidationTokenType::Op
                         {
                             // it is a unary op
+
                             if !v.expect_expression {
                                 dbg!("error4");
                                 ShuntingYard::send_everything_to_output(
@@ -204,8 +224,12 @@ impl ShuntingYard {
                                 );
                                 v = ValidationState::new_from_index(output_stack.len());
                                 continue;
-                            } else if let Some(Token::NumberLiteral(NumberToken { .. })) =
-                                tokens.get(input_index as usize + 1)
+                            } else if ShuntingYard::get_next_nonstring_token(
+                                tokens,
+                                input_index as usize + 1,
+                            )
+                            .map(|it| it.is_number())
+                            .unwrap_or(false)
                             {
                                 v.neg = false;
                             }
@@ -261,19 +285,18 @@ impl ShuntingYard {
                         // so clear the operator stack, push the next unit onto the output
                         // push the unit onto the output, and close it
                         ShuntingYard::send_everything_to_output(&mut operator_stack, output_stack);
-                        if let Some(Token::Operator(OperatorToken {
-                            typ: OperatorTokenType::Unit(unit),
-                            ptr,
-                        })) = tokens.get(input_index as usize + 1)
+                        if let Some(TokenType::Operator(OperatorTokenType::Unit(unit))) =
+                            ShuntingYard::get_next_nonstring_token(tokens, input_index as usize + 1)
+                                .map(|it| &it.typ)
                         {
                             v.had_operator = true;
                             v.expect_expression = false;
                             v.prev_token_type = ValidationTokenType::Op;
-                            output_stack.push(Token::Operator(OperatorToken {
-                                typ: OperatorTokenType::Unit(unit.clone()),
-                                ptr,
-                            }));
+                            output_stack
+                                .push(TokenType::Operator(OperatorTokenType::Unit(unit.clone())));
+
                             input_index += 1;
+
                             ShuntingYard::send_to_output(op.clone(), output_stack);
                             if v.can_be_valid_closing_token() {
                                 dbg!("close1");
@@ -309,7 +332,7 @@ impl ShuntingYard {
                         operator_stack.push(op.clone());
                     }
                 },
-                Token::NumberLiteral(num) => {
+                TokenType::NumberLiteral(num) => {
                     if !v.expect_expression {
                         dbg!("error");
                         dbg!(&operator_stack);
@@ -319,39 +342,29 @@ impl ShuntingYard {
                     }
                     // TODO nézd meg muszáj e klnozni, ne me tudja ez a fv átvenni az ownershipet
                     // a input_tokens felett, vagy az outputban nem e lehetnek pointerek
-                    output_stack.push(Token::NumberLiteral(NumberToken {
-                        num: if v.neg {
-                            (&num.num).neg()
-                        } else {
-                            num.num.clone()
-                        },
-                        ptr: num.ptr,
+                    output_stack.push(TokenType::NumberLiteral(if v.neg {
+                        (&num).neg()
+                    } else {
+                        num.clone()
                     }));
                     v.neg = false;
                     if v.can_be_valid_closing_token() {
-                        if let Some(Token::Operator(OperatorToken {
-                            typ: OperatorTokenType::Unit(unit),
-                            ptr,
-                        })) = tokens.get(input_index as usize + 1)
+                        if let Some(TokenType::Operator(OperatorTokenType::Unit(unit))) =
+                            ShuntingYard::get_next_nonstring_token(tokens, input_index as usize + 1)
+                                .map(|it| &it.typ)
                         {
                             // if the next token is unit, push it to the stack immediately, and
                             // skip the next iteration
-                            output_stack.push(Token::Operator(OperatorToken {
-                                typ: OperatorTokenType::Unit(unit.clone()),
-                                ptr,
-                            }));
+                            output_stack
+                                .push(TokenType::Operator(OperatorTokenType::Unit(unit.clone())));
                             input_index += 1;
-                        } else if let Some(Token::Operator(OperatorToken {
-                            typ: OperatorTokenType::Perc,
-                            ptr,
-                        })) = tokens.get(input_index as usize + 1)
+                        } else if let Some(TokenType::Operator(OperatorTokenType::Perc)) =
+                            ShuntingYard::get_next_nonstring_token(tokens, input_index as usize + 1)
+                                .map(|it| &it.typ)
                         {
                             // if the next token is '%', push it to the stack immediately, and
                             // skip the next iteration
-                            output_stack.push(Token::Operator(OperatorToken {
-                                typ: OperatorTokenType::Perc,
-                                ptr,
-                            }));
+                            output_stack.push(TokenType::Operator(OperatorTokenType::Perc));
                             input_index += 1;
                         }
 
@@ -366,24 +379,14 @@ impl ShuntingYard {
                 // Token::UnitOfMeasure(str, unit) => {
                 // output.push(input_token.clone());
                 // }
-                Token::Variable(str) => {
+                TokenType::Variable => {
                     if !v.expect_expression {
                         dbg!("error8");
                         ShuntingYard::send_everything_to_output(&mut operator_stack, output_stack);
                         v = ValidationState::new_from_index(output_stack.len());
                         continue;
                     }
-                    output_stack.push(input_token.clone());
-                }
-                Token::StringLiteral(str) => {
-                    // it ignores strings
-                    if false {
-                        // if function_names.iter().any(|it| it == str) {
-                        //  ShuntingYardStacks((operatorStack + Token.Operator("fun " + inputToken.str)), output + inputToken)
-                    } else {
-                        // ignore it
-                        // output.push(input_token.clone());
-                    }
+                    output_stack.push(input_token.typ.clone());
                 }
             }
         }
@@ -406,52 +409,39 @@ impl ShuntingYard {
         }
     }
 
-    // fn handle_unary_operator<'text_ptr, 'units>(
-    //     input_token: &OperatorToken<'text_ptr, 'units>,
-    //     unary_op: OperatorTokenType<'units>,
-    //     last_token: Option<&Token<'text_ptr, 'units>>,
-    //     operator_stack: &mut Vec<OperatorToken<'text_ptr, 'units>>,
-    //     output: &mut Vec<Token<'text_ptr, 'units>>,
-    // ) {
-    //     if last_token
-    //         .map(|it| match it {
-    //             Token::Operator(last_op) => {
-    //                 !matches!(last_op.typ, OperatorTokenType::ParenClose)
-    //                     && !matches!(last_op.typ, OperatorTokenType::BracketClose)
-    //                     && !matches!(last_op.typ, OperatorTokenType::Perc)
-    //                     && !matches!(last_op.typ, OperatorTokenType::Unit(_))
-    //             }
-    //             _ => false,
-    //         })
-    //         .unwrap_or(true)
-    //     {
-    //         operator_stack.push(OperatorToken::new(unary_op, input_token.ptr));
-    //     } else {
-    //         ShuntingYard::operator_rule(input_token, operator_stack, output);
-    //         operator_stack.push(input_token.clone());
-    //     }
-    // }
+    fn get_next_nonstring_token<'a, 'text_ptr, 'units>(
+        tokens: &'a Vec<Token<'text_ptr, 'units>>,
+        mut i: usize,
+    ) -> Option<&'a Token<'text_ptr, 'units>> {
+        while i < tokens.len() {
+            if !tokens[i].is_string() {
+                return Some(&tokens[i]);
+            }
+            i += 1;
+        }
+        return None;
+    }
 
     fn operator_rule<'text_ptr, 'units>(
-        incoming_op: &OperatorToken<'text_ptr, 'units>,
-        operator_stack: &mut Vec<OperatorToken<'text_ptr, 'units>>,
-        output: &mut Vec<Token<'text_ptr, 'units>>,
+        incoming_op: &OperatorTokenType<'units>,
+        operator_stack: &mut Vec<OperatorTokenType<'units>>,
+        output: &mut Vec<TokenType<'units>>,
     ) {
         if operator_stack.is_empty() {
             return;
         }
         let top_of_stack = operator_stack[operator_stack.len() - 1].clone();
 
-        if matches!(top_of_stack.typ, OperatorTokenType::ParenOpen)
-            || matches!(top_of_stack.typ, OperatorTokenType::ParenClose)
-            || matches!(top_of_stack.typ, OperatorTokenType::BracketOpen)
-            || matches!(top_of_stack.typ, OperatorTokenType::BracketClose)
+        if matches!(top_of_stack, OperatorTokenType::ParenOpen)
+            || matches!(top_of_stack, OperatorTokenType::ParenClose)
+            || matches!(top_of_stack, OperatorTokenType::BracketOpen)
+            || matches!(top_of_stack, OperatorTokenType::BracketClose)
         {
             return;
         }
-        let incoming_op_precedence = incoming_op.typ.precedence();
-        let top_of_stack_precedence = top_of_stack.typ.precedence();
-        let assoc = incoming_op.typ.assoc();
+        let incoming_op_precedence = incoming_op.precedence();
+        let top_of_stack_precedence = top_of_stack.precedence();
+        let assoc = incoming_op.assoc();
         let incoming_prec_left_assoc_and_equal =
             assoc == Assoc::Left && incoming_op_precedence == top_of_stack_precedence;
         if incoming_op_precedence < top_of_stack_precedence || incoming_prec_left_assoc_and_equal {
@@ -469,28 +459,28 @@ impl ShuntingYard {
         }
     }
 
-    fn send_everything_to_output<'text_ptr, 'units>(
-        operator_stack: &mut Vec<OperatorToken<'text_ptr, 'units>>,
-        output_stack: &mut Vec<Token<'text_ptr, 'units>>,
+    fn send_everything_to_output<'units>(
+        operator_stack: &mut Vec<OperatorTokenType<'units>>,
+        output_stack: &mut Vec<TokenType<'units>>,
     ) {
         for op in operator_stack.drain(..).rev() {
             ShuntingYard::send_to_output(op, output_stack);
         }
     }
 
-    fn send_anything_until_opening_bracket<'text_ptr, 'units>(
-        operator_stack: &mut Vec<OperatorToken<'text_ptr, 'units>>,
-        output: &mut Vec<Token<'text_ptr, 'units>>,
+    fn send_anything_until_opening_bracket<'units>(
+        operator_stack: &mut Vec<OperatorTokenType<'units>>,
+        output: &mut Vec<TokenType<'units>>,
         open_paren_type: &OperatorTokenType,
         mut arg_count: usize,
-    ) -> Option<(OperatorToken<'text_ptr, 'units>, usize)> {
+    ) -> Option<usize> {
         if operator_stack.is_empty() {
             return None;
         }
         let top_of_op_stack = operator_stack.pop().unwrap();
-        if &top_of_op_stack.typ == open_paren_type {
-            return Some((top_of_op_stack, arg_count));
-        } else if top_of_op_stack.typ == OperatorTokenType::Comma {
+        if &top_of_op_stack == open_paren_type {
+            return Some(arg_count);
+        } else if top_of_op_stack == OperatorTokenType::Comma {
             arg_count += 1;
         } else {
             ShuntingYard::send_to_output(top_of_op_stack, output);
@@ -504,21 +494,21 @@ impl ShuntingYard {
     }
 
     fn send_to_output<'text_ptr, 'units>(
-        operator: OperatorToken<'text_ptr, 'units>,
-        output: &mut Vec<Token<'text_ptr, 'units>>,
+        operator: OperatorTokenType<'units>,
+        output: &mut Vec<TokenType<'units>>,
     ) {
         // TODO these should be enums
-        match operator.typ {
+        match operator {
             OperatorTokenType::Perc
             | OperatorTokenType::Add
             | OperatorTokenType::Sub
             | OperatorTokenType::UnitConverter
             | OperatorTokenType::UnaryPlus
-            | OperatorTokenType::UnaryMinus => output.push(Token::Operator(operator)),
-            OperatorTokenType::Pow => output.push(Token::Operator(operator)),
-            OperatorTokenType::Mult => output.push(Token::Operator(operator)),
-            OperatorTokenType::Div => output.push(Token::Operator(operator)),
-            _ => output.push(Token::Operator(operator)),
+            | OperatorTokenType::UnaryMinus => output.push(TokenType::Operator(operator)),
+            OperatorTokenType::Pow => output.push(TokenType::Operator(operator)),
+            OperatorTokenType::Mult => output.push(TokenType::Operator(operator)),
+            OperatorTokenType::Div => output.push(TokenType::Operator(operator)),
+            _ => output.push(TokenType::Operator(operator)),
         }
     }
 }
@@ -526,46 +516,53 @@ impl ShuntingYard {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::token_parser::{validate_tokens, NumberToken, TokenParser};
+    use crate::token_parser::TokenParser;
     use crate::units::consts::init_units;
     use crate::units::units::{UnitOutput, Units};
     use bigdecimal::BigDecimal;
     use std::str::FromStr;
 
     pub fn num<'text_ptr, 'units>(n: i64) -> Token<'text_ptr, 'units> {
-        Token::NumberLiteral(NumberToken {
-            num: n.into(),
+        Token {
             ptr: &[],
-        })
+            typ: TokenType::NumberLiteral(n.into()),
+        }
     }
+
     pub fn op<'text_ptr, 'units>(op_repr: OperatorTokenType<'units>) -> Token<'text_ptr, 'units> {
-        Token::Operator(OperatorToken {
-            typ: op_repr,
+        Token {
             ptr: &[],
-        })
+            typ: TokenType::Operator(op_repr),
+        }
     }
     pub fn str<'text_ptr, 'units>(op_repr: &'static str) -> Token<'text_ptr, 'units> {
-        Token::StringLiteral(unsafe { std::mem::transmute(op_repr) })
+        Token {
+            ptr: unsafe { std::mem::transmute(op_repr) },
+            typ: TokenType::StringLiteral,
+        }
     }
 
     pub fn unit<'text_ptr, 'units>(op_repr: &'static str) -> Token<'text_ptr, 'units> {
-        Token::Operator(OperatorToken {
-            typ: OperatorTokenType::Unit(UnitOutput::new()),
+        Token {
             ptr: unsafe { std::mem::transmute(op_repr) },
-        })
+            typ: TokenType::Operator(OperatorTokenType::Unit(UnitOutput::new())),
+        }
     }
 
     pub fn var<'text_ptr, 'units>(op_repr: &'static str) -> Token<'text_ptr, 'units> {
-        Token::Variable(unsafe { std::mem::transmute(op_repr) })
+        Token {
+            ptr: unsafe { std::mem::transmute(op_repr) },
+            typ: TokenType::Variable,
+        }
     }
     pub fn numf<'text_ptr, 'units>(n: f64) -> Token<'text_ptr, 'units> {
-        Token::NumberLiteral(NumberToken {
-            num: BigDecimal::from_f64(n).unwrap(),
+        Token {
             ptr: &[],
-        })
+            typ: TokenType::NumberLiteral(BigDecimal::from_f64(n).unwrap()),
+        }
     }
 
-    pub fn test_tokens(expected_tokens: &[Token], actual_tokens: &[Token]) {
+    pub fn compare_tokens(expected_tokens: &[Token], actual_tokens: &[Token]) {
         assert_eq!(
             expected_tokens.len(),
             actual_tokens.len(),
@@ -573,44 +570,36 @@ pub mod tests {
             &actual_tokens
         );
         for (actual_token, expected_token) in actual_tokens.iter().zip(expected_tokens.iter()) {
-            match (expected_token, actual_token) {
-                (Token::NumberLiteral(expected_num), Token::NumberLiteral(actual_num)) => {
+            match (&expected_token.typ, &actual_token.typ) {
+                (TokenType::NumberLiteral(expected_num), TokenType::NumberLiteral(actual_num)) => {
                     assert_eq!(
-                        expected_num.num, actual_num.num,
+                        expected_num, actual_num,
                         "actual tokens: {:?}",
                         &actual_tokens
                     )
                 }
-                (Token::Operator(expected_op), Token::Operator(actual_op)) => {
+                (TokenType::Operator(expected_op), TokenType::Operator(actual_op)) => {
                     match (expected_op, actual_op) {
-                        (
-                            OperatorToken {
-                                ptr: expected_op,
-                                typ: OperatorTokenType::Unit(_),
-                            },
-                            OperatorToken {
-                                ptr: actual_op,
-                                typ: OperatorTokenType::Unit(_),
-                            },
-                        ) => {
+                        (OperatorTokenType::Unit(_), OperatorTokenType::Unit(actual_unit)) => {
                             //     expected_op is an &str
-                            let str_slice = unsafe { std::mem::transmute::<_, &str>(*expected_op) };
-                            let expected_chars = str_slice.chars().collect::<Vec<char>>();
-                            assert_eq!(&expected_chars, actual_op)
+                            let str_slice =
+                                unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
+                            assert_eq!(&actual_unit.to_string(), str_slice)
                         }
                         _ => assert_eq!(
-                            expected_op.typ, actual_op.typ,
+                            expected_op, actual_op,
                             "actual tokens: {:?}",
                             &actual_tokens
                         ),
                     }
                 }
-                (Token::StringLiteral(expected_op), Token::StringLiteral(actual_op)) => {
+                (TokenType::StringLiteral, TokenType::StringLiteral) => {
                     // expected_op is an &str
-                    let str_slice = unsafe { std::mem::transmute::<_, &str>(*expected_op) };
+                    let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
                     let expected_chars = str_slice.chars().collect::<Vec<char>>();
                     // in shunting yard, we don't care about whitespaces, they are tested in token_parser
-                    let trimmed_actual: Vec<char> = actual_op
+                    let trimmed_actual: Vec<char> = actual_token
+                        .ptr
                         .iter()
                         .collect::<String>()
                         .trim()
@@ -622,12 +611,13 @@ pub mod tests {
                         &actual_tokens
                     )
                 }
-                (Token::Variable(expected_op), Token::Variable(actual_op)) => {
+                (TokenType::Variable, TokenType::Variable) => {
                     // expected_op is an &str
-                    let str_slice = unsafe { std::mem::transmute::<_, &str>(*expected_op) };
+                    let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
                     let expected_chars = str_slice.chars().collect::<Vec<char>>();
                     // in shunting yard, we don't care about whitespaces, they are tested in token_parser
-                    let trimmed_actual: Vec<char> = actual_op
+                    let trimmed_actual: Vec<char> = actual_token
+                        .ptr
                         .iter()
                         .collect::<String>()
                         .trim()
@@ -650,30 +640,51 @@ pub mod tests {
     pub fn do_shunting_yard<'text_ptr, 'units>(
         text: &'text_ptr [char],
         units: &'units Units,
-    ) -> Vec<Token<'text_ptr, 'units>> {
+        tokens: &mut Vec<Token<'text_ptr, 'units>>,
+    ) -> Vec<TokenType<'units>> {
         let mut output = vec![];
-        let mut tokens = vec![];
         let vars = vec![String::from("var0"), String::from("var1")];
-        TokenParser::parse_line(&text, &vars, &[], &mut tokens, &units);
-        // validate_tokens(&mut tokens);
+        TokenParser::parse_line(&text, &vars, &[], tokens, &units);
         ShuntingYard::shunting_yard(tokens, &[], &mut output);
         return output;
     }
 
-    fn test(text: &str, expected_tokens: &[Token]) {
+    fn test_output(text: &str, expected_tokens: &[Token]) {
         println!("===================================================");
         println!("{}", text);
         let temp = text.chars().collect::<Vec<char>>();
         let mut units = Units::new();
-        // units.init();
         units.units = init_units(&units.prefixes);
-        let output = do_shunting_yard(&temp, &units);
-        test_tokens(expected_tokens, &output);
+        let mut tokens = vec![];
+        let output = do_shunting_yard(&temp, &units, &mut tokens);
+        dbg!(&output);
+        compare_tokens(
+            expected_tokens,
+            output
+                .iter()
+                .map(|it| Token {
+                    ptr: &[],
+                    typ: it.clone(),
+                })
+                .collect::<Vec<_>>()
+                .as_slice(),
+        );
+    }
+
+    fn test_tokens(text: &str, expected_tokens: &[Token]) {
+        println!("===================================================");
+        println!("{}", text);
+        let temp = text.chars().collect::<Vec<char>>();
+        let mut units = Units::new();
+        units.units = init_units(&units.prefixes);
+        let mut tokens = vec![];
+        let output = do_shunting_yard(&temp, &units, &mut tokens);
+        compare_tokens(expected_tokens, &tokens);
     }
 
     #[test]
     fn test1() {
-        test(
+        test_output(
             "1/2s",
             &[num(1), num(2), unit("s"), op(OperatorTokenType::Div)],
         );
@@ -686,7 +697,7 @@ pub mod tests {
         //     &[var("var0"), num(100), op(OperatorTokenType::Add)],
         // );
 
-        test(
+        test_output(
             "30% - 10%",
             &[
                 num(30),
@@ -697,7 +708,7 @@ pub mod tests {
             ],
         );
 
-        test(
+        test_output(
             "10km/h * 45min * 12 km to h",
             &[
                 num(10),
@@ -713,12 +724,12 @@ pub mod tests {
             ],
         );
 
-        test(
+        test_output(
             "space separated numbers 10 000 000 + 1 234",
             &[num(10000000), num(1234), op(OperatorTokenType::Add)],
         );
 
-        test(
+        test_output(
             "1 * (2+3)",
             &[
                 num(1),
@@ -732,7 +743,7 @@ pub mod tests {
 
     #[test]
     fn test_shunting_matrices() {
-        test(
+        test_output(
             "[2] + 1",
             &[
                 num(2),
@@ -741,7 +752,7 @@ pub mod tests {
                 op(OperatorTokenType::Add),
             ],
         );
-        test(
+        test_output(
             "[2, 3] + 1",
             &[
                 num(2),
@@ -752,7 +763,7 @@ pub mod tests {
             ],
         );
 
-        test(
+        test_output(
             "[[2, 3, 4], [5, 6, 7]] + 1",
             &[
                 num(2),
@@ -769,7 +780,7 @@ pub mod tests {
             ],
         );
 
-        test(
+        test_output(
             "[[2 + 3, 4 * 5], [ 6 / 7, 8^9]]",
             &[
                 num(2),
@@ -790,8 +801,8 @@ pub mod tests {
             ],
         );
 
-        test("1 + [2,]", &[]);
-        test(
+        test_output("1 + [2,]", &[]);
+        test_output(
             "1 + [2,] 3*4",
             &[num(3), num(4), op(OperatorTokenType::Mult)],
         );
@@ -809,16 +820,16 @@ pub mod tests {
 
     #[test]
     fn unary_operators() {
-        test("1-2", &[num(1), num(2), op(OperatorTokenType::Sub)]);
-        test("-1 + -2", &[num(-1), num(-2), op(OperatorTokenType::Add)]);
-        test("-1+-2", &[num(-1), num(-2), op(OperatorTokenType::Add)]);
-        test("-1 - -2", &[num(-1), num(-2), op(OperatorTokenType::Sub)]);
-        test("-1--2", &[num(-1), num(-2), op(OperatorTokenType::Sub)]);
-        test("+1-+2", &[num(1), num(2), op(OperatorTokenType::Sub)]);
-        test("+1++2", &[num(1), num(2), op(OperatorTokenType::Add)]);
-        test("2^-2", &[num(2), num(-2), op(OperatorTokenType::Pow)]);
+        test_output("1-2", &[num(1), num(2), op(OperatorTokenType::Sub)]);
+        test_output("-1 + -2", &[num(-1), num(-2), op(OperatorTokenType::Add)]);
+        test_output("-1+-2", &[num(-1), num(-2), op(OperatorTokenType::Add)]);
+        test_output("-1 - -2", &[num(-1), num(-2), op(OperatorTokenType::Sub)]);
+        test_output("-1--2", &[num(-1), num(-2), op(OperatorTokenType::Sub)]);
+        test_output("+1-+2", &[num(1), num(2), op(OperatorTokenType::Sub)]);
+        test_output("+1++2", &[num(1), num(2), op(OperatorTokenType::Add)]);
+        test_output("2^-2", &[num(2), num(-2), op(OperatorTokenType::Pow)]);
 
-        test(
+        test_output(
             "-(1) - -(2)",
             &[
                 num(1),
@@ -838,7 +849,7 @@ pub mod tests {
         // //     &[var("var0"), num(100), op(OperatorTokenType::Add)],
         // // );
         //
-        test(
+        test_output(
             "2m/3m",
             &[
                 num(2),
@@ -849,12 +860,12 @@ pub mod tests {
             ],
         );
 
-        test(
+        test_output(
             "2/3m",
             &[num(2), num(3), unit("m"), op(OperatorTokenType::Div)],
         );
 
-        test(
+        test_output(
             "5km + 5cm",
             &[
                 num(5),
@@ -865,7 +876,7 @@ pub mod tests {
             ],
         );
 
-        test(
+        test_output(
             "100 ft * lbf to (in*lbf)",
             &[
                 num(100),
@@ -876,28 +887,67 @@ pub mod tests {
         );
 
         // typo: the text contain 'lbG' and not lbF
-        test(
+        test_output(
             "100 ft * lbf to (in*lbg)",
             // &[num(100), unit("ft * lbf"), op(OperatorTokenType::In)],
             &[], // invalid, no vlaue
         );
+        test_tokens(
+            "100 ft * lbf to (in*lbg)",
+            &[
+                num(100),
+                str(" "),
+                unit("ft * lbf"),
+                str(" "),
+                op(OperatorTokenType::UnitConverter),
+                str(" "),
+                op(OperatorTokenType::ParenOpen),
+                str("in"),
+                op(OperatorTokenType::Mult),
+                str("lbg"),
+                op(OperatorTokenType::ParenClose),
+            ],
+        );
 
         // typo: the text contain 'lbG' and not lbF
-        test(
+        test_output(
             "100 ft * lbf to (in*lbg) 1 + 100",
             &[num(1), num(100), op(OperatorTokenType::Add)],
         );
 
-        test("1szer sem jött el + *megjegyzés 2 éve...", &[]);
-        test(
+        test_output("1szer sem jött el + *megjegyzés 2 éve...", &[]);
+        test_tokens(
+            "1szer sem jött el + *megjegyzés 2 éve...",
+            &[
+                str("1"),
+                str("szer"),
+                str(" "),
+                str("sem"),
+                str(" "),
+                str("jött"),
+                str(" "),
+                str("el"),
+                str(" "),
+                str("+"),
+                str(" "),
+                str("*"),
+                str("megjegyzés"),
+                str(" "),
+                str("2"),
+                str("éve"),
+                str("..."),
+            ],
+        );
+
+        test_output(
             "1+4szer sem jött el + *megjegyzés 2 éve...",
             &[num(1), num(4), op(OperatorTokenType::Add)],
         );
-        test(
+        test_output(
             "75-15 euróból kell adózni mert 15 EUR adómentes",
             &[num(75), num(15), op(OperatorTokenType::Sub)],
         );
-        test(
+        test_output(
             "15 EUR adómentes azaz 75-15 euróból kell adózni",
             &[num(75), num(15), op(OperatorTokenType::Sub)],
         );
