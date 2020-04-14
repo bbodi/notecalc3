@@ -1,7 +1,8 @@
 #![feature(ptr_offset_from, const_if_match, const_fn, const_panic, drain_filter)]
+#![feature(const_generics)]
 
 use crate::calc::evaluate_tokens;
-use crate::editor::{Editor, InputKey, InputModifiers, Line, MAX_LINE_LEN};
+use crate::editor::{Editor, InputKey, InputModifiers, Line};
 use crate::shunting_yard::ShuntingYard;
 use crate::token_parser::{OperatorTokenType, Token, TokenParser, TokenType};
 use crate::units::consts::{create_prefixes, init_units};
@@ -277,8 +278,9 @@ const LINE_NUM_CONSTS: [[char; 3]; 256] = [
     ['2', '5', '6'],
 ];
 
-pub const MAX_ROW_LEN: usize = 120;
-pub const GUTTER_LEN: u8 = 1 + 3 + 1;
+const MAX_CANVAS_WIDTH: usize = 120;
+const MAX_EDITOR_WIDTH: usize = 80;
+const LEFT_GUTTER_WIDTH: usize = 1 + 3 + 1;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -292,8 +294,8 @@ pub enum TextStyle {
 #[derive(Debug)]
 pub struct RenderTextMsg<'a> {
     pub text: &'a [char],
-    pub row: u8,
-    pub column: u8,
+    pub row: usize,
+    pub column: usize,
 }
 
 #[repr(C)]
@@ -301,8 +303,14 @@ pub struct RenderTextMsg<'a> {
 pub enum OutputMessage<'a> {
     SetStyle(TextStyle),
     SetColor([u8; 4]),
+    RenderChar(usize, usize, char),
     RenderText(RenderTextMsg<'a>),
-    RenderRectangle { x: u8, y: u8, w: u8, h: u8 },
+    RenderRectangle {
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+    },
 }
 
 #[derive(Debug)]
@@ -337,13 +345,18 @@ impl<'a> RenderBuckets<'a> {
         self.custom_commands[layer as usize].push(OutputMessage::SetColor(color));
     }
 
-    pub fn draw_rect(&mut self, layer: Layer, x: u8, y: u8, w: u8, h: u8) {
+    pub fn draw_rect(&mut self, layer: Layer, x: usize, y: usize, w: usize, h: usize) {
         self.custom_commands[layer as usize].push(OutputMessage::RenderRectangle { x, y, w, h });
+    }
+
+    pub fn draw_char(&mut self, layer: Layer, x: usize, y: usize, ch: char) {
+        self.custom_commands[layer as usize].push(OutputMessage::RenderChar(x, y, ch));
     }
 }
 
 pub struct NoteCalcApp<'a> {
-    pub content: Vec<Line>,
+    client_width: usize,
+    canvas: Vec<Line>,
     units: Units<'a>,
     pub editor: Editor,
     variables: Vec<String>,
@@ -352,13 +365,14 @@ pub struct NoteCalcApp<'a> {
 }
 
 impl<'a> NoteCalcApp<'a> {
-    pub fn new() -> NoteCalcApp<'a> {
+    pub fn new(client_width: usize) -> NoteCalcApp<'a> {
         let prefixes: &'static UnitPrefixes = Box::leak(Box::new(create_prefixes()));
         let units = Units::new(&prefixes);
         let mut lines = Vec::with_capacity(128);
         lines.push(Line::new());
         NoteCalcApp {
-            content: lines,
+            client_width,
+            canvas: lines,
             prefixes,
             units,
             editor: Editor::new(),
@@ -368,17 +382,23 @@ impl<'a> NoteCalcApp<'a> {
     }
 
     pub fn get_selected_text(&self) -> Option<String> {
-        self.editor.get_selected_text(&self.content)
+        self.editor.get_selected_text(&self.canvas)
     }
 
     pub fn render(&mut self) -> RenderBuckets {
+        let RIGHT_GUTTER_WIDTH = 3;
+        let MIN_RESULT_PANEL_WIDTH = 20;
+        let result_gutter_x = (LEFT_GUTTER_WIDTH + MAX_EDITOR_WIDTH)
+            .min(self.client_width - (RIGHT_GUTTER_WIDTH + MIN_RESULT_PANEL_WIDTH));
+        let current_editor_width = result_gutter_x - LEFT_GUTTER_WIDTH;
+
         // TODO: improve vec alloc
         let mut render_buckets = RenderBuckets::new();
         let mut result_buffer_index = 0;
         let mut result_str_positions: SmallVec<[Option<(usize, usize)>; 256]> =
             SmallVec::with_capacity(256);
         let mut longest_row_len = 0;
-        for (row_index, line) in self.content.iter().enumerate() {
+        for (row_index, line) in self.canvas.iter().enumerate() {
             if line.len() > longest_row_len {
                 longest_row_len = line.len();
             }
@@ -386,7 +406,7 @@ impl<'a> NoteCalcApp<'a> {
             // TODO optimize vec allocations
             let mut tokens = Vec::with_capacity(128);
             TokenParser::parse_line(
-                &line.get_chars()[0..line.len()],
+                &line.get_chars()[0..line.len() as usize],
                 &self.variables,
                 &[],
                 &mut tokens,
@@ -408,18 +428,31 @@ impl<'a> NoteCalcApp<'a> {
                         _ => &mut render_buckets.operators,
                     },
                 };
+                let text_len = token
+                    .ptr
+                    .len()
+                    .min((current_editor_width as isize - column_index as isize).max(0) as usize);
                 dst.push(RenderTextMsg {
-                    text: token.ptr,
-                    row: row_index as u8,
-                    column: column_index + GUTTER_LEN,
+                    text: &token.ptr[0..text_len],
+                    row: row_index,
+                    column: column_index + LEFT_GUTTER_WIDTH,
                 });
-                column_index += token.ptr.len() as u8;
+                column_index += token.ptr.len();
             }
-            if self.editor.show_cursor {
+            if column_index >= current_editor_width {
+                render_buckets.draw_char(
+                    Layer::AboveText,
+                    current_editor_width + LEFT_GUTTER_WIDTH,
+                    row_index,
+                    '\u{2026}',
+                );
+            }
+            let cursor_pos = self.editor.get_selection().get_cursor_pos();
+            if self.editor.show_cursor && cursor_pos.column < current_editor_width {
                 render_buckets.texts.push(RenderTextMsg {
                     text: &['▏'],
-                    row: self.editor.get_selection().get_cursor_pos().row as u8,
-                    column: self.editor.get_selection().get_cursor_pos().column as u8 + GUTTER_LEN,
+                    row: cursor_pos.row,
+                    column: cursor_pos.column + LEFT_GUTTER_WIDTH,
                 });
             }
 
@@ -435,31 +468,36 @@ impl<'a> NoteCalcApp<'a> {
                 result_str_positions.push(None);
             }
         }
-        let result_gutter_x = GUTTER_LEN + MAX_LINE_LEN as u8;
         for (row_i, pos) in result_str_positions.iter().enumerate() {
             if let Some((start, end)) = pos {
                 render_buckets.texts.push(RenderTextMsg {
                     text: &self.result_buffer[*start..*end],
-                    row: row_i as u8,
-                    column: result_gutter_x + 3,
+                    row: row_i,
+                    column: result_gutter_x + RIGHT_GUTTER_WIDTH,
                 });
             }
         }
 
         // gutter
         render_buckets.set_color(Layer::BehindText, [242, 242, 242, 255]);
-        render_buckets.draw_rect(Layer::BehindText, 0, 0, GUTTER_LEN, 255);
+        render_buckets.draw_rect(Layer::BehindText, 0, 0, LEFT_GUTTER_WIDTH, 255);
 
         // result gutter
-        render_buckets.draw_rect(Layer::BehindText, result_gutter_x, 0, 3, 255);
+        render_buckets.draw_rect(
+            Layer::BehindText,
+            result_gutter_x,
+            0,
+            RIGHT_GUTTER_WIDTH,
+            255,
+        );
 
         // highlight current line
         render_buckets.set_color(Layer::BehindText, [0xFC, 0xFA, 0xED, 200]);
         render_buckets.draw_rect(
             Layer::BehindText,
             0,
-            self.editor.get_selection().get_cursor_pos().row as u8,
-            result_gutter_x + 3 + 10,
+            self.editor.get_selection().get_cursor_pos().row,
+            result_gutter_x + RIGHT_GUTTER_WIDTH + MIN_RESULT_PANEL_WIDTH,
             1,
         );
         // line numbers
@@ -468,7 +506,7 @@ impl<'a> NoteCalcApp<'a> {
             render_buckets.custom_commands[Layer::BehindText as usize].push(
                 OutputMessage::RenderText(RenderTextMsg {
                     text: &(LINE_NUM_CONSTS[i][..]),
-                    row: i as u8,
+                    row: i,
                     column: 1,
                 }),
             )
@@ -483,34 +521,34 @@ impl<'a> NoteCalcApp<'a> {
                 // first line
                 render_buckets.draw_rect(
                     Layer::BehindText,
-                    start.column as u8 + GUTTER_LEN,
-                    start.row as u8,
-                    (MAX_LINE_LEN - start.column) as u8,
+                    start.column + LEFT_GUTTER_WIDTH,
+                    start.row,
+                    (MAX_EDITOR_WIDTH - start.column).min(current_editor_width),
                     1,
                 );
                 // full lines
                 let height = end.row - start.row - 1;
                 render_buckets.draw_rect(
                     Layer::BehindText,
-                    GUTTER_LEN,
-                    (start.row + 1) as u8,
-                    MAX_LINE_LEN as u8,
-                    height as u8,
+                    LEFT_GUTTER_WIDTH,
+                    start.row + 1,
+                    current_editor_width,
+                    height,
                 );
                 // last line
                 render_buckets.draw_rect(
                     Layer::BehindText,
-                    GUTTER_LEN,
-                    end.row as u8,
-                    end.column as u8,
+                    LEFT_GUTTER_WIDTH,
+                    end.row,
+                    end.column.min(current_editor_width),
                     1,
                 );
             } else {
                 render_buckets.draw_rect(
                     Layer::BehindText,
-                    start.column as u8 + GUTTER_LEN,
-                    start.row as u8,
-                    (end.column - start.column) as u8,
+                    start.column + LEFT_GUTTER_WIDTH,
+                    start.row,
+                    (end.column - start.column).min(current_editor_width),
                     1,
                 );
             }
@@ -519,29 +557,32 @@ impl<'a> NoteCalcApp<'a> {
         return render_buckets;
     }
 
-    pub fn handle_click(&mut self, x: u8, y: u8) {
-        let lines = &self.content;
+    pub fn handle_click(&mut self, x: usize, y: usize) {
+        let lines = &self.canvas;
         let editor = &mut self.editor;
-        if x < GUTTER_LEN {
+        if x < LEFT_GUTTER_WIDTH {
             // clicked on gutter
-        } else if x - GUTTER_LEN < MAX_LINE_LEN as u8 {
-            editor.handle_click(lines, x - GUTTER_LEN, y);
+        } else if x - LEFT_GUTTER_WIDTH < MAX_EDITOR_WIDTH {
+            editor.handle_click(lines, x - LEFT_GUTTER_WIDTH, y);
         }
     }
 
-    pub fn handle_drag(&mut self, x: u8, y: u8) {
-        let lines = &self.content;
+    pub fn handle_resize(&mut self, new_client_width: usize) {
+        self.client_width = new_client_width;
+    }
+
+    pub fn handle_drag(&mut self, x: usize, y: usize) {
+        let lines = &self.canvas;
         let editor = &mut self.editor;
-        if x < GUTTER_LEN {
+        if x < LEFT_GUTTER_WIDTH {
             // clicked on gutter
-        } else if x - GUTTER_LEN < MAX_LINE_LEN as u8 {
-            editor.handle_drag(lines, x - GUTTER_LEN, y);
+        } else if x - LEFT_GUTTER_WIDTH < MAX_EDITOR_WIDTH {
+            editor.handle_drag(lines, x - LEFT_GUTTER_WIDTH, y);
         }
     }
 
     pub fn handle_input(&mut self, input: InputKey, modifiers: InputModifiers) {
-        self.editor
-            .handle_input(&mut self.content, input, modifiers);
+        self.editor.handle_input(&mut self.canvas, input, modifiers);
     }
 }
 

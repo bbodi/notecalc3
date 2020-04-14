@@ -1,2 +1,2 @@
-use crate::editor::{FirstModifiedRowIndex, Line, MAX_LINE_LEN};
+use crate::editor::{FirstModifiedRowIndex, Line};
 use crate::{OutputMessage, RenderTextMsg};
