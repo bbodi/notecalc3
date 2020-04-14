@@ -38,18 +38,18 @@ fn skip_whitespaces(str: &[char]) -> &[char] {
 }
 
 pub struct Units<'a> {
-    pub prefixes: UnitPrefixes,
+    pub prefixes: &'a UnitPrefixes,
     pub units: HashMap<&'static str, Unit<'a>>,
     pub aliases: HashMap<&'static str, &'static str>,
     pub no_prefix: Prefix,
 }
 
 impl<'a> Units<'a> {
-    pub fn new() -> Units<'a> {
+    pub fn new(prefixes: &'a UnitPrefixes) -> Units<'a> {
         Units {
             no_prefix: Prefix::new(&[], "1", false),
-            prefixes: create_prefixes(),
-            units: HashMap::new(),
+            prefixes,
+            units: init_units(&prefixes),
             aliases: init_aliases(),
         }
     }
@@ -282,7 +282,7 @@ impl<'a> Units<'a> {
     }
 }
 
-fn parse_number(mut text: &mut &[char]) -> Option<isize> {
+fn parse_number(text: &mut &[char]) -> Option<isize> {
     let mut tmp: [u8; 32] = [0; 32];
     let mut i = if !text.is_empty() && text[0] == '-' {
         tmp[0] = b'-';
@@ -626,8 +626,8 @@ mod tests {
 
     #[test]
     fn should_create_unit_correctly() {
-        let mut units = Units::new();
-        units.units = init_units(&units.prefixes);
+        let prefixes = create_prefixes();
+        let units = Units::new(&prefixes);
 
         let unit1 = parse("cm", &units);
         assert_eq!(&['m'], unit1.units[0].unit.name);
@@ -805,8 +805,8 @@ mod tests {
 
     #[test]
     fn exp_notation() {
-        let mut units = Units::new();
-        units.units = init_units(&units.prefixes);
+        let prefixes = create_prefixes();
+        let units = Units::new(&prefixes);
 
         // exponential notation, binary or hex is not supported in exponents
         let unit1 = parse("kg^1e0 * m^1.0e3 * s^-2.0e0", &units);
@@ -830,8 +830,8 @@ mod tests {
 
     #[test]
     fn test_prefixes() {
-        let mut units = Units::new();
-        units.units = init_units(&units.prefixes);
+        let prefixes = create_prefixes();
+        let units = Units::new(&prefixes);
         //should accept both long and short prefixes
         assert_eq!(parse("ohm", &units).units[0].unit.name, &['o', 'h', 'm']);
         assert_eq!(
@@ -850,8 +850,8 @@ mod tests {
 
     #[test]
     fn test_plurals() {
-        let mut units = Units::new();
-        units.units = init_units(&units.prefixes);
+        let prefixes = create_prefixes();
+        let units = Units::new(&prefixes);
 
         let unit1 = parse("meters", &units);
         assert_eq!(&['m', 'e', 't', 'e', 'r'], unit1.units[0].unit.name);
@@ -868,8 +868,8 @@ mod tests {
 
     #[test]
     fn test_units_j_mol_k_parsing() {
-        let mut units = Units::new();
-        units.units = init_units(&units.prefixes);
+        let prefixes = create_prefixes();
+        let units = Units::new(&prefixes);
 
         let unit1 = parse("(J / mol / K)", &units);
         assert_eq!(unit1.units[0].prefix.name, &[]);
@@ -906,8 +906,8 @@ mod tests {
 
     #[test]
     fn test_cancelling_out() {
-        let mut units = Units::new();
-        units.units = init_units(&units.prefixes);
+        let prefixes = create_prefixes();
+        let units = Units::new(&prefixes);
 
         let unit1 = parse("(km/h) * h", &units);
         assert_eq!(3, unit1.units.len());
@@ -947,8 +947,8 @@ mod tests {
 
     #[test]
     fn test_is_derive() {
-        let mut units = Units::new();
-        units.units = init_units(&units.prefixes);
+        let prefixes = create_prefixes();
+        let units = Units::new(&prefixes);
         assert_eq!(false, parse("kg", &units).is_derived());
         assert_eq!(true, parse("kg/s", &units).is_derived());
         assert_eq!(true, parse("kg^2", &units).is_derived());
@@ -958,8 +958,8 @@ mod tests {
 
     #[test]
     fn test_value_and_dim() {
-        let mut units = Units::new();
-        units.units = init_units(&units.prefixes);
+        let prefixes = create_prefixes();
+        let units = Units::new(&prefixes);
         assert_eq!(parse("s*A", &units), parse("C", &units));
         assert_eq!(parse("W/A", &units), parse("V", &units));
         assert_eq!(parse("V/A", &units), parse("ohm", &units));
@@ -973,8 +973,8 @@ mod tests {
 
     #[test]
     fn test_angles() {
-        let mut units = Units::new();
-        units.units = init_units(&units.prefixes);
+        let prefixes = create_prefixes();
+        let units = Units::new(&prefixes);
 
         assert_eq!(parse("radian", &units), parse("rad", &units));
         assert_eq!(parse("radians", &units), parse("rad", &units));

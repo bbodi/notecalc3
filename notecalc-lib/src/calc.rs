@@ -698,14 +698,15 @@ mod tests {
     use crate::shunting_yard::ShuntingYard;
     use crate::token_parser::TokenParser;
     use crate::units;
-    use crate::units::consts::init_units;
+    use crate::units::consts::{create_prefixes, init_units};
 
     use super::*;
 
     fn test_tokens(text: &str, expected_tokens: &[Token]) {
         println!("===================================================");
         println!("{}", text);
-        let mut units = Units::new();
+        let prefixes = create_prefixes();
+        let mut units = Units::new(&prefixes);
         units.units = init_units(&units.prefixes);
         let temp = text.chars().collect::<Vec<char>>();
         let mut tokens = vec![];
@@ -721,7 +722,8 @@ mod tests {
         dbg!(text);
         let temp = text.chars().collect::<Vec<char>>();
 
-        let mut units = Units::new();
+        let prefixes = create_prefixes();
+        let mut units = Units::new(&prefixes);
         units.units = init_units(&units.prefixes);
 
         let mut tokens = vec![];
@@ -927,7 +929,17 @@ mod tests {
     fn tests_for_invalid_input() {
         test("3e-3-", " ");
 
-        test_tokens("[2, asda]", &[]);
+        test_tokens(
+            "[2, asda]",
+            &[
+                str("["),
+                str("2"),
+                str(","),
+                str(" "),
+                str("asda"),
+                str("]"),
+            ],
+        );
         test("[2, asda]", " ");
 
         test(
@@ -937,7 +949,25 @@ mod tests {
 
         test_tokens(
             "1szer sem jött el + *megjegyzés 2 éve...",
-            &[num(1), str("+")],
+            &[
+                str("1"),
+                str("szer"),
+                str(" "),
+                str("sem"),
+                str(" "),
+                str("jött"),
+                str(" "),
+                str("el"),
+                str(" "),
+                str("+"),
+                str(" "),
+                str("*"),
+                str("megjegyzés"),
+                str(" "),
+                str("2"),
+                str(" "),
+                str("éve..."),
+            ],
         );
         test("1szer sem jött el + *megjegyzés 2 éve...", " ");
 
@@ -949,8 +979,20 @@ mod tests {
         test("100 Hz to s", "0");
 
         // matrix
-        test_tokens("[]", &[]); // there are no empty vectors
-        test_tokens("1 + [2,]", &[num(1), str("+")]);
+        test_tokens("[]", &[str("["), str("]")]); // there are no empty vectors
+        test_tokens(
+            "1 + [2,]",
+            &[
+                str("1"),
+                str(" "),
+                str("+"),
+                str(" "),
+                str("["),
+                str("2"),
+                str(","),
+                str("]"),
+            ],
+        );
         test("1 + [2,]", " ");
 
         // multiply operator must be explicit, "5" is ignored here
@@ -1010,7 +1052,10 @@ mod tests {
 
     #[test]
     fn test_eval_failure_changes_token_type() {
-        test_tokens("1 - not_variable", &[num(1), str("-")]);
+        test_tokens(
+            "1 - not_variable",
+            &[str("1"), str(" "), str("-"), str(" "), str("not_variable")],
+        );
     }
 
     #[test]

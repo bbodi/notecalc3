@@ -492,7 +492,7 @@ fn handle_unary_shit() {}
 mod tests {
     use super::*;
     use crate::shunting_yard::tests::*;
-    use crate::units::consts::init_units;
+    use crate::units::consts::{create_prefixes, init_units};
     use crate::units::units::Units;
 
     #[test]
@@ -500,8 +500,8 @@ mod tests {
         fn test_parse(str: &str, expected_value: u64) {
             let mut vec = vec![];
             let temp = str.chars().collect::<Vec<_>>();
-            let mut units = Units::new();
-            units.units = init_units(&units.prefixes);
+            let prefixes = create_prefixes();
+            let units = Units::new(&prefixes);
             TokenParser::parse_line(&temp, &[], &[], &mut vec, &units);
             match vec.get(0) {
                 Some(Token {
@@ -518,7 +518,8 @@ mod tests {
         fn test_parse_f(str: &str, expected_value: f64) {
             let mut vec = vec![];
             let temp = str.chars().collect::<Vec<_>>();
-            let units = Units::new();
+            let prefixes = create_prefixes();
+            let units = Units::new(&prefixes);
             TokenParser::parse_line(&temp, &[], &[], &mut vec, &units);
             match vec.get(0) {
                 Some(Token {
@@ -557,8 +558,8 @@ mod tests {
         println!("{}", text);
         let mut vec = vec![];
         let temp = text.chars().collect::<Vec<_>>();
-        let mut units = Units::new();
-        units.units = init_units(&units.prefixes);
+        let prefixes = create_prefixes();
+        let units = Units::new(&prefixes);
         TokenParser::parse_line(&temp, &[], &[], &mut vec, &units);
         assert_eq!(
             expected_tokens.len(),

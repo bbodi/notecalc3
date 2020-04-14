@@ -16,18 +16,20 @@ struct ValidationState {
     open_brackets: usize,
     open_parens: usize,
     prev_token_type: ValidationTokenType,
-    tmp_start_index: usize,
+    tmp_output_stack_start_index: usize,
+    tmp_input_token_start_index: usize,
     neg: bool,
 }
 
 impl ValidationState {
-    fn new_from_index(output_stack_index: usize) -> ValidationState {
+    fn new_from_index(output_stack_index: usize, token_index: isize) -> ValidationState {
         ValidationState {
             expect_expression: true,
             open_brackets: 0,
             open_parens: 0,
             prev_token_type: ValidationTokenType::Nothing,
-            tmp_start_index: output_stack_index,
+            tmp_output_stack_start_index: output_stack_index,
+            tmp_input_token_start_index: token_index as usize,
             had_operator: false,
             neg: false,
         }
@@ -51,13 +53,16 @@ impl ShuntingYard {
         let mut operator_stack: Vec<OperatorTokenType> = vec![];
 
         let mut last_valid_range = None;
-        let mut v = ValidationState::new_from_index(0);
+        let mut v = ValidationState::new_from_index(0, 0);
         let mut input_index: isize = -1;
 
         let mut matrix_start_text_pos = None;
+
+        dbg!(&tokens);
         while input_index + 1 < tokens.len() as isize {
             input_index += 1; // it is here so it is incremented always when "continue"
             let input_token = &tokens[input_index as usize];
+            dbg!(&input_token);
             match &input_token.typ {
                 TokenType::StringLiteral => {
                     // it ignores strings
@@ -78,12 +83,9 @@ impl ShuntingYard {
                     OperatorTokenType::ParenClose => {
                         if v.expect_expression || v.open_parens == 0 {
                             dbg!("error1");
-
-                            ShuntingYard::send_everything_to_output(
-                                &mut operator_stack,
-                                output_stack,
-                            );
-                            v = ValidationState::new_from_index(output_stack.len());
+                            operator_stack.clear();
+                            ShuntingYard::set_tokens_to_string(tokens, input_index, &v);
+                            v = ValidationState::new_from_index(output_stack.len(), input_index);
                             continue;
                         } else {
                             v.expect_expression = false;
@@ -102,7 +104,8 @@ impl ShuntingYard {
                                 &mut operator_stack,
                                 output_stack,
                             );
-                            last_valid_range = Some((v.tmp_start_index, output_stack.len() - 1));
+                            last_valid_range =
+                                Some((v.tmp_output_stack_start_index, output_stack.len() - 1));
                         }
                     }
                     OperatorTokenType::BracketOpen => {
@@ -116,11 +119,9 @@ impl ShuntingYard {
                     OperatorTokenType::BracketClose => {
                         if v.expect_expression || v.open_brackets <= 0 {
                             dbg!("error2");
-                            ShuntingYard::send_everything_to_output(
-                                &mut operator_stack,
-                                output_stack,
-                            );
-                            v = ValidationState::new_from_index(output_stack.len());
+                            operator_stack.clear();
+                            ShuntingYard::set_tokens_to_string(tokens, input_index, &v);
+                            v = ValidationState::new_from_index(output_stack.len(), input_index);
                             continue;
                         } else {
                             v.expect_expression = false;
@@ -170,7 +171,7 @@ impl ShuntingYard {
                                     output_stack,
                                 );
                                 last_valid_range =
-                                    Some((v.tmp_start_index, output_stack.len() - 1));
+                                    Some((v.tmp_output_stack_start_index, output_stack.len() - 1));
                             }
                         } else {
                             panic!()
@@ -184,17 +185,18 @@ impl ShuntingYard {
 
                             if !v.expect_expression {
                                 dbg!("error3");
-                                ShuntingYard::send_everything_to_output(
-                                    &mut operator_stack,
-                                    output_stack,
+                                operator_stack.clear();
+                                ShuntingYard::set_tokens_to_string(tokens, input_index, &v);
+                                v = ValidationState::new_from_index(
+                                    output_stack.len(),
+                                    input_index,
                                 );
-                                v = ValidationState::new_from_index(output_stack.len());
                                 continue;
                             } else if ShuntingYard::get_next_nonstring_token(
                                 tokens,
                                 input_index as usize + 1,
                             )
-                            .map(|it| it.is_number())
+                            .map(|it| it.0.is_number())
                             .unwrap_or(false)
                             {
                                 v.neg = true;
@@ -218,17 +220,18 @@ impl ShuntingYard {
 
                             if !v.expect_expression {
                                 dbg!("error4");
-                                ShuntingYard::send_everything_to_output(
-                                    &mut operator_stack,
-                                    output_stack,
+                                operator_stack.clear();
+                                ShuntingYard::set_tokens_to_string(tokens, input_index, &v);
+                                v = ValidationState::new_from_index(
+                                    output_stack.len(),
+                                    input_index,
                                 );
-                                v = ValidationState::new_from_index(output_stack.len());
                                 continue;
                             } else if ShuntingYard::get_next_nonstring_token(
                                 tokens,
                                 input_index as usize + 1,
                             )
-                            .map(|it| it.is_number())
+                            .map(|it| it.0.is_number())
                             .unwrap_or(false)
                             {
                                 v.neg = false;
@@ -240,13 +243,6 @@ impl ShuntingYard {
                             v.had_operator = true;
                             v.prev_token_type = ValidationTokenType::Op;
                         }
-                        // ShuntingYard::handle_unary_operator(
-                        //     op,
-                        //     OperatorTokenType::UnaryPlus,
-                        //     last_token,
-                        //     &mut operator_stack,
-                        //     output,
-                        // );
                     }
                     OperatorTokenType::Assign => {
                         // the left side of the '=' might be a variable name like 'km' or 'm'
@@ -256,11 +252,9 @@ impl ShuntingYard {
                     OperatorTokenType::Comma => {
                         if v.open_brackets == 0 && v.open_parens == 0 {
                             dbg!("error5");
-                            ShuntingYard::send_everything_to_output(
-                                &mut operator_stack,
-                                output_stack,
-                            );
-                            v = ValidationState::new_from_index(output_stack.len());
+                            operator_stack.clear();
+                            ShuntingYard::set_tokens_to_string(tokens, input_index, &v);
+                            v = ValidationState::new_from_index(output_stack.len(), input_index);
                             continue;
                         }
                         v.prev_token_type = ValidationTokenType::Nothing;
@@ -277,36 +271,41 @@ impl ShuntingYard {
                                 &mut operator_stack,
                                 output_stack,
                             );
-                            last_valid_range = Some((v.tmp_start_index, output_stack.len() - 1));
+                            last_valid_range =
+                                Some((v.tmp_output_stack_start_index, output_stack.len() - 1));
                         }
                     }
                     OperatorTokenType::UnitConverter => {
                         // "in" must be the last operator, only a unit can follow it
                         // so clear the operator stack, push the next unit onto the output
                         // push the unit onto the output, and close it
-                        ShuntingYard::send_everything_to_output(&mut operator_stack, output_stack);
-                        if let Some(TokenType::Operator(OperatorTokenType::Unit(unit))) =
+                        if let Some((
+                            Token {
+                                typ: TokenType::Operator(OperatorTokenType::Unit(unit)),
+                                ..
+                            },
+                            offset,
+                        )) =
                             ShuntingYard::get_next_nonstring_token(tokens, input_index as usize + 1)
-                                .map(|it| &it.typ)
                         {
                             v.had_operator = true;
                             v.expect_expression = false;
                             v.prev_token_type = ValidationTokenType::Op;
-                            output_stack
-                                .push(TokenType::Operator(OperatorTokenType::Unit(unit.clone())));
 
-                            input_index += 1;
-
-                            ShuntingYard::send_to_output(op.clone(), output_stack);
                             if v.can_be_valid_closing_token() {
                                 dbg!("close1");
                                 ShuntingYard::send_everything_to_output(
                                     &mut operator_stack,
                                     output_stack,
                                 );
+                                output_stack.push(TokenType::Operator(OperatorTokenType::Unit(
+                                    unit.clone(),
+                                )));
+                                ShuntingYard::send_to_output(op.clone(), output_stack);
                                 last_valid_range =
-                                    Some((v.tmp_start_index, output_stack.len() - 1));
+                                    Some((v.tmp_output_stack_start_index, output_stack.len() - 1));
                             }
+                            input_index += 1 + offset as isize;
                         } else {
                             // it is not an "in" operator but a string literal
                         }
@@ -318,11 +317,9 @@ impl ShuntingYard {
                         if v.expect_expression {
                             dbg!("error6");
                             dbg!(&v);
-                            ShuntingYard::send_everything_to_output(
-                                &mut operator_stack,
-                                output_stack,
-                            );
-                            v = ValidationState::new_from_index(output_stack.len());
+                            operator_stack.clear();
+                            ShuntingYard::set_tokens_to_string(tokens, input_index, &v);
+                            v = ValidationState::new_from_index(output_stack.len(), input_index);
                             continue;
                         }
                         v.had_operator = true;
@@ -333,45 +330,52 @@ impl ShuntingYard {
                     }
                 },
                 TokenType::NumberLiteral(num) => {
+                    let num = num.clone();
                     if !v.expect_expression {
                         dbg!("error");
                         dbg!(&operator_stack);
-                        ShuntingYard::send_everything_to_output(&mut operator_stack, output_stack);
                         dbg!(&output_stack);
-                        v = ValidationState::new_from_index(output_stack.len());
+                        operator_stack.clear();
+                        ShuntingYard::set_tokens_to_string(tokens, input_index, &v);
+                        v = ValidationState::new_from_index(output_stack.len(), input_index);
                     }
                     // TODO nézd meg muszáj e klnozni, ne me tudja ez a fv átvenni az ownershipet
                     // a input_tokens felett, vagy az outputban nem e lehetnek pointerek
                     output_stack.push(TokenType::NumberLiteral(if v.neg {
                         (&num).neg()
                     } else {
-                        num.clone()
+                        num
                     }));
                     v.neg = false;
                     if v.can_be_valid_closing_token() {
-                        if let Some(TokenType::Operator(OperatorTokenType::Unit(unit))) =
+                        if let Some((next_token, offset)) =
                             ShuntingYard::get_next_nonstring_token(tokens, input_index as usize + 1)
-                                .map(|it| &it.typ)
                         {
-                            // if the next token is unit, push it to the stack immediately, and
-                            // skip the next iteration
-                            output_stack
-                                .push(TokenType::Operator(OperatorTokenType::Unit(unit.clone())));
-                            input_index += 1;
-                        } else if let Some(TokenType::Operator(OperatorTokenType::Perc)) =
-                            ShuntingYard::get_next_nonstring_token(tokens, input_index as usize + 1)
-                                .map(|it| &it.typ)
-                        {
-                            // if the next token is '%', push it to the stack immediately, and
-                            // skip the next iteration
-                            output_stack.push(TokenType::Operator(OperatorTokenType::Perc));
-                            input_index += 1;
+                            if let TokenType::Operator(OperatorTokenType::Unit(unit)) =
+                                &next_token.typ
+                            {
+                                // if the next token is unit, push it to the stack immediately, and
+                                // skip the next iteration
+                                output_stack.push(TokenType::Operator(OperatorTokenType::Unit(
+                                    unit.clone(),
+                                )));
+                                input_index += 1 + offset as isize;
+                            } else if let TokenType::Operator(OperatorTokenType::Perc) =
+                                next_token.typ
+                            {
+                                // if the next token is '%', push it to the stack immediately, and
+                                // skip the next iteration
+                                output_stack.push(TokenType::Operator(OperatorTokenType::Perc));
+                                input_index += 1 + offset as isize;
+                            }
                         }
 
                         dbg!("close2");
                         dbg!(&operator_stack);
+                        dbg!(&output_stack);
                         ShuntingYard::send_everything_to_output(&mut operator_stack, output_stack);
-                        last_valid_range = Some((v.tmp_start_index, output_stack.len() - 1));
+                        last_valid_range =
+                            Some((v.tmp_output_stack_start_index, output_stack.len() - 1));
                     }
                     v.prev_token_type = ValidationTokenType::Expr;
                     v.expect_expression = false;
@@ -382,8 +386,9 @@ impl ShuntingYard {
                 TokenType::Variable => {
                     if !v.expect_expression {
                         dbg!("error8");
-                        ShuntingYard::send_everything_to_output(&mut operator_stack, output_stack);
-                        v = ValidationState::new_from_index(output_stack.len());
+                        operator_stack.clear();
+                        ShuntingYard::set_tokens_to_string(tokens, input_index, &v);
+                        v = ValidationState::new_from_index(output_stack.len(), input_index);
                         continue;
                     }
                     output_stack.push(input_token.typ.clone());
@@ -397,27 +402,34 @@ impl ShuntingYard {
 
         // keep only the valid interval
         if let Some((last_valid_start_index, last_valid_end_index)) = last_valid_range {
-            dbg!(&output_stack);
-            dbg!(&last_valid_start_index);
-            dbg!(&last_valid_end_index);
             output_stack.drain(last_valid_end_index + 1..);
-            dbg!(&output_stack);
-            dbg!(&v);
             output_stack.drain(0..last_valid_start_index);
-        } else {
+        } else if input_index > 0 {
             output_stack.clear();
+            ShuntingYard::set_tokens_to_string(tokens, input_index, &v);
+        }
+    }
+
+    fn set_tokens_to_string<'text_ptr, 'units>(
+        tokens: &mut Vec<Token<'text_ptr, 'units>>,
+        input_index: isize,
+        v: &ValidationState,
+    ) {
+        for token in tokens[v.tmp_input_token_start_index..=input_index as usize].iter_mut() {
+            token.typ = TokenType::StringLiteral
         }
     }
 
     fn get_next_nonstring_token<'a, 'text_ptr, 'units>(
         tokens: &'a Vec<Token<'text_ptr, 'units>>,
-        mut i: usize,
-    ) -> Option<&'a Token<'text_ptr, 'units>> {
-        while i < tokens.len() {
-            if !tokens[i].is_string() {
-                return Some(&tokens[i]);
+        i: usize,
+    ) -> Option<(&'a Token<'text_ptr, 'units>, usize)> {
+        let mut offset = 0;
+        while i + offset < tokens.len() {
+            if !tokens[i + offset].is_string() {
+                return Some((&tokens[i + offset], offset));
             }
-            i += 1;
+            offset += 1;
         }
         return None;
     }
@@ -517,7 +529,7 @@ impl ShuntingYard {
 pub mod tests {
     use super::*;
     use crate::token_parser::TokenParser;
-    use crate::units::consts::init_units;
+    use crate::units::consts::{create_prefixes, init_units};
     use crate::units::units::{UnitOutput, Units};
     use bigdecimal::BigDecimal;
     use std::str::FromStr;
@@ -564,8 +576,8 @@ pub mod tests {
 
     pub fn compare_tokens(expected_tokens: &[Token], actual_tokens: &[Token]) {
         assert_eq!(
-            expected_tokens.len(),
             actual_tokens.len(),
+            expected_tokens.len(),
             "actual tokens: {:?}",
             &actual_tokens
         );
@@ -602,11 +614,10 @@ pub mod tests {
                         .ptr
                         .iter()
                         .collect::<String>()
-                        .trim()
                         .chars()
                         .collect();
                     assert_eq!(
-                        &expected_chars, &trimmed_actual,
+                        &trimmed_actual, &expected_chars,
                         "actual tokens: {:?}",
                         &actual_tokens
                     )
@@ -653,7 +664,8 @@ pub mod tests {
         println!("===================================================");
         println!("{}", text);
         let temp = text.chars().collect::<Vec<char>>();
-        let mut units = Units::new();
+        let prefixes = create_prefixes();
+        let mut units = Units::new(&prefixes);
         units.units = init_units(&units.prefixes);
         let mut tokens = vec![];
         let output = do_shunting_yard(&temp, &units, &mut tokens);
@@ -675,8 +687,8 @@ pub mod tests {
         println!("===================================================");
         println!("{}", text);
         let temp = text.chars().collect::<Vec<char>>();
-        let mut units = Units::new();
-        units.units = init_units(&units.prefixes);
+        let prefixes = create_prefixes();
+        let units = Units::new(&prefixes);
         let mut tokens = vec![];
         let output = do_shunting_yard(&temp, &units, &mut tokens);
         compare_tokens(expected_tokens, &tokens);
@@ -688,14 +700,6 @@ pub mod tests {
             "1/2s",
             &[num(1), num(2), unit("s"), op(OperatorTokenType::Div)],
         );
-
-        //the shunting Yard should exclude assign operator and its lhs operand. because" +
-        //                     "inputs like b = 100*100+ will be evaulated successfully in this case"
-        // TODO
-        // test(
-        //     "var1 = var0 + 100",
-        //     &[var("var0"), num(100), op(OperatorTokenType::Add)],
-        // );
 
         test_output(
             "30% - 10%",
@@ -709,10 +713,35 @@ pub mod tests {
         );
 
         test_output(
+            "10km/h * 45min",
+            &[
+                num(10),
+                unit("km / h"),
+                num(45),
+                unit("min"),
+                op(OperatorTokenType::Mult),
+            ],
+        );
+
+        test_output(
+            "10km/h * 45min * 12 km",
+            &[
+                num(10),
+                unit("km / h"),
+                num(45),
+                unit("min"),
+                op(OperatorTokenType::Mult),
+                num(12),
+                unit("km"),
+                op(OperatorTokenType::Mult),
+            ],
+        );
+
+        test_output(
             "10km/h * 45min * 12 km to h",
             &[
                 num(10),
-                unit("km/h"),
+                unit("km / h"),
                 num(45),
                 unit("min"),
                 op(OperatorTokenType::Mult),
@@ -849,6 +878,9 @@ pub mod tests {
         // //     &[var("var0"), num(100), op(OperatorTokenType::Add)],
         // // );
         //
+
+        test_output("", &[]);
+
         test_output(
             "2m/3m",
             &[
@@ -880,12 +912,24 @@ pub mod tests {
             "100 ft * lbf to (in*lbf)",
             &[
                 num(100),
-                unit("ft * lbf"),
-                unit("(in*lbf)"),
+                unit("ft lbf"),
+                unit("in lbf"),
                 op(OperatorTokenType::UnitConverter),
             ],
         );
 
+        test_tokens(
+            "100 ft * lbf to (in*lbf)",
+            &[
+                num(100),
+                str(" "),
+                unit("ft lbf"),
+                str(" "),
+                op(OperatorTokenType::UnitConverter),
+                str(" "),
+                unit("in lbf"),
+            ],
+        );
         // typo: the text contain 'lbG' and not lbF
         test_output(
             "100 ft * lbf to (in*lbg)",
@@ -895,17 +939,17 @@ pub mod tests {
         test_tokens(
             "100 ft * lbf to (in*lbg)",
             &[
-                num(100),
+                str("100"),
                 str(" "),
-                unit("ft * lbf"),
+                str("ft * lbf"),
                 str(" "),
-                op(OperatorTokenType::UnitConverter),
+                str("to"),
                 str(" "),
-                op(OperatorTokenType::ParenOpen),
+                str("("),
                 str("in"),
-                op(OperatorTokenType::Mult),
+                str("*"),
                 str("lbg"),
-                op(OperatorTokenType::ParenClose),
+                str(")"),
             ],
         );
 
@@ -913,6 +957,28 @@ pub mod tests {
         test_output(
             "100 ft * lbf to (in*lbg) 1 + 100",
             &[num(1), num(100), op(OperatorTokenType::Add)],
+        );
+        test_tokens(
+            "100 ft * lbf to (in*lbg) 1 + 100",
+            &[
+                str("100"),
+                str(" "),
+                str("ft * lbf"),
+                str(" "),
+                str("to"),
+                str(" "),
+                str("("),
+                str("in"),
+                str("*"),
+                str("lbg"),
+                str(")"),
+                str(" "),
+                num(1),
+                str(" "),
+                op(OperatorTokenType::Add),
+                str(" "),
+                num(100),
+            ],
         );
 
         test_output("1szer sem jött el + *megjegyzés 2 éve...", &[]);
@@ -934,8 +1000,8 @@ pub mod tests {
                 str("megjegyzés"),
                 str(" "),
                 str("2"),
-                str("éve"),
-                str("..."),
+                str(" "),
+                str("éve..."),
             ],
         );
 
