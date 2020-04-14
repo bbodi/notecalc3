@@ -1,7 +1,7 @@
 #![feature(ptr_offset_from, const_if_match, const_fn, const_panic, drain_filter)]
 #![feature(const_generics)]
 
-use crate::calc::evaluate_tokens;
+use crate::calc::{evaluate_tokens, CalcResult};
 use crate::editor::{Editor, InputKey, InputModifiers, Line};
 use crate::shunting_yard::ShuntingYard;
 use crate::token_parser::{OperatorTokenType, Token, TokenParser, TokenType};
@@ -385,6 +385,43 @@ impl<'a> NoteCalcApp<'a> {
         self.editor.get_selected_text(&self.canvas)
     }
 
+    pub fn get_content(&self) -> String {
+        let mut result = String::with_capacity(self.canvas.len() * MAX_EDITOR_WIDTH);
+        for line in &self.canvas {
+            result.extend(line.get_chars()[0..line.len()].iter());
+            result.push('\n');
+        }
+        return result;
+    }
+
+    pub fn set_content(&mut self, text: &str) {
+        self.canvas.clear();
+        self.canvas.push(Line::new());
+        self.editor.set_cursor_pos(0, 0);
+        let mut col_index = 0;
+        let mut row_index = 0;
+        for ch in text.chars() {
+            if ch == '\r' {
+                // ignore
+                continue;
+            } else if ch == '\n' {
+                self.canvas[row_index].set_len(col_index);
+                row_index += 1;
+                col_index = 0;
+                self.canvas.push(Line::new());
+                continue;
+            } else if col_index == MAX_EDITOR_WIDTH {
+                self.canvas[row_index].set_len(col_index);
+                row_index += 1;
+                col_index = 0;
+                self.canvas.push(Line::new());
+            }
+            self.canvas[row_index].set_char(col_index, ch);
+            col_index += 1;
+        }
+        self.canvas[row_index].set_len(col_index);
+    }
+
     pub fn render(&mut self) -> RenderBuckets {
         let RIGHT_GUTTER_WIDTH = 3;
         let MIN_RESULT_PANEL_WIDTH = 20;
@@ -458,8 +495,23 @@ impl<'a> NoteCalcApp<'a> {
 
             let result = evaluate_tokens(&mut shunting_output_stack, &self.units);
             if let Some((result, there_was_unit_conversion)) = result {
+                let result_str = if let CalcResult::Quantity(num, unit) = &result {
+                    if there_was_unit_conversion {
+                        result.to_string()
+                    } else {
+                        let maybe_simpler = unit.simplify(&self.units, &num);
+                        if let Some(simpler) = maybe_simpler {
+                            CalcResult::Quantity(num.clone(), simpler).to_string()
+                        } else {
+                            result.to_string()
+                        }
+                    }
+                } else {
+                    result.to_string()
+                };
+
                 let start = result_buffer_index;
-                for ch in result.to_string().chars() {
+                for ch in result_str.chars() {
                     self.result_buffer[result_buffer_index] = ch;
                     result_buffer_index += 1;
                 }

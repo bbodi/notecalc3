@@ -12,7 +12,6 @@ enum ValidationTokenType {
 #[derive(Eq, PartialEq, Debug)]
 struct ValidationState {
     expect_expression: bool,
-    had_operator: bool,
     open_brackets: usize,
     open_parens: usize,
     prev_token_type: ValidationTokenType,
@@ -30,13 +29,12 @@ impl ValidationState {
             prev_token_type: ValidationTokenType::Nothing,
             tmp_output_stack_start_index: output_stack_index,
             tmp_input_token_start_index: token_index as usize,
-            had_operator: false,
             neg: false,
         }
     }
 
     fn can_be_valid_closing_token(&self) -> bool {
-        self.open_brackets == 0 && self.open_parens == 0 && self.had_operator
+        self.open_brackets == 0 && self.open_parens == 0
     }
 }
 
@@ -210,7 +208,6 @@ impl ShuntingYard {
                             ShuntingYard::operator_rule(op, &mut operator_stack, output_stack);
                             operator_stack.push(op.clone());
                             v.expect_expression = true;
-                            v.had_operator = true;
                             v.prev_token_type = ValidationTokenType::Op;
                         }
                     }
@@ -242,7 +239,6 @@ impl ShuntingYard {
                             ShuntingYard::operator_rule(op, &mut operator_stack, output_stack);
                             operator_stack.push(op.clone());
                             v.expect_expression = true;
-                            v.had_operator = true;
                             v.prev_token_type = ValidationTokenType::Op;
                         }
                     }
@@ -300,7 +296,6 @@ impl ShuntingYard {
                                 // after 'to', there must be a single unit component, nothing else
                                 continue;
                             }
-                            v.had_operator = true;
                             v.expect_expression = false;
                             v.prev_token_type = ValidationTokenType::Op;
 
@@ -335,7 +330,6 @@ impl ShuntingYard {
                             v = ValidationState::new_from_index(output_stack.len(), input_index);
                             continue;
                         }
-                        v.had_operator = true;
                         v.expect_expression = true;
                         v.prev_token_type = ValidationTokenType::Op;
                         ShuntingYard::operator_rule(op, &mut operator_stack, output_stack);
@@ -412,6 +406,10 @@ impl ShuntingYard {
 
         for op in operator_stack.iter().rev() {
             ShuntingYard::send_to_output(op.clone(), output_stack);
+        }
+
+        if (!v.can_be_valid_closing_token() || v.expect_expression) && input_index > 0 {
+            ShuntingYard::set_tokens_to_string(tokens, input_index, &v);
         }
 
         // keep only the valid interval
@@ -894,6 +892,7 @@ pub mod tests {
         //
 
         test_output("", &[]);
+        test_output("2", &[num(2)]);
 
         test_output(
             "2m/3m",

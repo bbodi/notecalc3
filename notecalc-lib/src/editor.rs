@@ -81,6 +81,10 @@ impl Line {
         self.len
     }
 
+    pub(crate) fn set_len(&mut self, len: usize) {
+        self.len = len;
+    }
+
     pub fn get_chars(&self) -> &[char] {
         &self.chars[..]
     }
@@ -644,11 +648,7 @@ impl Editor {
     }
 
     fn remove_selection(lines: &mut Vec<Line>, first: Pos, second: Pos) -> bool {
-        // let first = self.selection.get_first();
-        // let second = self.selection.get_second();
-        if first.column + second.column >= MAX_EDITOR_WIDTH {
-            return false;
-        } else if second.row > first.row {
+        if second.row > first.row {
             // töröld a közbenső egész sorokat teljesen
             for _ in first.row + 1..second.row {
                 lines.remove(first.row + 1);
@@ -2895,6 +2895,13 @@ mod tests {
             &[InputKey::Del],
             InputModifiers::none(),
             "aaaaa█",
+        );
+
+        test(
+            "((0b00101 AND 0xFF) XOR 0xFF00) << 16 >> 16  ❱NOT(0xFF)❰",
+            &[InputKey::Del],
+            InputModifiers::none(),
+            "((0b00101 AND 0xFF) XOR 0xFF00) << 16 >> 16  █",
         );
     }
 

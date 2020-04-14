@@ -240,7 +240,16 @@ impl TokenParser {
             i += 2;
             let mut end_index_before_last_whitespace = i;
             while i < str.len() {
-                if str[i].is_ascii_hexdigit() {
+                if str[i].is_ascii_hexdigit()
+                    && str
+                        .get(i + 1)
+                        .map(|it| {
+                            it.is_ascii_hexdigit()
+                                || it.is_ascii_whitespace()
+                                || !it.is_alphabetic()
+                        })
+                        .unwrap_or(true)
+                {
                     end_index_before_last_whitespace = i + 1;
                     number_str[number_str_index] = str[i] as u8;
                     number_str_index += 1;
@@ -457,15 +466,21 @@ impl TokenParser {
             _ => {
                 if str.starts_with(&['t', 'o', ' ']) {
                     op(OperatorTokenType::UnitConverter, str, 2)
-                } else if str.starts_with(&['A', 'N', 'D', ' ']) {
+                } else if str.starts_with(&['A', 'N', 'D'])
+                    && str.get(3).map(|it| !it.is_alphabetic()).unwrap_or(true)
+                {
                     // TODO unit test "0xff and(12)"
                     op(OperatorTokenType::And, str, 3)
-                } else if str.starts_with(&['o', 'r', ' ']) {
+                } else if str.starts_with(&['O', 'R'])
+                    && str.get(2).map(|it| !it.is_alphabetic()).unwrap_or(true)
+                {
                     op(OperatorTokenType::Or, str, 2)
                 } else if str.starts_with(&['N', 'O', 'T', '(']) {
                     op(OperatorTokenType::Not, str, 3)
                 // '(' will be parsed separately as an operator
-                } else if str.starts_with(&['X', 'O', 'R', ' ']) {
+                } else if str.starts_with(&['X', 'O', 'R'])
+                    && str.get(3).map(|it| !it.is_alphabetic()).unwrap_or(true)
+                {
                     op(OperatorTokenType::Xor, str, 3)
                 } else if str.starts_with(&['<', '<']) {
                     op(OperatorTokenType::ShiftLeft, str, 2)
@@ -758,6 +773,27 @@ mod tests {
             "1/2s",
             &[num(1), op(OperatorTokenType::Div), num(2), unit("s")],
         );
+        test(
+            "0xFF AND 0b11",
+            &[
+                num(0xFF),
+                str(" "),
+                op(OperatorTokenType::And),
+                str(" "),
+                num(0b11),
+            ],
+        );
+
+        test(
+            "0xFF AND",
+            &[num(0xff), str(" "), op(OperatorTokenType::And)],
+        );
+        test("0xFF OR", &[num(0xff), str(" "), op(OperatorTokenType::Or)]);
+        test(
+            "0xFF XOR",
+            &[num(0xff), str(" "), op(OperatorTokenType::Xor)],
+        );
+
         test(
             "((0b00101 AND 0xFF) XOR 0xFF00) << 16 >> 16  NOT(0xFF)",
             &[

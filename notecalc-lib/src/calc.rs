@@ -110,17 +110,17 @@ pub fn evaluate_tokens<'text_ptr, 'units>(
             TokenType::Variable => {}
         }
     }
-    match last_success_operation_result_index {
+    return match last_success_operation_result_index {
         Some(last_success_operation_index) => {
             // e.g. "1+2 some text 3"
             // in this case prefer the result of 1+2 and ignore the number 3
-            return Some((
+            Some((
                 stack[last_success_operation_index].clone(),
                 there_was_unit_conversion,
-            ));
+            ))
         }
-        _ => None,
-    }
+        None => stack.pop().map(|it| (it, there_was_unit_conversion)),
+    };
 }
 
 fn apply_operation<'text_ptr, 'units>(
@@ -927,49 +927,50 @@ mod tests {
 
     #[test]
     fn tests_for_invalid_input() {
-        // test("3e-3-", " ");
-        //
-        // test_tokens(
-        //     "[2, asda]",
-        //     &[
-        //         str("["),
-        //         str("2"),
-        //         str(","),
-        //         str(" "),
-        //         str("asda"),
-        //         str("]"),
-        //     ],
-        // );
-        // test("[2, asda]", " ");
-        //
-        // test(
-        //     "2+3 - this minus sign is part of the text, should not affect the result",
-        //     "5",
-        // );
-        //
-        // test_tokens(
-        //     "1szer sem jött el + *megjegyzés 2 éve...",
-        //     &[
-        //         str("1"),
-        //         str("szer"),
-        //         str(" "),
-        //         str("sem"),
-        //         str(" "),
-        //         str("jött"),
-        //         str(" "),
-        //         str("el"),
-        //         str(" "),
-        //         str("+"),
-        //         str(" "),
-        //         str("*"),
-        //         str("megjegyzés"),
-        //         str(" "),
-        //         str("2"),
-        //         str(" "),
-        //         str("éve..."),
-        //     ],
-        // );
-        // test("1szer sem jött el + *megjegyzés 2 éve...", " ");
+        test("3", "3");
+        test("3e-3-", " ");
+
+        test_tokens(
+            "[2, asda]",
+            &[
+                str("["),
+                str("2"),
+                str(","),
+                str(" "),
+                str("asda"),
+                str("]"),
+            ],
+        );
+        test("[2, asda]", " ");
+
+        test(
+            "2+3 - this minus sign is part of the text, should not affect the result",
+            "5",
+        );
+
+        test_tokens(
+            "1szer sem jött el + *megjegyzés 2 éve...",
+            &[
+                str("1"),
+                str("szer"),
+                str(" "),
+                str("sem"),
+                str(" "),
+                str("jött"),
+                str(" "),
+                str("el"),
+                str(" "),
+                str("+"),
+                str(" "),
+                str("*"),
+                str("megjegyzés"),
+                str(" "),
+                str("2"),
+                str(" "),
+                str("éve..."),
+            ],
+        );
+        test("1szer sem jött el + *megjegyzés 2 éve...", " ");
         //
         // // TODO these should be errors, because easily identifiable
         // // there is a typo in lbg, so the "in..." part is not evaulated
@@ -1081,6 +1082,45 @@ mod tests {
     #[test]
     fn test_matrix_wont_take_operands_from_outside_its_scope() {
         test("1 + [2, asda]", " ");
+    }
+
+    #[test]
+    fn test_binary_ops() {
+        test("0xFF AND 0b111", "7");
+
+        test_tokens(
+            "0xFF AND(0b11 OR 0b1111)",
+            &[
+                num(0xff),
+                str(" "),
+                op(OperatorTokenType::And),
+                op(OperatorTokenType::ParenOpen),
+                num(0b11),
+                str(" "),
+                op(OperatorTokenType::Or),
+                str(" "),
+                num(0b1111),
+                op(OperatorTokenType::ParenClose),
+            ],
+        );
+
+        test("0xFF AND(0b11 OR 0b1111)", "15");
+    }
+
+    #[test]
+    fn test_unfinished_operators() {
+        test_tokens(
+            "0xFF AND 0b11 AND",
+            &[
+                num(0xff),
+                str(" "),
+                op(OperatorTokenType::And),
+                str(" "),
+                num(0b11),
+                str(" "),
+                str("AND"),
+            ],
+        );
     }
 
     #[test]
