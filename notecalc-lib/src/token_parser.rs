@@ -896,6 +896,22 @@ mod tests {
                 num(15),
             ],
         );
+
+        test(
+            "12km/h * 45s ^^",
+            &[
+                num(12),
+                unit("km/h"),
+                str(" "),
+                op(OperatorTokenType::Mult),
+                str(" "),
+                num(45),
+                unit("s"),
+                str(" "),
+                op(OperatorTokenType::Pow),
+                op(OperatorTokenType::Pow),
+            ],
+        );
     }
 
     #[test]

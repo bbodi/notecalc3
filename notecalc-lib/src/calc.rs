@@ -927,56 +927,76 @@ mod tests {
 
     #[test]
     fn tests_for_invalid_input() {
-        test("3e-3-", " ");
+        // test("3e-3-", " ");
+        //
+        // test_tokens(
+        //     "[2, asda]",
+        //     &[
+        //         str("["),
+        //         str("2"),
+        //         str(","),
+        //         str(" "),
+        //         str("asda"),
+        //         str("]"),
+        //     ],
+        // );
+        // test("[2, asda]", " ");
+        //
+        // test(
+        //     "2+3 - this minus sign is part of the text, should not affect the result",
+        //     "5",
+        // );
+        //
+        // test_tokens(
+        //     "1szer sem jött el + *megjegyzés 2 éve...",
+        //     &[
+        //         str("1"),
+        //         str("szer"),
+        //         str(" "),
+        //         str("sem"),
+        //         str(" "),
+        //         str("jött"),
+        //         str(" "),
+        //         str("el"),
+        //         str(" "),
+        //         str("+"),
+        //         str(" "),
+        //         str("*"),
+        //         str("megjegyzés"),
+        //         str(" "),
+        //         str("2"),
+        //         str(" "),
+        //         str("éve..."),
+        //     ],
+        // );
+        // test("1szer sem jött el + *megjegyzés 2 éve...", " ");
+        //
+        // // TODO these should be errors, because easily identifiable
+        // // there is a typo in lbg, so the "in..." part is not evaulated
+        // test("100 ft * lbf to (in*lbg)", " ");
+        // test("100 ft * lbf * 1 to (in*lbg)", "100 ft lbf");
+        // // wrong type
+        // test("100 Hz to s", "0");
 
+        test("12m/h * 45s ^^", "0.15 m");
+        test("12km/h * 45s ^^", "150 m");
         test_tokens(
-            "[2, asda]",
+            "12km/h * 45s ^^",
             &[
-                str("["),
-                str("2"),
-                str(","),
+                num(12),
+                unit("km / h"),
                 str(" "),
-                str("asda"),
-                str("]"),
+                op(OperatorTokenType::Mult),
+                str(" "),
+                num(45),
+                unit("s"),
+                str(" "),
+                str("^"),
+                str("^"),
             ],
         );
-        test("[2, asda]", " ");
 
-        test(
-            "2+3 - this minus sign is part of the text, should not affect the result",
-            "5",
-        );
-
-        test_tokens(
-            "1szer sem jött el + *megjegyzés 2 éve...",
-            &[
-                str("1"),
-                str("szer"),
-                str(" "),
-                str("sem"),
-                str(" "),
-                str("jött"),
-                str(" "),
-                str("el"),
-                str(" "),
-                str("+"),
-                str(" "),
-                str("*"),
-                str("megjegyzés"),
-                str(" "),
-                str("2"),
-                str(" "),
-                str("éve..."),
-            ],
-        );
-        test("1szer sem jött el + *megjegyzés 2 éve...", " ");
-
-        // TODO these should be errors, because easily identifiable
-        // there is a typo in lbg, so the "in..." part is not evaulated
-        test("100 ft * lbf to (in*lbg)", " ");
-        test("100 ft * lbf * 1 to (in*lbg)", "100 ft lbf");
-        // wrong type
-        test("100 Hz to s", "0");
+        // there are no empty vectors
 
         // matrix
         test_tokens("[]", &[str("["), str("]")]); // there are no empty vectors

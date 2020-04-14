@@ -52,7 +52,7 @@ impl ShuntingYard {
         // TODO extract out so no alloc SmallVec?
         let mut operator_stack: Vec<OperatorTokenType> = vec![];
 
-        let mut last_valid_range = None;
+        let mut last_valid_output_range = None;
         let mut v = ValidationState::new_from_index(0, 0);
         let mut input_index: isize = -1;
 
@@ -104,7 +104,8 @@ impl ShuntingYard {
                                 &mut operator_stack,
                                 output_stack,
                             );
-                            last_valid_range =
+                            v.tmp_input_token_start_index = input_index as usize + 1;
+                            last_valid_output_range =
                                 Some((v.tmp_output_stack_start_index, output_stack.len() - 1));
                         }
                     }
@@ -170,7 +171,8 @@ impl ShuntingYard {
                                     &mut operator_stack,
                                     output_stack,
                                 );
-                                last_valid_range =
+                                v.tmp_input_token_start_index = input_index as usize + 1;
+                                last_valid_output_range =
                                     Some((v.tmp_output_stack_start_index, output_stack.len() - 1));
                             }
                         } else {
@@ -271,7 +273,8 @@ impl ShuntingYard {
                                 &mut operator_stack,
                                 output_stack,
                             );
-                            last_valid_range =
+                            v.tmp_input_token_start_index = input_index as usize + 1;
+                            last_valid_output_range =
                                 Some((v.tmp_output_stack_start_index, output_stack.len() - 1));
                         }
                     }
@@ -288,6 +291,15 @@ impl ShuntingYard {
                         )) =
                             ShuntingYard::get_next_nonstring_token(tokens, input_index as usize + 1)
                         {
+                            if ShuntingYard::get_next_nonstring_token(
+                                tokens,
+                                input_index as usize + 1 + offset + 1,
+                            )
+                            .is_some()
+                            {
+                                // after 'to', there must be a single unit component, nothing else
+                                continue;
+                            }
                             v.had_operator = true;
                             v.expect_expression = false;
                             v.prev_token_type = ValidationTokenType::Op;
@@ -302,7 +314,8 @@ impl ShuntingYard {
                                     unit.clone(),
                                 )));
                                 ShuntingYard::send_to_output(op.clone(), output_stack);
-                                last_valid_range =
+                                v.tmp_input_token_start_index = input_index as usize + 1;
+                                last_valid_output_range =
                                     Some((v.tmp_output_stack_start_index, output_stack.len() - 1));
                             }
                             input_index += 1 + offset as isize;
@@ -374,7 +387,8 @@ impl ShuntingYard {
                         dbg!(&operator_stack);
                         dbg!(&output_stack);
                         ShuntingYard::send_everything_to_output(&mut operator_stack, output_stack);
-                        last_valid_range =
+                        v.tmp_input_token_start_index = input_index as usize + 1;
+                        last_valid_output_range =
                             Some((v.tmp_output_stack_start_index, output_stack.len() - 1));
                     }
                     v.prev_token_type = ValidationTokenType::Expr;
@@ -401,7 +415,7 @@ impl ShuntingYard {
         }
 
         // keep only the valid interval
-        if let Some((last_valid_start_index, last_valid_end_index)) = last_valid_range {
+        if let Some((last_valid_start_index, last_valid_end_index)) = last_valid_output_range {
             output_stack.drain(last_valid_end_index + 1..);
             output_stack.drain(0..last_valid_start_index);
         } else if input_index > 0 {
@@ -978,6 +992,32 @@ pub mod tests {
                 op(OperatorTokenType::Add),
                 str(" "),
                 num(100),
+            ],
+        );
+
+        test_output(
+            "12km/h * 45s ^^",
+            &[
+                num(12),
+                unit("km / h"),
+                num(45),
+                unit("s"),
+                op(OperatorTokenType::Mult),
+            ],
+        );
+        test_tokens(
+            "12km/h * 45s ^^",
+            &[
+                num(12),
+                unit("km / h"),
+                str(" "),
+                op(OperatorTokenType::Mult),
+                str(" "),
+                num(45),
+                unit("s"),
+                str(" "),
+                str("^"),
+                str("^"),
             ],
         );
 

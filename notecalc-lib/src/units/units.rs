@@ -109,8 +109,12 @@ impl<'a> Units<'a> {
                 c = skip(c, u_str.len());
                 res
             } else {
-                return (output, last_valid_cursor_pos);
+                break 'main_loop;
             };
+            if power_multiplier_stack.is_empty() {
+                // there is no open parenthesis
+                last_valid_cursor_pos = Units::calc_parsed_len(text, c);
+            }
 
             let mut power = power_multiplier_current * power_multiplier_stack_product;
             // Is there a "^ number"?
@@ -122,20 +126,14 @@ impl<'a> Units<'a> {
                     power *= p as isize;
                 } else {
                     // No valid number found for the power!
-                    return (output, last_valid_cursor_pos);
+                    output.add_unit(UnitInstance::new(res.0, res.1, power));
+                    break 'main_loop;
                 }
             }
-
+            output.add_unit(UnitInstance::new(res.0, res.1, power));
             // Add the unit to the list
-            output.units.push(UnitInstance {
-                unit: res.0,
-                prefix: res.1,
-                power,
-            });
+
             // TODO refactor into UnitInstance::new
-            for i in 0..BASE_DIMENSION_COUNT {
-                output.dimensions[i] += res.0.base[i] * power;
-            }
 
             c = skip_whitespaces(c);
 
@@ -145,9 +143,8 @@ impl<'a> Units<'a> {
                 if let Some(a) = power_multiplier_stack.pop() {
                     power_multiplier_stack_product /= a;
                 } else {
-                    // throw new SyntaxError('Unmatched ")" in "' + text + '" at index ' + index.toString())
                     last_valid_cursor_pos = Units::calc_parsed_len(text, c);
-                    return (output, last_valid_cursor_pos);
+                    break 'main_loop;
                 }
                 c = next(c);
                 c = skip_whitespaces(c);
@@ -190,6 +187,9 @@ impl<'a> Units<'a> {
             }
         }
 
+        if last_valid_cursor_pos == 0 {
+            output.units.clear();
+        }
         return (output, last_valid_cursor_pos);
     }
 
@@ -420,6 +420,13 @@ impl<'a> UnitOutput<'a> {
         }
     }
 
+    pub fn add_unit(&mut self, unit: UnitInstance<'a>) {
+        for i in 0..BASE_DIMENSION_COUNT {
+            self.dimensions[i] += unit.unit.base[i] * unit.power;
+        }
+        self.units.push(unit);
+    }
+
     pub fn is_unitless(&self) -> bool {
         self.dimensions.iter().all(|it| *it == 0)
     }
@@ -601,6 +608,16 @@ pub struct UnitInstance<'a> {
     pub unit: &'a Unit<'a>,
     pub prefix: &'a Prefix,
     pub power: isize,
+}
+
+impl<'a> UnitInstance<'a> {
+    pub fn new(unit: &'a Unit, prefix: &'a Prefix, power: isize) -> UnitInstance<'a> {
+        UnitInstance {
+            unit,
+            prefix,
+            power,
+        }
+    }
 }
 
 impl<'a> Debug for UnitInstance<'a> {
@@ -982,5 +999,26 @@ mod tests {
         assert_eq!(parse("degrees", &units), parse("deg", &units));
         assert_eq!(parse("gradian", &units), parse("grad", &units));
         assert_eq!(parse("gradians", &units), parse("grad", &units));
+    }
+
+    #[test]
+    fn test_invalid_power() {
+        let prefixes = create_prefixes();
+        let units = Units::new(&prefixes);
+
+        let unit1 = parse("s ^^", &units);
+        assert_eq!(1, unit1.units.len());
+        assert_eq!(1, unit1.units[0].power);
+        assert_eq!(1, unit1.dimensions[2]);
+
+        assert_eq!(unit1.units[0].prefix.name, &[]);
+        assert_eq!(unit1.units[0].unit.name, &['s']);
+        assert_eq!(1, unit1.units[0].power);
+
+        let unit1 = parse("(in*lbg)", &units);
+        assert_eq!(0, unit1.units.len());
+
+        let unit1 = parse("(s ^^)", &units);
+        assert_eq!(0, unit1.units.len());
     }
 }
