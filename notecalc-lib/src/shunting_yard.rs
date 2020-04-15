@@ -335,6 +335,7 @@ impl ShuntingYard {
                             v.expect_expression = false;
                             v.prev_token_type = ValidationTokenType::Op;
 
+                            input_index += 1 + offset as isize;
                             if v.can_be_valid_closing_token() {
                                 dbg!("close1");
                                 ShuntingYard::send_everything_to_output(
@@ -347,7 +348,6 @@ impl ShuntingYard {
                                 ShuntingYard::send_to_output(op.clone(), output_stack);
                                 v.close_valid_range(output_stack.len(), input_index);
                             }
-                            input_index += 1 + offset as isize;
                         } else {
                             // it is not an "in" operator but a string literal
                         }
@@ -1009,7 +1009,21 @@ pub mod tests {
                 str(" "),
                 op(OperatorTokenType::UnitConverter),
                 str(" "),
-                str("(in*lbf)"),
+                unit("in lbf"),
+            ],
+        );
+
+        test_tokens(
+            "1 Kib/s to b/s ",
+            &[
+                num(1),
+                str(" "),
+                unit("Kib / s"),
+                str(" "),
+                op(OperatorTokenType::UnitConverter),
+                str(" "),
+                unit("b / s"),
+                str(" "),
             ],
         );
         // typo: the text contain 'lbG' and not lbF

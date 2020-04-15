@@ -278,8 +278,7 @@ const LINE_NUM_CONSTS: [[char; 3]; 256] = [
     ['2', '5', '6'],
 ];
 
-const MAX_CANVAS_WIDTH: usize = 120;
-const MAX_EDITOR_WIDTH: usize = 80;
+const MAX_EDITOR_WIDTH: usize = 120;
 const LEFT_GUTTER_WIDTH: usize = 1 + 3 + 1;
 
 #[repr(C)]
@@ -476,12 +475,12 @@ impl<'a> NoteCalcApp<'a> {
                 });
                 column_index += token.ptr.len();
             }
-            if column_index >= current_editor_width {
+            if column_index > current_editor_width {
                 render_buckets.draw_char(
                     Layer::AboveText,
                     current_editor_width + LEFT_GUTTER_WIDTH,
                     row_index,
-                    '\u{2026}',
+                    '…',
                 );
             }
             let cursor_pos = self.editor.get_selection().get_cursor_pos();
