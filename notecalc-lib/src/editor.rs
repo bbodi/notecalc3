@@ -305,11 +305,14 @@ impl Editor {
         lines[row_index].set_char(column_index, ch)
     }
 
-    pub fn handle_tick(&mut self, now: u32) {
-        if now >= self.next_blink_at {
+    pub fn handle_tick(&mut self, now: u32) -> bool {
+        return if now >= self.next_blink_at {
             self.show_cursor = !self.show_cursor;
             self.next_blink_at = now + 300;
-        }
+            true
+        } else {
+            false
+        };
     }
 
     pub fn handle_input(
@@ -347,37 +350,7 @@ impl Editor {
                     }
                 } else {
                     let col = if modifiers.ctrl {
-                        // check the type of the prev char
-                        let mut col = cur_pos.column;
-                        let line = &lines[cur_pos.row].chars;
-                        let len = lines[cur_pos.row].len;
-                        while col < len {
-                            if line[col].is_alphanumeric() || line[col] == '_' {
-                                col += 1;
-                                while col < len && (line[col].is_alphanumeric() || line[col] == '_')
-                                {
-                                    col += 1;
-                                }
-                                break;
-                            } else if line[col] == '\"' {
-                                col += 1;
-                                break;
-                            } else if !line[col].is_ascii_whitespace() {
-                                col += 1;
-                                while col < len
-                                    && !(line[col].is_alphanumeric()
-                                        || line[col] == '_'
-                                        || line[col] == '\"'
-                                        || line[col].is_ascii_whitespace())
-                                {
-                                    col += 1;
-                                }
-                                break;
-                            } else {
-                                col += 1;
-                            }
-                        }
-                        col
+                        Editor::jump_word_backward(lines, &cur_pos)
                     } else {
                         cur_pos.column + 1
                     };
@@ -591,6 +564,39 @@ impl Editor {
             }
         }
         return FirstModifiedRowIndex(0);
+    }
+
+    fn jump_word_backward(lines: &mut Vec<Line>, cur_pos: &Pos) -> usize {
+        // check the type of the prev char
+        let mut col = cur_pos.column;
+        let line = &lines[cur_pos.row].chars;
+        let len = lines[cur_pos.row].len;
+        while col < len {
+            if line[col].is_alphanumeric() || line[col] == '_' {
+                col += 1;
+                while col < len && (line[col].is_alphanumeric() || line[col] == '_') {
+                    col += 1;
+                }
+                break;
+            } else if line[col] == '\"' {
+                col += 1;
+                break;
+            } else if !line[col].is_ascii_whitespace() {
+                col += 1;
+                while col < len
+                    && !(line[col].is_alphanumeric()
+                        || line[col] == '_'
+                        || line[col] == '\"'
+                        || line[col].is_ascii_whitespace())
+                {
+                    col += 1;
+                }
+                break;
+            } else {
+                col += 1;
+            }
+        }
+        col
     }
 
     fn insert_at(lines: &mut Vec<Line>, str: &str, row_index: usize, insert_at: usize) -> Pos {
@@ -2503,6 +2509,191 @@ mod tests {
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz\n\
             █abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz",
+        );
+    }
+
+    #[test]
+    fn test_ctrl_backspace() {
+        test("a█", &[InputKey::Backspace], InputModifiers::ctrl(), "█");
+
+        test(
+            "█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            &[InputKey::Backspace],
+            InputModifiers::ctrl(),
+            "█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijklmnopqrstuvwxyz\n\
+            abcdef█ghijklmnopqrstuvwxyz",
+            &[InputKey::Backspace],
+            InputModifiers::ctrl(),
+            "abcdefghijklmnopqrstuvwxyz\n\
+            █ghijklmnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijklmnopqrstuvwxyz█\n\
+            abcdefghijklmnopqrstuvwxyz",
+            &[InputKey::Backspace],
+            InputModifiers::ctrl(),
+            "█\n\
+            abcdefghijklmnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz█",
+            &[InputKey::Backspace],
+            InputModifiers::ctrl(),
+            "abcdefghijklmnopqrstuvwxyz\n\
+            █",
+        );
+
+        test(
+            "abcde█fghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            &[
+                InputKey::Backspace,
+                InputKey::Backspace,
+                InputKey::Backspace,
+            ],
+            InputModifiers::ctrl(),
+            "█fghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        );
+
+        test(
+            "█",
+            &[
+                InputKey::Backspace,
+                InputKey::Backspace,
+                InputKey::Backspace,
+            ],
+            InputModifiers::ctrl(),
+            "█",
+        );
+
+        test(
+            "abcdefghijklmnopqrstuvwxyz\n\
+            █abcdefghijklmnopqrstuvwxyz",
+            &[InputKey::Backspace],
+            InputModifiers::ctrl(),
+            "abcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrst█uvwxyz",
+            &[
+                InputKey::Home,
+                InputKey::Backspace,
+                InputKey::Home,
+                InputKey::Backspace,
+            ],
+            InputModifiers::ctrl(),
+            "abcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijklmnopqrstuvwxyz█",
+            &[InputKey::Backspace],
+            InputModifiers::ctrl(),
+            "█",
+        );
+
+        test(
+            "abcdefghijkl mnopqrstuvwxyz█",
+            &[InputKey::Backspace],
+            InputModifiers::ctrl(),
+            "abcdefghijkl █",
+        );
+
+        test(
+            "abcdefghijkl █mnopqrstuvwxyz",
+            &[InputKey::Backspace],
+            InputModifiers::ctrl(),
+            "█mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl█ mnopqrstuvwxyz",
+            &[InputKey::Backspace],
+            InputModifiers::ctrl(),
+            "█ mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl    █mnopqrstuvwxyz",
+            &[InputKey::Backspace],
+            InputModifiers::ctrl(),
+            "█mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl  )  █mnopqrstuvwxyz",
+            &[InputKey::Backspace],
+            InputModifiers::ctrl(),
+            "abcdefghijkl  █mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl  |()-+%'^%/=?{}#<>&@[]*  █mnopqrstuvwxyz",
+            &[InputKey::Backspace],
+            InputModifiers::ctrl(),
+            "abcdefghijkl  █mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl  \"  █mnopqrstuvwxyz",
+            &[InputKey::Backspace],
+            InputModifiers::ctrl(),
+            "abcdefghijkl  █mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl  12  █mnopqrstuvwxyz",
+            &[InputKey::Backspace],
+            InputModifiers::ctrl(),
+            "abcdefghijkl  █mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl  12a  █mnopqrstuvwxyz",
+            &[InputKey::Backspace],
+            InputModifiers::ctrl(),
+            "abcdefghijkl  █mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl  a12  █mnopqrstuvwxyz",
+            &[InputKey::Backspace],
+            InputModifiers::ctrl(),
+            "abcdefghijkl  █mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl  _  █mnopqrstuvwxyz",
+            &[InputKey::Backspace],
+            InputModifiers::ctrl(),
+            "abcdefghijkl  █mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl  _1a  █mnopqrstuvwxyz",
+            &[InputKey::Backspace],
+            InputModifiers::ctrl(),
+            "abcdefghijkl  █mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl  \"❤(  █mnopqrstuvwxyz",
+            &[InputKey::Backspace],
+            InputModifiers::ctrl(),
+            "abcdefghijkl  \"█mnopqrstuvwxyz",
         );
     }
 
