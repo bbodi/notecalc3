@@ -16,20 +16,45 @@ struct ValidationState {
     open_parens: usize,
     prev_token_type: ValidationTokenType,
     tmp_output_stack_start_index: usize,
-    tmp_input_token_start_index: usize,
+    first_nonvalidated_token_index: usize,
+    valid_range_start_token_index: usize,
+    had_operator: bool,
     neg: bool,
+    // output stack start and end index
+    last_valid_output_range: Option<(usize, usize)>,
 }
 
 impl ValidationState {
-    fn new_from_index(output_stack_index: usize, token_index: isize) -> ValidationState {
+    fn close_valid_range(&mut self, output_stack_len: usize, token_index: isize) {
+        self.first_nonvalidated_token_index = token_index as usize + 1;
+        self.last_valid_output_range =
+            Some((self.tmp_output_stack_start_index, output_stack_len - 1));
+    }
+
+    fn reset(&mut self, output_stack_index: usize, token_index: isize) {
+        self.tmp_output_stack_start_index = output_stack_index;
+        self.first_nonvalidated_token_index = token_index as usize;
+        self.valid_range_start_token_index = token_index as usize;
+        self.expect_expression = true;
+        self.open_brackets = 0;
+        self.open_parens = 0;
+        self.prev_token_type = ValidationTokenType::Nothing;
+        self.neg = false;
+        self.had_operator = false;
+    }
+
+    fn new() -> ValidationState {
         ValidationState {
+            last_valid_output_range: None,
             expect_expression: true,
             open_brackets: 0,
+            valid_range_start_token_index: 0,
             open_parens: 0,
             prev_token_type: ValidationTokenType::Nothing,
-            tmp_output_stack_start_index: output_stack_index,
-            tmp_input_token_start_index: token_index as usize,
+            tmp_output_stack_start_index: 0,
+            first_nonvalidated_token_index: 0,
             neg: false,
+            had_operator: false,
         }
     }
 
@@ -50,13 +75,12 @@ impl ShuntingYard {
         // TODO extract out so no alloc SmallVec?
         let mut operator_stack: Vec<OperatorTokenType> = vec![];
 
-        let mut last_valid_output_range = None;
-        let mut v = ValidationState::new_from_index(0, 0);
+        dbg!(&tokens);
+        let mut v = ValidationState::new();
         let mut input_index: isize = -1;
 
         let mut matrix_start_text_pos = None;
 
-        dbg!(&tokens);
         while input_index + 1 < tokens.len() as isize {
             input_index += 1; // it is here so it is incremented always when "continue"
             let input_token = &tokens[input_index as usize];
@@ -82,8 +106,12 @@ impl ShuntingYard {
                         if v.expect_expression || v.open_parens == 0 {
                             dbg!("error1");
                             operator_stack.clear();
-                            ShuntingYard::set_tokens_to_string(tokens, input_index, &v);
-                            v = ValidationState::new_from_index(output_stack.len(), input_index);
+                            ShuntingYard::set_tokens_to_string(
+                                tokens,
+                                v.first_nonvalidated_token_index,
+                                input_index,
+                            );
+                            v.reset(output_stack.len(), input_index);
                             continue;
                         } else {
                             v.expect_expression = false;
@@ -102,9 +130,7 @@ impl ShuntingYard {
                                 &mut operator_stack,
                                 output_stack,
                             );
-                            v.tmp_input_token_start_index = input_index as usize + 1;
-                            last_valid_output_range =
-                                Some((v.tmp_output_stack_start_index, output_stack.len() - 1));
+                            v.close_valid_range(output_stack.len(), input_index);
                         }
                     }
                     OperatorTokenType::BracketOpen => {
@@ -119,8 +145,12 @@ impl ShuntingYard {
                         if v.expect_expression || v.open_brackets <= 0 {
                             dbg!("error2");
                             operator_stack.clear();
-                            ShuntingYard::set_tokens_to_string(tokens, input_index, &v);
-                            v = ValidationState::new_from_index(output_stack.len(), input_index);
+                            ShuntingYard::set_tokens_to_string(
+                                tokens,
+                                v.first_nonvalidated_token_index,
+                                input_index,
+                            );
+                            v.reset(output_stack.len(), input_index);
                             continue;
                         } else {
                             v.expect_expression = false;
@@ -152,7 +182,7 @@ impl ShuntingYard {
                                         .offset_from(matrix_start_text_pos.unwrap().as_ptr())
                                         as usize;
                                     tokens.insert(
-                                        0,
+                                        input_index as usize + 1,
                                         Token {
                                             ptr: std::mem::transmute(
                                                 std::ptr::slice_from_raw_parts(
@@ -163,15 +193,15 @@ impl ShuntingYard {
                                             typ: matrix_token_type.clone(),
                                         },
                                     );
-                                    matrix_start_text_pos = None;
                                 }
+                                matrix_start_text_pos = None;
+                                // skip Matrix Token
+                                input_index += 1;
                                 ShuntingYard::send_everything_to_output(
                                     &mut operator_stack,
                                     output_stack,
                                 );
-                                v.tmp_input_token_start_index = input_index as usize + 1;
-                                last_valid_output_range =
-                                    Some((v.tmp_output_stack_start_index, output_stack.len() - 1));
+                                v.close_valid_range(output_stack.len(), input_index);
                             }
                         } else {
                             panic!()
@@ -186,11 +216,12 @@ impl ShuntingYard {
                             if !v.expect_expression {
                                 dbg!("error3");
                                 operator_stack.clear();
-                                ShuntingYard::set_tokens_to_string(tokens, input_index, &v);
-                                v = ValidationState::new_from_index(
-                                    output_stack.len(),
+                                ShuntingYard::set_tokens_to_string(
+                                    tokens,
+                                    v.first_nonvalidated_token_index,
                                     input_index,
                                 );
+                                v.reset(output_stack.len(), input_index);
                                 continue;
                             } else if ShuntingYard::get_next_nonstring_token(
                                 tokens,
@@ -207,6 +238,7 @@ impl ShuntingYard {
                         } else {
                             ShuntingYard::operator_rule(op, &mut operator_stack, output_stack);
                             operator_stack.push(op.clone());
+                            v.had_operator = true;
                             v.expect_expression = true;
                             v.prev_token_type = ValidationTokenType::Op;
                         }
@@ -220,11 +252,12 @@ impl ShuntingYard {
                             if !v.expect_expression {
                                 dbg!("error4");
                                 operator_stack.clear();
-                                ShuntingYard::set_tokens_to_string(tokens, input_index, &v);
-                                v = ValidationState::new_from_index(
-                                    output_stack.len(),
+                                ShuntingYard::set_tokens_to_string(
+                                    tokens,
+                                    v.first_nonvalidated_token_index,
                                     input_index,
                                 );
+                                v.reset(output_stack.len(), input_index);
                                 continue;
                             } else if ShuntingYard::get_next_nonstring_token(
                                 tokens,
@@ -238,6 +271,7 @@ impl ShuntingYard {
                         } else {
                             ShuntingYard::operator_rule(op, &mut operator_stack, output_stack);
                             operator_stack.push(op.clone());
+                            v.had_operator = true;
                             v.expect_expression = true;
                             v.prev_token_type = ValidationTokenType::Op;
                         }
@@ -251,8 +285,12 @@ impl ShuntingYard {
                         if v.open_brackets == 0 && v.open_parens == 0 {
                             dbg!("error5");
                             operator_stack.clear();
-                            ShuntingYard::set_tokens_to_string(tokens, input_index, &v);
-                            v = ValidationState::new_from_index(output_stack.len(), input_index);
+                            ShuntingYard::set_tokens_to_string(
+                                tokens,
+                                v.first_nonvalidated_token_index,
+                                input_index,
+                            );
+                            v.reset(output_stack.len(), input_index);
                             continue;
                         }
                         v.prev_token_type = ValidationTokenType::Nothing;
@@ -269,9 +307,7 @@ impl ShuntingYard {
                                 &mut operator_stack,
                                 output_stack,
                             );
-                            v.tmp_input_token_start_index = input_index as usize + 1;
-                            last_valid_output_range =
-                                Some((v.tmp_output_stack_start_index, output_stack.len() - 1));
+                            v.close_valid_range(output_stack.len(), input_index);
                         }
                     }
                     OperatorTokenType::UnitConverter => {
@@ -309,9 +345,7 @@ impl ShuntingYard {
                                     unit.clone(),
                                 )));
                                 ShuntingYard::send_to_output(op.clone(), output_stack);
-                                v.tmp_input_token_start_index = input_index as usize + 1;
-                                last_valid_output_range =
-                                    Some((v.tmp_output_stack_start_index, output_stack.len() - 1));
+                                v.close_valid_range(output_stack.len(), input_index);
                             }
                             input_index += 1 + offset as isize;
                         } else {
@@ -326,10 +360,15 @@ impl ShuntingYard {
                             dbg!("error6");
                             dbg!(&v);
                             operator_stack.clear();
-                            ShuntingYard::set_tokens_to_string(tokens, input_index, &v);
-                            v = ValidationState::new_from_index(output_stack.len(), input_index);
+                            ShuntingYard::set_tokens_to_string(
+                                tokens,
+                                v.first_nonvalidated_token_index,
+                                input_index,
+                            );
+                            v.reset(output_stack.len(), input_index);
                             continue;
                         }
+                        v.had_operator = true;
                         v.expect_expression = true;
                         v.prev_token_type = ValidationTokenType::Op;
                         ShuntingYard::operator_rule(op, &mut operator_stack, output_stack);
@@ -343,8 +382,12 @@ impl ShuntingYard {
                         dbg!(&operator_stack);
                         dbg!(&output_stack);
                         operator_stack.clear();
-                        ShuntingYard::set_tokens_to_string(tokens, input_index, &v);
-                        v = ValidationState::new_from_index(output_stack.len(), input_index);
+                        ShuntingYard::set_tokens_to_string(
+                            tokens,
+                            v.first_nonvalidated_token_index,
+                            input_index,
+                        );
+                        v.reset(output_stack.len(), input_index);
                     }
                     // TODO nézd meg muszáj e klnozni, ne me tudja ez a fv átvenni az ownershipet
                     // a input_tokens felett, vagy az outputban nem e lehetnek pointerek
@@ -377,13 +420,23 @@ impl ShuntingYard {
                             }
                         }
 
-                        dbg!("close2");
-                        dbg!(&operator_stack);
-                        dbg!(&output_stack);
-                        ShuntingYard::send_everything_to_output(&mut operator_stack, output_stack);
-                        v.tmp_input_token_start_index = input_index as usize + 1;
-                        last_valid_output_range =
-                            Some((v.tmp_output_stack_start_index, output_stack.len() - 1));
+                        if v.last_valid_output_range.is_none() || v.had_operator {
+                            dbg!("close2");
+                            dbg!(&operator_stack);
+                            dbg!(&output_stack);
+                            ShuntingYard::send_everything_to_output(
+                                &mut operator_stack,
+                                output_stack,
+                            );
+                            // set everything to string which is in front of this expr
+                            dbg!(v.first_nonvalidated_token_index);
+                            v.close_valid_range(output_stack.len(), input_index);
+                            ShuntingYard::set_tokens_to_string(
+                                tokens,
+                                0,
+                                v.valid_range_start_token_index as isize - 1,
+                            );
+                        }
                     }
                     v.prev_token_type = ValidationTokenType::Expr;
                     v.expect_expression = false;
@@ -395,8 +448,12 @@ impl ShuntingYard {
                     if !v.expect_expression {
                         dbg!("error8");
                         operator_stack.clear();
-                        ShuntingYard::set_tokens_to_string(tokens, input_index, &v);
-                        v = ValidationState::new_from_index(output_stack.len(), input_index);
+                        ShuntingYard::set_tokens_to_string(
+                            tokens,
+                            v.first_nonvalidated_token_index,
+                            input_index,
+                        );
+                        v.reset(output_stack.len(), input_index);
                         continue;
                     }
                     output_stack.push(input_token.typ.clone());
@@ -408,27 +465,41 @@ impl ShuntingYard {
             ShuntingYard::send_to_output(op.clone(), output_stack);
         }
 
-        if (!v.can_be_valid_closing_token() || v.expect_expression) && input_index > 0 {
-            ShuntingYard::set_tokens_to_string(tokens, input_index, &v);
+        // set everything to string which is not closed
+        if input_index >= 0 {
+            ShuntingYard::set_tokens_to_string(
+                tokens,
+                v.first_nonvalidated_token_index,
+                input_index,
+            );
         }
+        // if (!v.can_be_valid_closing_token() || v.expect_expression) && input_index > 0 {
+        // ShuntingYard::set_tokens_to_string(tokens, v.tmp_input_token_start_index, input_index);
+        // }
 
         // keep only the valid interval
-        if let Some((last_valid_start_index, last_valid_end_index)) = last_valid_output_range {
+        if let Some((last_valid_start_index, last_valid_end_index)) = v.last_valid_output_range {
             output_stack.drain(last_valid_end_index + 1..);
             output_stack.drain(0..last_valid_start_index);
         } else if input_index > 0 {
             output_stack.clear();
-            ShuntingYard::set_tokens_to_string(tokens, input_index, &v);
+            ShuntingYard::set_tokens_to_string(
+                tokens,
+                v.first_nonvalidated_token_index,
+                input_index,
+            );
         }
     }
 
     fn set_tokens_to_string<'text_ptr, 'units>(
         tokens: &mut Vec<Token<'text_ptr, 'units>>,
-        input_index: isize,
-        v: &ValidationState,
+        from: usize,
+        to: isize,
     ) {
-        for token in tokens[v.tmp_input_token_start_index..=input_index as usize].iter_mut() {
-            token.typ = TokenType::StringLiteral
+        if to >= 0 {
+            for token in tokens[from..=to as usize].iter_mut() {
+                token.typ = TokenType::StringLiteral
+            }
         }
     }
 
@@ -681,7 +752,6 @@ pub mod tests {
         units.units = init_units(&units.prefixes);
         let mut tokens = vec![];
         let output = do_shunting_yard(&temp, &units, &mut tokens);
-        dbg!(&output);
         compare_tokens(
             expected_tokens,
             output
@@ -842,7 +912,7 @@ pub mod tests {
             ],
         );
 
-        test_output("1 + [2,]", &[]);
+        test_output("1 + [2,]", &[num(1)]);
         test_output(
             "1 + [2,] 3*4",
             &[num(3), num(4), op(OperatorTokenType::Mult)],
@@ -884,12 +954,11 @@ pub mod tests {
 
     #[test]
     fn test2() {
-        // // TODO
-        // // test(
-        // //     "var1 = var0 + 100",
-        // //     &[var("var0"), num(100), op(OperatorTokenType::Add)],
-        // // );
-        //
+        // TODO
+        // test(
+        //     "var1 = var0 + 100",
+        //     &[var("var0"), num(100), op(OperatorTokenType::Add)],
+        // );
 
         test_output("", &[]);
         test_output("2", &[num(2)]);
@@ -940,21 +1009,17 @@ pub mod tests {
                 str(" "),
                 op(OperatorTokenType::UnitConverter),
                 str(" "),
-                unit("in lbf"),
+                str("(in*lbf)"),
             ],
         );
         // typo: the text contain 'lbG' and not lbF
-        test_output(
-            "100 ft * lbf to (in*lbg)",
-            // &[num(100), unit("ft * lbf"), op(OperatorTokenType::In)],
-            &[], // invalid, no vlaue
-        );
+        test_output("100 ft * lbf to (in*lbg)", &[num(100), unit("ft lbf")]);
         test_tokens(
             "100 ft * lbf to (in*lbg)",
             &[
-                str("100"),
+                num(100),
                 str(" "),
-                str("ft * lbf"),
+                unit("ft lbf"),
                 str(" "),
                 str("to"),
                 str(" "),
@@ -1020,11 +1085,11 @@ pub mod tests {
             ],
         );
 
-        test_output("1szer sem jött el + *megjegyzés 2 éve...", &[]);
+        test_output("1szer sem jött el + *megjegyzés 2 éve...", &[num(1)]);
         test_tokens(
             "1szer sem jött el + *megjegyzés 2 éve...",
             &[
-                str("1"),
+                num(1),
                 str("szer"),
                 str(" "),
                 str("sem"),
@@ -1055,6 +1120,44 @@ pub mod tests {
         test_output(
             "15 EUR adómentes azaz 75-15 euróból kell adózni",
             &[num(75), num(15), op(OperatorTokenType::Sub)],
+        );
+    }
+
+    #[test]
+    fn asd() {
+        test_output(
+            "1+4szer sem jött el + *megjegyzés 2 éve...",
+            &[num(1), num(4), op(OperatorTokenType::Add)],
+        );
+        test_output(
+            "1+4szer sem jött el + *megjegyzés 2éve...+ 3",
+            &[num(2), num(3), op(OperatorTokenType::Add)],
+        );
+        test_tokens(
+            "1+4szer sem jött el + *megjegyzés 2éve...+ 3",
+            &[
+                str("1"),
+                str("+"),
+                str("4"),
+                str("szer"),
+                str(" "),
+                str("sem"),
+                str(" "),
+                str("jött"),
+                str(" "),
+                str("el"),
+                str(" "),
+                str("+"),
+                str(" "),
+                str("*"),
+                str("megjegyzés"),
+                str(" "),
+                num(2),
+                str("éve..."),
+                op(OperatorTokenType::Add),
+                str(" "),
+                num(3),
+            ],
         );
     }
 }
