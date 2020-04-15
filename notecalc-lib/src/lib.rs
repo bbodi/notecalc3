@@ -2,7 +2,7 @@
 #![feature(const_generics)]
 
 use crate::calc::{evaluate_tokens, CalcResult};
-use crate::editor::{Editor, InputKey, InputModifiers, Line};
+use crate::editor::{Editor, InputKey, InputModifiers};
 use crate::shunting_yard::ShuntingYard;
 use crate::token_parser::{OperatorTokenType, Token, TokenParser, TokenType};
 use crate::units::consts::{create_prefixes, init_units};
@@ -355,7 +355,6 @@ impl<'a> RenderBuckets<'a> {
 
 pub struct NoteCalcApp<'a> {
     client_width: usize,
-    canvas: Vec<Line>,
     units: Units<'a>,
     pub editor: Editor,
     variables: Vec<String>,
@@ -367,58 +366,14 @@ impl<'a> NoteCalcApp<'a> {
     pub fn new(client_width: usize) -> NoteCalcApp<'a> {
         let prefixes: &'static UnitPrefixes = Box::leak(Box::new(create_prefixes()));
         let units = Units::new(&prefixes);
-        let mut lines = Vec::with_capacity(128);
-        lines.push(Line::new());
         NoteCalcApp {
             client_width,
-            canvas: lines,
             prefixes,
             units,
-            editor: Editor::new(),
+            editor: Editor::new(MAX_EDITOR_WIDTH),
             variables: Vec::with_capacity(16),
             result_buffer: [0 as char; 1024],
         }
-    }
-
-    pub fn get_selected_text(&self) -> Option<String> {
-        self.editor.get_selected_text(&self.canvas)
-    }
-
-    pub fn get_content(&self) -> String {
-        let mut result = String::with_capacity(self.canvas.len() * MAX_EDITOR_WIDTH);
-        for line in &self.canvas {
-            result.extend(line.get_chars()[0..line.len()].iter());
-            result.push('\n');
-        }
-        return result;
-    }
-
-    pub fn set_content(&mut self, text: &str) {
-        self.canvas.clear();
-        self.canvas.push(Line::new());
-        self.editor.set_cursor_pos(0, 0);
-        let mut col_index = 0;
-        let mut row_index = 0;
-        for ch in text.chars() {
-            if ch == '\r' {
-                // ignore
-                continue;
-            } else if ch == '\n' {
-                self.canvas[row_index].set_len(col_index);
-                row_index += 1;
-                col_index = 0;
-                self.canvas.push(Line::new());
-                continue;
-            } else if col_index == MAX_EDITOR_WIDTH {
-                self.canvas[row_index].set_len(col_index);
-                row_index += 1;
-                col_index = 0;
-                self.canvas.push(Line::new());
-            }
-            self.canvas[row_index].set_char(col_index, ch);
-            col_index += 1;
-        }
-        self.canvas[row_index].set_len(col_index);
     }
 
     pub fn render(&mut self) -> RenderBuckets {
@@ -434,20 +389,15 @@ impl<'a> NoteCalcApp<'a> {
         let mut result_str_positions: SmallVec<[Option<(usize, usize)>; 256]> =
             SmallVec::with_capacity(256);
         let mut longest_row_len = 0;
-        for (row_index, line) in self.canvas.iter().enumerate() {
+
+        for (row_index, line) in self.editor.lines().enumerate() {
             if line.len() > longest_row_len {
                 longest_row_len = line.len();
             }
 
             // TODO optimize vec allocations
             let mut tokens = Vec::with_capacity(128);
-            TokenParser::parse_line(
-                &line.get_chars()[0..line.len() as usize],
-                &self.variables,
-                &[],
-                &mut tokens,
-                &self.units,
-            );
+            TokenParser::parse_line(line, &self.variables, &[], &mut tokens, &self.units);
 
             let mut shunting_output_stack = Vec::with_capacity(128);
             ShuntingYard::shunting_yard(&mut tokens, &[], &mut shunting_output_stack);
@@ -609,12 +559,11 @@ impl<'a> NoteCalcApp<'a> {
     }
 
     pub fn handle_click(&mut self, x: usize, y: usize) {
-        let lines = &self.canvas;
         let editor = &mut self.editor;
         if x < LEFT_GUTTER_WIDTH {
             // clicked on gutter
         } else if x - LEFT_GUTTER_WIDTH < MAX_EDITOR_WIDTH {
-            editor.handle_click(lines, x - LEFT_GUTTER_WIDTH, y);
+            editor.handle_click(x - LEFT_GUTTER_WIDTH, y);
         }
     }
 
@@ -623,17 +572,16 @@ impl<'a> NoteCalcApp<'a> {
     }
 
     pub fn handle_drag(&mut self, x: usize, y: usize) {
-        let lines = &self.canvas;
         let editor = &mut self.editor;
         if x < LEFT_GUTTER_WIDTH {
             // clicked on gutter
         } else if x - LEFT_GUTTER_WIDTH < MAX_EDITOR_WIDTH {
-            editor.handle_drag(lines, x - LEFT_GUTTER_WIDTH, y);
+            editor.handle_drag(x - LEFT_GUTTER_WIDTH, y);
         }
     }
 
     pub fn handle_input(&mut self, input: InputKey, modifiers: InputModifiers) {
-        self.editor.handle_input(&mut self.canvas, input, modifiers);
+        self.editor.handle_input(input, modifiers);
     }
 }
 

@@ -1,7 +1,6 @@
 use crate::calc::{pow, strip_trailing_zeroes, MAX_PRECISION};
 use crate::units::consts::{
-    create_prefixes, get_base_unit_for, init_aliases, init_units, BASE_UNIT_DIMENSIONS,
-    BASE_UNIT_DIMENSION_COUNT,
+    get_base_unit_for, init_aliases, init_units, BASE_UNIT_DIMENSIONS, BASE_UNIT_DIMENSION_COUNT,
 };
 use crate::units::{Prefix, Unit, UnitPrefixes, BASE_DIMENSION_COUNT};
 use bigdecimal::BigDecimal;
@@ -635,6 +634,7 @@ impl<'a> Debug for UnitInstance<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::units::consts::create_prefixes;
     use bigdecimal::*;
 
     fn parse<'a>(str: &'a str, units: &'a Units) -> UnitOutput<'a> {

@@ -1,6 +1,3 @@
-use crate::MAX_EDITOR_WIDTH;
-use std::io::BufWriter;
-
 #[repr(C)]
 #[derive(Eq, PartialEq, Debug, Clone, Copy)]
 pub enum InputKey<'a> {
@@ -61,65 +58,6 @@ impl InputModifiers {
     }
 }
 
-/// The length of a single line, but not all the chars are
-/// editable
-/// Currently only single codepoint characters are supported
-pub struct Line {
-    chars: [char; MAX_EDITOR_WIDTH],
-    len: usize,
-}
-
-impl Line {
-    pub fn new() -> Line {
-        Line {
-            chars: [0 as char; MAX_EDITOR_WIDTH],
-            len: 0,
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
-    pub(crate) fn set_len(&mut self, len: usize) {
-        self.len = len;
-    }
-
-    pub fn get_chars(&self) -> &[char] {
-        &self.chars[..]
-    }
-
-    pub fn get_mut(&mut self, column_index: usize) -> &mut char {
-        return &mut self.chars[column_index];
-    }
-
-    pub fn get(&self, column_index: usize) -> &char {
-        return &self.chars[column_index];
-    }
-
-    pub fn set_char(&mut self, column_index: usize, ch: char) {
-        *self.get_mut(column_index) = ch;
-    }
-
-    pub fn insert_char(&mut self, column_index: usize, ch: char) -> bool {
-        if self.len == MAX_EDITOR_WIDTH {
-            return false;
-        }
-        self.chars
-            .copy_within(column_index..self.len, column_index + 1);
-        self.set_char(column_index, ch);
-        self.len += 1;
-        return true;
-    }
-
-    pub fn remove_char(&mut self, column_index: usize) -> bool {
-        self.chars
-            .copy_within(column_index + 1..self.len, column_index);
-        self.len -= 1;
-        return true;
-    }
-}
-
 #[derive(Eq, PartialEq, Debug, Clone, Copy)]
 pub struct Pos {
     pub row: usize,
@@ -169,7 +107,7 @@ impl Selection {
     pub fn range(start: Pos, end: Pos) -> Selection {
         Selection {
             start,
-            end: Some(end),
+            end: if start == end { None } else { Some(end) },
         }
     }
 
@@ -179,8 +117,8 @@ impl Selection {
 
     pub fn get_first(&self) -> Pos {
         if let Some(end) = self.end {
-            let end_index = end.row * MAX_EDITOR_WIDTH + end.column;
-            let start_index = self.start.row * MAX_EDITOR_WIDTH + self.start.column;
+            let end_index = end.row * 1024 + end.column;
+            let start_index = self.start.row * 1024 + self.start.column;
             if end_index < start_index {
                 end
             } else {
@@ -193,8 +131,8 @@ impl Selection {
 
     pub fn get_second(&self) -> Pos {
         if let Some(end) = self.end {
-            let end_index = end.row * MAX_EDITOR_WIDTH + end.column;
-            let start_index = self.start.row * MAX_EDITOR_WIDTH + self.start.column;
+            let end_index = end.row * 1024 + end.column;
+            let start_index = self.start.row * 1024 + self.start.column;
             if end_index > start_index {
                 end
             } else {
@@ -223,17 +161,141 @@ pub struct Editor {
     last_column_index: usize,
     next_blink_at: u32,
     pub show_cursor: bool,
+    max_line_len: usize,
+    line_lens: Vec<usize>,
+    canvas: Vec<char>,
 }
 
 pub struct FirstModifiedRowIndex(usize);
 
+#[derive(Eq, PartialEq, Copy, Clone)]
+enum JumpMode {
+    IgnoreWhitespaces,
+    ConsiderWhitespaces,
+    BlockOnWhitespace,
+}
+
 impl Editor {
-    pub fn new() -> Editor {
-        Editor {
+    pub fn new(max_len: usize) -> Editor {
+        let mut ed = Editor {
+            canvas: Vec::with_capacity(max_len * 32),
+            line_lens: Vec::with_capacity(32),
+            max_line_len: max_len,
             selection: Selection::single(0, 0),
             last_column_index: 0,
             next_blink_at: 0,
             show_cursor: false,
+        };
+        ed.push_line();
+        return ed;
+    }
+
+    pub fn push_line(&mut self) {
+        let line = std::iter::repeat(0 as char).take(self.max_line_len);
+        self.canvas.extend(line);
+        self.line_lens.push(0);
+    }
+
+    pub fn insert_line_at(&mut self, at: usize) {
+        let start_pos = self.max_line_len * at;
+        let line = std::iter::repeat(0 as char).take(self.max_line_len);
+        self.canvas.splice(start_pos..start_pos, line);
+        self.line_lens.insert(at, 0);
+    }
+
+    pub fn remove_line_at(&mut self, at: usize) {
+        let from = self.max_line_len * at;
+        let to = from + self.max_line_len;
+        self.canvas.splice(from..to, std::iter::empty());
+        self.line_lens.remove(at);
+    }
+
+    pub fn line_count(&self) -> usize {
+        self.line_lens.len()
+    }
+
+    pub fn line_len(&self, row_i: usize) -> usize {
+        self.line_lens[row_i]
+    }
+
+    fn get_char_pos(&self, row_index: usize, column_index: usize) -> usize {
+        row_index * self.max_line_len + column_index
+    }
+
+    fn get_line_chars(&self, row_index: usize) -> &[char] {
+        let from = row_index * self.max_line_len;
+        let to = from + self.max_line_len;
+        &self.canvas[from..to]
+    }
+
+    fn get_mut_line_chars(&mut self, row_index: usize) -> &mut [char] {
+        let from = row_index * self.max_line_len;
+        let to = from + self.max_line_len;
+        &mut self.canvas[from..to]
+    }
+
+    pub fn get_char(&mut self, row_index: usize, column_index: usize) -> char {
+        return self.canvas[self.get_char_pos(row_index, column_index)];
+    }
+
+    pub fn set_char(&mut self, row_index: usize, column_index: usize, ch: char) {
+        let current_line_count = self.line_count();
+        for _ in current_line_count..=row_index {
+            self.push_line();
+        }
+        let char_pos = self.get_char_pos(row_index, column_index);
+        self.canvas[char_pos] = ch;
+    }
+
+    pub fn insert_char(&mut self, row_index: usize, column_index: usize, ch: char) -> bool {
+        if self.line_lens[row_index] == self.max_line_len {
+            return false;
+        }
+        let from = self.get_char_pos(row_index, column_index);
+        let len = self.line_lens[row_index];
+        let to = self.get_char_pos(row_index, len);
+        self.canvas.copy_within(from..to, from + 1);
+        self.canvas[from] = ch;
+        self.line_lens[row_index] += 1;
+        return true;
+    }
+
+    pub fn remove_char(&mut self, row_index: usize, column_index: usize) -> bool {
+        let from = self.get_char_pos(row_index, column_index);
+        let len = self.line_lens[row_index];
+        let to = self.get_char_pos(row_index, len);
+        self.canvas.copy_within(from + 1..to, from);
+        self.line_lens[row_index] -= 1;
+        return true;
+    }
+
+    pub fn set_content(&mut self, text: &str) {
+        self.clear();
+        self.set_cursor_pos(0, 0);
+        self.insert_at(text, 0, 0);
+    }
+
+    pub fn lines(&self) -> impl Iterator<Item = &[char]> {
+        return self
+            .canvas
+            .chunks(self.max_line_len)
+            .zip(self.line_lens.iter())
+            .map(|(line, len)| &line[0..*len]);
+    }
+
+    pub fn get_content(&self) -> String {
+        let mut result = String::with_capacity(self.canvas.len() * self.max_line_len);
+
+        for line in self.lines() {
+            result.extend(line);
+            result.push('\n');
+        }
+        return result;
+    }
+
+    pub fn clear(&mut self) {
+        for len in self.line_lens.iter_mut() {
+            *len = 0;
         }
     }
 
@@ -241,50 +303,53 @@ impl Editor {
         &self.selection
     }
 
-    pub fn handle_click(&mut self, lines: &Vec<Line>, x: usize, y: usize) {
-        let y = if y >= lines.len() {
-            (lines.len() - 1)
-        } else {
-            y
-        };
-        let col = x.min(lines[y].len);
+    pub fn handle_click(&mut self, x: usize, y: usize) {
+        let line_count = self.line_count();
+        let y = if y >= line_count { line_count - 1 } else { y };
+
+        let col = x.min(self.line_len(y));
         self.selection = Selection::from_pos(Pos::from_row_column(y, col));
     }
 
-    pub fn handle_drag(&mut self, lines: &Vec<Line>, x: usize, y: usize) {
-        let y = if y >= lines.len() {
-            (lines.len() - 1)
+    pub fn handle_drag(&mut self, x: usize, y: usize) {
+        let y = if y >= self.line_count() {
+            self.line_count() - 1
         } else {
             y
         };
-        let col = x.min(lines[y].len);
+        let col = x.min(self.line_len(y));
         self.selection = self.selection.extend(Pos::from_row_column(y, col));
     }
 
-    pub fn get_selected_text(&self, lines: &Vec<Line>) -> Option<String> {
+    pub fn get_selected_text(&self) -> Option<String> {
         if self.selection.end.is_none() {
             return None;
         }
         let start = self.selection.get_first();
         let end = self.selection.get_second();
         if end.row > start.row {
-            let mut result = String::with_capacity((end.row - start.row) * MAX_EDITOR_WIDTH);
+            let mut result = String::with_capacity((end.row - start.row) * self.max_line_len);
             // first line
-            result.extend(lines[start.row].chars[start.column..lines[start.row].len].iter());
+            let from = self.get_char_pos(start.row, start.column);
+            let to = self.get_char_pos(start.row, self.line_lens[start.row]);
+            result.extend(&self.canvas[from..to]);
             result.push('\n');
             // full lines
             for i in start.row + 1..end.row {
-                result.extend(lines[i].chars[0..lines[i].len].iter());
+                let from = self.get_char_pos(i, 0);
+                let to = self.get_char_pos(i, self.line_lens[i]);
+                result.extend(&self.canvas[from..to]);
                 result.push('\n');
             }
-            result.extend(lines[end.row].chars[0..end.column].iter());
+
+            let from = self.get_char_pos(end.row, 0);
+            let to = self.get_char_pos(end.row, end.column);
+            result.extend(&self.canvas[from..to]);
             Some(result)
         } else {
-            Some(
-                lines[start.row].chars[start.column..end.column]
-                    .iter()
-                    .collect::<String>(),
-            )
+            let from = self.get_char_pos(start.row, start.column);
+            let to = self.get_char_pos(start.row, end.column);
+            Some((&self.canvas[from..to]).iter().collect::<String>())
         }
     }
 
@@ -298,17 +363,10 @@ impl Editor {
         self.last_column_index = self.selection.get_cursor_pos().column;
     }
 
-    pub fn set_char(lines: &mut Vec<Line>, row_index: usize, column_index: usize, ch: char) {
-        for i in lines.len()..=row_index {
-            lines.push(Line::new())
-        }
-        lines[row_index].set_char(column_index, ch)
-    }
-
     pub fn handle_tick(&mut self, now: u32) -> bool {
         return if now >= self.next_blink_at {
             self.show_cursor = !self.show_cursor;
-            self.next_blink_at = now + 300;
+            self.next_blink_at = now + 500;
             true
         } else {
             false
@@ -317,7 +375,6 @@ impl Editor {
 
     pub fn handle_input(
         &mut self,
-        lines: &mut Vec<Line>,
         input: InputKey,
         modifiers: InputModifiers,
     ) -> FirstModifiedRowIndex {
@@ -333,7 +390,7 @@ impl Editor {
                 self.last_column_index = self.selection.get_cursor_pos().column;
             }
             InputKey::End => {
-                let new_pos = cur_pos.with_column(lines[cur_pos.row].len);
+                let new_pos = cur_pos.with_column(self.line_lens[cur_pos.row]);
                 self.selection = if modifiers.shift {
                     self.selection.extend(new_pos)
                 } else {
@@ -342,15 +399,15 @@ impl Editor {
                 self.last_column_index = self.selection.get_cursor_pos().column;
             }
             InputKey::Right => {
-                let new_pos = if cur_pos.column + 1 > lines[cur_pos.row].len {
-                    if cur_pos.row + 1 < lines.len() {
+                let new_pos = if cur_pos.column + 1 > self.line_lens[cur_pos.row] {
+                    if cur_pos.row + 1 < self.line_count() {
                         Pos::from_row_column(cur_pos.row + 1, 0)
                     } else {
                         cur_pos
                     }
                 } else {
                     let col = if modifiers.ctrl {
-                        Editor::jump_word_backward(lines, &cur_pos)
+                        self.jump_word_forward(&cur_pos, JumpMode::IgnoreWhitespaces)
                     } else {
                         cur_pos.column + 1
                     };
@@ -370,43 +427,14 @@ impl Editor {
             InputKey::Left => {
                 let new_pos = if cur_pos.column == 0 {
                     if cur_pos.row >= 1 {
-                        Pos::from_row_column(cur_pos.row - 1, lines[cur_pos.row - 1].len)
+                        Pos::from_row_column(cur_pos.row - 1, self.line_lens[cur_pos.row - 1])
                     } else {
                         cur_pos
                     }
                 } else {
                     let col = if modifiers.ctrl {
                         // check the type of the prev char
-                        let mut col = cur_pos.column;
-                        let line = &lines[cur_pos.row].chars;
-                        while col > 0 {
-                            if line[col - 1].is_alphanumeric() || line[col - 1] == '_' {
-                                col -= 1;
-                                while col > 0
-                                    && (line[col - 1].is_alphanumeric() || line[col - 1] == '_')
-                                {
-                                    col -= 1;
-                                }
-                                break;
-                            } else if line[col - 1] == '\"' {
-                                col -= 1;
-                                break;
-                            } else if !line[col - 1].is_ascii_whitespace() {
-                                col -= 1;
-                                while col > 0
-                                    && !(line[col - 1].is_alphanumeric()
-                                        || line[col - 1] == '_'
-                                        || line[col - 1] == '\"'
-                                        || line[col - 1].is_ascii_whitespace())
-                                {
-                                    col -= 1;
-                                }
-                                break;
-                            } else {
-                                col -= 1;
-                            }
-                        }
-                        col
+                        self.jump_word_backward(&cur_pos, JumpMode::IgnoreWhitespaces)
                     } else {
                         cur_pos.column - 1
                     };
@@ -430,7 +458,7 @@ impl Editor {
                 } else {
                     Pos::from_row_column(
                         cur_pos.row - 1,
-                        self.last_column_index.min(lines[cur_pos.row - 1].len),
+                        self.last_column_index.min(self.line_lens[cur_pos.row - 1]),
                     )
                 };
                 self.selection = if modifiers.shift {
@@ -440,12 +468,12 @@ impl Editor {
                 };
             }
             InputKey::Down => {
-                let new_pos = if cur_pos.row == lines.len() - 1 {
-                    cur_pos.with_column(lines[cur_pos.row].len)
+                let new_pos = if cur_pos.row == self.line_count() - 1 {
+                    cur_pos.with_column(self.line_lens[cur_pos.row])
                 } else {
                     Pos::from_row_column(
                         cur_pos.row + 1,
-                        self.last_column_index.min(lines[cur_pos.row + 1].len),
+                        self.last_column_index.min(self.line_lens[cur_pos.row + 1]),
                     )
                 };
                 self.selection = if modifiers.shift {
@@ -459,20 +487,19 @@ impl Editor {
                     let first = self.selection.get_first();
                     let second = self.selection.get_second();
 
-                    Editor::remove_selection(lines, first, second);
+                    self.remove_selection(first, second);
                     self.selection = Selection::from_pos(first);
                 } else {
-                    if cur_pos.column == lines[cur_pos.row].len {
-                        if cur_pos.row < lines.len() - 1 {
-                            Editor::merge_with_next_row(
-                                lines,
-                                cur_pos.row,
-                                lines[cur_pos.row].len,
-                                0,
-                            );
+                    if cur_pos.column == self.line_lens[cur_pos.row] {
+                        if cur_pos.row < self.line_count() - 1 {
+                            self.merge_with_next_row(cur_pos.row, self.line_lens[cur_pos.row], 0);
                         }
+                    } else if modifiers.ctrl {
+                        let col = self.jump_word_forward(&cur_pos, JumpMode::ConsiderWhitespaces);
+                        let new_pos = cur_pos.with_column(col);
+                        self.remove_selection(cur_pos, new_pos);
                     } else {
-                        lines[cur_pos.row].remove_char(cur_pos.column);
+                        self.remove_char(cur_pos.row, cur_pos.column);
                     }
                 }
             }
@@ -481,57 +508,78 @@ impl Editor {
                     let first = self.selection.get_first();
                     let second = self.selection.get_second();
 
-                    Editor::remove_selection(lines, first, second);
-                    Editor::split_line(lines, first.row, first.column);
+                    self.remove_selection(first, second);
+                    self.split_line(first.row, first.column);
                     self.selection = Selection::from_pos(Pos::from_row_column(first.row + 1, 0));
                 } else {
-                    Editor::split_line(lines, cur_pos.row, cur_pos.column);
+                    self.split_line(cur_pos.row, cur_pos.column);
                     self.selection = Selection::from_pos(Pos::from_row_column(cur_pos.row + 1, 0));
                 }
             }
             InputKey::Backspace => {
-                if let Some(end) = self.selection.end {
+                if self.selection.end.is_some() {
                     let first = self.selection.get_first();
                     let second = self.selection.get_second();
 
-                    Editor::remove_selection(lines, first, second);
+                    self.remove_selection(first, second);
                     self.selection = Selection::from_pos(first);
                 } else {
                     if cur_pos.column == 0 {
                         if cur_pos.row > 0 {
                             let prev_row_i = cur_pos.row - 1;
-                            let prev_len_before_merge = lines[prev_row_i].len;
-                            if Editor::merge_with_next_row(
-                                lines,
-                                prev_row_i,
-                                lines[prev_row_i].len,
-                                0,
-                            ) {
+                            let prev_len_before_merge = self.line_lens[prev_row_i];
+                            if self.merge_with_next_row(prev_row_i, prev_len_before_merge, 0) {
                                 self.selection = Selection::from_pos(Pos::from_row_column(
                                     prev_row_i,
                                     prev_len_before_merge,
                                 ));
                             }
                         }
-                    } else if lines[cur_pos.row].remove_char(cur_pos.column - 1) {
+                    } else if modifiers.ctrl {
+                        let col = self.jump_word_backward(&cur_pos, JumpMode::IgnoreWhitespaces);
+                        let new_pos = cur_pos.with_column(col);
+                        self.remove_selection(new_pos, cur_pos);
+                        self.selection = Selection::from_pos(new_pos);
+                    } else if self.remove_char(cur_pos.row, cur_pos.column - 1) {
                         self.selection =
                             Selection::from_pos(cur_pos.with_column(cur_pos.column - 1));
                     }
                 }
             }
             InputKey::Char(ch) => {
-                if self.selection.end.is_some() {
+                if ch == 'e' && modifiers.ctrl {
+                    let prev_index = self.jump_word_backward(
+                        &self.selection.get_first(),
+                        if self.selection.end.is_some() {
+                            JumpMode::IgnoreWhitespaces
+                        } else {
+                            JumpMode::BlockOnWhitespace
+                        },
+                    );
+                    let next_index = self.jump_word_forward(
+                        &self.selection.get_second(),
+                        if self.selection.end.is_some() {
+                            JumpMode::IgnoreWhitespaces
+                        } else {
+                            JumpMode::BlockOnWhitespace
+                        },
+                    );
+                    self.selection = Selection::range(
+                        cur_pos.with_column(prev_index),
+                        cur_pos.with_column(next_index),
+                    );
+                } else if self.selection.end.is_some() {
                     let mut first = self.selection.get_first();
                     let second = self.selection.get_second();
 
                     // we will insert a char at this pos
                     first.column += 1;
-                    if Editor::remove_selection(lines, first, second) {
-                        lines[first.row].set_char(first.column - 1, ch);
+                    if self.remove_selection(first, second) {
+                        self.set_char(first.row, first.column - 1, ch);
                     }
                     self.selection = Selection::from_pos(first);
                 } else {
-                    if lines[cur_pos.row].insert_char(cur_pos.column, ch) {
+                    if self.insert_char(cur_pos.row, cur_pos.column, ch) {
                         self.selection =
                             Selection::from_pos(cur_pos.with_column(cur_pos.column + 1));
                     }
@@ -541,15 +589,17 @@ impl Editor {
                 // save the content of first row which will be moved
                 let mut text_to_move_buf: [u8; /*MAX_EDITOR_WIDTH * 4*/ 1024] = [0; 1024];
                 let mut text_to_move_buf_index = 0;
-                for ch in &lines[cur_pos.row].chars[cur_pos.column..lines[cur_pos.row].len] {
+
+                for ch in
+                    &self.get_line_chars(cur_pos.row)[cur_pos.column..self.line_lens[cur_pos.row]]
+                {
                     ch.encode_utf8(&mut text_to_move_buf[text_to_move_buf_index..]);
                     text_to_move_buf_index += ch.len_utf8();
                 }
 
-                let new_pos = Editor::insert_at(lines, str, cur_pos.row, cur_pos.column);
+                let new_pos = self.insert_at(str, cur_pos.row, cur_pos.column);
                 if text_to_move_buf_index > 0 {
-                    let p = Editor::insert_at(
-                        lines,
+                    let p = self.insert_at(
                         unsafe {
                             std::str::from_utf8_unchecked(
                                 &text_to_move_buf[0..text_to_move_buf_index],
@@ -558,7 +608,7 @@ impl Editor {
                         new_pos.row,
                         new_pos.column,
                     );
-                    lines[p.row].len = p.column;
+                    self.line_lens[p.row] = p.column;
                 }
                 self.selection = Selection::from_pos(new_pos);
             }
@@ -566,11 +616,56 @@ impl Editor {
         return FirstModifiedRowIndex(0);
     }
 
-    fn jump_word_backward(lines: &mut Vec<Line>, cur_pos: &Pos) -> usize {
+    fn jump_word_backward(&mut self, cur_pos: &Pos, mode: JumpMode) -> usize {
+        let mut col = cur_pos.column;
+        let line = self.get_line_chars(cur_pos.row);
+        while col > 0 {
+            if line[col - 1].is_alphanumeric() || line[col - 1] == '_' {
+                col -= 1;
+                while col > 0 && (line[col - 1].is_alphanumeric() || line[col - 1] == '_') {
+                    col -= 1;
+                }
+                break;
+            } else if line[col - 1] == '\"' {
+                col -= 1;
+                break;
+            } else if !line[col - 1].is_ascii_whitespace() {
+                col -= 1;
+                while col > 0
+                    && !(line[col - 1].is_alphanumeric()
+                        || line[col - 1] == '_'
+                        || line[col - 1] == '\"'
+                        || line[col - 1].is_ascii_whitespace())
+                {
+                    col -= 1;
+                }
+                break;
+            } else {
+                match mode {
+                    JumpMode::IgnoreWhitespaces => {
+                        col -= 1;
+                    }
+                    JumpMode::ConsiderWhitespaces => {
+                        col -= 1;
+                        while col > 0 && line[col - 1].is_ascii_whitespace() {
+                            col -= 1;
+                        }
+                        break;
+                    }
+                    JumpMode::BlockOnWhitespace => {
+                        break;
+                    }
+                }
+            }
+        }
+        col
+    }
+
+    fn jump_word_forward(&mut self, cur_pos: &Pos, mode: JumpMode) -> usize {
         // check the type of the prev char
         let mut col = cur_pos.column;
-        let line = &lines[cur_pos.row].chars;
-        let len = lines[cur_pos.row].len;
+        let line = self.get_line_chars(cur_pos.row);
+        let len = self.line_lens[cur_pos.row];
         while col < len {
             if line[col].is_alphanumeric() || line[col] == '_' {
                 col += 1;
@@ -593,13 +688,27 @@ impl Editor {
                 }
                 break;
             } else {
-                col += 1;
+                match mode {
+                    JumpMode::IgnoreWhitespaces => {
+                        col += 1;
+                    }
+                    JumpMode::ConsiderWhitespaces => {
+                        col += 1;
+                        while col < len && line[col].is_ascii_whitespace() {
+                            col += 1;
+                        }
+                        break;
+                    }
+                    JumpMode::BlockOnWhitespace => {
+                        break;
+                    }
+                }
             }
         }
         col
     }
 
-    fn insert_at(lines: &mut Vec<Line>, str: &str, row_index: usize, insert_at: usize) -> Pos {
+    fn insert_at(&mut self, str: &str, row_index: usize, insert_at: usize) -> Pos {
         let mut col = insert_at;
         let mut row = row_index;
         for ch in str.chars() {
@@ -607,65 +716,91 @@ impl Editor {
                 // ignore
                 continue;
             } else if ch == '\n' {
-                lines[row].len = col;
+                self.line_lens[row] = col;
                 row += 1;
-                lines.insert(row, Line::new());
+                self.insert_line_at(row);
                 col = 0;
                 continue;
-            } else if col == MAX_EDITOR_WIDTH {
-                lines[row].len = col;
+            } else if col == self.max_line_len {
+                self.line_lens[row] = col;
                 row += 1;
-                lines.insert(row, Line::new());
+                self.insert_line_at(row);
                 col = 0;
             }
-            Editor::set_char(lines, row, col, ch);
+            self.set_char(row, col, ch);
             col += 1;
         }
-        lines[row].len = col;
+        self.line_lens[row] = col;
         return Pos::from_row_column(row, col);
     }
 
-    fn split_line(lines: &mut Vec<Line>, row_index: usize, split_at: usize) {
-        let mut new_line = Line::new();
-        let move_to_next_line = &lines[row_index].chars[split_at..lines[row_index].len];
-        new_line.chars[0..move_to_next_line.len()].copy_from_slice(move_to_next_line);
-        new_line.len = move_to_next_line.len();
-        lines.insert(row_index + 1, new_line);
-        lines[row_index].len = split_at;
+    fn split_line(&mut self, row_index: usize, split_at: usize) {
+        // let move_to_next_line = &lines[row_index].chars[split_at..lines[row_index].len];
+
+        self.insert_line_at(row_index + 1);
+        let new_line_pos = self.get_char_pos(row_index + 1, 0);
+
+        // let move_to_next_line = {
+        //     let from = self.get_char_pos(row_index, split_at);
+        //     let to = self.line_lens[row_index];
+        //     &self.canvas[from..to]
+        // };
+        {
+            let from = self.get_char_pos(row_index, split_at);
+            let to = self.get_char_pos(row_index, self.line_lens[row_index]);
+            self.canvas.copy_within(from..to, new_line_pos);
+            self.line_lens[row_index + 1] = to - from;
+        }
+        // self.canvas[new_line_pos..new_line_pos + move_to_next_line.len()]
+        //     .copy_from_slice(move_to_next_line);
+        // new_line.chars[0..move_to_next_line.len()].copy_from_slice(move_to_next_line);
+        // new_line.len = move_to_next_line.len();
+
+        // lines.insert(row_index + 1, new_line);
+        self.line_lens[row_index] = split_at;
+        // lines[row_index].len = split_at;
     }
 
     fn merge_with_next_row(
-        lines: &mut Vec<Line>,
+        &mut self,
         row_index: usize,
         first_row_col: usize,
         second_row_col: usize,
     ) -> bool {
-        if lines[row_index].len + lines[row_index + 1].len > MAX_EDITOR_WIDTH {
+        if self.line_lens[row_index] + self.line_lens[row_index + 1] > self.max_line_len {
             return false;
         }
 
-        let tmp = lines.remove(row_index + 1);
-        let keep = &tmp.chars[second_row_col..tmp.len];
-        let from = first_row_col;
-        let to = from + keep.len();
-        lines[row_index].chars[from..to].copy_from_slice(keep);
-        lines[row_index].len = first_row_col + keep.len();
+        let dst = self.get_char_pos(row_index, first_row_col);
+        let src_from = self.get_char_pos(row_index + 1, second_row_col);
+        let src_to = self.get_char_pos(row_index + 1, self.line_lens[row_index + 1]);
+        self.canvas.copy_within(src_from..src_to, dst);
+        self.line_lens[row_index] = first_row_col + (src_to - src_from);
+
+        self.remove_line_at(row_index + 1);
+
+        // let tmp = lines.remove(row_index + 1);
+        // let keep = &tmp.chars[second_row_col..tmp.len];
+        // let from = first_row_col;
+        // let to = from + keep.len();
+        // lines[row_index].chars[from..to].copy_from_slice(keep);
+        // lines[row_index].len = first_row_col + keep.len();
+
         return true;
     }
 
-    fn remove_selection(lines: &mut Vec<Line>, first: Pos, second: Pos) -> bool {
+    fn remove_selection(&mut self, first: Pos, second: Pos) -> bool {
         if second.row > first.row {
             // töröld a közbenső egész sorokat teljesen
             for _ in first.row + 1..second.row {
-                lines.remove(first.row + 1);
+                self.remove_line_at(first.row + 1);
             }
-            Editor::merge_with_next_row(lines, first.row, first.column, second.column);
+            self.merge_with_next_row(first.row, first.column, second.column);
         } else {
-            lines[first.row]
-                .chars
+            self.get_mut_line_chars(first.row)
                 .copy_within(second.column.., first.column);
             let selected_char_count = second.column - first.column;
-            lines[first.row].len -= selected_char_count;
+            self.line_lens[first.row] -= selected_char_count;
         }
         return true;
     }
@@ -686,7 +821,7 @@ mod tests {
         modifiers: InputModifiers,
         expected_content: &str,
     ) {
-        let mut editor = Editor::new();
+        let mut editor = Editor::new(80);
         test0(
             &mut editor,
             initial_content,
@@ -705,9 +840,7 @@ mod tests {
         inputs: &[InputKey],
         modifiers: InputModifiers,
         expected_content: &str,
-    ) -> Vec<Line> {
-        let mut lines = Vec::with_capacity(12);
-        lines.push(Line::new());
+    ) {
         // we can assume here that it does not contain illegal or complex input
         // so we can just set it as it is
         let mut selection_found = false;
@@ -730,18 +863,18 @@ mod tests {
                         column: row_len,
                     };
                 } else {
-                    Editor::set_char(&mut lines, row_index, row_len, char);
+                    editor.set_char(row_index, row_len, char);
                     row_len += 1;
                 }
             }
-            lines[row_index].len = row_len;
+            editor.line_lens[row_index] = row_len;
         }
         if selection_found {
             editor.set_selection(selection_start, selection_end);
         }
 
         for input in inputs {
-            editor.handle_input(&mut lines, *input, modifiers);
+            editor.handle_input(*input, modifiers);
         }
 
         // assert
@@ -768,28 +901,29 @@ mod tests {
                     }
                 } else {
                     assert_eq!(
-                        *lines[row_index].get(expected_row_len),
+                        editor.get_line_chars(row_index)[expected_row_len],
                         char,
                         "row: {}, column: {}, chars: {:?}",
                         row_index,
                         expected_row_len,
-                        &lines[row_index].chars[..]
+                        editor.get_line_chars(row_index)
                     );
                     expected_row_len += 1;
                 }
             }
+
             assert!(
-                lines[row_index].len <= expected_row_len,
+                editor.line_lens[row_index] <= expected_row_len,
                 "Line {}, Actual data is longer: {:?}",
                 row_index,
-                &lines[row_index].chars[expected_row_len..lines[row_index].len]
+                &editor.get_line_chars(row_index)[expected_row_len..editor.line_lens[row_index]]
             );
             assert!(
-                lines[row_index].len >= expected_row_len,
+                editor.line_lens[row_index] >= expected_row_len,
                 "Line {}, Actual data is shorter,  actual: {:?} \n, expected: {:?}",
                 row_index,
-                &lines[row_index].chars[0..lines[row_index].len],
-                &expected_line[lines[row_index].len..expected_row_len]
+                &editor.get_line_chars(row_index)[0..editor.line_lens[row_index]],
+                &expected_line[editor.line_lens[row_index]..expected_row_len]
             );
         }
         if selection_found {
@@ -806,13 +940,12 @@ mod tests {
         } else {
             assert_eq!(editor.selection, expected_cursor, "Cursor");
         }
-        return lines;
     }
 
     #[test]
     fn test_the_test() {
-        let mut editor = Editor::new();
-        let lines = test0(
+        let mut editor = Editor::new(80);
+        test0(
             &mut editor,
             "█abcdefghijklmnopqrstuvwxyz",
             &[],
@@ -823,14 +956,14 @@ mod tests {
         assert_eq!(editor.selection.start.row, 0);
         assert_eq!(editor.selection.end, None);
 
-        assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0].len, 26);
-        assert_eq!(lines[0].chars[0], 'a');
-        assert_eq!(lines[0].chars[3], 'd');
-        assert_eq!(lines[0].chars[25], 'z');
+        assert_eq!(editor.line_count(), 1);
+        assert_eq!(editor.line_lens[0], 26);
+        assert_eq!(editor.canvas[0], 'a');
+        assert_eq!(editor.canvas[3], 'd');
+        assert_eq!(editor.canvas[25], 'z');
 
         // single codepoint
-        let lines = test0(
+        test0(
             &mut editor,
             "█abcdeéfghijklmnopqrstuvwxyz",
             &[],
@@ -841,11 +974,11 @@ mod tests {
         assert_eq!(editor.selection.start.row, 0);
         assert_eq!(editor.selection.end, None);
 
-        assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0].len, 28);
-        assert_eq!(lines[0].chars[0], 'a');
-        assert_eq!(lines[0].chars[3], 'd');
-        assert_eq!(lines[0].chars[25], 'x');
+        assert_eq!(editor.line_count(), 1);
+        assert_eq!(editor.line_lens[0], 28);
+        assert_eq!(editor.canvas[0], 'a');
+        assert_eq!(editor.canvas[3], 'd');
+        assert_eq!(editor.canvas[25], 'x');
 
         let lines = test0(
             &mut editor,
@@ -867,11 +1000,11 @@ mod tests {
             "selection: {:?}",
             editor.selection
         );
-        assert_eq!(lines.len(), 2);
-        assert_eq!(lines[1].len, 25);
-        assert_eq!(lines[1].chars[0], 'A');
-        assert_eq!(lines[1].chars[3], 'D');
-        assert_eq!(lines[1].chars[24], 'Y');
+        assert_eq!(editor.line_count(), 2);
+        assert_eq!(editor.line_lens[1], 25);
+        assert_eq!(editor.get_char(1, 0), 'A');
+        assert_eq!(editor.get_char(1, 3), 'D');
+        assert_eq!(editor.get_char(1, 24), 'Y');
     }
 
     #[test]
@@ -920,7 +1053,7 @@ mod tests {
 
     #[test]
     fn test_the_test_selection() {
-        let mut editor = Editor::new();
+        let mut editor = Editor::new(80);
         test0(
             &mut editor,
             "a❱bcdefghij❰klmnopqrstuvwxyz",
@@ -986,7 +1119,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Selection start")]
     fn test_the_test_selection2() {
-        let mut editor = Editor::new();
+        let mut editor = Editor::new(80);
         test0(
             &mut editor,
             "a❱bcdefghij❰klmnopqrstuvwxyz",
@@ -999,7 +1132,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Selection end")]
     fn test_the_test_selection3() {
-        let mut editor = Editor::new();
+        let mut editor = Editor::new(80);
         test0(
             &mut editor,
             "a❱bcdefghij❰klmnopqrstuvwxyz",
@@ -1055,7 +1188,7 @@ mod tests {
 
     #[test]
     fn test_simple_left_cursor() {
-        let mut editor = Editor::new();
+        let mut editor = Editor::new(80);
         test(
             "abcdefghij█klmnopqrstuvwxyz",
             &[InputKey::Left],
@@ -1610,7 +1743,7 @@ mod tests {
 
     #[test]
     fn test_simple_left_cursor_selection() {
-        let mut editor = Editor::new();
+        let mut editor = Editor::new(80);
         test(
             "abcdefghij█klmnopqrstuvwxyz",
             &[InputKey::Left],
@@ -1655,7 +1788,7 @@ mod tests {
 
     #[test]
     fn test_left_right_cursor_selection() {
-        let mut editor = Editor::new();
+        let mut editor = Editor::new(80);
         test(
             "abcdefghij█klmnopqrstuvwxyz",
             &[
@@ -2513,6 +2646,268 @@ mod tests {
     }
 
     #[test]
+    fn test_ctrl_del() {
+        test(
+            "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz█",
+            &[InputKey::Del],
+            InputModifiers::ctrl(),
+            "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz█",
+        );
+
+        test(
+            "abcde█fghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            &[InputKey::Del, InputKey::Del, InputKey::Del],
+            InputModifiers::ctrl(),
+            "abcde█",
+        );
+
+        test(
+            "█",
+            &[InputKey::Del, InputKey::Del, InputKey::Del],
+            InputModifiers::ctrl(),
+            "█",
+        );
+
+        test(
+            "abcdefghijklmnopqrstuvwxyz█\n\
+            abcdefghijklmnopqrstuvwxyz",
+            &[InputKey::Del],
+            InputModifiers::ctrl(),
+            "abcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijklmnop█qrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            &[InputKey::End, InputKey::Del, InputKey::End, InputKey::Del],
+            InputModifiers::ctrl(),
+            "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyz",
+        );
+
+        test(
+            "█abcdefghijklmnopqrstuvwxyz",
+            &[InputKey::Del],
+            InputModifiers::ctrl(),
+            "█",
+        );
+
+        test(
+            "█abcdefghijkl mnopqrstuvwxyz",
+            &[InputKey::Del],
+            InputModifiers::ctrl(),
+            "█ mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl█ mnopqrstuvwxyz",
+            &[InputKey::Del],
+            InputModifiers::ctrl(),
+            "abcdefghijkl█mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl █mnopqrstuvwxyz",
+            &[InputKey::Del],
+            InputModifiers::ctrl(),
+            "abcdefghijkl █",
+        );
+
+        test(
+            "abcdefghijkl█    mnopqrstuvwxyz",
+            &[InputKey::Del],
+            InputModifiers::ctrl(),
+            "abcdefghijkl█mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl█  )  mnopqrstuvwxyz",
+            &[InputKey::Del],
+            InputModifiers::ctrl(),
+            "abcdefghijkl█)  mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl█  |()-+%'^%/=?{}#<>&@[]*  mnopqrstuvwxyz",
+            &[InputKey::Del],
+            InputModifiers::ctrl(),
+            "abcdefghijkl█|()-+%'^%/=?{}#<>&@[]*  mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl█  \"  mnopqrstuvwxyz",
+            &[InputKey::Del],
+            InputModifiers::ctrl(),
+            "abcdefghijkl█\"  mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl█  12  mnopqrstuvwxyz",
+            &[InputKey::Del],
+            InputModifiers::ctrl(),
+            "abcdefghijkl█12  mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl█  12a  mnopqrstuvwxyz",
+            &[InputKey::Del],
+            InputModifiers::ctrl(),
+            "abcdefghijkl█12a  mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl█  a12  mnopqrstuvwxyz",
+            &[InputKey::Del],
+            InputModifiers::ctrl(),
+            "abcdefghijkl█a12  mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl█  _  mnopqrstuvwxyz",
+            &[InputKey::Del],
+            InputModifiers::ctrl(),
+            "abcdefghijkl█_  mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl█  _1a  mnopqrstuvwxyz",
+            &[InputKey::Del],
+            InputModifiers::ctrl(),
+            "abcdefghijkl█_1a  mnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijkl█  \"❤(  mnopqrstuvwxyz",
+            &[InputKey::Del],
+            InputModifiers::ctrl(),
+            "abcdefghijkl█\"❤(  mnopqrstuvwxyz",
+        );
+    }
+
+    #[test]
+    fn test_ctrl_w() {
+        test("█", &[InputKey::Char('w')], InputModifiers::ctrl(), "█");
+        test("a█", &[InputKey::Char('w')], InputModifiers::ctrl(), "❱a❰");
+        test("█a", &[InputKey::Char('w')], InputModifiers::ctrl(), "❱a❰");
+
+        test(
+            "█asd",
+            &[InputKey::Char('w')],
+            InputModifiers::ctrl(),
+            "❱asd❰",
+        );
+        test(
+            "asd█",
+            &[InputKey::Char('w')],
+            InputModifiers::ctrl(),
+            "❱asd❰",
+        );
+        test(
+            "a█sd",
+            &[InputKey::Char('w')],
+            InputModifiers::ctrl(),
+            "❱asd❰",
+        );
+        test(
+            "as█d",
+            &[InputKey::Char('w')],
+            InputModifiers::ctrl(),
+            "❱asd❰",
+        );
+
+        test(
+            "as█d 12",
+            &[InputKey::Char('w')],
+            InputModifiers::ctrl(),
+            "❱asd❰ 12",
+        );
+        test(
+            "asd █12",
+            &[InputKey::Char('w')],
+            InputModifiers::ctrl(),
+            "asd ❱12❰",
+        );
+        test(
+            "asd 1█2",
+            &[InputKey::Char('w')],
+            InputModifiers::ctrl(),
+            "asd ❱12❰",
+        );
+        test(
+            "asd 12█",
+            &[InputKey::Char('w')],
+            InputModifiers::ctrl(),
+            "asd ❱12❰",
+        );
+
+        test(
+            "█asdasdasd\n\
+            bbbbbbbbbbb",
+            &[InputKey::Char('w')],
+            InputModifiers::ctrl(),
+            "❱asdasdasd❰\n\
+            bbbbbbbbbbb",
+        );
+
+        test(
+            "asd 12█",
+            &[InputKey::Char('w'), InputKey::Char('w')],
+            InputModifiers::ctrl(),
+            "❱asd 12❰",
+        );
+
+        test(
+            "█asd 12",
+            &[InputKey::Char('w'), InputKey::Char('w')],
+            InputModifiers::ctrl(),
+            "❱asd 12❰",
+        );
+
+        test(
+            "asd █12 qwe",
+            &[InputKey::Char('w'), InputKey::Char('w')],
+            InputModifiers::ctrl(),
+            "❱asd 12 qwe❰",
+        );
+
+        test(
+            "vvv asd █12 qwe ttt",
+            &[InputKey::Char('w'), InputKey::Char('w')],
+            InputModifiers::ctrl(),
+            "vvv ❱asd 12 qwe❰ ttt",
+        );
+
+        test(
+            "vvv ❱asd 12 qwe❱ ttt",
+            &[InputKey::Char('w')],
+            InputModifiers::ctrl(),
+            "❱vvv asd 12 qwe ttt❰",
+        );
+
+        test(
+            "vvv asd █12 qwe ttt",
+            &[
+                InputKey::Char('w'),
+                InputKey::Char('w'),
+                InputKey::Char('w'),
+            ],
+            InputModifiers::ctrl(),
+            "❱vvv asd 12 qwe ttt❰",
+        );
+
+        // asd
+        // test(
+        //     "(1+█2)*2 / 4",
+        //     &[InputKey::Char('w'), InputKey::Char('w'), InputKey::Char('w')],
+        //     InputModifiers::ctrl(),
+        //     "❱vvv asd 12 qwe ttt❰",
+        // );
+    }
+
+    #[test]
     fn test_ctrl_backspace() {
         test("a█", &[InputKey::Backspace], InputModifiers::ctrl(), "█");
 
@@ -3098,7 +3493,7 @@ mod tests {
 
     #[test]
     fn test_copy() {
-        let mut editor = Editor::new();
+        let mut editor = Editor::new(80);
         let lines = test0(
             &mut editor,
             "aaaaa❱12s aa\n\
@@ -3115,7 +3510,7 @@ mod tests {
             a❰",
         );
         assert_eq!(
-            editor.get_selected_text(&lines),
+            editor.get_selected_text(),
             Some("12s aa\na\na\na\na".to_owned())
         )
     }

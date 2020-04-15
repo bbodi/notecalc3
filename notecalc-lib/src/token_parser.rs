@@ -1,6 +1,5 @@
 use crate::units::units::{UnitOutput, Units};
 use bigdecimal::{BigDecimal, Num};
-use std::ops::Neg;
 use std::str::FromStr;
 
 #[derive(Debug, Clone)]

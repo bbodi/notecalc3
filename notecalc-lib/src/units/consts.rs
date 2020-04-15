@@ -3,8 +3,8 @@ use std::str::FromStr;
 
 use bigdecimal::*;
 
-use crate::units::units::{UnitInstance, UnitOutput, Units};
-use crate::units::{Prefix, Unit, UnitPrefixes, BASE_DIMENSION_COUNT};
+use crate::units::units::{UnitInstance, Units};
+use crate::units::{Prefix, Unit, UnitPrefixes};
 
 #[repr(C)]
 enum UnitType {
