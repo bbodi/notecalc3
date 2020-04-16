@@ -271,7 +271,7 @@ impl Editor {
 
     pub fn set_content(&mut self, text: &str) {
         self.clear();
-        self.set_cursor_pos(0, 0);
+        self.set_cursor_pos_r_c(0, 0);
         self.insert_at(text, 0, 0);
     }
 
@@ -308,7 +308,7 @@ impl Editor {
         let y = if y >= line_count { line_count - 1 } else { y };
 
         let col = x.min(self.line_len(y));
-        self.selection = Selection::from_pos(Pos::from_row_column(y, col));
+        self.set_cursor_pos_r_c(y, col);
     }
 
     pub fn handle_drag(&mut self, x: usize, y: usize) {
@@ -318,7 +318,7 @@ impl Editor {
             y
         };
         let col = x.min(self.line_len(y));
-        self.selection = self.selection.extend(Pos::from_row_column(y, col));
+        self.set_selection_save_col(self.selection.extend(Pos::from_row_column(y, col)));
     }
 
     pub fn get_selected_text(&self) -> Option<String> {
@@ -353,14 +353,25 @@ impl Editor {
         }
     }
 
-    pub fn set_cursor_pos(&mut self, row_index: usize, column_index: usize) {
-        self.selection = Selection::single(row_index, column_index);
-        self.last_column_index = column_index;
+    #[inline]
+    pub fn set_cursor_pos(&mut self, pos: Pos) {
+        self.set_selection_save_col(Selection::from_pos(pos));
     }
 
-    pub fn set_selection(&mut self, start: Pos, end: Pos) {
-        self.selection = Selection::range(start, end);
-        self.last_column_index = self.selection.get_cursor_pos().column;
+    #[inline]
+    pub fn set_cursor_pos_r_c(&mut self, row_index: usize, column_index: usize) {
+        self.set_selection_save_col(Selection::single(row_index, column_index));
+    }
+
+    #[inline]
+    pub fn set_cursor_range(&mut self, start: Pos, end: Pos) {
+        self.set_selection_save_col(Selection::range(start, end));
+    }
+
+    #[inline]
+    pub fn set_selection_save_col(&mut self, selection: Selection) {
+        self.selection = selection;
+        self.last_column_index = selection.get_cursor_pos().column;
     }
 
     pub fn handle_tick(&mut self, now: u32) -> bool {
@@ -382,21 +393,21 @@ impl Editor {
         match input {
             InputKey::Home => {
                 let new_pos = cur_pos.with_column(0);
-                self.selection = if modifiers.shift {
+                let new_selection = if modifiers.shift {
                     self.selection.extend(new_pos)
                 } else {
                     Selection::from_pos(new_pos)
                 };
-                self.last_column_index = self.selection.get_cursor_pos().column;
+                self.set_selection_save_col(new_selection);
             }
             InputKey::End => {
                 let new_pos = cur_pos.with_column(self.line_lens[cur_pos.row]);
-                self.selection = if modifiers.shift {
+                let new_selection = if modifiers.shift {
                     self.selection.extend(new_pos)
                 } else {
                     Selection::from_pos(new_pos)
                 };
-                self.last_column_index = self.selection.get_cursor_pos().column;
+                self.set_selection_save_col(new_selection);
             }
             InputKey::Right => {
                 let new_pos = if cur_pos.column + 1 > self.line_lens[cur_pos.row] {
@@ -413,7 +424,7 @@ impl Editor {
                     };
                     cur_pos.with_column(col)
                 };
-                self.selection = if modifiers.shift {
+                let selection = if modifiers.shift {
                     self.selection.extend(new_pos)
                 } else {
                     if self.selection.end.is_some() {
@@ -422,7 +433,7 @@ impl Editor {
                         Selection::from_pos(new_pos)
                     }
                 };
-                self.last_column_index = self.selection.get_cursor_pos().column;
+                self.set_selection_save_col(selection);
             }
             InputKey::Left => {
                 let new_pos = if cur_pos.column == 0 {
@@ -441,7 +452,7 @@ impl Editor {
                     cur_pos.with_column(col)
                 };
 
-                self.selection = if modifiers.shift {
+                let selection = if modifiers.shift {
                     self.selection.extend(new_pos)
                 } else {
                     if self.selection.end.is_some() {
@@ -450,7 +461,7 @@ impl Editor {
                         Selection::from_pos(new_pos)
                     }
                 };
-                self.last_column_index = self.selection.get_cursor_pos().column;
+                self.set_selection_save_col(selection);
             }
             InputKey::Up => {
                 let new_pos = if cur_pos.row == 0 {
@@ -488,7 +499,8 @@ impl Editor {
                     let second = self.selection.get_second();
 
                     self.remove_selection(first, second);
-                    self.selection = Selection::from_pos(first);
+                    let selection = Selection::from_pos(first);
+                    self.set_selection_save_col(selection);
                 } else {
                     if cur_pos.column == self.line_lens[cur_pos.row] {
                         if cur_pos.row < self.line_count() - 1 {
@@ -510,10 +522,16 @@ impl Editor {
 
                     self.remove_selection(first, second);
                     self.split_line(first.row, first.column);
-                    self.selection = Selection::from_pos(Pos::from_row_column(first.row + 1, 0));
+                    self.set_selection_save_col(Selection::from_pos(Pos::from_row_column(
+                        first.row + 1,
+                        0,
+                    )));
                 } else {
                     self.split_line(cur_pos.row, cur_pos.column);
-                    self.selection = Selection::from_pos(Pos::from_row_column(cur_pos.row + 1, 0));
+                    self.set_selection_save_col(Selection::from_pos(Pos::from_row_column(
+                        cur_pos.row + 1,
+                        0,
+                    )));
                 }
             }
             InputKey::Backspace => {
@@ -522,16 +540,15 @@ impl Editor {
                     let second = self.selection.get_second();
 
                     self.remove_selection(first, second);
-                    self.selection = Selection::from_pos(first);
+                    self.set_selection_save_col(Selection::from_pos(first));
                 } else {
                     if cur_pos.column == 0 {
                         if cur_pos.row > 0 {
                             let prev_row_i = cur_pos.row - 1;
                             let prev_len_before_merge = self.line_lens[prev_row_i];
                             if self.merge_with_next_row(prev_row_i, prev_len_before_merge, 0) {
-                                self.selection = Selection::from_pos(Pos::from_row_column(
-                                    prev_row_i,
-                                    prev_len_before_merge,
+                                self.set_selection_save_col(Selection::from_pos(
+                                    Pos::from_row_column(prev_row_i, prev_len_before_merge),
                                 ));
                             }
                         }
@@ -539,15 +556,16 @@ impl Editor {
                         let col = self.jump_word_backward(&cur_pos, JumpMode::IgnoreWhitespaces);
                         let new_pos = cur_pos.with_column(col);
                         self.remove_selection(new_pos, cur_pos);
-                        self.selection = Selection::from_pos(new_pos);
+                        self.set_selection_save_col(Selection::from_pos(new_pos));
                     } else if self.remove_char(cur_pos.row, cur_pos.column - 1) {
-                        self.selection =
-                            Selection::from_pos(cur_pos.with_column(cur_pos.column - 1));
+                        self.set_selection_save_col(Selection::from_pos(
+                            cur_pos.with_column(cur_pos.column - 1),
+                        ));
                     }
                 }
             }
             InputKey::Char(ch) => {
-                if ch == 'e' && modifiers.ctrl {
+                if ch == 'w' && modifiers.ctrl {
                     let prev_index = self.jump_word_backward(
                         &self.selection.get_first(),
                         if self.selection.end.is_some() {
@@ -564,10 +582,10 @@ impl Editor {
                             JumpMode::BlockOnWhitespace
                         },
                     );
-                    self.selection = Selection::range(
+                    self.set_selection_save_col(Selection::range(
                         cur_pos.with_column(prev_index),
                         cur_pos.with_column(next_index),
-                    );
+                    ));
                 } else if self.selection.end.is_some() {
                     let mut first = self.selection.get_first();
                     let second = self.selection.get_second();
@@ -577,11 +595,12 @@ impl Editor {
                     if self.remove_selection(first, second) {
                         self.set_char(first.row, first.column - 1, ch);
                     }
-                    self.selection = Selection::from_pos(first);
+                    self.set_selection_save_col(Selection::from_pos(first));
                 } else {
                     if self.insert_char(cur_pos.row, cur_pos.column, ch) {
-                        self.selection =
-                            Selection::from_pos(cur_pos.with_column(cur_pos.column + 1));
+                        self.set_selection_save_col(Selection::from_pos(
+                            cur_pos.with_column(cur_pos.column + 1),
+                        ));
                     }
                 }
             }
@@ -610,7 +629,7 @@ impl Editor {
                     );
                     self.line_lens[p.row] = p.column;
                 }
-                self.selection = Selection::from_pos(new_pos);
+                self.set_selection_save_col(Selection::from_pos(new_pos));
             }
         }
         return FirstModifiedRowIndex(0);
@@ -850,7 +869,7 @@ mod tests {
             let mut row_len = 0;
             for char in line.chars() {
                 if char == CURSOR_MARKER {
-                    editor.set_cursor_pos(row_index, row_len);
+                    editor.set_cursor_pos_r_c(row_index, row_len);
                 } else if char == SELECTION_START_MARK {
                     selection_found = true;
                     selection_start = Pos {
@@ -870,7 +889,7 @@ mod tests {
             editor.line_lens[row_index] = row_len;
         }
         if selection_found {
-            editor.set_selection(selection_start, selection_end);
+            editor.set_cursor_range(selection_start, selection_end);
         }
 
         for input in inputs {
@@ -3269,6 +3288,22 @@ mod tests {
             "abcd█mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
         );
+
+        // the last cursor pos should set to zero after del
+        test(
+            "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            ❱abcdefghijkl❰mnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            &[InputKey::Del, InputKey::Up],
+            InputModifiers::none(),
+            "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            █abcdefghijklmnopqrstuvwxyz\n\
+            mnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        )
     }
 
     #[test]
