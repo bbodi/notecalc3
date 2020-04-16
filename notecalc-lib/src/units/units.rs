@@ -677,6 +677,18 @@ mod tests {
         assert_eq!(&['s'], unit1.units[1].unit.name);
         assert_eq!(-1, unit1.units[1].power);
 
+        let unit1 = parse("ml", &units);
+        assert_eq!(&['m'], unit1.units[0].prefix.name);
+        assert_eq!(&['l'], unit1.units[0].unit.name);
+        assert_eq!(3, unit1.dimensions[1]);
+        assert_eq!(1, unit1.units[0].power);
+
+        let unit1 = parse("ml^-1", &units);
+        assert_eq!(&['m'], unit1.units[0].prefix.name);
+        assert_eq!(&['l'], unit1.units[0].unit.name);
+        assert_eq!(-3, unit1.dimensions[1]);
+        assert_eq!(-1, unit1.units[0].power);
+
         let unit1 = parse("Hz", &units);
         assert_eq!(&['H', 'z'], unit1.units[0].unit.name);
 

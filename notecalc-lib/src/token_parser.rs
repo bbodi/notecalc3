@@ -81,7 +81,7 @@ impl<'a> OperatorTokenType<'a> {
             OperatorTokenType::ShiftRight => 0,
             OperatorTokenType::Assign => 0,
             OperatorTokenType::UnitConverter => 0,
-            OperatorTokenType::Unit(_) => 4,
+            OperatorTokenType::Unit(_) => 3,
             OperatorTokenType::Comma => 0,
             OperatorTokenType::BracketOpen => 0,
             OperatorTokenType::BracketClose => 0,

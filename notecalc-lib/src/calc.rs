@@ -591,7 +591,12 @@ fn divide_op<'a>(lhs: &CalcResult<'a>, rhs: &CalcResult<'a>) -> Option<CalcResul
         }
         (CalcResult::Number(lhs), CalcResult::Quantity(rhs, unit)) => {
             // 100 / 2km => (100 / 2) km
-            Some(CalcResult::Quantity(lhs / rhs, unit.clone()))
+            // 100 / 2km => (100 / 2) km
+            let mut new_unit = unit.pow(-1);
+
+            let denormalized_num = unit.denormalize(rhs);
+            let num_part = new_unit.normalize(&(lhs / &denormalized_num));
+            Some(CalcResult::Quantity(num_part, new_unit.clone()))
         }
         (CalcResult::Number(lhs), CalcResult::Percentage(rhs)) => {
             // 100 / 50%
@@ -781,6 +786,10 @@ mod tests {
         test("1 ft * lbf * 2 rad", "2 ft lbf rad");
         test("1 ft * lbf * 2 rad to in*lbf*rad", "24 in lbf rad");
         test(
+            "(2/3)m",
+            "0.66666666666666666666666666666666666666666666666667 m",
+        );
+        test(
             "2/3m",
             "0.66666666666666666666666666666666666666666666666667 m",
         );
@@ -920,9 +929,13 @@ mod tests {
 
     #[test]
     fn test_quant_vs_non_quant() {
-        test("12 km/h * 5 ", "60 km / h");
-        test("200kg alma + 300 kg banán ", "500 kg");
-        test("(1 alma + 4 körte) * 3 ember", "15");
+        // test("12 km/h * 5 ", "60 km / h");
+        // test("200kg alma + 300 kg banán ", "500 kg");
+        // test("(1 alma + 4 körte) * 3 ember", "15");
+
+        test("3000/50ml", "60 ml");
+        test("3000/(50ml)", "60 ml^-1");
+        test("1/(2km/h)", "0.5 h / km");
     }
 
     #[test]
