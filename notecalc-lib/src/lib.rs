@@ -3,6 +3,7 @@
 
 use crate::calc::{evaluate_tokens, CalcResult};
 use crate::editor::{Editor, InputKey, InputModifiers};
+use crate::renderer::render_result;
 use crate::shunting_yard::ShuntingYard;
 use crate::token_parser::{OperatorTokenType, Token, TokenParser, TokenType};
 use crate::units::consts::{create_prefixes, init_units};
@@ -351,6 +352,33 @@ impl<'a> RenderBuckets<'a> {
     pub fn draw_char(&mut self, layer: Layer, x: usize, y: usize, ch: char) {
         self.custom_commands[layer as usize].push(OutputMessage::RenderChar(x, y, ch));
     }
+
+    pub fn draw_text(&mut self, layer: Layer, x: usize, y: usize, text: &'static [char]) {
+        self.custom_commands[layer as usize].push(OutputMessage::RenderText(RenderTextMsg {
+            text,
+            row: y,
+            column: y,
+        }));
+    }
+}
+
+#[derive(Eq, PartialEq, Copy, Clone)]
+pub enum ResultFormat {
+    Bin,
+    Dec,
+    Hex,
+}
+
+pub struct LineData {
+    result_format: ResultFormat,
+}
+
+impl Default for LineData {
+    fn default() -> Self {
+        LineData {
+            result_format: ResultFormat::Dec,
+        }
+    }
 }
 
 pub struct NoteCalcApp<'a> {
@@ -358,6 +386,7 @@ pub struct NoteCalcApp<'a> {
     units: Units<'a>,
     pub editor: Editor,
     variables: Vec<String>,
+    line_datas: Vec<LineData>,
     prefixes: &'static UnitPrefixes,
     result_buffer: [char; 1024],
 }
@@ -366,14 +395,20 @@ impl<'a> NoteCalcApp<'a> {
     pub fn new(client_width: usize) -> NoteCalcApp<'a> {
         let prefixes: &'static UnitPrefixes = Box::leak(Box::new(create_prefixes()));
         let units = Units::new(&prefixes);
+        let mut line_datas = Vec::with_capacity(32);
         NoteCalcApp {
             client_width,
             prefixes,
             units,
-            editor: Editor::new(MAX_EDITOR_WIDTH),
+            editor: Editor::new(MAX_EDITOR_WIDTH, &mut line_datas),
+            line_datas,
             variables: Vec::with_capacity(16),
             result_buffer: [0 as char; 1024],
         }
+    }
+
+    pub fn set_content(&mut self, text: &str) {
+        return self.editor.set_content(text, &mut self.line_datas);
     }
 
     pub fn render(&mut self) -> RenderBuckets {
@@ -389,6 +424,16 @@ impl<'a> NoteCalcApp<'a> {
         let mut result_str_positions: SmallVec<[Option<(usize, usize)>; 256]> =
             SmallVec::with_capacity(256);
         let mut longest_row_len = 0;
+
+        // result gutter
+        render_buckets.set_color(Layer::BehindText, [242, 242, 242, 255]);
+        render_buckets.draw_rect(
+            Layer::BehindText,
+            result_gutter_x,
+            0,
+            RIGHT_GUTTER_WIDTH,
+            255,
+        );
 
         for (row_index, line) in self.editor.lines().enumerate() {
             if line.len() > longest_row_len {
@@ -433,31 +478,15 @@ impl<'a> NoteCalcApp<'a> {
                     '…',
                 );
             }
-            let cursor_pos = self.editor.get_selection().get_cursor_pos();
-            if self.editor.show_cursor && cursor_pos.column < current_editor_width {
-                render_buckets.texts.push(RenderTextMsg {
-                    text: &['▏'],
-                    row: cursor_pos.row,
-                    column: cursor_pos.column + LEFT_GUTTER_WIDTH,
-                });
-            }
 
             let result = evaluate_tokens(&mut shunting_output_stack, &self.units);
             if let Some((result, there_was_unit_conversion)) = result {
-                let result_str = if let CalcResult::Quantity(num, unit) = &result {
-                    if there_was_unit_conversion {
-                        result.to_string()
-                    } else {
-                        let maybe_simpler = unit.simplify(&self.units, &num);
-                        if let Some(simpler) = maybe_simpler {
-                            CalcResult::Quantity(num.clone(), simpler).to_string()
-                        } else {
-                            result.to_string()
-                        }
-                    }
-                } else {
-                    result.to_string()
-                };
+                let result_str = render_result(
+                    &self.units,
+                    &result,
+                    &self.line_datas[row_index].result_format,
+                    there_was_unit_conversion,
+                );
 
                 let start = result_buffer_index;
                 for ch in result_str.chars() {
@@ -467,6 +496,23 @@ impl<'a> NoteCalcApp<'a> {
                 result_str_positions.push(Some((start, result_buffer_index)));
             } else {
                 result_str_positions.push(None);
+            }
+            match self.line_datas[row_index].result_format {
+                ResultFormat::Hex => {
+                    render_buckets.operators.push(RenderTextMsg {
+                        text: &['0', 'x'],
+                        row: row_index,
+                        column: result_gutter_x + 1,
+                    });
+                }
+                ResultFormat::Bin => {
+                    render_buckets.operators.push(RenderTextMsg {
+                        text: &['0', 'b'],
+                        row: row_index,
+                        column: result_gutter_x + 1,
+                    });
+                }
+                ResultFormat::Dec => {}
             }
         }
         for (row_i, pos) in result_str_positions.iter().enumerate() {
@@ -479,18 +525,18 @@ impl<'a> NoteCalcApp<'a> {
             }
         }
 
+        let cursor_pos = self.editor.get_selection().get_cursor_pos();
+        if self.editor.show_cursor && cursor_pos.column < current_editor_width {
+            render_buckets.texts.push(RenderTextMsg {
+                text: &['▏'],
+                row: cursor_pos.row,
+                column: cursor_pos.column + LEFT_GUTTER_WIDTH,
+            });
+        }
+
         // gutter
         render_buckets.set_color(Layer::BehindText, [242, 242, 242, 255]);
         render_buckets.draw_rect(Layer::BehindText, 0, 0, LEFT_GUTTER_WIDTH, 255);
-
-        // result gutter
-        render_buckets.draw_rect(
-            Layer::BehindText,
-            result_gutter_x,
-            0,
-            RIGHT_GUTTER_WIDTH,
-            255,
-        );
 
         // highlight current line
         render_buckets.set_color(Layer::BehindText, [0xFC, 0xFA, 0xED, 200]);
@@ -581,7 +627,26 @@ impl<'a> NoteCalcApp<'a> {
     }
 
     pub fn handle_input(&mut self, input: InputKey, modifiers: InputModifiers) {
-        self.editor.handle_input(input, modifiers);
+        if modifiers.alt && input == InputKey::Left {
+            let cur_pos = self.editor.get_selection().get_cursor_pos();
+            let new_format = match &self.line_datas[cur_pos.row].result_format {
+                ResultFormat::Bin => ResultFormat::Hex,
+                ResultFormat::Dec => ResultFormat::Bin,
+                ResultFormat::Hex => ResultFormat::Dec,
+            };
+            self.line_datas[cur_pos.row].result_format = new_format;
+        } else if modifiers.alt && input == InputKey::Right {
+            let cur_pos = self.editor.get_selection().get_cursor_pos();
+            let new_format = match &self.line_datas[cur_pos.row].result_format {
+                ResultFormat::Bin => ResultFormat::Dec,
+                ResultFormat::Dec => ResultFormat::Hex,
+                ResultFormat::Hex => ResultFormat::Bin,
+            };
+            self.line_datas[cur_pos.row].result_format = new_format;
+        } else {
+            self.editor
+                .handle_input(input, modifiers, &mut self.line_datas);
+        }
     }
 }
 

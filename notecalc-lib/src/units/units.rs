@@ -1,4 +1,5 @@
-use crate::calc::{pow, strip_trailing_zeroes, MAX_PRECISION};
+use crate::calc::{pow, MAX_PRECISION};
+use crate::renderer::strip_trailing_zeroes;
 use crate::units::consts::{
     get_base_unit_for, init_aliases, init_units, BASE_UNIT_DIMENSIONS, BASE_UNIT_DIMENSION_COUNT,
 };

@@ -8,8 +8,10 @@ use smallvec::alloc::fmt::{Error, Formatter};
 use smallvec::SmallVec;
 
 use crate::matrix::MatrixData;
+use crate::token_parser::TokenType::StringLiteral;
 use crate::token_parser::{OperatorTokenType, Token, TokenType};
 use crate::units::units::{UnitOutput, Units};
+use std::io::BufWriter;
 
 // it is limited by bigdecimal crate :(
 // TODO: download and mofiy the crate
@@ -27,59 +29,6 @@ pub enum CalcResult<'units> {
     Percentage(BigDecimal),
     Quantity(BigDecimal, UnitOutput<'units>),
     Matrix(MatrixData<'units>),
-}
-
-impl<'a> std::fmt::Display for CalcResult<'a> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        fn num_to_string(f: &mut Formatter<'_>, num: &BigDecimal) -> std::fmt::Result {
-            let num = if num.is_integer() {
-                num.with_scale(0)
-            } else {
-                strip_trailing_zeroes(num)
-            };
-
-            f.write_str(&num.to_string())
-        }
-        match self {
-            CalcResult::Number(num) => {
-                // TODO optimize
-                num_to_string(f, num)?;
-            }
-            CalcResult::Percentage(num) => {
-                num_to_string(f, num)?;
-                f.write_char('%')?;
-            }
-            CalcResult::Quantity(num, unit) => {
-                num_to_string(f, dbg!(&unit.denormalize(num)))?;
-                f.write_char(' ')?;
-                f.write_str(&unit.to_string())?;
-            }
-            CalcResult::Matrix(mat) => {
-                if !mat.is_vector() {
-                    f.write_char('[')?;
-                }
-                for (col_i, cols) in mat.cols.iter().enumerate() {
-                    if col_i > 0 {
-                        f.write_char(',')?;
-                        f.write_char(' ')?;
-                    }
-                    f.write_char('[')?;
-                    for (row_i, cell) in cols.iter().enumerate() {
-                        if row_i > 0 {
-                            f.write_char(',')?;
-                            f.write_char(' ')?;
-                        }
-                        f.write_str(&cell.to_string())?;
-                    }
-                    f.write_char(']')?;
-                }
-                if !mat.is_vector() {
-                    f.write_char(']')?;
-                }
-            }
-        }
-        Ok(())
-    }
 }
 
 pub fn evaluate_tokens<'text_ptr, 'units>(
@@ -590,8 +539,7 @@ fn divide_op<'a>(lhs: &CalcResult<'a>, rhs: &CalcResult<'a>) -> Option<CalcResul
             Some(CalcResult::Number(lhs / rhs))
         }
         (CalcResult::Number(lhs), CalcResult::Quantity(rhs, unit)) => {
-            // 100 / 2km => (100 / 2) km
-            // 100 / 2km => (100 / 2) km
+            // 100 / 2km => 100 / (2 km)
             let mut new_unit = unit.pow(-1);
 
             let denormalized_num = unit.denormalize(rhs);
@@ -662,25 +610,6 @@ pub fn pow(this: BigDecimal, mut exp: i64) -> BigDecimal {
     }
 }
 
-// TODO: really hack and ugly and slow
-pub fn strip_trailing_zeroes(num: &BigDecimal) -> BigDecimal {
-    let (_, mut scale) = num.as_bigint_and_exponent();
-    let mut result = num.clone();
-    loop {
-        if scale == 0 {
-            break;
-        }
-        let scaled = result.with_scale(scale - 1);
-        if &scaled == num {
-            result = scaled;
-        } else {
-            break;
-        }
-        scale -= 1;
-    }
-    return result;
-}
-
 pub fn dec(num: i64) -> BigDecimal {
     BigDecimal::from_i64(num).unwrap()
 }
@@ -702,10 +631,11 @@ mod tests {
     use crate::shunting_yard::tests::*;
     use crate::shunting_yard::ShuntingYard;
     use crate::token_parser::TokenParser;
-    use crate::units;
     use crate::units::consts::{create_prefixes, init_units};
+    use crate::{units, ResultFormat};
 
     use super::*;
+    use crate::renderer::render_result;
 
     fn test_tokens(text: &str, expected_tokens: &[Token]) {
         println!("===================================================");
@@ -736,22 +666,22 @@ mod tests {
             crate::shunting_yard::tests::do_shunting_yard(&temp, &units, &mut tokens);
         let result = evaluate_tokens(&mut shunting_output, &units);
         dbg!(&result);
-        if let Some((CalcResult::Quantity(num, unit), there_was_unit_conversion)) = result {
-            if there_was_unit_conversion {
-                assert_eq!(expected, CalcResult::Quantity(num, unit).to_string());
-            } else {
-                let maybe_simpler = unit.simplify(&units, &num);
-                if let Some(simpler) = maybe_simpler {
-                    assert_eq!(expected, CalcResult::Quantity(num, simpler).to_string());
-                } else {
-                    dbg!((&num, &unit));
-                    assert_eq!(expected, CalcResult::Quantity(num, unit).to_string());
-                }
-            }
+        if let Some((CalcResult::Quantity(num, unit), there_was_unit_conversion)) = &result {
+            assert_eq!(
+                expected,
+                render_result(
+                    &units,
+                    &result.as_ref().unwrap().0,
+                    &ResultFormat::Dec,
+                    *there_was_unit_conversion
+                )
+            );
         } else {
             assert_eq!(
                 expected,
-                result.map(|it| it.0.to_string()).unwrap_or(" ".to_string())
+                result
+                    .map(|it| render_result(&units, &it.0, &ResultFormat::Dec, false))
+                    .unwrap_or(" ".to_string())
             );
         }
     }
@@ -791,7 +721,7 @@ mod tests {
         );
         test(
             "2/3m",
-            "0.66666666666666666666666666666666666666666666666667 m",
+            "0.66666666666666666666666666666666666666666666666667 m^-1",
         );
 
         test("123 N to (kg m)/s^2", "123 (kg m) / s^2");
@@ -933,7 +863,8 @@ mod tests {
         // test("200kg alma + 300 kg banán ", "500 kg");
         // test("(1 alma + 4 körte) * 3 ember", "15");
 
-        test("3000/50ml", "60 ml");
+        test("3000/50ml", "60 ml^-1");
+        test("(3000/50)ml", "60 ml");
         test("3000/(50ml)", "60 ml^-1");
         test("1/(2km/h)", "0.5 h / km");
     }
