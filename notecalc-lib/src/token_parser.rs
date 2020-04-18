@@ -1,12 +1,14 @@
+use crate::calc::CalcResult;
 use crate::units::units::{UnitOutput, Units};
-use bigdecimal::{BigDecimal, Num};
+use bigdecimal::{BigDecimal, Num, Zero};
+use std::collections::HashMap;
 use std::str::FromStr;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum TokenType<'units> {
-    // UnitOfMeasure(&'text_pr [char], UnitOutput<'units>),
     StringLiteral,
-    Variable,
+    // index to the variable vec
+    Variable(usize),
     NumberLiteral(BigDecimal),
     Operator(OperatorTokenType<'units>),
 }
@@ -45,12 +47,13 @@ pub enum OperatorTokenType<'units> {
     ParenOpen,
     ParenClose,
     BracketOpen,
+    Semicolon,
     BracketClose,
     ShiftLeft,
     ShiftRight,
     Assign,
     UnitConverter,
-    Matrix { arg_count: usize },
+    Matrix { row_count: usize, col_count: usize },
     Unit(UnitOutput<'units>),
 }
 
@@ -82,7 +85,7 @@ impl<'a> OperatorTokenType<'a> {
             OperatorTokenType::Assign => 0,
             OperatorTokenType::UnitConverter => 0,
             OperatorTokenType::Unit(_) => 3,
-            OperatorTokenType::Comma => 0,
+            OperatorTokenType::Semicolon | OperatorTokenType::Comma => 0,
             OperatorTokenType::BracketOpen => 0,
             OperatorTokenType::BracketClose => 0,
             OperatorTokenType::Matrix { .. } => 0,
@@ -111,7 +114,7 @@ impl<'a> OperatorTokenType<'a> {
             OperatorTokenType::UnitConverter => Assoc::Left,
             OperatorTokenType::Unit(_) => Assoc::Left,
             // Right, so 1 comma won't replace an other on the operator stack
-            OperatorTokenType::Comma => Assoc::Right,
+            OperatorTokenType::Semicolon | OperatorTokenType::Comma => Assoc::Right,
             OperatorTokenType::BracketOpen => Assoc::Left,
             OperatorTokenType::BracketClose => Assoc::Left,
             OperatorTokenType::Matrix { .. } => Assoc::Left,
@@ -124,9 +127,8 @@ pub struct TokenParser {}
 impl TokenParser {
     pub fn parse_line<'text_ptr, 'units>(
         line: &'text_ptr [char],
-        variable_names: &[String],
+        variable_names: &[(&'text_ptr [char], CalcResult)],
         function_names: &[&str],
-        // dst: &'text_ptr mut Vec<Token<'text_ptr, 'units>>,
         dst: &mut Vec<Token<'text_ptr, 'units>>,
         units: &'units Units,
     ) {
@@ -137,24 +139,19 @@ impl TokenParser {
         let mut index = 0;
         let mut can_be_unit = false;
         while index < line.len() {
-            if let Some(token) = TokenParser::try_extract_unit(&line[index..], units, can_be_unit)
-                .or_else(|| {
+            let parse_result = TokenParser::try_extract_variable_name(
+                &line[index..],
+                variable_names,
+            )
+            .or_else(|| {
+                TokenParser::try_extract_unit(&line[index..], units, can_be_unit).or_else(|| {
                     TokenParser::try_extract_operator(&line[index..]).or_else(|| {
                         TokenParser::try_extract_number_literal(&line[index..])
-                            .map(|it| Token {
-                                typ: TokenType::NumberLiteral(it.0),
-                                ptr: it.1,
-                            })
-                            .or_else(|| {
-                                TokenParser::try_extract_variable_name(
-                                    &line[index..],
-                                    variable_names,
-                                )
-                                .or_else(|| TokenParser::try_extract_string_literal(&line[index..]))
-                            })
+                            .or_else(|| TokenParser::try_extract_string_literal(&line[index..]))
                     })
                 })
-            {
+            });
+            if let Some(token) = parse_result {
                 match &token.typ {
                     // Token::UnitOfMeasure(ptr, ..) => {
                     //     can_be_unit = false;
@@ -173,11 +170,12 @@ impl TokenParser {
                         index += token.ptr.len()
                     }
                     TokenType::Operator(typ) => {
+                        // TODO: what is this can be unit??
                         can_be_unit = matches!(typ, OperatorTokenType::ParenClose)
                             || matches!(typ, OperatorTokenType::UnitConverter);
                         index += token.ptr.len()
                     }
-                    TokenType::Variable => {
+                    TokenType::Variable(_) => {
                         can_be_unit = true;
                         index += token.ptr.len()
                     }
@@ -189,9 +187,9 @@ impl TokenParser {
         }
     }
 
-    pub fn try_extract_number_literal<'text_ptr>(
+    pub fn try_extract_number_literal<'text_ptr, 'unit>(
         str: &'text_ptr [char],
-    ) -> Option<(BigDecimal, &'text_ptr [char])> {
+    ) -> Option<Token<'text_ptr, 'unit>> {
         let mut number_str = [b'0'; 32];
         let mut number_str_index = 0;
         let mut i = 0;
@@ -231,7 +229,10 @@ impl TokenParser {
                     2,
                 )
                 .ok()?;
-                Some((num.into(), &str[0..i]))
+                Some(Token {
+                    typ: TokenType::NumberLiteral(num.into()),
+                    ptr: &str[0..i],
+                })
             } else {
                 None
             }
@@ -267,7 +268,10 @@ impl TokenParser {
                     16,
                 )
                 .ok()?;
-                Some((num.into(), &str[0..i]))
+                Some(Token {
+                    typ: TokenType::NumberLiteral(num.into()),
+                    ptr: &str[0..i],
+                })
             } else {
                 None
             }
@@ -345,12 +349,14 @@ impl TokenParser {
                     std::str::from_utf8_unchecked(&number_str[0..number_str_index])
                 })
                 .ok()?;
-                Some((
-                    multiplier
-                        .map(|it| BigDecimal::from(it) * &num)
-                        .unwrap_or(num),
-                    &str[0..i],
-                ))
+                Some(Token {
+                    typ: TokenType::NumberLiteral(
+                        multiplier
+                            .map(|it| BigDecimal::from(it) * &num)
+                            .unwrap_or(num),
+                    ),
+                    ptr: &str[0..i],
+                })
             } else {
                 None
             }
@@ -385,17 +391,33 @@ impl TokenParser {
 
     fn try_extract_variable_name<'text_ptr, 'units>(
         str: &'text_ptr [char],
-        variable_names: &[String],
+        vars: &[(&'text_ptr [char], CalcResult)],
     ) -> Option<Token<'text_ptr, 'units>> {
-        'asd: for var_name in variable_names {
-            for (i, ch) in var_name.chars().enumerate() {
-                if i >= str.len() || str[i] != ch {
+        let mut longest_match_index = 0;
+        let mut longest_match = 0;
+        'asd: for (var_index, (var_name, _)) in vars.iter().enumerate() {
+            for (i, ch) in var_name.iter().enumerate() {
+                if i >= str.len() || str[i] != *ch {
                     continue 'asd;
                 }
             }
+            // only full match allowed e.g. if there is variable 'b', it should not match "b0" as 'b' and '0'
+            let not_full_match = str
+                .get(var_name.len())
+                .map(|it| it.is_alphanumeric())
+                .unwrap_or(false);
+            if not_full_match {
+                continue 'asd;
+            }
+            if var_name.len() > longest_match {
+                longest_match = var_name.len();
+                longest_match_index = var_index;
+            }
+        }
+        if longest_match > 0 {
             return Some(Token {
-                typ: TokenType::Variable,
-                ptr: &str[0..var_name.chars().count()],
+                typ: TokenType::Variable(longest_match_index),
+                ptr: &str[0..longest_match],
             });
         }
         return None;
@@ -462,6 +484,7 @@ impl TokenParser {
             '[' => op(OperatorTokenType::BracketOpen, str, 1),
             ']' => op(OperatorTokenType::BracketClose, str, 1),
             ',' => op(OperatorTokenType::Comma, str, 1),
+            ';' => op(OperatorTokenType::Semicolon, str, 1),
             _ => {
                 if str.starts_with(&['t', 'o', ' ']) {
                     op(OperatorTokenType::UnitConverter, str, 2)
@@ -516,7 +539,7 @@ mod tests {
             let temp = str.chars().collect::<Vec<_>>();
             let prefixes = create_prefixes();
             let units = Units::new(&prefixes);
-            TokenParser::parse_line(&temp, &[], &[], &mut vec, &units);
+            TokenParser::parse_line(&temp, &Vec::new(), &[], &mut vec, &units);
             match vec.get(0) {
                 Some(Token {
                     ptr,
@@ -534,7 +557,7 @@ mod tests {
             let temp = str.chars().collect::<Vec<_>>();
             let prefixes = create_prefixes();
             let units = Units::new(&prefixes);
-            TokenParser::parse_line(&temp, &[], &[], &mut vec, &units);
+            TokenParser::parse_line(&temp, &Vec::new(), &[], &mut vec, &units);
             match vec.get(0) {
                 Some(Token {
                     ptr,
@@ -568,13 +591,17 @@ mod tests {
         test_parse_f("123.456.3", 123.456);
     }
 
-    fn test(text: &str, expected_tokens: &[Token]) {
+    fn test_vars(var_names: &[&'static [char]], text: &str, expected_tokens: &[Token]) {
+        let var_names: Vec<(&[char], CalcResult)> = var_names
+            .into_iter()
+            .map(|it| (*it, CalcResult::Number(BigDecimal::zero())))
+            .collect();
         println!("{}", text);
         let mut vec = vec![];
         let temp = text.chars().collect::<Vec<_>>();
         let prefixes = create_prefixes();
         let units = Units::new(&prefixes);
-        TokenParser::parse_line(&temp, &[], &[], &mut vec, &units);
+        TokenParser::parse_line(&temp, &var_names, &[], &mut vec, &units);
         assert_eq!(
             expected_tokens.len(),
             vec.len(),
@@ -605,6 +632,12 @@ mod tests {
                     let expected_chars = str_slice.chars().collect::<Vec<char>>();
                     assert_eq!(expected_chars.as_slice(), actual_token.ptr)
                 }
+                (TokenType::Variable(_), TokenType::Variable(_)) => {
+                    // expected_op is an &str
+                    let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
+                    let expected_chars = str_slice.chars().collect::<Vec<char>>();
+                    assert_eq!(expected_chars.as_slice(), actual_token.ptr)
+                }
                 // (Token::UnitOfMeasure(expected_op, ..), Token::UnitOfMeasure(actual_op, ..)) => {
 
                 // }
@@ -620,6 +653,10 @@ mod tests {
                 ),
             }
         }
+    }
+
+    fn test(text: &str, expected_tokens: &[Token]) {
+        test_vars(&[], text, expected_tokens);
     }
 
     #[test]
@@ -999,6 +1036,25 @@ mod tests {
         );
 
         test(
+            "[1, 2; 3, 4]",
+            &[
+                op(OperatorTokenType::BracketOpen),
+                num(1),
+                op(OperatorTokenType::Comma),
+                str(" "),
+                num(2),
+                op(OperatorTokenType::Semicolon),
+                str(" "),
+                num(3),
+                op(OperatorTokenType::Comma),
+                str(" "),
+                num(4),
+                op(OperatorTokenType::BracketClose),
+            ],
+        );
+
+        // it becomes invalid during validation
+        test(
             "[[1, 2], [3, 4]]",
             &[
                 op(OperatorTokenType::BracketOpen),
@@ -1113,24 +1169,71 @@ mod tests {
 
     #[test]
     fn test_that_strings_are_parsed_fully_so_b0_is_not_equal_to_b_and_0() {
-        // TODO: wait for variables
-        // test(
-        //     "b = b0 + 100",
-        //     &[
-        //         str("b"),
-        //         str(" "),
-        //         // TODO: when we have variable names, it will be op not string
-        //         // op(OperatorTokenType::Assign),
-        //         str("="),
-        //         str(" "),
-        //         str("b0"),
-        //         str(" "),
-        //         // todo same
-        //         // op(OperatorTokenType::Add),
-        //         str("+"),
-        //         str(" "),
-        //         num(100),
-        //     ],
-        // );
+        test_vars(
+            &[&['b'], &['b', '0']],
+            "b0 + 100",
+            &[
+                var("b0"),
+                str(" "),
+                op(OperatorTokenType::Add),
+                str(" "),
+                num(100),
+            ],
+        );
+
+        test_vars(
+            &[&['b'], &['b', '0']],
+            "b = b0 + 100",
+            &[
+                var("b"),
+                str(" "),
+                op(OperatorTokenType::Assign),
+                str(" "),
+                var("b0"),
+                str(" "),
+                op(OperatorTokenType::Add),
+                str(" "),
+                num(100),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_variables() {
+        test_vars(
+            &[&['1', '2', ' ', 'a', 'l', 'm', 'a']],
+            "3 + 12 alma",
+            &[
+                num(3),
+                str(" "),
+                op(OperatorTokenType::Add),
+                str(" "),
+                var("12 alma"),
+            ],
+        );
+
+        test_vars(
+            &[],
+            "12 = 13",
+            &[
+                num(12),
+                str(" "),
+                op(OperatorTokenType::Assign),
+                str(" "),
+                num(13),
+            ],
+        );
+
+        test_vars(
+            &[&['v', 'a', 'r', '(', '1', '2', '*', '4', ')']],
+            "13 * var(12*4)",
+            &[
+                num(13),
+                str(" "),
+                op(OperatorTokenType::Mult),
+                str(" "),
+                var("var(12*4)"),
+            ],
+        );
     }
 }

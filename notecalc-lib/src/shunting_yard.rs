@@ -21,14 +21,27 @@ struct ValidationState {
     had_operator: bool,
     neg: bool,
     // output stack start and end index
+    last_valid_input_token_range: Option<(usize, usize)>,
     last_valid_output_range: Option<(usize, usize)>,
+    had_assign_op: bool,
+    assign_op_input_token_pos: Option<usize>,
+    had_non_ws_string_literal: bool,
+    matrix_start_input_pos: usize,
+    matrix_row_count: usize,
+    matrix_prev_row_len: Option<usize>,
+    matrix_current_row_len: usize,
 }
 
 impl ValidationState {
     fn close_valid_range(&mut self, output_stack_len: usize, token_index: isize) {
         self.first_nonvalidated_token_index = token_index as usize + 1;
+        self.last_valid_input_token_range =
+            Some((self.valid_range_start_token_index, token_index as usize));
         self.last_valid_output_range =
             Some((self.tmp_output_stack_start_index, output_stack_len - 1));
+        self.matrix_row_count = 1;
+        self.matrix_prev_row_len = None;
+        self.matrix_current_row_len = 1;
     }
 
     fn reset(&mut self, output_stack_index: usize, token_index: isize) {
@@ -41,11 +54,17 @@ impl ValidationState {
         self.prev_token_type = ValidationTokenType::Nothing;
         self.neg = false;
         self.had_operator = false;
+        self.matrix_row_count = 1;
+        self.matrix_prev_row_len = None;
+        self.matrix_current_row_len = 1;
     }
 
     fn new() -> ValidationState {
         ValidationState {
+            matrix_start_input_pos: 0,
+            had_non_ws_string_literal: false,
             last_valid_output_range: None,
+            last_valid_input_token_range: None,
             expect_expression: true,
             open_brackets: 0,
             valid_range_start_token_index: 0,
@@ -55,11 +74,23 @@ impl ValidationState {
             first_nonvalidated_token_index: 0,
             neg: false,
             had_operator: false,
+            had_assign_op: false,
+            assign_op_input_token_pos: None,
+            matrix_row_count: 1,
+            matrix_prev_row_len: None,
+            matrix_current_row_len: 1,
         }
     }
 
     fn can_be_valid_closing_token(&self) -> bool {
         self.open_brackets == 0 && self.open_parens == 0
+    }
+
+    fn is_valid_assignment_expression(&self) -> bool {
+        return self
+            .assign_op_input_token_pos
+            .map(|it| it == self.valid_range_start_token_index)
+            .unwrap_or(false);
     }
 }
 
@@ -79,14 +110,18 @@ impl ShuntingYard {
         let mut v = ValidationState::new();
         let mut input_index: isize = -1;
 
-        let mut matrix_start_text_pos = None;
-
         while input_index + 1 < tokens.len() as isize {
             input_index += 1; // it is here so it is incremented always when "continue"
             let input_token = &tokens[input_index as usize];
             dbg!(&input_token);
             match &input_token.typ {
                 TokenType::StringLiteral => {
+                    if !input_token.ptr[0].is_ascii_whitespace() {
+                        v.had_non_ws_string_literal = true;
+                    }
+                    if v.valid_range_start_token_index == input_index as usize {
+                        v.valid_range_start_token_index += 1;
+                    }
                     // it ignores strings
                     if false {
                         // if function_names.iter().any(|it| it == str) {
@@ -106,23 +141,17 @@ impl ShuntingYard {
                         if v.expect_expression || v.open_parens == 0 {
                             dbg!("error1");
                             operator_stack.clear();
-                            ShuntingYard::set_tokens_to_string(
-                                tokens,
-                                v.first_nonvalidated_token_index,
-                                input_index,
-                            );
-                            v.reset(output_stack.len(), input_index);
+                            v.reset(output_stack.len(), input_index + 1);
                             continue;
                         } else {
                             v.expect_expression = false;
                             v.open_parens -= 1;
                             v.prev_token_type = ValidationTokenType::Expr;
                         }
-                        let _ = ShuntingYard::send_anything_until_opening_bracket(
+                        ShuntingYard::send_anything_until_opening_bracket(
                             &mut operator_stack,
                             output_stack,
                             &OperatorTokenType::ParenOpen,
-                            0,
                         );
                         if v.can_be_valid_closing_token() {
                             dbg!("close");
@@ -134,23 +163,27 @@ impl ShuntingYard {
                         }
                     }
                     OperatorTokenType::BracketOpen => {
+                        if v.open_brackets > 0 {
+                            dbg!("error [");
+                            operator_stack.clear();
+                            v.reset(output_stack.len(), input_index + 1);
+                            continue;
+                        }
                         v.open_brackets += 1;
                         v.prev_token_type = ValidationTokenType::Nothing;
+                        v.matrix_start_input_pos = input_index as usize;
                         operator_stack.push(op.clone());
-                        if matrix_start_text_pos.is_none() {
-                            matrix_start_text_pos = Some(input_token.ptr);
-                        }
                     }
                     OperatorTokenType::BracketClose => {
-                        if v.expect_expression || v.open_brackets <= 0 {
-                            dbg!("error2");
+                        if v.expect_expression
+                            || v.open_brackets <= 0
+                            || v.matrix_prev_row_len
+                                .map(|it| it != v.matrix_current_row_len)
+                                .unwrap_or(false)
+                        {
+                            dbg!("error ']'");
                             operator_stack.clear();
-                            ShuntingYard::set_tokens_to_string(
-                                tokens,
-                                v.first_nonvalidated_token_index,
-                                input_index,
-                            );
-                            v.reset(output_stack.len(), input_index);
+                            v.reset(output_stack.len(), input_index + 1);
                             continue;
                         } else {
                             v.expect_expression = false;
@@ -158,53 +191,33 @@ impl ShuntingYard {
                             v.prev_token_type = ValidationTokenType::Expr;
                         }
                         // todo számmal térjen vissza ne tokentypeal..
-                        if let Some(comma_count) = ShuntingYard::send_anything_until_opening_bracket(
+                        ShuntingYard::send_anything_until_opening_bracket(
                             &mut operator_stack,
                             output_stack,
                             &OperatorTokenType::BracketOpen,
-                            0,
-                        ) {
-                            let matrix_token_type =
-                                TokenType::Operator(OperatorTokenType::Matrix {
-                                    arg_count: comma_count + 1,
-                                });
-                            output_stack.push(matrix_token_type.clone());
+                        );
+                        let matrix_token_type = TokenType::Operator(OperatorTokenType::Matrix {
+                            row_count: v.matrix_row_count,
+                            col_count: v.matrix_current_row_len,
+                        });
+                        output_stack.push(matrix_token_type.clone());
 
-                            if v.can_be_valid_closing_token() {
-                                dbg!("close");
-                                // Matrix will point to the whole output,
-                                // so we can highlight only the first/last char if we want
-                                // (the brackets)
-                                unsafe {
-                                    let char_count = input_token
-                                        .ptr
-                                        .as_ptr()
-                                        .offset_from(matrix_start_text_pos.unwrap().as_ptr())
-                                        as usize;
-                                    tokens.insert(
-                                        input_index as usize + 1,
-                                        Token {
-                                            ptr: std::mem::transmute(
-                                                std::ptr::slice_from_raw_parts(
-                                                    matrix_start_text_pos.unwrap().as_ptr(),
-                                                    char_count + 1,
-                                                ),
-                                            ),
-                                            typ: matrix_token_type.clone(),
-                                        },
-                                    );
-                                }
-                                matrix_start_text_pos = None;
-                                // skip Matrix Token
-                                input_index += 1;
-                                ShuntingYard::send_everything_to_output(
-                                    &mut operator_stack,
-                                    output_stack,
-                                );
-                                v.close_valid_range(output_stack.len(), input_index);
-                            }
-                        } else {
-                            panic!()
+                        if v.can_be_valid_closing_token() {
+                            dbg!("close ']'");
+                            tokens.insert(
+                                v.matrix_start_input_pos,
+                                Token {
+                                    ptr: &[],
+                                    typ: matrix_token_type.clone(),
+                                },
+                            );
+                            // we inserted one element so increase it
+                            input_index += 1;
+                            ShuntingYard::send_everything_to_output(
+                                &mut operator_stack,
+                                output_stack,
+                            );
+                            v.close_valid_range(output_stack.len(), input_index);
                         }
                     }
                     OperatorTokenType::Sub => {
@@ -216,12 +229,7 @@ impl ShuntingYard {
                             if !v.expect_expression {
                                 dbg!("error3");
                                 operator_stack.clear();
-                                ShuntingYard::set_tokens_to_string(
-                                    tokens,
-                                    v.first_nonvalidated_token_index,
-                                    input_index,
-                                );
-                                v.reset(output_stack.len(), input_index);
+                                v.reset(output_stack.len(), input_index + 1);
                                 continue;
                             } else if ShuntingYard::get_next_nonstring_token(
                                 tokens,
@@ -252,12 +260,7 @@ impl ShuntingYard {
                             if !v.expect_expression {
                                 dbg!("error4");
                                 operator_stack.clear();
-                                ShuntingYard::set_tokens_to_string(
-                                    tokens,
-                                    v.first_nonvalidated_token_index,
-                                    input_index,
-                                );
-                                v.reset(output_stack.len(), input_index);
+                                v.reset(output_stack.len(), input_index + 1);
                                 continue;
                             } else if ShuntingYard::get_next_nonstring_token(
                                 tokens,
@@ -277,26 +280,62 @@ impl ShuntingYard {
                         }
                     }
                     OperatorTokenType::Assign => {
-                        // the left side of the '=' might be a variable name like 'km' or 'm'
-                        // don't put '=' on the stack and remove the lhs of '=' from it
-                        output_stack.pop();
+                        if v.had_assign_op || !v.had_non_ws_string_literal {
+                            dbg!("error assignment");
+                            if let Some(assign_op_input_token_pos) = v.assign_op_input_token_pos {
+                                tokens[assign_op_input_token_pos].typ = TokenType::StringLiteral;
+                            }
+                            v.assign_op_input_token_pos = None;
+                            // make everything to string
+                            ShuntingYard::set_tokens_to_string(tokens, 0, input_index as usize);
+                            v.reset(output_stack.len(), input_index + 1);
+                        } else {
+                            v.had_assign_op = true;
+                            v.assign_op_input_token_pos = Some(input_index as usize);
+                            dbg!("assignment");
+                            // assignment op should be part of valid tokens
+                            v.reset(output_stack.len(), input_index);
+                            ShuntingYard::send_to_output(op.clone(), output_stack);
+                        }
+                        operator_stack.clear();
+                        continue;
                     }
                     OperatorTokenType::Comma => {
-                        if v.open_brackets == 0 && v.open_parens == 0 {
-                            dbg!("error5");
+                        if v.open_brackets == 0 && v.open_parens == 0
+                            || (v.open_brackets > 0
+                                && v.matrix_prev_row_len
+                                    .map(|it| v.matrix_current_row_len + 1 > it)
+                                    .unwrap_or(false))
+                        {
+                            dbg!("error ','");
                             operator_stack.clear();
-                            ShuntingYard::set_tokens_to_string(
-                                tokens,
-                                v.first_nonvalidated_token_index,
-                                input_index,
-                            );
-                            v.reset(output_stack.len(), input_index);
+                            v.reset(output_stack.len(), input_index + 1);
                             continue;
                         }
                         v.prev_token_type = ValidationTokenType::Nothing;
                         v.expect_expression = true;
+                        if v.open_brackets > 0 {
+                            v.matrix_current_row_len += 1;
+                        }
                         ShuntingYard::operator_rule(op, &mut operator_stack, output_stack);
-                        operator_stack.push(op.clone());
+                    }
+                    OperatorTokenType::Semicolon => {
+                        if v.open_brackets == 0
+                            || v.matrix_prev_row_len
+                                .map(|it| v.matrix_current_row_len != it)
+                                .unwrap_or(false)
+                        {
+                            dbg!("error ';'");
+                            operator_stack.clear();
+                            v.reset(output_stack.len(), input_index + 1);
+                            continue;
+                        }
+                        v.prev_token_type = ValidationTokenType::Nothing;
+                        v.expect_expression = true;
+                        v.matrix_prev_row_len = Some(v.matrix_current_row_len);
+                        v.matrix_current_row_len = 1;
+                        v.matrix_row_count += 1;
+                        ShuntingYard::operator_rule(op, &mut operator_stack, output_stack);
                     }
                     OperatorTokenType::Perc | OperatorTokenType::Unit(_) => {
                         ShuntingYard::send_to_output(op.clone(), output_stack);
@@ -360,12 +399,7 @@ impl ShuntingYard {
                             dbg!("error6");
                             dbg!(&v);
                             operator_stack.clear();
-                            ShuntingYard::set_tokens_to_string(
-                                tokens,
-                                v.first_nonvalidated_token_index,
-                                input_index,
-                            );
-                            v.reset(output_stack.len(), input_index);
+                            v.reset(output_stack.len(), input_index + 1);
                             continue;
                         }
                         v.had_operator = true;
@@ -382,11 +416,6 @@ impl ShuntingYard {
                         dbg!(&operator_stack);
                         dbg!(&output_stack);
                         operator_stack.clear();
-                        ShuntingYard::set_tokens_to_string(
-                            tokens,
-                            v.first_nonvalidated_token_index,
-                            input_index,
-                        );
                         v.reset(output_stack.len(), input_index);
                     }
                     // TODO nézd meg muszáj e klnozni, ne me tudja ez a fv átvenni az ownershipet
@@ -431,11 +460,6 @@ impl ShuntingYard {
                             // set everything to string which is in front of this expr
                             dbg!(v.first_nonvalidated_token_index);
                             v.close_valid_range(output_stack.len(), input_index);
-                            ShuntingYard::set_tokens_to_string(
-                                tokens,
-                                0,
-                                v.valid_range_start_token_index as isize - 1,
-                            );
                         }
                     }
                     v.prev_token_type = ValidationTokenType::Expr;
@@ -444,21 +468,31 @@ impl ShuntingYard {
                 // Token::UnitOfMeasure(str, unit) => {
                 // output.push(input_token.clone());
                 // }
-                TokenType::Variable => {
+                TokenType::Variable(_var_index) => {
                     if !v.expect_expression {
                         dbg!("error8");
                         operator_stack.clear();
-                        ShuntingYard::set_tokens_to_string(
-                            tokens,
-                            v.first_nonvalidated_token_index,
-                            input_index,
-                        );
-                        v.reset(output_stack.len(), input_index);
+                        v.reset(output_stack.len(), input_index + 1);
                         continue;
                     }
                     output_stack.push(input_token.typ.clone());
+                    if v.last_valid_output_range.is_none() || v.had_operator {
+                        dbg!("close variable");
+                        ShuntingYard::send_everything_to_output(&mut operator_stack, output_stack);
+                        // set everything to string which is in front of this expr
+                        v.close_valid_range(output_stack.len(), input_index);
+                    }
+                    v.prev_token_type = ValidationTokenType::Expr;
+                    v.expect_expression = false;
                 }
             }
+        }
+
+        if v.is_valid_assignment_expression() {
+            // close it
+            // set everything to string which is in front of this expr
+            v.close_valid_range(output_stack.len(), input_index);
+            ShuntingYard::set_tokens_to_string(tokens, 0, v.valid_range_start_token_index - 1);
         }
 
         for op in operator_stack.iter().rev() {
@@ -466,27 +500,27 @@ impl ShuntingYard {
         }
 
         // set everything to string which is not closed
-        if input_index >= 0 {
-            ShuntingYard::set_tokens_to_string(
-                tokens,
-                v.first_nonvalidated_token_index,
-                input_index,
-            );
+        if let Some((start, end)) = v.last_valid_input_token_range {
+            if start > 0 {
+                ShuntingYard::set_tokens_to_string(tokens, 0, start - 1);
+            }
+            ShuntingYard::set_tokens_to_string(tokens, end + 1, input_index as usize);
+        } else if !tokens.is_empty() {
+            // there is no valid range, everything is string
+            ShuntingYard::set_tokens_to_string(tokens, 0, tokens.len() - 1 as usize);
         }
-        // if (!v.can_be_valid_closing_token() || v.expect_expression) && input_index > 0 {
-        // ShuntingYard::set_tokens_to_string(tokens, v.tmp_input_token_start_index, input_index);
-        // }
 
         // keep only the valid interval
         if let Some((last_valid_start_index, last_valid_end_index)) = v.last_valid_output_range {
             output_stack.drain(last_valid_end_index + 1..);
             output_stack.drain(0..last_valid_start_index);
         } else if input_index > 0 {
+            // TODO what is this branch, can happen?
             output_stack.clear();
             ShuntingYard::set_tokens_to_string(
                 tokens,
                 v.first_nonvalidated_token_index,
-                input_index,
+                input_index as usize,
             );
         }
     }
@@ -494,12 +528,10 @@ impl ShuntingYard {
     fn set_tokens_to_string<'text_ptr, 'units>(
         tokens: &mut Vec<Token<'text_ptr, 'units>>,
         from: usize,
-        to: isize,
+        to: usize,
     ) {
-        if to >= 0 {
-            for token in tokens[from..=to as usize].iter_mut() {
-                token.typ = TokenType::StringLiteral
-            }
+        for token in tokens[from..=to].iter_mut() {
+            token.typ = TokenType::StringLiteral
         }
     }
 
@@ -567,16 +599,13 @@ impl ShuntingYard {
         operator_stack: &mut Vec<OperatorTokenType<'units>>,
         output: &mut Vec<TokenType<'units>>,
         open_paren_type: &OperatorTokenType,
-        mut arg_count: usize,
-    ) -> Option<usize> {
+    ) {
         if operator_stack.is_empty() {
-            return None;
+            return;
         }
         let top_of_op_stack = operator_stack.pop().unwrap();
         if &top_of_op_stack == open_paren_type {
-            return Some(arg_count);
-        } else if top_of_op_stack == OperatorTokenType::Comma {
-            arg_count += 1;
+            return;
         } else {
             ShuntingYard::send_to_output(top_of_op_stack, output);
         }
@@ -584,7 +613,6 @@ impl ShuntingYard {
             operator_stack,
             output,
             open_paren_type,
-            arg_count,
         );
     }
 
@@ -611,10 +639,12 @@ impl ShuntingYard {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::calc::CalcResult;
     use crate::token_parser::TokenParser;
     use crate::units::consts::{create_prefixes, init_units};
     use crate::units::units::{UnitOutput, Units};
     use bigdecimal::BigDecimal;
+    use std::collections::HashMap;
     use std::str::FromStr;
 
     pub fn num<'text_ptr, 'units>(n: i64) -> Token<'text_ptr, 'units> {
@@ -647,7 +677,7 @@ pub mod tests {
     pub fn var<'text_ptr, 'units>(op_repr: &'static str) -> Token<'text_ptr, 'units> {
         Token {
             ptr: unsafe { std::mem::transmute(op_repr) },
-            typ: TokenType::Variable,
+            typ: TokenType::Variable(0),
         }
     }
     pub fn numf<'text_ptr, 'units>(n: f64) -> Token<'text_ptr, 'units> {
@@ -705,7 +735,7 @@ pub mod tests {
                         &actual_tokens
                     )
                 }
-                (TokenType::Variable, TokenType::Variable) => {
+                (TokenType::Variable(_), TokenType::Variable(_)) => {
                     // expected_op is an &str
                     let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
                     let expected_chars = str_slice.chars().collect::<Vec<char>>();
@@ -714,7 +744,6 @@ pub mod tests {
                         .ptr
                         .iter()
                         .collect::<String>()
-                        .trim()
                         .chars()
                         .collect();
                     assert_eq!(
@@ -735,15 +764,20 @@ pub mod tests {
         text: &'text_ptr [char],
         units: &'units Units,
         tokens: &mut Vec<Token<'text_ptr, 'units>>,
+        vars: &Vec<(&'text_ptr [char], CalcResult)>,
     ) -> Vec<TokenType<'units>> {
         let mut output = vec![];
-        let vars = vec![String::from("var0"), String::from("var1")];
         TokenParser::parse_line(&text, &vars, &[], tokens, &units);
         ShuntingYard::shunting_yard(tokens, &[], &mut output);
         return output;
     }
 
-    fn test_output(text: &str, expected_tokens: &[Token]) {
+    fn test_output_vars(var_names: &[&'static [char]], text: &str, expected_tokens: &[Token]) {
+        let var_names: Vec<(&[char], CalcResult)> = var_names
+            .into_iter()
+            .map(|it| (*it, CalcResult::Number(BigDecimal::zero())))
+            .collect();
+
         println!("===================================================");
         println!("{}", text);
         let temp = text.chars().collect::<Vec<char>>();
@@ -751,7 +785,7 @@ pub mod tests {
         let mut units = Units::new(&prefixes);
         units.units = init_units(&units.prefixes);
         let mut tokens = vec![];
-        let output = do_shunting_yard(&temp, &units, &mut tokens);
+        let output = do_shunting_yard(&temp, &units, &mut tokens, &var_names);
         compare_tokens(
             expected_tokens,
             output
@@ -765,6 +799,10 @@ pub mod tests {
         );
     }
 
+    fn test_output(text: &str, expected_tokens: &[Token]) {
+        test_output_vars(&[], text, expected_tokens);
+    }
+
     fn test_tokens(text: &str, expected_tokens: &[Token]) {
         println!("===================================================");
         println!("{}", text);
@@ -772,7 +810,7 @@ pub mod tests {
         let prefixes = create_prefixes();
         let units = Units::new(&prefixes);
         let mut tokens = vec![];
-        let output = do_shunting_yard(&temp, &units, &mut tokens);
+        let output = do_shunting_yard(&temp, &units, &mut tokens, &Vec::new());
         compare_tokens(expected_tokens, &tokens);
     }
 
@@ -858,7 +896,10 @@ pub mod tests {
             "[2] + 1",
             &[
                 num(2),
-                op(OperatorTokenType::Matrix { arg_count: 1 }),
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 1,
+                }),
                 num(1),
                 op(OperatorTokenType::Add),
             ],
@@ -868,31 +909,126 @@ pub mod tests {
             &[
                 num(2),
                 num(3),
-                op(OperatorTokenType::Matrix { arg_count: 2 }),
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 2,
+                }),
                 num(1),
                 op(OperatorTokenType::Add),
+            ],
+        );
+
+        test_output(
+            "[2, 3, 4; 5, 6, 7] + 1",
+            &[
+                num(2),
+                num(3),
+                num(4),
+                num(5),
+                num(6),
+                num(7),
+                op(OperatorTokenType::Matrix {
+                    row_count: 2,
+                    col_count: 3,
+                }),
+                num(1),
+                op(OperatorTokenType::Add),
+            ],
+        );
+
+        // invalid, only 2 elements in the second row
+        test_output("[2, 3, 4; 5, 6] + 1", &[num(1)]);
+
+        // invalid
+        test_tokens(
+            "[[2, 3, 4], [5, 6, 7]] + 1",
+            &[
+                str("["),
+                str("["),
+                str("2"),
+                str(","),
+                str(" "),
+                str("3"),
+                str(","),
+                str(" "),
+                str("4"),
+                str("]"),
+                str(","),
+                str(" "),
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 3,
+                }),
+                op(OperatorTokenType::BracketOpen),
+                num(5),
+                op(OperatorTokenType::Comma),
+                str(" "),
+                num(6),
+                op(OperatorTokenType::Comma),
+                str(" "),
+                num(7),
+                op(OperatorTokenType::BracketClose),
+                str("]"),
+                str(" "),
+                str("+"),
+                str(" "),
+                str("1"),
+            ],
+        );
+
+        test_output(
+            "[1,2,3]*[4;5;6]",
+            &[
+                num(1),
+                num(2),
+                num(3),
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 3,
+                }),
+                num(4),
+                num(5),
+                num(6),
+                op(OperatorTokenType::Matrix {
+                    row_count: 3,
+                    col_count: 1,
+                }),
+                op(OperatorTokenType::Mult),
+            ],
+        );
+
+        test_tokens(
+            "[1,2,3;4,5]",
+            &[
+                str("["),
+                str("1"),
+                str(","),
+                str("2"),
+                str(","),
+                str("3"),
+                str(";"),
+                str("4"),
+                str(","),
+                str("5"),
+                str("]"),
             ],
         );
 
         test_output(
             "[[2, 3, 4], [5, 6, 7]] + 1",
             &[
-                num(2),
-                num(3),
-                num(4),
-                op(OperatorTokenType::Matrix { arg_count: 3 }),
                 num(5),
                 num(6),
                 num(7),
-                op(OperatorTokenType::Matrix { arg_count: 3 }),
-                op(OperatorTokenType::Matrix { arg_count: 2 }),
-                num(1),
-                op(OperatorTokenType::Add),
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 3,
+                }),
             ],
         );
 
         test_output(
-            "[[2 + 3, 4 * 5], [ 6 / 7, 8^9]]",
+            "[2 + 3, 4 * 5;  6 / 7, 8^9]",
             &[
                 num(2),
                 num(3),
@@ -900,15 +1036,16 @@ pub mod tests {
                 num(4),
                 num(5),
                 op(OperatorTokenType::Mult),
-                op(OperatorTokenType::Matrix { arg_count: 2 }),
                 num(6),
                 num(7),
                 op(OperatorTokenType::Div),
                 num(8),
                 num(9),
                 op(OperatorTokenType::Pow),
-                op(OperatorTokenType::Matrix { arg_count: 2 }),
-                op(OperatorTokenType::Matrix { arg_count: 2 }),
+                op(OperatorTokenType::Matrix {
+                    row_count: 2,
+                    col_count: 2,
+                }),
             ],
         );
 
@@ -1138,7 +1275,7 @@ pub mod tests {
     }
 
     #[test]
-    fn asd() {
+    fn invalid_inputs() {
         test_output(
             "1+4szer sem jött el + *megjegyzés 2 éve...",
             &[num(1), num(4), op(OperatorTokenType::Add)],
@@ -1173,5 +1310,106 @@ pub mod tests {
                 num(3),
             ],
         );
+    }
+
+    #[test]
+    fn variable_test() {
+        test_tokens(
+            "a = 12",
+            &[
+                str("a"),
+                str(" "),
+                op(OperatorTokenType::Assign),
+                str(" "),
+                num(12),
+            ],
+        );
+        test_output("a = 12", &[op(OperatorTokenType::Assign), num(12)]);
+
+        test_tokens(
+            "alfa béta = 12*4",
+            &[
+                str("alfa"),
+                str(" "),
+                str("béta"),
+                str(" "),
+                op(OperatorTokenType::Assign),
+                str(" "),
+                num(12),
+                op(OperatorTokenType::Mult),
+                num(4),
+            ],
+        );
+        test_output(
+            "alfa béta = 12*4",
+            &[
+                op(OperatorTokenType::Assign),
+                num(12),
+                num(4),
+                op(OperatorTokenType::Mult),
+            ],
+        );
+
+        test_tokens(
+            "var(12*4) = 13",
+            &[
+                str("var"),
+                str("("),
+                str("12"),
+                str("*"),
+                str("4"),
+                str(")"),
+                str(" "),
+                op(OperatorTokenType::Assign),
+                str(" "),
+                num(13),
+            ],
+        );
+        test_output("var(12*4) = 13", &[op(OperatorTokenType::Assign), num(13)]);
+    }
+
+    #[test]
+    fn invalid_variable_test() {
+        test_tokens("= 12", &[str("="), str(" "), num(12)]);
+        test_output("= 12", &[num(12)]);
+
+        test_tokens(" = 12", &[str(" "), str("="), str(" "), num(12)]);
+        test_output(" = 12", &[num(12)]);
+
+        test_tokens(
+            "a == 12",
+            &[str("a"), str(" "), str("="), str("="), str(" "), num(12)],
+        );
+        test_tokens(
+            "a = 12 =",
+            &[
+                str("a"),
+                str(" "),
+                str("="),
+                str(" "),
+                str("12"),
+                str(" "),
+                str("="),
+            ],
+        );
+
+        test_tokens(
+            "12 = 13",
+            &[str("12"), str(" "), str("="), str(" "), str("13")],
+        );
+    }
+
+    #[test]
+    fn variable_usage() {
+        test_output_vars(
+            &[&['b'], &['b', '0']],
+            "b0 + 100",
+            &[var(""), num(100), op(OperatorTokenType::Add)],
+        );
+
+        test_output("a1 + 12", &[num(12)]);
+
+        test_output_vars(&[&['b'], &['b', '0']], "b1 + 100", &[num(100)]);
+        test_output_vars(&[&['b'], &['b', '0']], "b", &[var("")]);
     }
 }

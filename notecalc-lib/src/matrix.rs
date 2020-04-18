@@ -4,13 +4,21 @@ use bigdecimal::BigDecimal;
 #[derive(Debug, Clone)]
 pub struct MatrixData<'units> {
     // column major storing
-    pub cols: Vec<Vec<CalcResult<'units>>>,
+    pub cols: Vec<CalcResult<'units>>,
+    pub row_count: usize,
+    pub col_count: usize,
 }
 
 impl<'units> MatrixData<'units> {
-    pub fn new(cells: Vec<CalcResult<'units>>) -> MatrixData<'units> {
+    pub fn new(
+        cells: Vec<CalcResult<'units>>,
+        row_count: usize,
+        col_count: usize,
+    ) -> MatrixData<'units> {
         MatrixData {
-            cols: vec![cells.to_vec()],
+            cols: cells,
+            row_count,
+            col_count,
         }
     }
 

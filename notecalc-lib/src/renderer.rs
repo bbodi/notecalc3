@@ -43,27 +43,22 @@ fn render_result_into(
             f.write_char('%');
         }
         CalcResult::Matrix(mat) => {
-            if !mat.is_vector() {
-                f.write_char('[');
-            }
-            for (col_i, cols) in mat.cols.iter().enumerate() {
-                if col_i > 0 {
-                    f.write_char(',');
+            f.write_char('[');
+            for row_i in 0..mat.row_count {
+                if row_i > 0 {
+                    f.write_char(';');
                     f.write_char(' ');
                 }
-                f.write_char('[');
-                for (row_i, cell) in cols.iter().enumerate() {
-                    if row_i > 0 {
+                for col_i in 0..mat.col_count {
+                    if col_i > 0 {
                         f.write_char(',');
                         f.write_char(' ');
                     }
+                    let cell = &mat.cols[row_i * mat.col_count + col_i];
                     render_result_into(units, cell, format, false, f);
                 }
-                f.write_char(']');
             }
-            if !mat.is_vector() {
-                f.write_char(']');
-            }
+            f.write_char(']');
         }
     }
 }

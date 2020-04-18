@@ -1,16 +1,17 @@
+use bigdecimal::*;
+use smallvec::alloc::fmt::{Error, Formatter};
+use smallvec::SmallVec;
 use std::fmt::Write;
 use std::ops::BitXor;
 use std::ops::Neg;
 use std::ops::Not;
-
-use bigdecimal::*;
-use smallvec::alloc::fmt::{Error, Formatter};
-use smallvec::SmallVec;
+use std::str::FromStr;
 
 use crate::matrix::MatrixData;
 use crate::token_parser::TokenType::StringLiteral;
 use crate::token_parser::{OperatorTokenType, Token, TokenType};
 use crate::units::units::{UnitOutput, Units};
+use std::collections::HashMap;
 use std::io::BufWriter;
 
 // it is limited by bigdecimal crate :(
@@ -31,18 +32,30 @@ pub enum CalcResult<'units> {
     Matrix(MatrixData<'units>),
 }
 
+pub struct EvaluationResult<'units> {
+    pub there_was_unit_conversion: bool,
+    pub assignment: bool,
+    pub result: CalcResult<'units>,
+}
+
 pub fn evaluate_tokens<'text_ptr, 'units>(
     tokens: &mut Vec<TokenType<'units>>,
     units: &'units Units,
-) -> Option<(CalcResult<'units>, bool)> {
+    variables: &[(&'text_ptr [char], CalcResult<'units>)],
+) -> Option<EvaluationResult<'units>> {
     let mut stack = vec![];
     let mut there_was_unit_conversion = false;
+    let mut assignment = false;
     let mut last_success_operation_result_index = None;
     dbg!(&tokens);
-    for (i, token) in tokens.iter_mut().enumerate() {
+    for token in tokens.iter_mut() {
         match &token {
             TokenType::NumberLiteral(num) => stack.push(CalcResult::Number(num.clone())),
             TokenType::Operator(typ) => {
+                if *typ == OperatorTokenType::Assign {
+                    assignment = true;
+                    continue;
+                }
                 if !stack.is_empty() {
                     if apply_operation(&mut stack, &typ, units) == true {
                         if matches!(typ, OperatorTokenType::UnitConverter) {
@@ -56,19 +69,28 @@ pub fn evaluate_tokens<'text_ptr, 'units>(
                 }
             }
             TokenType::StringLiteral => panic!(),
-            TokenType::Variable => {}
+            TokenType::Variable(index) => {
+                // TODO clone :(
+                stack.push(variables[*index].1.clone());
+            }
         }
     }
     return match last_success_operation_result_index {
         Some(last_success_operation_index) => {
+            // TODO: after shunting yard validation logic, do we need it?
             // e.g. "1+2 some text 3"
             // in this case prefer the result of 1+2 and ignore the number 3
-            Some((
-                stack[last_success_operation_index].clone(),
+            Some(EvaluationResult {
                 there_was_unit_conversion,
-            ))
+                assignment,
+                result: stack[last_success_operation_index].clone(),
+            })
         }
-        None => stack.pop().map(|it| (it, there_was_unit_conversion)),
+        None => stack.pop().map(|it| EvaluationResult {
+            there_was_unit_conversion,
+            assignment,
+            result: it,
+        }),
     };
 }
 
@@ -125,20 +147,28 @@ fn apply_operation<'text_ptr, 'units>(
                 false
             }
         }
-        OperatorTokenType::Matrix { arg_count } => {
-            if stack.len() >= *arg_count {
-                let matrix_args = stack.drain(stack.len() - *arg_count..).collect::<Vec<_>>();
-                stack.push(CalcResult::Matrix(MatrixData::new(matrix_args)));
+        OperatorTokenType::Matrix {
+            row_count,
+            col_count,
+        } => {
+            let arg_count = row_count * col_count;
+            if stack.len() >= arg_count {
+                let matrix_args = stack.drain(stack.len() - arg_count..).collect::<Vec<_>>();
+                stack.push(CalcResult::Matrix(MatrixData::new(
+                    matrix_args,
+                    *row_count,
+                    *col_count,
+                )));
                 true
             } else {
                 false
             }
         }
-        OperatorTokenType::Comma => {
+        OperatorTokenType::Semicolon | OperatorTokenType::Comma => {
             // ignore
             true
         }
-        OperatorTokenType::Assign => todo!(),
+        OperatorTokenType::Assign => panic!("handled in the main loop above"),
         OperatorTokenType::ParenOpen
         | OperatorTokenType::ParenClose
         | OperatorTokenType::BracketOpen
@@ -407,7 +437,7 @@ fn multiply_op<'units>(
             // 50% * 50%
             Some(CalcResult::Percentage((lhs / dec(100)) * (rhs / dec(100))))
         }
-        _ => todo!(),
+        _ => None,
     }
 }
 
@@ -468,7 +498,10 @@ fn add_op<'a>(lhs: &CalcResult<'a>, rhs: &CalcResult<'a>) -> Option<CalcResult<'
             // 50% + 50%
             Some(CalcResult::Percentage(lhs + rhs))
         }
-        _ => todo!(),
+        _ => {
+            // TODO
+            None
+        }
     }
 }
 
@@ -645,14 +678,15 @@ mod tests {
         units.units = init_units(&units.prefixes);
         let temp = text.chars().collect::<Vec<char>>();
         let mut tokens = vec![];
+        let vars = Vec::new();
         let mut shunting_output =
-            crate::shunting_yard::tests::do_shunting_yard(&temp, &units, &mut tokens);
-        let mut result_stack = evaluate_tokens(&mut shunting_output, &units);
+            crate::shunting_yard::tests::do_shunting_yard(&temp, &units, &mut tokens, &vars);
+        let mut result_stack = evaluate_tokens(&mut shunting_output, &units, &vars);
 
         crate::shunting_yard::tests::compare_tokens(expected_tokens, &tokens);
     }
 
-    fn test(text: &str, expected: &'static str) {
+    fn test_vars(vars: &Vec<(&'static [char], CalcResult)>, text: &str, expected: &'static str) {
         dbg!("===========================================================");
         dbg!(text);
         let temp = text.chars().collect::<Vec<char>>();
@@ -663,15 +697,21 @@ mod tests {
 
         let mut tokens = vec![];
         let mut shunting_output =
-            crate::shunting_yard::tests::do_shunting_yard(&temp, &units, &mut tokens);
-        let result = evaluate_tokens(&mut shunting_output, &units);
-        dbg!(&result);
-        if let Some((CalcResult::Quantity(num, unit), there_was_unit_conversion)) = &result {
+            crate::shunting_yard::tests::do_shunting_yard(&temp, &units, &mut tokens, vars);
+
+        let result = evaluate_tokens(&mut shunting_output, &units, vars);
+
+        if let Some(EvaluationResult {
+            there_was_unit_conversion,
+            assignment: _assignment,
+            result: CalcResult::Quantity(num, unit),
+        }) = &result
+        {
             assert_eq!(
                 expected,
                 render_result(
                     &units,
-                    &result.as_ref().unwrap().0,
+                    &result.as_ref().unwrap().result,
                     &ResultFormat::Dec,
                     *there_was_unit_conversion
                 )
@@ -680,10 +720,14 @@ mod tests {
             assert_eq!(
                 expected,
                 result
-                    .map(|it| render_result(&units, &it.0, &ResultFormat::Dec, false))
+                    .map(|it| render_result(&units, &it.result, &ResultFormat::Dec, false))
                     .unwrap_or(" ".to_string())
             );
         }
+    }
+
+    fn test(text: &str, expected: &'static str) {
+        test_vars(&Vec::new(), text, expected);
     }
 
     #[test]
@@ -962,6 +1006,11 @@ mod tests {
 
         // multiply operator must be explicit, "5" is ignored here
         test("5(1+2)", "3");
+
+        // invalid
+        test("[[2 * 1]]", "2");
+        test("[[2 * 3, 4]]", "6");
+        test("[[2 * 1, 3], [4, 5]]", "[4, 5]");
     }
 
     #[test]
@@ -1010,9 +1059,9 @@ mod tests {
         test("[2+3]", "[5]");
         test("[2+3, 4 - 1, 5*2, 6/3, 2^4]", "[5, 3, 10, 2, 16]");
 
-        test("[[2 * 1]]", "[[2]]");
-        test("[[2 * 1, 3]]", "[[2, 3]]");
-        test("[[2 * 1, 3], [4, 5]]", "[[2, 3], [4, 5]]");
+        test("[2 * 1]", "[2]");
+        test("[2 * 3; 4]", "[6; 4]");
+        test("[2 * 1, 3; 4, 5]", "[2, 3; 4, 5]");
     }
 
     #[test]
@@ -1076,5 +1125,15 @@ mod tests {
         test("1 Kib/s to b/s", "1024 b / s");
 
         test("1kb to bytes", "125 bytes");
+    }
+
+    #[test]
+    fn test_variables() {
+        let mut vars = Vec::new();
+        vars.push((
+            &['v', 'a', 'r'][..],
+            CalcResult::Number(BigDecimal::from_str("12").unwrap()),
+        ));
+        test_vars(&vars, "var * 2", "24");
     }
 }
