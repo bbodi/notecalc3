@@ -1,7 +1,6 @@
 use crate::calc::CalcResult;
 use crate::units::units::{UnitOutput, Units};
 use bigdecimal::{BigDecimal, Num, Zero};
-use std::collections::HashMap;
 use std::str::FromStr;
 
 #[derive(Debug, Clone, Eq, PartialEq)]

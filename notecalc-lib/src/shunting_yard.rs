@@ -220,63 +220,55 @@ impl ShuntingYard {
                             v.close_valid_range(output_stack.len(), input_index);
                         }
                     }
-                    OperatorTokenType::Sub => {
-                        if v.prev_token_type == ValidationTokenType::Nothing
-                            || v.prev_token_type == ValidationTokenType::Op
+                    OperatorTokenType::Sub
+                        if (v.prev_token_type == ValidationTokenType::Nothing
+                        || v.prev_token_type == ValidationTokenType::Op) &&
+                        /*next token is not whitespace/empty */ tokens
+                        .get(input_index as usize + 1)
+                        .map(|it| !it.ptr[0].is_ascii_whitespace())
+                        .unwrap_or(false) =>
+                    {
+                        // it is a unary op
+                        if !v.expect_expression {
+                            dbg!("error3");
+                            operator_stack.clear();
+                            v.reset(output_stack.len(), input_index + 1);
+                            continue;
+                        } else if ShuntingYard::get_next_nonstring_token(
+                            tokens,
+                            input_index as usize + 1,
+                        )
+                        .map(|it| it.0.is_number())
+                        .unwrap_or(false)
                         {
-                            // it is a unary op
-
-                            if !v.expect_expression {
-                                dbg!("error3");
-                                operator_stack.clear();
-                                v.reset(output_stack.len(), input_index + 1);
-                                continue;
-                            } else if ShuntingYard::get_next_nonstring_token(
-                                tokens,
-                                input_index as usize + 1,
-                            )
-                            .map(|it| it.0.is_number())
-                            .unwrap_or(false)
-                            {
-                                v.neg = true;
-                            } else {
-                                // process it as a unary op
-                                operator_stack.push(OperatorTokenType::UnaryMinus);
-                            }
+                            v.neg = true;
                         } else {
-                            ShuntingYard::operator_rule(op, &mut operator_stack, output_stack);
-                            operator_stack.push(op.clone());
-                            v.had_operator = true;
-                            v.expect_expression = true;
-                            v.prev_token_type = ValidationTokenType::Op;
+                            // process it as a unary op
+                            operator_stack.push(OperatorTokenType::UnaryMinus);
                         }
                     }
-                    OperatorTokenType::Add => {
-                        if v.prev_token_type == ValidationTokenType::Nothing
-                            || v.prev_token_type == ValidationTokenType::Op
+                    OperatorTokenType::Add
+                        if (v.prev_token_type == ValidationTokenType::Nothing
+                        || v.prev_token_type == ValidationTokenType::Op) &&
+                        /*next token is not whitespace/empty */ tokens
+                        .get(input_index as usize + 1)
+                        .map(|it| !it.ptr[0].is_ascii_whitespace())
+                        .unwrap_or(false) =>
+                    {
+                        // it is a unary op
+                        if !v.expect_expression {
+                            dbg!("error4");
+                            operator_stack.clear();
+                            v.reset(output_stack.len(), input_index + 1);
+                            continue;
+                        } else if ShuntingYard::get_next_nonstring_token(
+                            tokens,
+                            input_index as usize + 1,
+                        )
+                        .map(|it| it.0.is_number())
+                        .unwrap_or(false)
                         {
-                            // it is a unary op
-
-                            if !v.expect_expression {
-                                dbg!("error4");
-                                operator_stack.clear();
-                                v.reset(output_stack.len(), input_index + 1);
-                                continue;
-                            } else if ShuntingYard::get_next_nonstring_token(
-                                tokens,
-                                input_index as usize + 1,
-                            )
-                            .map(|it| it.0.is_number())
-                            .unwrap_or(false)
-                            {
-                                v.neg = false;
-                            }
-                        } else {
-                            ShuntingYard::operator_rule(op, &mut operator_stack, output_stack);
-                            operator_stack.push(op.clone());
-                            v.had_operator = true;
-                            v.expect_expression = true;
-                            v.prev_token_type = ValidationTokenType::Op;
+                            v.neg = false;
                         }
                     }
                     OperatorTokenType::Assign => {
@@ -510,6 +502,10 @@ impl ShuntingYard {
             ShuntingYard::set_tokens_to_string(tokens, 0, tokens.len() - 1 as usize);
         }
 
+        // remove String tokens with empty content
+        // they were Matrices but were unvalidated
+        tokens.drain_filter(|it| it.is_string() && it.ptr.is_empty());
+
         // keep only the valid interval
         if let Some((last_valid_start_index, last_valid_end_index)) = v.last_valid_output_range {
             output_stack.drain(last_valid_end_index + 1..);
@@ -660,6 +656,7 @@ pub mod tests {
             typ: TokenType::Operator(op_repr),
         }
     }
+
     pub fn str<'text_ptr, 'units>(op_repr: &'static str) -> Token<'text_ptr, 'units> {
         Token {
             ptr: unsafe { std::mem::transmute(op_repr) },
@@ -680,6 +677,7 @@ pub mod tests {
             typ: TokenType::Variable(0),
         }
     }
+
     pub fn numf<'text_ptr, 'units>(n: f64) -> Token<'text_ptr, 'units> {
         Token {
             ptr: &[],
@@ -892,87 +890,159 @@ pub mod tests {
 
     #[test]
     fn test_shunting_matrices() {
-        test_output(
-            "[2] + 1",
-            &[
-                num(2),
-                op(OperatorTokenType::Matrix {
-                    row_count: 1,
-                    col_count: 1,
-                }),
-                num(1),
-                op(OperatorTokenType::Add),
-            ],
-        );
-        test_output(
-            "[2, 3] + 1",
-            &[
-                num(2),
-                num(3),
-                op(OperatorTokenType::Matrix {
-                    row_count: 1,
-                    col_count: 2,
-                }),
-                num(1),
-                op(OperatorTokenType::Add),
-            ],
-        );
+        // test_output(
+        //     "[2] + 1",
+        //     &[
+        //         num(2),
+        //         op(OperatorTokenType::Matrix {
+        //             row_count: 1,
+        //             col_count: 1,
+        //         }),
+        //         num(1),
+        //         op(OperatorTokenType::Add),
+        //     ],
+        // );
+        // test_output(
+        //     "[2, 3] + 1",
+        //     &[
+        //         num(2),
+        //         num(3),
+        //         op(OperatorTokenType::Matrix {
+        //             row_count: 1,
+        //             col_count: 2,
+        //         }),
+        //         num(1),
+        //         op(OperatorTokenType::Add),
+        //     ],
+        // );
+        //
+        // test_output(
+        //     "[2, 3, 4; 5, 6, 7] + 1",
+        //     &[
+        //         num(2),
+        //         num(3),
+        //         num(4),
+        //         num(5),
+        //         num(6),
+        //         num(7),
+        //         op(OperatorTokenType::Matrix {
+        //             row_count: 2,
+        //             col_count: 3,
+        //         }),
+        //         num(1),
+        //         op(OperatorTokenType::Add),
+        //     ],
+        // );
+        //
+        // // invalid, only 2 elements in the second row
+        // test_output("[2, 3, 4; 5, 6] + 1", &[num(1)]);
+        //
+        // // invalid
+        // test_tokens(
+        //     "[[2, 3, 4], [5, 6, 7]] + 1",
+        //     &[
+        //         str("["),
+        //         str("["),
+        //         str("2"),
+        //         str(","),
+        //         str(" "),
+        //         str("3"),
+        //         str(","),
+        //         str(" "),
+        //         str("4"),
+        //         str("]"),
+        //         str(","),
+        //         str(" "),
+        //         op(OperatorTokenType::Matrix {
+        //             row_count: 1,
+        //             col_count: 3,
+        //         }),
+        //         op(OperatorTokenType::BracketOpen),
+        //         num(5),
+        //         op(OperatorTokenType::Comma),
+        //         str(" "),
+        //         num(6),
+        //         op(OperatorTokenType::Comma),
+        //         str(" "),
+        //         num(7),
+        //         op(OperatorTokenType::BracketClose),
+        //         str("]"),
+        //         str(" "),
+        //         str("+"),
+        //         str(" "),
+        //         str("1"),
+        //     ],
+        // );
 
-        test_output(
-            "[2, 3, 4; 5, 6, 7] + 1",
-            &[
-                num(2),
-                num(3),
-                num(4),
-                num(5),
-                num(6),
-                num(7),
-                op(OperatorTokenType::Matrix {
-                    row_count: 2,
-                    col_count: 3,
-                }),
-                num(1),
-                op(OperatorTokenType::Add),
-            ],
-        );
-
-        // invalid, only 2 elements in the second row
-        test_output("[2, 3, 4; 5, 6] + 1", &[num(1)]);
-
-        // invalid
         test_tokens(
-            "[[2, 3, 4], [5, 6, 7]] + 1",
+            "[1,2,3] *- [4;5;6]",
             &[
                 str("["),
-                str("["),
+                str("1"),
+                str(","),
                 str("2"),
                 str(","),
-                str(" "),
                 str("3"),
-                str(","),
-                str(" "),
-                str("4"),
                 str("]"),
-                str(","),
                 str(" "),
+                str("*"),
+                str("-"),
+                str(" "),
+                op(OperatorTokenType::Matrix {
+                    row_count: 3,
+                    col_count: 1,
+                }),
+                op(OperatorTokenType::BracketOpen),
+                num(4),
+                op(OperatorTokenType::Semicolon),
+                num(5),
+                op(OperatorTokenType::Semicolon),
+                num(6),
+                op(OperatorTokenType::BracketClose),
+            ],
+        );
+
+        // TODO: currently I allow unary op-s on matrix, but rethink it
+        test_tokens(
+            "[1,2,3] * -[4;5;6]",
+            &[
                 op(OperatorTokenType::Matrix {
                     row_count: 1,
                     col_count: 3,
                 }),
                 op(OperatorTokenType::BracketOpen),
-                num(5),
+                num(1),
                 op(OperatorTokenType::Comma),
-                str(" "),
-                num(6),
+                num(2),
                 op(OperatorTokenType::Comma),
-                str(" "),
-                num(7),
+                num(3),
                 op(OperatorTokenType::BracketClose),
-                str("]"),
                 str(" "),
-                str("+"),
+                op(OperatorTokenType::Mult),
                 str(" "),
-                str("1"),
+                op(OperatorTokenType::Sub),
+                // str("["),
+                // str("1"),
+                // str(","),
+                // str("2"),
+                // str(","),
+                // str("3"),
+                // str("]"),
+                // str(" "),
+                // str("*"),
+                // str(" "),
+                // str("-"),
+                op(OperatorTokenType::Matrix {
+                    row_count: 3,
+                    col_count: 1,
+                }),
+                op(OperatorTokenType::BracketOpen),
+                num(4),
+                op(OperatorTokenType::Semicolon),
+                num(5),
+                op(OperatorTokenType::Semicolon),
+                num(6),
+                op(OperatorTokenType::BracketClose),
             ],
         );
 

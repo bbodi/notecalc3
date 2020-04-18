@@ -2,7 +2,7 @@
 #![feature(const_generics)]
 
 use crate::calc::{evaluate_tokens, CalcResult};
-use crate::editor::{Editor, InputKey, InputModifiers};
+use crate::editor::{Canvas, Editor, InputKey, InputModifiers, Pos, Selection};
 use crate::renderer::render_result;
 use crate::shunting_yard::ShuntingYard;
 use crate::token_parser::{OperatorTokenType, Token, TokenParser, TokenType};
@@ -300,6 +300,13 @@ pub struct RenderTextMsg<'a> {
     pub column: usize,
 }
 
+#[derive(Debug)]
+pub struct RenderStringMsg {
+    pub text: String,
+    pub row: usize,
+    pub column: usize,
+}
+
 #[repr(C)]
 #[derive(Debug)]
 pub enum OutputMessage<'a> {
@@ -307,6 +314,7 @@ pub enum OutputMessage<'a> {
     SetColor(u32),
     RenderChar(usize, usize, char),
     RenderText(RenderTextMsg<'a>),
+    RenderString(RenderStringMsg),
     RenderRectangle {
         x: usize,
         y: usize,
@@ -362,6 +370,14 @@ impl<'a> RenderBuckets<'a> {
             column: x,
         }));
     }
+
+    pub fn draw_string(&mut self, layer: Layer, x: usize, y: usize, text: String) {
+        self.custom_commands[layer as usize].push(OutputMessage::RenderString(RenderStringMsg {
+            text: text.clone(),
+            row: y,
+            column: x,
+        }));
+    }
 }
 
 #[derive(Eq, PartialEq, Copy, Clone)]
@@ -383,6 +399,232 @@ impl Default for LineData {
     }
 }
 
+pub struct MatrixEditing {
+    editor: Editor,
+    row_count: usize,
+    col_count: usize,
+    current_cell: Pos,
+    start_text_index: usize,
+    end_text_index: usize,
+    render_x: usize,
+    render_y: usize,
+    cell_strings: Vec<String>,
+    editor_data: Vec<usize>,
+}
+
+impl MatrixEditing {
+    const TMP_BUF_LEN_PER_CELL: usize = 32;
+    pub fn new<'a>(
+        row_count: usize,
+        col_count: usize,
+        src_canvas: &[char],
+        start_text_index: usize,
+        end_text_index: usize,
+        step_in_pos: Pos,
+        render_x: usize,
+        render_y: usize,
+    ) -> MatrixEditing {
+        let mut editor_data = Vec::new();
+        let mut mat_edit = MatrixEditing {
+            render_x,
+            render_y,
+            start_text_index,
+            end_text_index,
+            editor: Editor::new(32, &mut editor_data),
+            row_count,
+            col_count,
+            current_cell: Pos::from_row_column(0, 0),
+            cell_strings: Vec::with_capacity(row_count * col_count),
+            editor_data,
+        };
+        let mut str: String = String::with_capacity(8);
+        let mut row_i = 0;
+        let mut col_i = 0;
+        let mut can_ignore_ws = true;
+        for ch in src_canvas {
+            match ch {
+                '[' => {
+                    //ignore
+                }
+                ']' => {
+                    break;
+                }
+                ',' => {
+                    col_i += 1;
+                    mat_edit.cell_strings.push(str);
+                    str = String::with_capacity(8);
+                    str = String::with_capacity(8);
+                    can_ignore_ws = true;
+                }
+                ';' => {
+                    row_i += 1;
+                    col_i = 0;
+                    mat_edit.cell_strings.push(str);
+                    str = String::with_capacity(8);
+                    can_ignore_ws = true;
+                }
+                _ if ch.is_ascii_whitespace() && can_ignore_ws => {
+                    // ignore
+                }
+                _ => {
+                    can_ignore_ws = false;
+                    str.push(*ch);
+                }
+            }
+        }
+        if str.len() > 0 {
+            mat_edit.cell_strings.push(str);
+        }
+
+        mat_edit
+            .editor
+            .set_content(&mat_edit.cell_strings[0], &mut mat_edit.editor_data);
+
+        mat_edit
+    }
+
+    fn change_cell(&mut self, new_pos: Pos) {
+        let mut backend = &mut self.cell_strings
+            [self.current_cell.row * self.col_count + self.current_cell.column];
+        backend.clear();
+        self.editor.write_content_into(&mut backend);
+
+        let new_content = &self.cell_strings[new_pos.row * self.col_count + new_pos.column];
+        self.editor.set_content(new_content, &mut self.editor_data);
+
+        self.current_cell = new_pos;
+    }
+
+    fn render<'b>(
+        &self,
+        mut render_x: usize,
+        mut render_y: usize,
+        current_editor_width: usize,
+        render_buckets: &mut RenderBuckets<'b>,
+        rendered_row_height: usize,
+    ) -> usize {
+        let vert_align_offset = (rendered_row_height - self.row_count) / 2;
+
+        render_buckets.operators.push(RenderTextMsg {
+            text: &['⎡'],
+            row: render_y + vert_align_offset,
+            column: render_x + LEFT_GUTTER_WIDTH,
+        });
+        for i in 1..self.row_count - 1 {
+            render_buckets.operators.push(RenderTextMsg {
+                text: &['⎢'],
+                row: render_y + i + vert_align_offset,
+                column: render_x + LEFT_GUTTER_WIDTH,
+            });
+        }
+        render_buckets.operators.push(RenderTextMsg {
+            text: &['⎣'],
+            row: render_y + self.row_count - 1 + vert_align_offset,
+            column: render_x + LEFT_GUTTER_WIDTH,
+        });
+        render_x += 1;
+
+        for col_i in 0..self.col_count {
+            if render_x >= current_editor_width {
+                return render_x;
+            }
+            let max_width: usize = (0..self.row_count)
+                .map(|row_i| {
+                    if self.current_cell == Pos::from_row_column(row_i, col_i) {
+                        self.editor.line_len(0)
+                    } else {
+                        self.cell_strings[row_i * self.col_count + col_i].len()
+                    }
+                })
+                .max()
+                .unwrap();
+            for row_i in 0..self.row_count {
+                let len: usize = if self.current_cell == Pos::from_row_column(row_i, col_i) {
+                    self.editor.line_len(0)
+                } else {
+                    self.cell_strings[row_i * self.col_count + col_i].len()
+                };
+                let padding_x = max_width - len;
+                let text_len = len.min(
+                    (current_editor_width as isize - (render_x + padding_x) as isize).max(0)
+                        as usize,
+                );
+
+                if self.current_cell == Pos::from_row_column(row_i, col_i) {
+                    render_buckets.set_color(Layer::AboveText, 0xBBBBBB_FF);
+                    render_buckets.draw_rect(
+                        Layer::AboveText,
+                        render_x + padding_x + LEFT_GUTTER_WIDTH,
+                        render_y + row_i + vert_align_offset,
+                        text_len,
+                        1,
+                    );
+                    let chars = &self.editor.lines().next().unwrap();
+                    render_buckets.set_color(Layer::AboveText, 0x000000_FF);
+                    for (i, char) in chars.iter().enumerate() {
+                        render_buckets.draw_char(
+                            Layer::AboveText,
+                            render_x + padding_x + LEFT_GUTTER_WIDTH + i,
+                            render_y + row_i + vert_align_offset,
+                            *char,
+                        );
+                    }
+                } else {
+                    let chars = &self.cell_strings[row_i * self.col_count + col_i];
+                    render_buckets.set_color(Layer::AboveText, 0x000000_FF);
+                    render_buckets.draw_string(
+                        Layer::AboveText,
+                        render_x + padding_x + LEFT_GUTTER_WIDTH,
+                        render_y + row_i + vert_align_offset,
+                        (&chars[0..text_len]).to_owned(),
+                    );
+                }
+
+                if self.current_cell == Pos::from_row_column(row_i, col_i) {
+                    if self.editor.show_cursor {
+                        render_buckets.set_color(Layer::AboveText, 0x000000_FF);
+                        render_buckets.draw_char(
+                            Layer::AboveText,
+                            (self.editor.get_selection().get_cursor_pos().column
+                                + LEFT_GUTTER_WIDTH)
+                                + render_x
+                                + padding_x,
+                            render_y + row_i + vert_align_offset,
+                            '▏',
+                        );
+                    }
+                }
+            }
+            render_x += if col_i + 1 < self.col_count {
+                max_width + 2
+            } else {
+                max_width
+            };
+        }
+
+        render_buckets.operators.push(RenderTextMsg {
+            text: &['⎤'],
+            row: render_y + vert_align_offset,
+            column: render_x + LEFT_GUTTER_WIDTH,
+        });
+        for i in 1..self.row_count - 1 {
+            render_buckets.operators.push(RenderTextMsg {
+                text: &['⎥'],
+                row: render_y + i + vert_align_offset,
+                column: render_x + LEFT_GUTTER_WIDTH,
+            });
+        }
+        render_buckets.operators.push(RenderTextMsg {
+            text: &['⎦'],
+            row: render_y + self.row_count - 1 + vert_align_offset,
+            column: render_x + LEFT_GUTTER_WIDTH,
+        });
+        render_x += 1;
+
+        render_x
+    }
+}
+
 pub struct NoteCalcApp<'a> {
     client_width: usize,
     units: Units<'a>,
@@ -390,6 +632,7 @@ pub struct NoteCalcApp<'a> {
     line_datas: Vec<LineData>,
     prefixes: &'static UnitPrefixes,
     result_buffer: [char; 1024],
+    matrix_editing: Option<MatrixEditing>,
 }
 
 impl<'a> NoteCalcApp<'a> {
@@ -404,6 +647,7 @@ impl<'a> NoteCalcApp<'a> {
             editor: Editor::new(MAX_EDITOR_WIDTH, &mut line_datas),
             line_datas,
             result_buffer: [0 as char; 1024],
+            matrix_editing: None,
         }
     }
 
@@ -411,7 +655,44 @@ impl<'a> NoteCalcApp<'a> {
         return self.editor.set_content(text, &mut self.line_datas);
     }
 
-    pub fn render(&mut self) -> RenderBuckets {
+    pub fn end_matrix_editing(&mut self, new_cursor_pos: Option<Pos>) {
+        let mat_editor = self.matrix_editing.as_ref().unwrap();
+        let mut concat = String::with_capacity(32);
+        concat.push('[');
+        for row_i in 0..mat_editor.row_count {
+            if row_i > 0 {
+                concat.push(';');
+            }
+            for col_i in 0..mat_editor.col_count {
+                if col_i > 0 {
+                    concat.push(',');
+                }
+                let cell_str = &mat_editor.cell_strings[row_i * mat_editor.col_count + col_i];
+                concat += &cell_str;
+            }
+        }
+        concat.push(']');
+        let cursor = self.editor.get_selection().get_cursor_pos();
+        self.editor.set_selection_save_col(Selection::range(
+            cursor.with_column(mat_editor.start_text_index),
+            cursor.with_column(mat_editor.end_text_index),
+        ));
+        self.editor
+            .handle_input(InputKey::Del, InputModifiers::none(), &mut self.line_datas);
+        self.editor.handle_input(
+            InputKey::Text(&concat),
+            InputModifiers::none(),
+            &mut self.line_datas,
+        );
+        self.matrix_editing = None;
+
+        if let Some(new_cursor_pos) = new_cursor_pos {
+            self.editor
+                .set_selection_save_col(Selection::from_pos(new_cursor_pos));
+        }
+    }
+
+    pub fn render<'b>(&'b mut self) -> RenderBuckets<'b> {
         let RIGHT_GUTTER_WIDTH = 3;
         let MIN_RESULT_PANEL_WIDTH = 20;
         let result_gutter_x = (LEFT_GUTTER_WIDTH + MAX_EDITOR_WIDTH)
@@ -437,7 +718,14 @@ impl<'a> NoteCalcApp<'a> {
 
         let mut vars: Vec<(&[char], CalcResult)> = Vec::new();
         let mut render_y = 0;
-        for (row_index, line) in self.editor.lines().enumerate() {
+        let cursor_pos = self.editor.get_selection().get_cursor_pos();
+
+        // contains the y position for each editor line
+        let mut editor_y_to_render_y = [0; 64];
+        let mut editor_y_to_vert_align = [0; 64];
+        for (editor_y, line) in self.editor.lines().take(64).enumerate() {
+            editor_y_to_render_y[editor_y] = render_y;
+
             if line.len() > longest_row_len {
                 longest_row_len = line.len();
             }
@@ -452,47 +740,98 @@ impl<'a> NoteCalcApp<'a> {
             // render
             let mut render_x = 0;
             let rendered_row_height = NoteCalcApp::calc_rendered_row_height(&tokens);
+            // "- 1" so if it is even, it always appear higher
+            let vert_align_offset = (rendered_row_height - 1) / 2;
+            editor_y_to_vert_align[editor_y] = vert_align_offset;
             let mut token_index = 0;
+            let mut editor_x = 0;
+            let mut cursor_render_x_offset: isize = 0;
             while token_index < tokens.len() {
                 let token = &tokens[token_index];
-                let need_matrix_render = self.line_datas[row_index].result_format
-                    == ResultFormat::Hex
-                    && rendered_row_height > 1;
-                if let (
-                    TokenType::Operator(OperatorTokenType::Matrix {
-                        row_count,
-                        col_count,
-                    }),
-                    true,
-                ) = (&token.typ, need_matrix_render)
+                if let TokenType::Operator(OperatorTokenType::Matrix {
+                    row_count,
+                    col_count,
+                }) = &token.typ
                 {
-                    render_x = NoteCalcApp::render_matrix(
-                        render_x,
-                        render_y,
-                        current_editor_width,
-                        *row_count,
-                        *col_count,
-                        &tokens[token_index..],
-                        &mut render_buckets,
-                    );
-
-                    while tokens[token_index].typ
+                    let mut text_width = 0;
+                    let mut end_token_index = token_index;
+                    while tokens[end_token_index].typ
                         != TokenType::Operator(OperatorTokenType::BracketClose)
                     {
-                        token_index += 1;
+                        text_width += tokens[end_token_index].ptr.len();
+                        end_token_index += 1;
                     }
-                    // ignore the brakcet as well
-                    token_index += 1;
+                    // ignore the bracket as well
+                    text_width += 1;
+                    end_token_index += 1;
+
+                    let cursor_isnide_matrix: bool = if cursor_pos.row == editor_y
+                        && cursor_pos.column > editor_x
+                        && cursor_pos.column < editor_x + text_width
+                    {
+                        // cursor is in this line
+                        // cursor is inside the matrix
+                        if self.matrix_editing.is_none() {
+                            self.matrix_editing = Some(MatrixEditing::new(
+                                *row_count,
+                                *col_count,
+                                &line[editor_x..editor_x + text_width],
+                                editor_x,
+                                editor_x + text_width,
+                                Pos::from_row_column(0, 0),
+                                render_x,
+                                render_y,
+                            ));
+                        }
+                        true
+                    } else {
+                        false
+                    };
+
+                    let new_render_x = if let (true, Some(mat_editor)) =
+                        (cursor_isnide_matrix, &self.matrix_editing)
+                    {
+                        mat_editor.render(
+                            render_x,
+                            render_y,
+                            current_editor_width,
+                            &mut render_buckets,
+                            rendered_row_height,
+                        )
+                    } else {
+                        NoteCalcApp::render_matrix(
+                            render_x,
+                            render_y,
+                            current_editor_width,
+                            *row_count,
+                            *col_count,
+                            &tokens[token_index..],
+                            &mut render_buckets,
+                            rendered_row_height,
+                        )
+                    };
+
+                    if cursor_pos.row == editor_y && cursor_pos.column >= editor_x + text_width {
+                        let rendered_width = (new_render_x - render_x) as isize;
+                        let diff = rendered_width - text_width as isize;
+                        cursor_render_x_offset += diff;
+                    }
+
+                    token_index = end_token_index;
+
+                    render_x = new_render_x;
+                    editor_x += text_width;
                 } else {
                     NoteCalcApp::draw_token(
                         token,
                         render_x,
-                        render_y,
+                        render_y + vert_align_offset,
                         current_editor_width,
                         &mut render_buckets,
                     );
                     token_index += 1;
                     render_x += token.ptr.len();
+                    editor_x += token.ptr.len();
                 }
             }
             if render_x > current_editor_width {
@@ -504,11 +843,35 @@ impl<'a> NoteCalcApp<'a> {
                 );
             }
 
+            if cursor_pos.row == editor_y {
+                if self.editor.show_cursor
+                    && self.matrix_editing.is_none()
+                    && ((cursor_pos.column as isize + cursor_render_x_offset) as usize)
+                        < current_editor_width
+                {
+                    render_buckets.texts.push(RenderTextMsg {
+                        text: &['▏'],
+                        row: render_y + vert_align_offset,
+                        column: ((cursor_pos.column + LEFT_GUTTER_WIDTH) as isize
+                            + cursor_render_x_offset) as usize,
+                    });
+                }
+                // highlight current line
+                render_buckets.set_color(Layer::BehindText, 0xFCFAED_C8);
+                render_buckets.draw_rect(
+                    Layer::BehindText,
+                    0,
+                    render_y,
+                    result_gutter_x + RIGHT_GUTTER_WIDTH + MIN_RESULT_PANEL_WIDTH,
+                    rendered_row_height,
+                );
+            }
+
             if let Some(result) = evaluate_tokens(&mut shunting_output_stack, &self.units, &vars) {
                 let result_str = render_result(
                     &self.units,
                     &result.result,
-                    &self.line_datas[row_index].result_format,
+                    &self.line_datas[editor_y].result_format,
                     result.there_was_unit_conversion,
                 );
 
@@ -544,7 +907,7 @@ impl<'a> NoteCalcApp<'a> {
                 result_str_positions.push(None);
             };
 
-            match self.line_datas[row_index].result_format {
+            match self.line_datas[editor_y].result_format {
                 ResultFormat::Hex => {
                     render_buckets.operators.push(RenderTextMsg {
                         text: &['0', 'x'],
@@ -563,45 +926,28 @@ impl<'a> NoteCalcApp<'a> {
             }
             render_y += rendered_row_height;
         }
+
         for (row_i, pos) in result_str_positions.iter().enumerate() {
             if let Some((start, end)) = pos {
                 render_buckets.texts.push(RenderTextMsg {
                     text: &self.result_buffer[*start..*end],
-                    row: row_i,
+                    row: editor_y_to_render_y[row_i] + editor_y_to_vert_align[row_i],
                     column: result_gutter_x + RIGHT_GUTTER_WIDTH,
                 });
             }
-        }
-
-        let cursor_pos = self.editor.get_selection().get_cursor_pos();
-        if self.editor.show_cursor && cursor_pos.column < current_editor_width {
-            render_buckets.texts.push(RenderTextMsg {
-                text: &['▏'],
-                row: cursor_pos.row,
-                column: cursor_pos.column + LEFT_GUTTER_WIDTH,
-            });
         }
 
         // gutter
         render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
         render_buckets.draw_rect(Layer::BehindText, 0, 0, LEFT_GUTTER_WIDTH, 255);
 
-        // highlight current line
-        render_buckets.set_color(Layer::BehindText, 0xFCFAED_C8);
-        render_buckets.draw_rect(
-            Layer::BehindText,
-            0,
-            self.editor.get_selection().get_cursor_pos().row,
-            result_gutter_x + RIGHT_GUTTER_WIDTH + MIN_RESULT_PANEL_WIDTH,
-            1,
-        );
         // line numbers
         render_buckets.set_color(Layer::BehindText, 0xADADAD_FF);
-        for i in 0..255 {
+        for i in 0..64 {
             render_buckets.custom_commands[Layer::BehindText as usize].push(
                 OutputMessage::RenderText(RenderTextMsg {
                     text: &(LINE_NUM_CONSTS[i][..]),
-                    row: i,
+                    row: editor_y_to_render_y[i],
                     column: 1,
                 }),
             )
@@ -660,22 +1006,25 @@ impl<'a> NoteCalcApp<'a> {
         col_count: usize,
         tokens: &[Token<'b, 'b>],
         render_buckets: &mut RenderBuckets<'b>,
+        rendered_row_height: usize,
     ) -> usize {
+        let vert_align_offset = (rendered_row_height - row_count) / 2;
+
         render_buckets.operators.push(RenderTextMsg {
             text: &['⎡'],
-            row: render_y,
+            row: render_y + vert_align_offset,
             column: render_x + LEFT_GUTTER_WIDTH,
         });
         for i in 1..row_count - 1 {
             render_buckets.operators.push(RenderTextMsg {
                 text: &['⎢'],
-                row: render_y + i,
+                row: render_y + i + vert_align_offset,
                 column: render_x + LEFT_GUTTER_WIDTH,
             });
         }
         render_buckets.operators.push(RenderTextMsg {
             text: &['⎣'],
-            row: render_y + row_count - 1,
+            row: render_y + row_count - 1 + vert_align_offset,
             column: render_x + LEFT_GUTTER_WIDTH,
         });
         render_x += 1;
@@ -740,7 +1089,7 @@ impl<'a> NoteCalcApp<'a> {
                     NoteCalcApp::draw_token(
                         token,
                         render_x + offset_x + local_x,
-                        render_y + row_i,
+                        render_y + row_i + vert_align_offset,
                         current_editor_width,
                         render_buckets,
                     );
@@ -756,19 +1105,19 @@ impl<'a> NoteCalcApp<'a> {
 
         render_buckets.operators.push(RenderTextMsg {
             text: &['⎤'],
-            row: render_y,
+            row: render_y + vert_align_offset,
             column: render_x + LEFT_GUTTER_WIDTH,
         });
         for i in 1..row_count - 1 {
             render_buckets.operators.push(RenderTextMsg {
                 text: &['⎥'],
-                row: render_y + i,
+                row: render_y + i + vert_align_offset,
                 column: render_x + LEFT_GUTTER_WIDTH,
             });
         }
         render_buckets.operators.push(RenderTextMsg {
             text: &['⎦'],
-            row: render_y + row_count - 1,
+            row: render_y + row_count - 1 + vert_align_offset,
             column: render_x + LEFT_GUTTER_WIDTH,
         });
         render_x += 1;
@@ -843,6 +1192,14 @@ impl<'a> NoteCalcApp<'a> {
         }
     }
 
+    pub fn handle_time(&mut self, now: u32) -> bool {
+        return if let Some(mat_editor) = &mut self.matrix_editing {
+            mat_editor.editor.handle_tick(now)
+        } else {
+            self.editor.handle_tick(now)
+        };
+    }
+
     pub fn handle_input(&mut self, input: InputKey, modifiers: InputModifiers) {
         if modifiers.alt && input == InputKey::Left {
             let cur_pos = self.editor.get_selection().get_cursor_pos();
@@ -860,9 +1217,54 @@ impl<'a> NoteCalcApp<'a> {
                 ResultFormat::Hex => ResultFormat::Bin,
             };
             self.line_datas[cur_pos.row].result_format = new_format;
+        } else if self.matrix_editing.is_some() {
+            self.handle_matrix_editor_input(input, modifiers)
         } else {
             self.editor
                 .handle_input(input, modifiers, &mut self.line_datas);
+        }
+    }
+
+    fn handle_matrix_editor_input(&mut self, input: InputKey, modifiers: InputModifiers) {
+        let mat_edit = self.matrix_editing.as_mut().unwrap();
+        let cur_pos = self.editor.get_selection().get_cursor_pos();
+        if input == InputKey::Esc || input == InputKey::Enter {
+            let newpos = mat_edit.end_text_index;
+            self.end_matrix_editing(Some(cur_pos.with_column(newpos)));
+        } else if input == InputKey::Left && mat_edit.editor.is_cursor_at_beginning() {
+            if mat_edit.current_cell.column > 0 {
+                mat_edit.change_cell(mat_edit.current_cell.with_prev_col())
+            } else {
+                let start_text_index = mat_edit.start_text_index;
+                self.end_matrix_editing(Some(cur_pos.with_column(start_text_index)));
+            }
+        } else if input == InputKey::Right && mat_edit.editor.is_cursor_at_eol() {
+            if mat_edit.current_cell.column + 1 < mat_edit.col_count {
+                mat_edit.change_cell(mat_edit.current_cell.with_next_col())
+            } else {
+                let end_text_index = mat_edit.end_text_index;
+                self.end_matrix_editing(Some(cur_pos.with_column(end_text_index)));
+            }
+        } else if input == InputKey::Up {
+            if mat_edit.current_cell.row > 0 {
+                mat_edit.change_cell(mat_edit.current_cell.with_prev_row())
+            } else {
+                self.end_matrix_editing(None);
+                self.editor
+                    .handle_input(input, modifiers, &mut self.line_datas);
+            }
+        } else if input == InputKey::Down {
+            if mat_edit.current_cell.row + 1 < mat_edit.row_count {
+                mat_edit.change_cell(mat_edit.current_cell.with_next_row())
+            } else {
+                self.end_matrix_editing(None);
+                self.editor
+                    .handle_input(input, modifiers, &mut self.line_datas);
+            }
+        } else {
+            mat_edit
+                .editor
+                .handle_input(input, modifiers, &mut mat_edit.editor_data);
         }
     }
 }
@@ -880,11 +1282,31 @@ fn digit_count(n: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::editor::Selection;
 
     #[test]
-    fn asd() {
+    fn bug1() {
         let mut app = NoteCalcApp::new(120);
-        app.handle_input(InputKey::Text("\n[3;4;2]\n"), InputModifiers::none());
+        app.handle_input(
+            InputKey::Text("[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]"),
+            InputModifiers::none(),
+        );
+        app.editor.set_selection_save_col(Selection::single(0, 33));
+        app.handle_input(InputKey::Right, InputModifiers::alt());
+        app.render();
+    }
+
+    #[test]
+    fn bug2() {
+        let mut app = NoteCalcApp::new(120);
+        app.handle_input(
+            InputKey::Text("[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]"),
+            InputModifiers::none(),
+        );
+        app.editor.set_selection_save_col(Selection::single(0, 1));
+        app.handle_input(InputKey::Right, InputModifiers::alt());
+        app.render();
+        app.handle_input(InputKey::Down, InputModifiers::none());
         app.render();
     }
 }

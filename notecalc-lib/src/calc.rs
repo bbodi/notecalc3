@@ -186,7 +186,7 @@ fn unary_operation<'text_ptr, 'units>(
 ) -> Option<CalcResult<'units>> {
     return match &op {
         OperatorTokenType::UnaryPlus => Some(top.clone()),
-        OperatorTokenType::UnaryMinus => Some(unary_minus_op(top)),
+        OperatorTokenType::UnaryMinus => unary_minus_op(top),
         OperatorTokenType::Perc => percentage_operator(top),
         OperatorTokenType::Not => binary_complement(top),
         OperatorTokenType::Unit(target_unit) => match top {
@@ -196,7 +196,7 @@ fn unary_operation<'text_ptr, 'units>(
             )),
             _ => None,
         },
-        _ => panic!(),
+        _ => None,
     };
 }
 
@@ -336,21 +336,21 @@ fn binary_and_op<'a>(lhs: &CalcResult, rhs: &CalcResult<'a>) -> Option<CalcResul
     }
 }
 
-fn unary_minus_op<'a>(lhs: &CalcResult<'a>) -> CalcResult<'a> {
+fn unary_minus_op<'a>(lhs: &CalcResult<'a>) -> Option<CalcResult<'a>> {
     match lhs {
         CalcResult::Number(lhs) => {
             // -12
-            CalcResult::Number(lhs.neg())
+            Some(CalcResult::Number(lhs.neg()))
         }
         CalcResult::Quantity(lhs, unit) => {
             // -12km
-            CalcResult::Quantity(lhs.neg(), unit.clone())
+            Some(CalcResult::Quantity(lhs.neg(), unit.clone()))
         }
         CalcResult::Percentage(lhs) => {
             // -50%
-            CalcResult::Percentage(lhs.neg())
+            Some(CalcResult::Percentage(lhs.neg()))
         }
-        _ => todo!(), // CalcResult::Matrix(mat) => CalcResult::Matrix(mat.neg()),
+        _ => None, // CalcResult::Matrix(mat) => CalcResult::Matrix(mat.neg()),
     }
 }
 
@@ -558,7 +558,7 @@ fn sub_op<'a>(lhs: &CalcResult<'a>, rhs: &CalcResult<'a>) -> Option<CalcResult<'
             // 50% - 50%
             Some(CalcResult::Percentage(lhs - rhs))
         }
-        _ => todo!(),
+        _ => None,
     }
 }
 
@@ -613,7 +613,7 @@ fn divide_op<'a>(lhs: &CalcResult<'a>, rhs: &CalcResult<'a>) -> Option<CalcResul
             // 50% / 50%
             None
         }
-        _ => todo!(),
+        _ => None,
     }
 }
 
