@@ -204,7 +204,7 @@ pub struct Editor {
     max_line_len: usize,
     line_lens: Vec<usize>,
     canvas: Canvas,
-    clipboard: String,
+    pub clipboard: String,
 }
 
 #[derive(Eq, PartialEq, Copy, Clone)]

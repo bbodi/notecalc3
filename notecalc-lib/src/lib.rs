@@ -484,15 +484,19 @@ impl MatrixEditing {
     }
 
     fn change_cell(&mut self, new_pos: Pos) {
-        let mut backend = &mut self.cell_strings
-            [self.current_cell.row * self.col_count + self.current_cell.column];
-        backend.clear();
-        self.editor.write_content_into(&mut backend);
+        self.save_editor_content();
 
         let new_content = &self.cell_strings[new_pos.row * self.col_count + new_pos.column];
         self.editor.set_content(new_content, &mut self.editor_data);
 
         self.current_cell = new_pos;
+    }
+
+    fn save_editor_content(&mut self) {
+        let mut backend = &mut self.cell_strings
+            [self.current_cell.row * self.col_count + self.current_cell.column];
+        backend.clear();
+        self.editor.write_content_into(&mut backend);
     }
 
     fn render<'b>(
@@ -656,7 +660,11 @@ impl<'a> NoteCalcApp<'a> {
     }
 
     pub fn end_matrix_editing(&mut self, new_cursor_pos: Option<Pos>) {
-        let mat_editor = self.matrix_editing.as_ref().unwrap();
+        let mat_editor = {
+            let mut mat_editor = self.matrix_editing.as_mut().unwrap();
+            mat_editor.save_editor_content();
+            mat_editor
+        };
         let mut concat = String::with_capacity(32);
         concat.push('[');
         for row_i in 0..mat_editor.row_count {
