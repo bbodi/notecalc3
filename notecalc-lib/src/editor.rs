@@ -1,6 +1,6 @@
 #[repr(C)]
-#[derive(Eq, PartialEq, Debug, Clone, Copy)]
-pub enum InputKey<'a> {
+#[derive(Eq, PartialEq, Debug, Clone)]
+pub enum InputKey {
     Left,
     Right,
     Up,
@@ -14,7 +14,7 @@ pub enum InputKey<'a> {
     Del,
     Esc,
     Char(char),
-    Text(&'a str),
+    Text(String),
 }
 
 #[repr(C)]
@@ -124,14 +124,14 @@ pub struct Selection {
 }
 
 impl Selection {
-    pub fn from_pos(pos: Pos) -> Selection {
+    pub fn single(pos: Pos) -> Selection {
         Selection {
             start: pos,
             end: None,
         }
     }
 
-    pub fn single(row_index: usize, column_index: usize) -> Selection {
+    pub fn single_r_c(row_index: usize, column_index: usize) -> Selection {
         Selection {
             start: Pos {
                 row: row_index,
@@ -182,7 +182,7 @@ impl Selection {
 
     pub fn extend(&self, new_end: Pos) -> Selection {
         return if self.start == new_end {
-            Selection::single(new_end.row, new_end.column)
+            Selection::single_r_c(new_end.row, new_end.column)
         } else {
             Selection::range(self.start, new_end)
         };
@@ -194,17 +194,40 @@ impl Selection {
 }
 
 pub type Canvas = Vec<char>;
+type EditorCommandGroup = Vec<EditorCommand>;
+
+enum EditorCommand {
+    InsertChar {
+        previously_selected_text: Option<String>,
+        selection: Selection,
+        ch: char,
+    },
+    LineSwap {
+        up: bool,
+        row: usize,
+    },
+    Todo,
+}
 
 pub struct Editor {
+    undo_stack: Vec<EditorCommandGroup>,
+    redo_stack: Vec<EditorCommandGroup>,
     selection: Selection,
     last_column_index: usize,
     time: u32,
     next_blink_at: u32,
+    modif_time_treshold_expires_at: u32,
     pub show_cursor: bool,
     max_line_len: usize,
     line_lens: Vec<usize>,
     canvas: Canvas,
     pub clipboard: String,
+}
+
+#[derive(Eq, PartialEq, Copy, Clone)]
+pub enum InputResult {
+    NoContentChange,
+    ContentWasModified,
 }
 
 #[derive(Eq, PartialEq, Copy, Clone)]
@@ -217,13 +240,16 @@ enum JumpMode {
 impl Editor {
     pub fn new(max_len: usize, line_data: &mut Vec<impl Default>) -> Editor {
         let mut ed = Editor {
+            undo_stack: Vec::with_capacity(32),
+            redo_stack: Vec::with_capacity(32),
             time: 0,
             canvas: Vec::with_capacity(max_len * 32),
             line_lens: Vec::with_capacity(32),
             max_line_len: max_len,
-            selection: Selection::single(0, 0),
+            selection: Selection::single_r_c(0, 0),
             last_column_index: 0,
             next_blink_at: 0,
+            modif_time_treshold_expires_at: 0,
             show_cursor: false,
             clipboard: String::new(),
         };
@@ -351,7 +377,7 @@ impl Editor {
     pub fn set_content(&mut self, text: &str, line_data: &mut Vec<impl Default>) {
         self.clear();
         self.set_cursor_pos_r_c(0, 0);
-        self.insert_at(text, 0, 0, line_data);
+        self.set_str_at(text, 0, 0, line_data);
     }
 
     pub fn lines(&self) -> impl Iterator<Item = &[char]> {
@@ -451,12 +477,12 @@ impl Editor {
 
     #[inline]
     pub fn set_cursor_pos(&mut self, pos: Pos) {
-        self.set_selection_save_col(Selection::from_pos(pos));
+        self.set_selection_save_col(Selection::single(pos));
     }
 
     #[inline]
     pub fn set_cursor_pos_r_c(&mut self, row_index: usize, column_index: usize) {
-        self.set_selection_save_col(Selection::single(row_index, column_index));
+        self.set_selection_save_col(Selection::single_r_c(row_index, column_index));
     }
 
     #[inline]
@@ -486,28 +512,30 @@ impl Editor {
         input: InputKey,
         modifiers: InputModifiers,
         line_data: &mut Vec<impl Default>,
-    ) {
+    ) -> InputResult {
         self.show_cursor = true;
         self.next_blink_at = self.time + 500;
         let cur_pos = self.selection.get_cursor_pos();
-        match input {
+        let command = match &input {
             InputKey::Home => {
                 let new_pos = cur_pos.with_column(0);
                 let new_selection = if modifiers.shift {
                     self.selection.extend(new_pos)
                 } else {
-                    Selection::from_pos(new_pos)
+                    Selection::single(new_pos)
                 };
                 self.set_selection_save_col(new_selection);
+                None
             }
             InputKey::End => {
                 let new_pos = cur_pos.with_column(self.line_lens[cur_pos.row]);
                 let new_selection = if modifiers.shift {
                     self.selection.extend(new_pos)
                 } else {
-                    Selection::from_pos(new_pos)
+                    Selection::single(new_pos)
                 };
                 self.set_selection_save_col(new_selection);
+                None
             }
             InputKey::Right => {
                 let new_pos = if cur_pos.column + 1 > self.line_lens[cur_pos.row] {
@@ -528,12 +556,13 @@ impl Editor {
                     self.selection.extend(new_pos)
                 } else {
                     if self.selection.end.is_some() {
-                        Selection::from_pos(self.selection.get_second())
+                        Selection::single(self.selection.get_second())
                     } else {
-                        Selection::from_pos(new_pos)
+                        Selection::single(new_pos)
                     }
                 };
                 self.set_selection_save_col(selection);
+                None
             }
             InputKey::Left => {
                 let new_pos = if cur_pos.column == 0 {
@@ -556,31 +585,26 @@ impl Editor {
                     self.selection.extend(new_pos)
                 } else {
                     if self.selection.end.is_some() {
-                        Selection::from_pos(self.selection.get_first())
+                        Selection::single(self.selection.get_first())
                     } else {
-                        Selection::from_pos(new_pos)
+                        Selection::single(new_pos)
                     }
                 };
                 self.set_selection_save_col(selection);
+                None
             }
             InputKey::Up => {
                 if modifiers.ctrl && modifiers.shift {
                     if cur_pos.row == 0 {
-                        return;
+                        return InputResult::NoContentChange;
                     }
-                    // swap lines
-                    let prev_i = self.get_char_pos(cur_pos.row - 1, 0);
-                    let cur_i = self.get_char_pos(cur_pos.row, 0);
-                    {
-                        let (left, right) = self.canvas.split_at_mut(cur_i);
-                        left[prev_i..].swap_with_slice(&mut right[0..self.max_line_len]);
-                    }
-                    let tmp = self.line_lens[cur_pos.row - 1];
-                    self.line_lens[cur_pos.row - 1] = self.line_lens[cur_pos.row];
-                    self.line_lens[cur_pos.row] = tmp;
-
+                    self.swap_lines_upward(cur_pos.row, line_data);
                     self.selection =
-                        Selection::from_pos(Pos::from_row_column(cur_pos.row - 1, cur_pos.column))
+                        Selection::single(Pos::from_row_column(cur_pos.row - 1, cur_pos.column));
+                    Some(EditorCommand::LineSwap {
+                        up: true,
+                        row: cur_pos.row,
+                    })
                 } else {
                     let new_pos = if cur_pos.row == 0 {
                         cur_pos.with_column(0)
@@ -593,28 +617,24 @@ impl Editor {
                     self.selection = if modifiers.shift {
                         self.selection.extend(new_pos)
                     } else {
-                        Selection::from_pos(new_pos)
+                        Selection::single(new_pos)
                     };
+                    None
                 }
             }
             InputKey::Down => {
                 if modifiers.ctrl && modifiers.shift {
                     if cur_pos.row == self.line_count() - 1 {
-                        return;
+                        return InputResult::NoContentChange;
                     }
-                    // swap lines
-                    let next_i = self.get_char_pos(cur_pos.row + 1, 0);
-                    let cur_i = self.get_char_pos(cur_pos.row, 0);
-                    {
-                        let (left, right) = self.canvas.split_at_mut(next_i);
-                        left[cur_i..].swap_with_slice(&mut right[0..self.max_line_len]);
-                    }
-                    let tmp = self.line_lens[cur_pos.row + 1];
-                    self.line_lens[cur_pos.row + 1] = self.line_lens[cur_pos.row];
-                    self.line_lens[cur_pos.row] = tmp;
+                    self.swap_lines_upward(cur_pos.row + 1, line_data);
 
                     self.selection =
-                        Selection::from_pos(Pos::from_row_column(cur_pos.row + 1, cur_pos.column))
+                        Selection::single(Pos::from_row_column(cur_pos.row + 1, cur_pos.column));
+                    Some(EditorCommand::LineSwap {
+                        up: false,
+                        row: cur_pos.row,
+                    })
                 } else {
                     let new_pos = if cur_pos.row == self.line_count() - 1 {
                         cur_pos.with_column(self.line_lens[cur_pos.row])
@@ -627,20 +647,23 @@ impl Editor {
                     self.selection = if modifiers.shift {
                         self.selection.extend(new_pos)
                     } else {
-                        Selection::from_pos(new_pos)
+                        Selection::single(new_pos)
                     };
+                    None
                 }
             }
             InputKey::Del => {
                 if let Some(end) = self.selection.end {
                     self.remove_selection(self.selection, line_data);
                     let first = self.selection.get_first();
-                    let selection = Selection::from_pos(first);
+                    let selection = Selection::single(first);
                     self.set_selection_save_col(selection);
+                    Some(EditorCommand::Todo)
                 } else {
                     if self.line_lens[cur_pos.row] == 0 && self.line_count() > 1 {
                         // if the current row is empty, the next line brings its data with itself
                         self.remove_line_at(cur_pos.row, line_data);
+                        Some(EditorCommand::Todo)
                     } else if cur_pos.column == self.line_lens[cur_pos.row] {
                         if cur_pos.row < self.line_count() - 1 {
                             self.merge_with_next_row(
@@ -649,13 +672,18 @@ impl Editor {
                                 0,
                                 line_data,
                             );
+                            Some(EditorCommand::Todo)
+                        } else {
+                            None
                         }
                     } else if modifiers.ctrl {
                         let col = self.jump_word_forward(&cur_pos, JumpMode::ConsiderWhitespaces);
                         let new_pos = cur_pos.with_column(col);
                         self.remove_selection(Selection::range(cur_pos, new_pos), line_data);
+                        Some(EditorCommand::Todo)
                     } else {
                         self.remove_char(cur_pos.row, cur_pos.column);
+                        Some(EditorCommand::Todo)
                     }
                 }
             }
@@ -665,7 +693,7 @@ impl Editor {
 
                     self.remove_selection(self.selection, line_data);
                     self.split_line(first.row, first.column, line_data);
-                    self.set_selection_save_col(Selection::from_pos(Pos::from_row_column(
+                    self.set_selection_save_col(Selection::single(Pos::from_row_column(
                         first.row + 1,
                         0,
                     )));
@@ -676,17 +704,19 @@ impl Editor {
                     } else {
                         self.split_line(cur_pos.row, cur_pos.column, line_data);
                     }
-                    self.set_selection_save_col(Selection::from_pos(Pos::from_row_column(
+                    self.set_selection_save_col(Selection::single(Pos::from_row_column(
                         cur_pos.row + 1,
                         0,
                     )));
                 }
+                Some(EditorCommand::Todo)
             }
             InputKey::Backspace => {
                 if self.selection.end.is_some() {
                     self.remove_selection(self.selection, line_data);
                     let first = self.selection.get_first();
-                    self.set_selection_save_col(Selection::from_pos(first));
+                    self.set_selection_save_col(Selection::single(first));
+                    Some(EditorCommand::Todo)
                 } else {
                     if cur_pos.column == 0 {
                         if cur_pos.row > 0 {
@@ -694,7 +724,7 @@ impl Editor {
                             if self.line_lens[prev_row_i] == 0 {
                                 // if the prev row is empty, the line takes its data with itself
                                 self.remove_line_at(prev_row_i, line_data);
-                                self.set_selection_save_col(Selection::from_pos(
+                                self.set_selection_save_col(Selection::single(
                                     Pos::from_row_column(prev_row_i, 0),
                                 ));
                             } else {
@@ -705,26 +735,33 @@ impl Editor {
                                     0,
                                     line_data,
                                 ) {
-                                    self.set_selection_save_col(Selection::from_pos(
+                                    self.set_selection_save_col(Selection::single(
                                         Pos::from_row_column(prev_row_i, prev_len_before_merge),
                                     ));
                                 }
                             }
+                            Some(EditorCommand::Todo)
+                        } else {
+                            None
                         }
                     } else if modifiers.ctrl {
                         let col = self.jump_word_backward(&cur_pos, JumpMode::IgnoreWhitespaces);
                         let new_pos = cur_pos.with_column(col);
                         self.remove_selection(Selection::range(new_pos, cur_pos), line_data);
-                        self.set_selection_save_col(Selection::from_pos(new_pos));
+                        self.set_selection_save_col(Selection::single(new_pos));
+                        Some(EditorCommand::Todo)
                     } else if self.remove_char(cur_pos.row, cur_pos.column - 1) {
-                        self.set_selection_save_col(Selection::from_pos(
+                        self.set_selection_save_col(Selection::single(
                             cur_pos.with_column(cur_pos.column - 1),
                         ));
+                        Some(EditorCommand::Todo)
+                    } else {
+                        None
                     }
                 }
             }
             InputKey::Char(ch) => {
-                if ch == 'w' && modifiers.ctrl {
+                if *ch == 'w' && modifiers.ctrl {
                     let prev_index = self.jump_word_backward(
                         &self.selection.get_first(),
                         if self.selection.end.is_some() {
@@ -745,14 +782,16 @@ impl Editor {
                         cur_pos.with_column(prev_index),
                         cur_pos.with_column(next_index),
                     ));
-                } else if ch == 'c' && modifiers.ctrl {
+                    None
+                } else if *ch == 'c' && modifiers.ctrl {
                     self.send_selection_to_clipboard();
-                } else if ch == 'x' && modifiers.ctrl {
+                    None
+                } else if *ch == 'x' && modifiers.ctrl {
                     if self.selection.end.is_some() {
                         self.send_selection_to_clipboard();
                         self.remove_selection(self.selection, line_data);
                         let first = self.selection.get_first();
-                        let selection = Selection::from_pos(first);
+                        let selection = Selection::single(first);
                         self.set_selection_save_col(selection);
                     } else {
                         self.selection = Selection::range(
@@ -767,12 +806,14 @@ impl Editor {
                             // last row
                             self.line_lens[cur_pos.row] = 0;
                         }
-                        self.selection = Selection::from_pos(cur_pos.with_column(0));
+                        self.selection = Selection::single(cur_pos.with_column(0));
                     }
-                } else if ch == 'd' && modifiers.ctrl {
+                    Some(EditorCommand::Todo)
+                } else if *ch == 'd' && modifiers.ctrl {
                     self.duplicate_line(cur_pos.row, line_data);
-                    self.set_selection_save_col(Selection::from_pos(cur_pos.with_next_row()));
-                } else if ch == 'a' && modifiers.ctrl {
+                    self.set_selection_save_col(Selection::single(cur_pos.with_next_row()));
+                    Some(EditorCommand::Todo)
+                } else if *ch == 'a' && modifiers.ctrl {
                     self.set_selection_save_col(Selection::range(
                         Pos::from_row_column(0, 0),
                         Pos::from_row_column(
@@ -780,56 +821,223 @@ impl Editor {
                             self.line_len(self.line_count() - 1),
                         ),
                     ));
+                    None
+                } else if *ch == 'z' && modifiers.ctrl && modifiers.shift {
+                    return self.redo(line_data);
+                } else if *ch == 'z' && modifiers.ctrl {
+                    return self.undo(line_data);
                 } else if self.selection.end.is_some() {
-                    let mut first = self.selection.get_first();
-
-                    if self.remove_selection(
-                        Selection::range(first.with_next_col(), self.selection.get_second()),
-                        line_data,
-                    ) {
-                        self.set_char(first.row, first.column, ch, line_data);
-                    }
-                    self.set_selection_save_col(Selection::from_pos(first.with_next_col()));
+                    let selected_text = self.get_selected_text();
+                    let cur_selection = self.selection;
+                    self.insert_char_while_selection(cur_selection, *ch, line_data);
+                    self.set_selection_save_col(Selection::single(
+                        cur_selection.get_first().with_next_col(),
+                    ));
+                    Some(EditorCommand::InsertChar {
+                        previously_selected_text: selected_text,
+                        selection: cur_selection,
+                        ch: *ch,
+                    })
                 } else {
-                    if self.insert_char(cur_pos.row, cur_pos.column, ch) {
-                        self.set_selection_save_col(Selection::from_pos(
-                            cur_pos.with_column(cur_pos.column + 1),
-                        ));
+                    if self.insert_char(cur_pos.row, cur_pos.column, *ch) {
+                        let selection = self.selection;
+                        self.set_selection_save_col(Selection::single(cur_pos.with_next_col()));
+                        Some(EditorCommand::InsertChar {
+                            previously_selected_text: None,
+                            selection,
+                            ch: *ch,
+                        })
+                    } else {
+                        None
                     }
                 }
             }
             InputKey::Text(str) => {
-                // save the content of first row which will be moved
-                let mut text_to_move_buf: [u8; /*MAX_EDITOR_WIDTH * 4*/ 1024] = [0; 1024];
-                let mut text_to_move_buf_index = 0;
-
-                for ch in
-                    &self.get_line_chars(cur_pos.row)[cur_pos.column..self.line_lens[cur_pos.row]]
-                {
-                    ch.encode_utf8(&mut text_to_move_buf[text_to_move_buf_index..]);
-                    text_to_move_buf_index += ch.len_utf8();
-                }
-
-                let new_pos = self.insert_at(str, cur_pos.row, cur_pos.column, line_data);
-                if text_to_move_buf_index > 0 {
-                    let p = self.insert_at(
-                        unsafe {
-                            std::str::from_utf8_unchecked(
-                                &text_to_move_buf[0..text_to_move_buf_index],
-                            )
-                        },
-                        new_pos.row,
-                        new_pos.column,
-                        line_data,
-                    );
-                    self.line_lens[p.row] = p.column;
-                }
-                self.set_selection_save_col(Selection::from_pos(new_pos));
+                let new_pos = self.insert_str_at(cur_pos, str, line_data);
+                self.set_selection_save_col(Selection::single(new_pos));
+                Some(EditorCommand::Todo)
             }
             InputKey::Esc => {
                 // nothing
+                None
             }
+        };
+        if let Some(command) = command {
+            if self.modif_time_treshold_expires_at < self.time || self.undo_stack.is_empty() {
+                // new undo group
+                self.undo_stack.push(Vec::with_capacity(4));
+            }
+            self.undo_stack.last_mut().unwrap().push(command);
+            self.modif_time_treshold_expires_at = self.time + 500;
+            InputResult::ContentWasModified
+        } else {
+            InputResult::NoContentChange
         }
+    }
+
+    fn undo(&mut self, line_data: &mut Vec<impl Default>) -> InputResult {
+        return if let Some(command_group) = self.undo_stack.pop() {
+            for command in command_group.iter().rev() {
+                self.execute_undo(command, line_data);
+            }
+            self.redo_stack.push(command_group);
+            InputResult::ContentWasModified
+        } else {
+            InputResult::NoContentChange
+        };
+    }
+
+    fn redo(&mut self, line_data: &mut Vec<impl Default>) -> InputResult {
+        return if let Some(command_group) = self.redo_stack.pop() {
+            for command in command_group.iter() {
+                self.execute_redo(command, line_data);
+            }
+            self.undo_stack.push(command_group);
+            InputResult::ContentWasModified
+        } else {
+            InputResult::NoContentChange
+        };
+    }
+
+    fn execute_undo(&mut self, command: &EditorCommand, line_data: &mut Vec<impl Default>) {
+        match command {
+            EditorCommand::InsertChar {
+                previously_selected_text,
+                selection,
+                ch,
+            } => {
+                if let (Some(_end), Some(previously_selected_text)) =
+                    (selection.end, previously_selected_text)
+                {
+                    let pos = selection.get_first();
+                    self.remove_char(pos.row, pos.column);
+                    self.insert_str_at(pos, &previously_selected_text, line_data);
+                } else {
+                    let cur_pos = selection.get_cursor_pos();
+                    self.remove_char(cur_pos.row, cur_pos.column);
+                }
+                self.set_selection_save_col(*selection);
+            }
+            EditorCommand::LineSwap { up, row } => {
+                if *up {
+                    let lower_row_i = *row;
+                    self.swap_lines_upward(lower_row_i, line_data);
+
+                    self.selection = Selection::single(Pos::from_row_column(
+                        lower_row_i,
+                        self.selection.get_cursor_pos().column,
+                    ));
+                } else {
+                    let upper_row_i = *row;
+                    self.swap_lines_upward(upper_row_i + 1, line_data);
+
+                    self.selection = Selection::single(Pos::from_row_column(
+                        upper_row_i,
+                        self.selection.get_cursor_pos().column,
+                    ));
+                }
+            }
+            EditorCommand::Todo => {}
+        }
+    }
+
+    fn execute_redo(&mut self, command: &EditorCommand, line_data: &mut Vec<impl Default>) {
+        match command {
+            EditorCommand::InsertChar {
+                previously_selected_text,
+                selection,
+                ch,
+            } => {
+                if let (Some(_end), Some(previously_selected_text)) =
+                    (selection.end, previously_selected_text)
+                {
+                    self.insert_char_while_selection(*selection, *ch, line_data);
+                } else {
+                    let cur_pos = selection.get_cursor_pos();
+                    self.insert_char(cur_pos.row, cur_pos.column, *ch);
+                }
+                self.set_selection_save_col(Selection::single(
+                    selection.get_first().with_next_col(),
+                ));
+            }
+            EditorCommand::LineSwap { up, row } => {
+                if *up {
+                    let lower_row_i = *row;
+                    self.swap_lines_upward(lower_row_i, line_data);
+
+                    self.selection = Selection::single(Pos::from_row_column(
+                        lower_row_i - 1,
+                        self.selection.get_cursor_pos().column,
+                    ));
+                } else {
+                    let upper_row_i = *row;
+                    self.swap_lines_upward(upper_row_i + 1, line_data);
+
+                    self.selection = Selection::single(Pos::from_row_column(
+                        upper_row_i + 1,
+                        self.selection.get_cursor_pos().column,
+                    ));
+                }
+            }
+
+            EditorCommand::Todo => {}
+        }
+    }
+
+    fn swap_lines_upward(&mut self, lower_row: usize, line_data: &mut Vec<impl Default>) {
+        // swap lines
+        {
+            let upper_i = self.get_char_pos(lower_row - 1, 0);
+            let cur_i = self.get_char_pos(lower_row, 0);
+            let (left, right) = self.canvas.split_at_mut(cur_i);
+            left[upper_i..].swap_with_slice(&mut right[0..self.max_line_len]);
+        }
+        let tmp = self.line_lens[lower_row - 1];
+        self.line_lens[lower_row - 1] = self.line_lens[lower_row];
+        self.line_lens[lower_row] = tmp;
+
+        let tmp = std::mem::replace(&mut line_data[lower_row - 1], Default::default());
+        line_data[lower_row - 1] = std::mem::replace(&mut line_data[lower_row], tmp);
+    }
+
+    fn insert_char_while_selection(
+        &mut self,
+        selection: Selection,
+        ch: char,
+        line_data: &mut Vec<impl Default>,
+    ) {
+        let mut first = selection.get_first();
+        if self.remove_selection(
+            Selection::range(first.with_next_col(), selection.get_second()),
+            line_data,
+        ) {
+            self.set_char(first.row, first.column, ch, line_data);
+        }
+    }
+
+    fn insert_str_at(&mut self, pos: Pos, str: &str, line_data: &mut Vec<impl Default>) -> Pos {
+        // save the content of first row which will be moved
+        let mut text_to_move_buf: [u8; /*MAX_EDITOR_WIDTH * 4*/ 1024] = [0; 1024];
+        let mut text_to_move_buf_index = 0;
+
+        for ch in &self.get_line_chars(pos.row)[pos.column..self.line_lens[pos.row]] {
+            ch.encode_utf8(&mut text_to_move_buf[text_to_move_buf_index..]);
+            text_to_move_buf_index += ch.len_utf8();
+        }
+
+        let new_pos = self.set_str_at(&str, pos.row, pos.column, line_data);
+        if text_to_move_buf_index > 0 {
+            let p = self.set_str_at(
+                unsafe {
+                    std::str::from_utf8_unchecked(&text_to_move_buf[0..text_to_move_buf_index])
+                },
+                new_pos.row,
+                new_pos.column,
+                line_data,
+            );
+            self.line_lens[p.row] = p.column;
+        }
+        return new_pos;
     }
 
     fn jump_word_backward(&mut self, cur_pos: &Pos, mode: JumpMode) -> usize {
@@ -924,7 +1132,7 @@ impl Editor {
         col
     }
 
-    fn insert_at(
+    fn set_str_at(
         &mut self,
         str: &str,
         row_index: usize,
@@ -1023,41 +1231,55 @@ mod tests {
     const SELECTION_START_MARK: char = '❱';
     const SELECTION_END_MARK: char = '❰';
 
+    struct TestParams<'a> {
+        initial_content: &'a str,
+        inputs: &'a [InputKey],
+        delay_after_inputs: &'a [u32],
+        modifiers: InputModifiers,
+        undo_count: usize,
+        redo_count: usize,
+        expected_content: &'a str,
+    }
+
+    fn test_undo(params: TestParams) {
+        let mut line_data = Vec::<usize>::new();
+        let mut editor = Editor::new(80, &mut line_data);
+        test0(&mut editor, &mut line_data, params);
+    }
+
     fn test(
-        initial_content: &str,
+        initial_content: &'static str,
         inputs: &[InputKey],
         modifiers: InputModifiers,
-        expected_content: &str,
+        expected_content: &'static str,
     ) {
         let mut line_data = Vec::<usize>::new();
         let mut editor = Editor::new(80, &mut line_data);
         test0(
             &mut editor,
             &mut line_data,
-            initial_content,
-            inputs,
-            modifiers,
-            expected_content,
+            TestParams {
+                initial_content,
+                inputs,
+                delay_after_inputs: &[],
+                modifiers,
+                undo_count: 0,
+                redo_count: 0,
+                expected_content,
+            },
         );
     }
 
     /// the strings in the parameter list are kind of a markup language
     /// '|' marks the cursor's position. If there are two of them, then
     /// it means a selection's begin and end.
-    fn test0(
-        editor: &mut Editor,
-        line_data: &mut Vec<impl Default>,
-        initial_content: &str,
-        inputs: &[InputKey],
-        modifiers: InputModifiers,
-        expected_content: &str,
-    ) {
+    fn test0(editor: &mut Editor, line_data: &mut Vec<impl Default>, params: TestParams) {
         // we can assume here that it does not contain illegal or complex input
         // so we can just set it as it is
         let mut selection_found = false;
         let mut selection_start = Pos { row: 0, column: 0 };
         let mut selection_end = Pos { row: 0, column: 0 };
-        for (row_index, line) in initial_content.lines().enumerate() {
+        for (row_index, line) in params.initial_content.lines().enumerate() {
             let mut row_len = 0;
             for char in line.chars() {
                 if char == CURSOR_MARKER {
@@ -1084,21 +1306,34 @@ mod tests {
             editor.set_cursor_range(selection_start, selection_end);
         }
 
-        for input in inputs {
-            editor.handle_input(*input, modifiers, line_data);
+        let mut now = 0;
+        for (i, input) in params.inputs.iter().enumerate() {
+            editor.handle_input(input.clone(), params.modifiers, line_data);
+            if i < params.delay_after_inputs.len() {
+                now += params.delay_after_inputs[i];
+                editor.handle_tick(now);
+            }
+        }
+
+        for i in 0..params.undo_count {
+            editor.undo(line_data);
+        }
+
+        for i in 0..params.redo_count {
+            editor.redo(line_data);
         }
 
         // assert
         let editor: &Editor = editor;
-        let mut expected_cursor = Selection::single(0, 0);
+        let mut expected_cursor = Selection::single_r_c(0, 0);
         let mut expected_selection_start = Pos { row: 0, column: 0 };
         let mut expected_selection_end = Pos { row: 0, column: 0 };
         let mut selection_found = false;
-        for (row_index, expected_line) in expected_content.lines().enumerate() {
+        for (row_index, expected_line) in params.expected_content.lines().enumerate() {
             let mut expected_row_len = 0;
             for char in expected_line.chars() {
                 if char == CURSOR_MARKER {
-                    expected_cursor = Selection::single(row_index, expected_row_len);
+                    expected_cursor = Selection::single_r_c(row_index, expected_row_len);
                 } else if char == SELECTION_START_MARK {
                     selection_found = true;
                     expected_selection_start = Pos {
@@ -1159,10 +1394,15 @@ mod tests {
         test0(
             &mut editor,
             &mut Vec::<usize>::new(),
-            "█abcdefghijklmnopqrstuvwxyz",
-            &[],
-            InputModifiers::none(),
-            "█abcdefghijklmnopqrstuvwxyz",
+            TestParams {
+                initial_content: "█abcdefghijklmnopqrstuvwxyz",
+                inputs: &[],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 0,
+                redo_count: 0,
+                expected_content: "█abcdefghijklmnopqrstuvwxyz",
+            },
         );
         assert_eq!(editor.selection.start.column, 0);
         assert_eq!(editor.selection.start.row, 0);
@@ -1178,10 +1418,15 @@ mod tests {
         test0(
             &mut editor,
             &mut Vec::<usize>::new(),
-            "█abcdeéfghijklmnopqrstuvwxyz",
-            &[],
-            InputModifiers::none(),
-            "█abcdee\u{301}fghijklmnopqrstuvwxyz",
+            TestParams {
+                initial_content: "█abcdeéfghijklmnopqrstuvwxyz",
+                inputs: &[],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 0,
+                redo_count: 0,
+                expected_content: "██abcdee\u{301}fghijklmnopqrstuvwxyz",
+            },
         );
         assert_eq!(editor.selection.start.column, 0);
         assert_eq!(editor.selection.start.row, 0);
@@ -1196,12 +1441,17 @@ mod tests {
         let lines = test0(
             &mut editor,
             &mut Vec::<usize>::new(),
-            "abcdefghijklmnopqrstuvwxyz\n\
+            TestParams {
+                initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             ABCD█EFGHIJKLMNOPQRSTUVWXY",
-            &[],
-            InputModifiers::none(),
-            "abcdefghijklmnopqrstuvwxyz\n\
+                inputs: &[],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 0,
+                redo_count: 0,
+                expected_content: "abcdefghijklmnopqrstuvwxyz\n\
             ABCD█EFGHIJKLMNOPQRSTUVWXY",
+            },
         );
         assert!(
             matches!(
@@ -1271,10 +1521,15 @@ mod tests {
         test0(
             &mut editor,
             &mut Vec::<usize>::new(),
-            "a❱bcdefghij❰klmnopqrstuvwxyz",
-            &[],
-            InputModifiers::none(),
-            "a❱bcdefghij❰klmnopqrstuvwxyz",
+            TestParams {
+                initial_content: "a❱bcdefghij❰klmnopqrstuvwxyz",
+                inputs: &[],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 0,
+                redo_count: 0,
+                expected_content: "a❱bcdefghij❰klmnopqrstuvwxyz",
+            },
         );
         assert!(
             matches!(
@@ -1291,12 +1546,17 @@ mod tests {
         test0(
             &mut editor,
             &mut Vec::<usize>::new(),
-            "a❱bcdefghijklmnopqrstuvwxyz\n\
+            TestParams {
+                initial_content: "a❱bcdefghijklmnopqrstuvwxyz\n\
             abcdefghij❰klmnopqrstuvwxyz",
-            &[],
-            InputModifiers::none(),
-            "a❱bcdefghijklmnopqrstuvwxyz\n\
+                inputs: &[],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 0,
+                redo_count: 0,
+                expected_content: "a❱bcdefghijklmnopqrstuvwxyz\n\
             abcdefghij❰klmnopqrstuvwxyz",
+            },
         );
         assert!(
             matches!(
@@ -1313,12 +1573,17 @@ mod tests {
         test0(
             &mut editor,
             &mut Vec::<usize>::new(),
-            "a❰bcdefghijklmnopqrstuvwxyz\n\
+            TestParams {
+                initial_content: "a❰bcdefghijklmnopqrstuvwxyz\n\
             abcdefghij❱klmnopqrstuvwxyz",
-            &[],
-            InputModifiers::none(),
-            "a❰bcdefghijklmnopqrstuvwxyz\n\
+                inputs: &[],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 0,
+                redo_count: 0,
+                expected_content: "a❰bcdefghijklmnopqrstuvwxyz\n\
             abcdefghij❱klmnopqrstuvwxyz",
+            },
         );
         assert!(
             matches!(
@@ -1342,15 +1607,20 @@ mod tests {
         test0(
             &mut editor,
             &mut line_data,
-            "█111111111\n\
+            TestParams {
+                initial_content: "█111111111\n\
             2222222222\n\
             3333333333",
-            &[InputKey::Enter],
-            InputModifiers::none(),
-            "\n\
+                inputs: &[InputKey::Enter],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 0,
+                redo_count: 0,
+                expected_content: "\n\
             █111111111\n\
             2222222222\n\
             3333333333",
+            },
         );
         assert_eq!(line_data, &[0, 1, 2, 3]);
 
@@ -1359,15 +1629,20 @@ mod tests {
         test0(
             &mut editor,
             &mut line_data,
-            "11█1111111\n\
+            TestParams {
+                initial_content: "11█1111111\n\
             2222222222\n\
             3333333333",
-            &[InputKey::Enter],
-            InputModifiers::none(),
-            "11\n\
+                inputs: &[InputKey::Enter],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 0,
+                redo_count: 0,
+                expected_content: "11\n\
             █1111111\n\
             2222222222\n\
             3333333333",
+            },
         );
         assert_eq!(line_data, &[1, 0, 2, 3]);
 
@@ -1376,13 +1651,18 @@ mod tests {
         test0(
             &mut editor,
             &mut line_data,
-            "\n\
+            TestParams {
+                initial_content: "\n\
             █2222222222\n\
             3333333333",
-            &[InputKey::Backspace],
-            InputModifiers::none(),
-            "█2222222222\n\
+                inputs: &[InputKey::Backspace],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 0,
+                redo_count: 0,
+                expected_content: "█2222222222\n\
             3333333333",
+            },
         );
         assert_eq!(line_data, &[2, 3]);
 
@@ -1390,13 +1670,18 @@ mod tests {
         test0(
             &mut editor,
             &mut line_data,
-            "111\n\
+            TestParams {
+                initial_content: "111\n\
             █2222222222\n\
             3333333333",
-            &[InputKey::Backspace],
-            InputModifiers::none(),
-            "111█2222222222\n\
+                inputs: &[InputKey::Backspace],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 0,
+                redo_count: 0,
+                expected_content: "111█2222222222\n\
             3333333333",
+            },
         );
         assert_eq!(line_data, &[1, 3]);
 
@@ -1405,13 +1690,18 @@ mod tests {
         test0(
             &mut editor,
             &mut line_data,
-            "█\n\
+            TestParams {
+                initial_content: "█\n\
             2222222222\n\
             3333333333",
-            &[InputKey::Del],
-            InputModifiers::none(),
-            "█2222222222\n\
+                inputs: &[InputKey::Del],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 0,
+                redo_count: 0,
+                expected_content: "█2222222222\n\
             3333333333",
+            },
         );
         assert_eq!(line_data, &[2, 3]);
 
@@ -1419,13 +1709,18 @@ mod tests {
         test0(
             &mut editor,
             &mut line_data,
-            "111█\n\
+            TestParams {
+                initial_content: "111█\n\
             2222222222\n\
             3333333333",
-            &[InputKey::Del],
-            InputModifiers::none(),
-            "111█2222222222\n\
+                inputs: &[InputKey::Del],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 0,
+                redo_count: 0,
+                expected_content: "111█2222222222\n\
             3333333333",
+            },
         );
         assert_eq!(line_data, &[1, 3]);
     }
@@ -1437,10 +1732,15 @@ mod tests {
         test0(
             &mut editor,
             &mut Vec::<usize>::new(),
-            "a❱bcdefghij❰klmnopqrstuvwxyz",
-            &[],
-            InputModifiers::none(),
-            "ab❱cdefghij❰klmnopqrstuvwxyz",
+            TestParams {
+                initial_content: "a❱bcdefghij❰klmnopqrstuvwxyz",
+                inputs: &[],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 0,
+                redo_count: 0,
+                expected_content: "ab❱cdefghij❰klmnopqrstuvwxyz",
+            },
         );
     }
 
@@ -1451,10 +1751,15 @@ mod tests {
         test0(
             &mut editor,
             &mut Vec::<usize>::new(),
-            "a❱bcdefghij❰klmnopqrstuvwxyz",
-            &[],
-            InputModifiers::none(),
-            "a❱bcdefghijk❰lmnopqrstuvwxyz",
+            TestParams {
+                initial_content: "a❱bcdefghij❰klmnopqrstuvwxyz",
+                inputs: &[],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 0,
+                redo_count: 0,
+                expected_content: "a❱bcdefghijk❰lmnopqrstuvwxyz",
+            },
         );
     }
 
@@ -2693,6 +2998,87 @@ mod tests {
     }
 
     #[test]
+    fn test_ctrl_shift_up_undo() {
+        test_undo(TestParams {
+            initial_content: "abcdefgh█ijklmnopqrstuvwxyz\n\
+            ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+            inputs: &[InputKey::Up],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::ctrl_shift(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefgh█ijklmnopqrstuvwxyz\n\
+            ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            ABCDEFGHI█JKLMNOPQRSTUVWXYZ",
+            inputs: &[InputKey::Up],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::ctrl_shift(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            ABCDEFGHI█JKLMNOPQRSTUVWXYZ",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            ABCDEFGHIJKLMNOPQRSTUVWXYZ\n\
+            123456789█12345678123456",
+            inputs: &[InputKey::Up, InputKey::Up],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::ctrl_shift(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            ABCDEFGHIJKLMNOPQRSTUVWXYZ\n\
+            123456789█12345678123456",
+        });
+    }
+
+    #[test]
+    fn test_ctrl_shift_up_redo() {
+        test_undo(TestParams {
+            initial_content: "abcdefgh█ijklmnopqrstuvwxyz\n\
+            ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+            inputs: &[InputKey::Up],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::ctrl_shift(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefgh█ijklmnopqrstuvwxyz\n\
+            ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        });
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            ABCDEFGHI█JKLMNOPQRSTUVWXYZ",
+            inputs: &[InputKey::Up],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::ctrl_shift(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "ABCDEFGHI█JKLMNOPQRSTUVWXYZ\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            ABCDEFGHIJKLMNOPQRSTUVWXYZ\n\
+            123456789█12345678123456",
+            inputs: &[InputKey::Up, InputKey::Up],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::ctrl_shift(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "123456789█12345678123456\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        });
+    }
+
+    #[test]
     fn test_ctrl_shift_down() {
         test(
             "abcdefghijklmnopqrstuvwxyz\n\
@@ -2722,6 +3108,88 @@ mod tests {
             12345678912345678123456\n\
             abcdefghi█jklmnopqrstuvwxyz",
         );
+    }
+
+    #[test]
+    fn test_ctrl_shift_down_undo() {
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            ABCDEFGHI█JKLMNOPQRSTUVWXYZ",
+            inputs: &[InputKey::Down],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::ctrl_shift(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            ABCDEFGHI█JKLMNOPQRSTUVWXYZ",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghi█jklmnopqrstuvwxyz\n\
+            ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+            inputs: &[InputKey::Down],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::ctrl_shift(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghi█jklmnopqrstuvwxyz\n\
+            ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghi█jklmnopqrstuvwxyz\n\
+            ABCDEFGHIJKLMNOPQRSTUVWXYZ\n\
+            12345678912345678123456",
+            inputs: &[InputKey::Down, InputKey::Down],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::ctrl_shift(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghi█jklmnopqrstuvwxyz\n\
+            ABCDEFGHIJKLMNOPQRSTUVWXYZ\n\
+            12345678912345678123456",
+        });
+    }
+
+    #[test]
+    fn test_ctrl_shift_down_redo() {
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            ABCDEFGHI█JKLMNOPQRSTUVWXYZ",
+            inputs: &[InputKey::Down],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::ctrl_shift(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            ABCDEFGHI█JKLMNOPQRSTUVWXYZ",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghi█jklmnopqrstuvwxyz\n\
+            ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+            inputs: &[InputKey::Down],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::ctrl_shift(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "ABCDEFGHIJKLMNOPQRSTUVWXYZ\n\
+            abcdefghi█jklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghi█jklmnopqrstuvwxyz\n\
+            ABCDEFGHIJKLMNOPQRSTUVWXYZ\n\
+            12345678912345678123456",
+            inputs: &[InputKey::Down, InputKey::Down],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::ctrl_shift(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "ABCDEFGHIJKLMNOPQRSTUVWXYZ\n\
+            12345678912345678123456\n\
+            abcdefghi█jklmnopqrstuvwxyz",
+        });
     }
 
     #[test]
@@ -2917,6 +3385,424 @@ mod tests {
             "abcdX█mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
         );
+    }
+
+    #[test]
+    fn test_insert_char_undo() {
+        test_undo(TestParams {
+            initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
+                               abcdefghijklmnopqrstuvwxyz",
+            inputs: &[InputKey::Char('1')],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "█abcdefghijklmnopqrstuvwxyz\n\
+                               abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdef█ghijklmnopqrstuvwxyz",
+            inputs: &[InputKey::Char('1')],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdef█ghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[InputKey::Char('1')],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijklmnopqrstuvwxyz█\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz█",
+            inputs: &[InputKey::Char('1')],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz█",
+        });
+
+        test_undo(TestParams {
+            initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[
+                InputKey::Char('1'),
+                InputKey::Char('❤'),
+                InputKey::Char('3'),
+            ],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        // line is full, no insertion is allowed
+        let text_80_len =
+            "█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzab\n\
+            abcdefghijklmnopqrstuvwxyz";
+        test_undo(TestParams {
+            initial_content: text_80_len,
+            inputs: &[
+                InputKey::Char('1'),
+                InputKey::Char('❤'),
+                InputKey::Char('3'),
+            ],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: text_80_len,
+        });
+    }
+
+    #[test]
+    fn test_insert_char_redo() {
+        test_undo(TestParams {
+            initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
+                               abcdefghijklmnopqrstuvwxyz",
+            inputs: &[InputKey::Char('1')],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "1█abcdefghijklmnopqrstuvwxyz\n\
+                               abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdef█ghijklmnopqrstuvwxyz",
+            inputs: &[InputKey::Char('1')],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdef1█ghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[InputKey::Char('1')],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijklmnopqrstuvwxyz1█\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz█",
+            inputs: &[InputKey::Char('1')],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz1█",
+        });
+
+        test_undo(TestParams {
+            initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[
+                InputKey::Char('1'),
+                InputKey::Char('❤'),
+                InputKey::Char('3'),
+            ],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "1❤3█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        // line is full, no insertion is allowed
+        let text_80_len =
+            "█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzab\n\
+            abcdefghijklmnopqrstuvwxyz";
+        test_undo(TestParams {
+            initial_content: text_80_len,
+            inputs: &[
+                InputKey::Char('1'),
+                InputKey::Char('❤'),
+                InputKey::Char('3'),
+            ],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: text_80_len,
+        });
+    }
+
+    #[test]
+    fn test_undo_command_grouping() {
+        test_undo(TestParams {
+            initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[
+                InputKey::Char('1'),
+                InputKey::Char('❤'),
+                InputKey::Char('3'),
+            ],
+            delay_after_inputs: &[501, 501, 501],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "1❤█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[
+                InputKey::Char('1'),
+                InputKey::Char('❤'),
+                InputKey::Char('3'),
+            ],
+            delay_after_inputs: &[501, 501, 501],
+            modifiers: InputModifiers::none(),
+            undo_count: 2,
+            redo_count: 0,
+            expected_content: "1█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[
+                InputKey::Char('1'),
+                InputKey::Char('❤'),
+                InputKey::Char('3'),
+            ],
+            delay_after_inputs: &[501, 501, 501],
+            modifiers: InputModifiers::none(),
+            undo_count: 3,
+            redo_count: 0,
+            expected_content: "█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[
+                InputKey::Char('1'),
+                InputKey::Char('❤'),
+                InputKey::Char('3'),
+            ],
+            delay_after_inputs: &[501, 0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "1█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[
+                InputKey::Char('1'),
+                InputKey::Char('❤'),
+                InputKey::Char('3'),
+            ],
+            delay_after_inputs: &[501, 0, 0],
+            modifiers: InputModifiers::none(),
+            undo_count: 2,
+            redo_count: 0,
+            expected_content: "█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[
+                InputKey::Char('1'),
+                InputKey::Char('❤'),
+                InputKey::Char('3'),
+            ],
+            delay_after_inputs: &[0, 501],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "1❤█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[
+                InputKey::Char('1'),
+                InputKey::Char('❤'),
+                InputKey::Char('3'),
+            ],
+            delay_after_inputs: &[0, 501],
+            modifiers: InputModifiers::none(),
+            undo_count: 2,
+            redo_count: 0,
+            expected_content: "█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+    }
+
+    #[test]
+    fn insert_char_with_selection_undo() {
+        test_undo(TestParams {
+            initial_content: "abcd❰efghijk❱lmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[InputKey::Char('X')],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcd❰efghijk❱lmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
+            abcdefghijkl❱mnopqrstuvwxyz",
+            inputs: &[InputKey::Char('X')],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcd❰efghijklmnopqrstuvwxyz\n\
+            abcdefghijkl❱mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "❰abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz❱",
+            inputs: &[InputKey::Char('X')],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "❰abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz❱",
+        });
+
+        test_undo(TestParams {
+            initial_content: "ab❰c❱defghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[InputKey::Char('X')],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "ab❰c❱defghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijkl❱mnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[InputKey::Char('X')],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcd❰efghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijkl❱mnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+    }
+
+    #[test]
+    fn insert_char_with_selection_redo() {
+        test_undo(TestParams {
+            initial_content: "abcd❰efghijk❱lmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[InputKey::Char('X')],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdX█lmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
+            abcdefghijkl❱mnopqrstuvwxyz",
+            inputs: &[InputKey::Char('X')],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdX█mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "❰abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz❱",
+            inputs: &[InputKey::Char('X')],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "X█",
+        });
+
+        test_undo(TestParams {
+            initial_content: "ab❰c❱defghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[InputKey::Char('X')],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abX█defghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijkl❱mnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[InputKey::Char('X')],
+            delay_after_inputs: &[0],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdX█mnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
     }
 
     #[test]
@@ -3801,7 +4687,7 @@ mod tests {
         test(
             "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[InputKey::Text("long text")],
+            &[InputKey::Text("long text".to_owned())],
             InputModifiers::none(),
             "long text█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -3810,7 +4696,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
-            &[InputKey::Text("long text")],
+            &[InputKey::Text("long text".to_owned())],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdeflong text█ghijklmnopqrstuvwxyz",
@@ -3819,7 +4705,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[InputKey::Text("long text")],
+            &[InputKey::Text("long text".to_owned())],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyzlong text█\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -3828,7 +4714,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
-            &[InputKey::Text("long text")],
+            &[InputKey::Text("long text".to_owned())],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyzlong text█",
@@ -3837,7 +4723,7 @@ mod tests {
         test(
             "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[InputKey::Text("long text ❤")],
+            &[InputKey::Text("long text ❤".to_owned())],
             InputModifiers::none(),
             "long text ❤█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -3847,7 +4733,7 @@ mod tests {
         test(
             "█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzab\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[InputKey::Text("long text ❤")],
+            &[InputKey::Text("long text ❤".to_owned())],
             InputModifiers::none(),
             "long text ❤█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopq\n\
             rstuvwxyzab\n\
@@ -3857,7 +4743,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijk█lmnopqrstuvwxyz",
-            &[InputKey::Text("long text ❤\nwith 3\nlines")],
+            &[InputKey::Text("long text ❤\nwith 3\nlines".to_owned())],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklong text ❤\n\
@@ -3946,65 +4832,85 @@ mod tests {
         test0(
             &mut editor,
             &mut line_data,
-            "aaa█aa12s aa\n\
+            TestParams {
+                initial_content: "aaa█aa12s aa\n\
             a\n\
             a\n\
             a\n\
             a",
-            &[InputKey::Char('x')],
-            InputModifiers::ctrl(),
-            "█a\n\
+                inputs: &[InputKey::Char('x')],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::ctrl(),
+                undo_count: 0,
+                redo_count: 0,
+                expected_content: "█a\n\
             a\n\
             a\n\
             a",
+            },
         );
         assert_eq!("aaaaa12s aa\n", &editor.clipboard);
         test0(
             &mut editor,
             &mut line_data,
-            "aaaaa12s aa\n\
+            TestParams {
+                initial_content: "aaaaa12s aa\n\
             a\n\
             a\n\
             a\n\
             a█",
-            &[InputKey::Char('x')],
-            InputModifiers::ctrl(),
-            "aaaaa12s aa\n\
+                inputs: &[InputKey::Char('x')],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::ctrl(),
+                undo_count: 0,
+                redo_count: 0,
+                expected_content: "aaaaa12s aa\n\
             a\n\
             a\n\
             a\n\
             █",
+            },
         );
         assert_eq!("a", &editor.clipboard);
 
         test0(
             &mut editor,
             &mut line_data,
-            "aaa❱aa12s a❰a\n\
+            TestParams {
+                initial_content: "aaa❱aa12s a❰a\n\
             a\n\
             a\n\
             a\n\
             a",
-            &[InputKey::Char('x')],
-            InputModifiers::ctrl(),
-            "aaa█a\n\
+                inputs: &[InputKey::Char('x')],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::ctrl(),
+                undo_count: 0,
+                redo_count: 0,
+                expected_content: "aaa█a\n\
             a\n\
             a\n\
             a\n\
             a",
+            },
         );
         assert_eq!("aa12s a", &editor.clipboard);
         test0(
             &mut editor,
             &mut line_data,
-            "a❱aaaa12s aa\n\
+            TestParams {
+                initial_content: "a❱aaaa12s aa\n\
             a\n\
             a\n\
             a\n\
             ❰a",
-            &[InputKey::Char('x')],
-            InputModifiers::ctrl(),
-            "a█a",
+                inputs: &[InputKey::Char('x')],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::ctrl(),
+                undo_count: 0,
+                redo_count: 0,
+                expected_content: "a█a",
+            },
         );
         assert_eq!("aaaa12s aa\na\na\na\n", &editor.clipboard);
     }
@@ -4015,18 +4921,23 @@ mod tests {
         let lines = test0(
             &mut editor,
             &mut Vec::<usize>::new(),
-            "aaaaa❱12s aa\n\
+            TestParams {
+                initial_content: "aaaaa❱12s aa\n\
             a\n\
             a\n\
             a\n\
             a❰",
-            &[],
-            InputModifiers::none(),
-            "aaaaa❱12s aa\n\
+                inputs: &[],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 0,
+                redo_count: 0,
+                expected_content: "aaaaa❱12s aa\n\
             a\n\
             a\n\
             a\n\
             a❰",
+            },
         );
         assert_eq!(
             editor.get_selected_text(),

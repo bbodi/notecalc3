@@ -2,7 +2,7 @@
 #![feature(const_generics)]
 
 use crate::calc::{evaluate_tokens, CalcResult};
-use crate::editor::{Canvas, Editor, InputKey, InputModifiers, Pos, Selection};
+use crate::editor::{Canvas, Editor, InputKey, InputModifiers, InputResult, Pos, Selection};
 use crate::renderer::render_result;
 use crate::shunting_yard::ShuntingYard;
 use crate::token_parser::{OperatorTokenType, Token, TokenParser, TokenType};
@@ -688,7 +688,7 @@ impl<'a> NoteCalcApp<'a> {
         self.editor
             .handle_input(InputKey::Del, InputModifiers::none(), &mut self.line_datas);
         self.editor.handle_input(
-            InputKey::Text(&concat),
+            InputKey::Text(concat),
             InputModifiers::none(),
             &mut self.line_datas,
         );
@@ -696,7 +696,7 @@ impl<'a> NoteCalcApp<'a> {
 
         if let Some(new_cursor_pos) = new_cursor_pos {
             self.editor
-                .set_selection_save_col(Selection::from_pos(new_cursor_pos));
+                .set_selection_save_col(Selection::single(new_cursor_pos));
         }
     }
 
@@ -1208,7 +1208,7 @@ impl<'a> NoteCalcApp<'a> {
         };
     }
 
-    pub fn handle_input(&mut self, input: InputKey, modifiers: InputModifiers) {
+    pub fn handle_input(&mut self, input: InputKey, modifiers: InputModifiers) -> bool {
         if modifiers.alt && input == InputKey::Left {
             let cur_pos = self.editor.get_selection().get_cursor_pos();
             let new_format = match &self.line_datas[cur_pos.row].result_format {
@@ -1217,6 +1217,7 @@ impl<'a> NoteCalcApp<'a> {
                 ResultFormat::Hex => ResultFormat::Dec,
             };
             self.line_datas[cur_pos.row].result_format = new_format;
+            false
         } else if modifiers.alt && input == InputKey::Right {
             let cur_pos = self.editor.get_selection().get_cursor_pos();
             let new_format = match &self.line_datas[cur_pos.row].result_format {
@@ -1225,11 +1226,15 @@ impl<'a> NoteCalcApp<'a> {
                 ResultFormat::Hex => ResultFormat::Bin,
             };
             self.line_datas[cur_pos.row].result_format = new_format;
+            false
         } else if self.matrix_editing.is_some() {
-            self.handle_matrix_editor_input(input, modifiers)
+            self.handle_matrix_editor_input(input, modifiers);
+            true
         } else {
-            self.editor
-                .handle_input(input, modifiers, &mut self.line_datas);
+            return self
+                .editor
+                .handle_input(input, modifiers, &mut self.line_datas)
+                == InputResult::ContentWasModified;
         }
     }
 
@@ -1296,10 +1301,11 @@ mod tests {
     fn bug1() {
         let mut app = NoteCalcApp::new(120);
         app.handle_input(
-            InputKey::Text("[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]"),
+            InputKey::Text("[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]".to_owned()),
             InputModifiers::none(),
         );
-        app.editor.set_selection_save_col(Selection::single(0, 33));
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 33));
         app.handle_input(InputKey::Right, InputModifiers::alt());
         app.render();
     }
@@ -1308,10 +1314,11 @@ mod tests {
     fn bug2() {
         let mut app = NoteCalcApp::new(120);
         app.handle_input(
-            InputKey::Text("[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]"),
+            InputKey::Text("[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]".to_owned()),
             InputModifiers::none(),
         );
-        app.editor.set_selection_save_col(Selection::single(0, 1));
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 1));
         app.handle_input(InputKey::Right, InputModifiers::alt());
         app.render();
         app.handle_input(InputKey::Down, InputModifiers::none());
