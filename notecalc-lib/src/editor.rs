@@ -9,17 +9,6 @@ pub enum EditorInputEvent {
     Esc,
     // PageUp,
     // PageDown,
-    Modif(EditorContentModifierEvent),
-}
-
-impl EditorInputEvent {
-    pub fn is(&self, what: EditorContentModifierEvent) -> bool {
-        matches!(self, EditorInputEvent::Modif(what))
-    }
-}
-
-#[derive(Eq, PartialEq, Debug, Clone)]
-pub enum EditorContentModifierEvent {
     Enter,
     Backspace,
     Del,
@@ -210,11 +199,63 @@ impl Selection {
 pub type Canvas = Vec<char>;
 type EditorCommandGroup = Vec<EditorCommand>;
 
-struct EditorCommand {
-    previously_selected_text: Option<String>,
-    selection: Selection,
-    event: EditorInputEvent,
-    modifiers: InputModifiers,
+enum EditorCommand {
+    SwapLineUpwards(Pos),
+    SwapLineDownards(Pos),
+    Del {
+        removed_char: char,
+        pos: Pos,
+    },
+    MergeLineWithNextRow {
+        upper_row_index: usize,
+        pos_before_merge: Pos,
+        pos_after_merge: Pos,
+    },
+    DelSelection {
+        removed_text: String,
+        selection: Selection,
+    },
+    DelCtrl {
+        remove_char_count: usize,
+        pos: Pos,
+    },
+    InsertEmptyRow(usize),
+    EnterSelection {
+        selection: Selection,
+        selected_text: String,
+    },
+    Enter(Pos),
+    Backspace {
+        removed_char: char,
+        pos: Pos,
+    },
+    BackspaceSelection {
+        removed_text: String,
+        selection: Selection,
+    },
+    BackspaceCtrl {
+        remove_char_count: usize,
+        pos: Pos,
+    },
+    InsertChar {
+        pos: Pos,
+        ch: char,
+    },
+    InsertCharSelection {
+        ch: char,
+        selection: Selection,
+        selected_text: String,
+    },
+    RemoveLine(Pos),
+    DuplicateLine(Pos),
+    InsertText {
+        pos: Pos,
+        text: String,
+    },
+    InsertTextSelection {
+        selection: Selection,
+        text: String,
+    },
 }
 
 pub struct Editor {
@@ -230,19 +271,6 @@ pub struct Editor {
     line_lens: Vec<usize>,
     canvas: Canvas,
     pub clipboard: String,
-}
-
-#[derive(Eq, PartialEq, Copy, Clone)]
-pub enum InputResult {
-    NoContentChange,
-    ContentWasModified,
-}
-
-#[derive(Eq, PartialEq, Copy, Clone)]
-enum JumpMode {
-    IgnoreWhitespaces,
-    ConsiderWhitespaces,
-    BlockOnWhitespace,
 }
 
 impl Editor {
@@ -341,7 +369,7 @@ impl Editor {
         &mut self.canvas[from..to]
     }
 
-    pub fn get_char(&mut self, row_index: usize, column_index: usize) -> char {
+    pub fn get_char(&self, row_index: usize, column_index: usize) -> char {
         return self.canvas[self.get_char_pos(row_index, column_index)];
     }
 
@@ -515,206 +543,167 @@ impl Editor {
         };
     }
 
-    fn handle_modif_input(
-        &mut self,
-        modif_event: &EditorContentModifierEvent,
+    fn create_command(
+        &self,
+        input: &EditorInputEvent,
         modifiers: InputModifiers,
-        selection: Selection,
-        line_data: &mut Vec<impl Default>,
-    ) -> InputResult {
+    ) -> Option<EditorCommand> {
+        let selection = self.selection;
         let cur_pos = selection.get_cursor_pos();
-        let first_cursor = selection.get_first();
-        match modif_event {
-            EditorContentModifierEvent::Del => {
+        return match input {
+            EditorInputEvent::Home => None,
+            EditorInputEvent::End => None,
+            EditorInputEvent::Right => None,
+            EditorInputEvent::Up => {
+                if modifiers.ctrl && modifiers.shift {
+                    return if cur_pos.row == 0 {
+                        None
+                    } else {
+                        Some(EditorCommand::SwapLineUpwards(cur_pos))
+                    };
+                } else {
+                    None
+                }
+            }
+            EditorInputEvent::Left => None,
+            EditorInputEvent::Down => {
+                if modifiers.ctrl && modifiers.shift {
+                    return if cur_pos.row == self.line_count() - 1 {
+                        None
+                    } else {
+                        Some(EditorCommand::SwapLineDownards(cur_pos))
+                    };
+                } else {
+                    None
+                }
+            }
+            EditorInputEvent::Esc => None,
+            EditorInputEvent::Del => {
                 if let Some(end) = selection.end {
-                    self.remove_selection(selection, line_data);
-                    let selection = Selection::single(first_cursor);
-                    self.set_selection_save_col(selection);
-                    InputResult::NoContentChange // todo
-                } else {
-                    if self.line_lens[cur_pos.row] == 0 && self.line_count() > 1 {
-                        // if the current row is empty, the next line brings its data with itself
-                        self.remove_line_at(cur_pos.row, line_data);
-                        InputResult::NoContentChange // todo
-                    } else if cur_pos.column == self.line_lens[cur_pos.row] {
-                        if cur_pos.row < self.line_count() - 1 {
-                            self.merge_with_next_row(
-                                cur_pos.row,
-                                self.line_lens[cur_pos.row],
-                                0,
-                                line_data,
-                            );
-                            InputResult::NoContentChange // todo
-                        } else {
-                            InputResult::NoContentChange
-                        }
-                    } else if modifiers.ctrl {
-                        let col = self.jump_word_forward(&cur_pos, JumpMode::ConsiderWhitespaces);
-                        let new_pos = cur_pos.with_column(col);
-                        self.remove_selection(Selection::range(cur_pos, new_pos), line_data);
-                        InputResult::NoContentChange // todo
+                    Some(EditorCommand::DelSelection {
+                        removed_text: self.get_selected_text(selection).unwrap(),
+                        selection,
+                    })
+                } else if cur_pos.column == self.line_len(cur_pos.row) {
+                    if cur_pos.row == self.line_count() - 1 {
+                        None
                     } else {
-                        self.remove_char(cur_pos.row, cur_pos.column);
-                        InputResult::NoContentChange // todo
+                        Some(EditorCommand::MergeLineWithNextRow {
+                            upper_row_index: cur_pos.row,
+                            pos_before_merge: cur_pos,
+                            pos_after_merge: cur_pos,
+                        })
                     }
+                } else if modifiers.ctrl {
+                    let col = self.jump_word_forward(&cur_pos, JumpMode::ConsiderWhitespaces);
+                    Some(EditorCommand::DelCtrl {
+                        remove_char_count: col - cur_pos.column,
+                        pos: cur_pos,
+                    })
+                } else {
+                    Some(EditorCommand::Del {
+                        removed_char: self.get_char(cur_pos.row, cur_pos.column),
+                        pos: cur_pos,
+                    })
                 }
             }
-            EditorContentModifierEvent::Enter => {
-                if let Some(end) = selection.end {
-                    self.remove_selection(selection, line_data);
-                    self.split_line(first_cursor.row, first_cursor.column, line_data);
-                    self.set_selection_save_col(Selection::single(Pos::from_row_column(
-                        first_cursor.row + 1,
-                        0,
-                    )));
+            EditorInputEvent::Enter => {
+                if modifiers.ctrl {
+                    Some(EditorCommand::InsertEmptyRow(cur_pos.row))
+                } else if selection.is_range() {
+                    Some(EditorCommand::EnterSelection {
+                        selection,
+                        selected_text: self.get_selected_text(selection).unwrap(),
+                    })
                 } else {
-                    if cur_pos.column == 0 {
-                        // the whole row is moved down, so take its line data as well
-                        self.insert_line_at(cur_pos.row, line_data);
-                    } else {
-                        self.split_line(cur_pos.row, cur_pos.column, line_data);
-                    }
-                    self.set_selection_save_col(Selection::single(Pos::from_row_column(
-                        cur_pos.row + 1,
-                        0,
-                    )));
-                }
-                InputResult::ContentWasModified
-            }
-            EditorContentModifierEvent::Backspace => {
-                if selection.end.is_some() {
-                    self.remove_selection(selection, line_data);
-                    self.set_selection_save_col(Selection::single(first_cursor));
-                    InputResult::ContentWasModified
-                } else {
-                    if cur_pos.column == 0 {
-                        if cur_pos.row > 0 {
-                            let prev_row_i = cur_pos.row - 1;
-                            if self.line_lens[prev_row_i] == 0 {
-                                // if the prev row is empty, the line takes its data with itself
-                                self.remove_line_at(prev_row_i, line_data);
-                                self.set_selection_save_col(Selection::single(
-                                    Pos::from_row_column(prev_row_i, 0),
-                                ));
-                            } else {
-                                let prev_len_before_merge = self.line_lens[prev_row_i];
-                                if self.merge_with_next_row(
-                                    prev_row_i,
-                                    prev_len_before_merge,
-                                    0,
-                                    line_data,
-                                ) {
-                                    self.set_selection_save_col(Selection::single(
-                                        Pos::from_row_column(prev_row_i, prev_len_before_merge),
-                                    ));
-                                }
-                            }
-                            InputResult::ContentWasModified
-                        } else {
-                            InputResult::NoContentChange
-                        }
-                    } else if modifiers.ctrl {
-                        let col = self.jump_word_backward(&cur_pos, JumpMode::IgnoreWhitespaces);
-                        let new_pos = cur_pos.with_column(col);
-                        self.remove_selection(Selection::range(new_pos, cur_pos), line_data);
-                        self.set_selection_save_col(Selection::single(new_pos));
-                        InputResult::ContentWasModified
-                    } else if self.remove_char(cur_pos.row, cur_pos.column - 1) {
-                        self.set_selection_save_col(Selection::single(
-                            cur_pos.with_column(cur_pos.column - 1),
-                        ));
-                        InputResult::ContentWasModified
-                    } else {
-                        InputResult::NoContentChange
-                    }
+                    Some(EditorCommand::Enter(cur_pos))
                 }
             }
-            EditorContentModifierEvent::Char(ch) => {
+            EditorInputEvent::Backspace => {
+                if selection.is_range() {
+                    Some(EditorCommand::BackspaceSelection {
+                        removed_text: self.get_selected_text(selection).unwrap(),
+                        selection,
+                    })
+                } else if cur_pos.column == 0 {
+                    if cur_pos.row == 0 {
+                        None
+                    } else {
+                        Some(EditorCommand::MergeLineWithNextRow {
+                            upper_row_index: cur_pos.row - 1,
+                            pos_before_merge: cur_pos,
+                            pos_after_merge: Pos::from_row_column(
+                                cur_pos.row - 1,
+                                self.line_len(cur_pos.row - 1),
+                            ),
+                        })
+                    }
+                } else if modifiers.ctrl {
+                    let col = self.jump_word_backward(&cur_pos, JumpMode::IgnoreWhitespaces);
+                    Some(EditorCommand::BackspaceCtrl {
+                        remove_char_count: cur_pos.column - col,
+                        pos: cur_pos,
+                    })
+                } else {
+                    Some(EditorCommand::Backspace {
+                        removed_char: self.get_char(cur_pos.row, cur_pos.column - 1),
+                        pos: cur_pos,
+                    })
+                }
+            }
+            EditorInputEvent::Char(ch) => {
                 if *ch == 'w' && modifiers.ctrl {
-                    let prev_index = self.jump_word_backward(
-                        &selection.get_first(),
-                        if selection.end.is_some() {
-                            JumpMode::IgnoreWhitespaces
-                        } else {
-                            JumpMode::BlockOnWhitespace
-                        },
-                    );
-                    let next_index = self.jump_word_forward(
-                        &selection.get_second(),
-                        if selection.end.is_some() {
-                            JumpMode::IgnoreWhitespaces
-                        } else {
-                            JumpMode::BlockOnWhitespace
-                        },
-                    );
-                    self.set_selection_save_col(Selection::range(
-                        cur_pos.with_column(prev_index),
-                        cur_pos.with_column(next_index),
-                    ));
-                    InputResult::NoContentChange
+                    None
                 } else if *ch == 'c' && modifiers.ctrl {
-                    self.send_selection_to_clipboard(self.selection);
-                    InputResult::NoContentChange
+                    None
                 } else if *ch == 'x' && modifiers.ctrl {
-                    if selection.end.is_some() {
-                        self.send_selection_to_clipboard(self.selection);
-                        self.remove_selection(selection, line_data);
-                        let selection = Selection::single(first_cursor);
-                        self.set_selection_save_col(selection);
+                    if selection.is_range() {
+                        Some(EditorCommand::DelSelection {
+                            selection,
+                            removed_text: self.get_selected_text(selection).unwrap(),
+                        })
                     } else {
-                        self.send_selection_to_clipboard(Selection::range(
-                            cur_pos.with_column(0),
-                            cur_pos.with_column(self.line_len(cur_pos.row)),
-                        ));
-                        if self.line_count() > cur_pos.row + 1 {
-                            self.clipboard.push('\n');
-                            self.remove_line_at(cur_pos.row, line_data);
-                        } else {
-                            // last row
-                            self.line_lens[cur_pos.row] = 0;
-                        }
-                        self.set_selection_save_col(Selection::single(cur_pos.with_column(0)));
+                        Some(EditorCommand::RemoveLine(cur_pos))
                     }
-                    InputResult::NoContentChange // todo
                 } else if *ch == 'd' && modifiers.ctrl {
-                    self.duplicate_line(cur_pos.row, line_data);
-                    self.set_selection_save_col(Selection::single(cur_pos.with_next_row()));
-                    InputResult::NoContentChange // todo
+                    Some(EditorCommand::DuplicateLine(cur_pos))
                 } else if *ch == 'a' && modifiers.ctrl {
-                    self.set_selection_save_col(Selection::range(
-                        Pos::from_row_column(0, 0),
-                        Pos::from_row_column(
-                            self.line_count() - 1,
-                            self.line_len(self.line_count() - 1),
-                        ),
-                    ));
-                    InputResult::NoContentChange
+                    None
                 } else if *ch == 'z' && modifiers.ctrl && modifiers.shift {
-                    InputResult::NoContentChange
+                    None
                 } else if *ch == 'z' && modifiers.ctrl {
-                    InputResult::NoContentChange
-                } else if selection.end.is_some() {
-                    let cur_selection = selection;
-                    self.insert_char_while_selection(cur_selection, *ch, line_data);
-                    self.set_selection_save_col(Selection::single(
-                        cur_selection.get_first().with_next_col(),
-                    ));
-                    InputResult::ContentWasModified
+                    None
+                } else if selection.is_range() {
+                    Some(EditorCommand::InsertCharSelection {
+                        ch: *ch,
+                        selection,
+                        selected_text: self.get_selected_text(selection).unwrap(),
+                    })
                 } else {
-                    if self.insert_char(cur_pos.row, cur_pos.column, *ch) {
-                        self.set_selection_save_col(Selection::single(cur_pos.with_next_col()));
-                        InputResult::ContentWasModified
+                    if self.line_len(cur_pos.row) == self.max_line_len {
+                        None
                     } else {
-                        InputResult::NoContentChange
+                        Some(EditorCommand::InsertChar {
+                            pos: cur_pos,
+                            ch: *ch,
+                        })
                     }
                 }
             }
-            EditorContentModifierEvent::Text(str) => {
-                let new_pos = self.insert_str_at(cur_pos, &str, line_data);
-                self.set_selection_save_col(Selection::single(new_pos));
-                InputResult::NoContentChange // todo
+            EditorInputEvent::Text(str) => {
+                if selection.is_range() {
+                    Some(EditorCommand::InsertTextSelection {
+                        selection,
+                        text: str.clone(),
+                    })
+                } else {
+                    Some(EditorCommand::InsertText {
+                        pos: cur_pos,
+                        text: str.clone(),
+                    })
+                }
             }
-        }
+        };
     }
 
     pub fn handle_input(
@@ -722,11 +711,176 @@ impl Editor {
         input: EditorInputEvent,
         modifiers: InputModifiers,
         line_data: &mut Vec<impl Default>,
-    ) -> InputResult {
+    ) {
+        if (input == EditorInputEvent::Char('x') || input == EditorInputEvent::Char('c'))
+            && modifiers.ctrl
+        {
+            self.send_selection_to_clipboard(self.selection);
+        }
+
+        if input == EditorInputEvent::Char('z') && modifiers.is_ctrl_shift() {
+            self.redo(line_data);
+        } else if input == EditorInputEvent::Char('z') && modifiers.ctrl {
+            self.undo(line_data);
+        } else if let Some(command) = self.create_command(&input, modifiers) {
+            self.do_command(&command, line_data);
+            if self.modif_time_treshold_expires_at < self.time || self.undo_stack.is_empty() {
+                // new undo group
+                self.undo_stack.push(Vec::with_capacity(4));
+            }
+            self.undo_stack.last_mut().unwrap().push(command);
+            self.modif_time_treshold_expires_at = self.time + 500;
+        } else {
+            self.handle_navigation_input(&input, modifiers);
+        };
+    }
+
+    fn do_command(&mut self, command: &EditorCommand, line_data: &mut Vec<impl Default>) {
         self.show_cursor = true;
         self.next_blink_at = self.time + 500;
+
+        match command {
+            EditorCommand::InsertText { pos, text } => {
+                let new_pos = self.insert_str_at(*pos, &text, line_data);
+                self.set_selection_save_col(Selection::single(new_pos));
+            }
+            EditorCommand::InsertTextSelection { selection, text } => {
+                self.remove_selection(*selection, line_data);
+                let new_pos = self.insert_str_at(selection.get_first(), &text, line_data);
+                self.set_selection_save_col(Selection::single(new_pos));
+            }
+            EditorCommand::SwapLineUpwards(pos) => {
+                self.swap_lines_upward(pos.row, line_data);
+                self.selection = Selection::single(Pos::from_row_column(pos.row - 1, pos.column));
+            }
+            EditorCommand::SwapLineDownards(pos) => {
+                self.swap_lines_upward(pos.row + 1, line_data);
+                self.selection = Selection::single(Pos::from_row_column(pos.row + 1, pos.column));
+            }
+            EditorCommand::Del { removed_char, pos } => {
+                if self.line_lens[pos.row] == 0 && self.line_count() > 1 {
+                    // if the current row is empty, the next line brings its data with itself
+                    self.remove_line_at(pos.row, line_data);
+                } else if pos.column == self.line_lens[pos.row] {
+                    if pos.row < self.line_count() - 1 {
+                        self.merge_with_next_row(pos.row, self.line_lens[pos.row], 0, line_data);
+                    }
+                } else {
+                    self.remove_char(pos.row, pos.column);
+                }
+                self.selection = Selection::single(*pos);
+            }
+            EditorCommand::DelSelection {
+                removed_text,
+                selection,
+            } => {
+                self.remove_selection(*selection, line_data);
+                let selection = Selection::single(selection.get_first());
+                self.set_selection_save_col(selection);
+            }
+            EditorCommand::DelCtrl {
+                remove_char_count,
+                pos,
+            } => {
+                let col = self.jump_word_forward(&pos, JumpMode::ConsiderWhitespaces);
+                let new_pos = pos.with_column(col);
+                // TODO csinálj egy optimaliált metódust ami biztos h az adott sorból töröl csak
+                self.remove_selection(Selection::range(*pos, new_pos), line_data);
+                self.selection = Selection::single(*pos);
+            }
+            EditorCommand::InsertEmptyRow(_) => {}
+            EditorCommand::EnterSelection {
+                selection,
+                selected_text,
+            } => {
+                self.handle_enter(*selection, line_data);
+            }
+            EditorCommand::Enter(pos) => {
+                self.handle_enter(Selection::single(*pos), line_data);
+            }
+            EditorCommand::MergeLineWithNextRow {
+                upper_row_index,
+                pos_before_merge,
+                pos_after_merge,
+            } => {
+                let upper_row_index = *upper_row_index;
+                if self.line_len(upper_row_index) == 0 {
+                    // if the prev row is empty, the line takes its data with itself
+                    self.remove_line_at(upper_row_index, line_data);
+                    self.set_selection_save_col(Selection::single(*pos_after_merge));
+                } else {
+                    let prev_len_before_merge = self.line_lens[upper_row_index];
+                    if self.merge_with_next_row(
+                        upper_row_index,
+                        prev_len_before_merge,
+                        0,
+                        line_data,
+                    ) {
+                        self.set_selection_save_col(Selection::single(*pos_after_merge));
+                    }
+                }
+            }
+            EditorCommand::Backspace { removed_char, pos } => {
+                if self.remove_char(pos.row, pos.column - 1) {
+                    self.set_selection_save_col(Selection::single(pos.with_column(pos.column - 1)));
+                }
+            }
+            EditorCommand::BackspaceSelection {
+                removed_text,
+                selection,
+            } => {
+                self.remove_selection(*selection, line_data);
+                self.set_selection_save_col(Selection::single(selection.get_first()));
+            }
+            EditorCommand::BackspaceCtrl {
+                remove_char_count,
+                pos,
+            } => {
+                let col = self.jump_word_backward(pos, JumpMode::IgnoreWhitespaces);
+                let new_pos = pos.with_column(col);
+                self.remove_selection(Selection::range(new_pos, *pos), line_data);
+                self.set_selection_save_col(Selection::single(new_pos));
+            }
+            EditorCommand::InsertChar { pos, ch } => {
+                if self.insert_char(pos.row, pos.column, *ch) {
+                    self.set_selection_save_col(Selection::single(pos.with_next_col()));
+                }
+            }
+            EditorCommand::InsertCharSelection {
+                ch,
+                selection,
+                selected_text,
+            } => {
+                self.insert_char_while_selection(*selection, *ch, line_data);
+                self.set_selection_save_col(Selection::single(
+                    selection.get_first().with_next_col(),
+                ));
+            }
+            EditorCommand::RemoveLine(pos) => {
+                self.send_selection_to_clipboard(Selection::range(
+                    pos.with_column(0),
+                    pos.with_column(self.line_len(pos.row)),
+                ));
+                if self.line_count() > pos.row + 1 {
+                    self.clipboard.push('\n');
+                    self.remove_line_at(pos.row, line_data);
+                } else {
+                    // last row
+                    self.line_lens[pos.row] = 0;
+                }
+                self.set_selection_save_col(Selection::single(pos.with_column(0)));
+            }
+            EditorCommand::DuplicateLine(pos) => {
+                self.duplicate_line(pos.row, line_data);
+                self.set_selection_save_col(Selection::single(pos.with_next_row()));
+            }
+        }
+    }
+
+    pub fn handle_navigation_input(&mut self, input: &EditorInputEvent, modifiers: InputModifiers) {
         let cur_pos = self.selection.get_cursor_pos();
-        let command = match input {
+
+        match input {
             EditorInputEvent::Home => {
                 let new_pos = cur_pos.with_column(0);
                 let new_selection = if modifiers.shift {
@@ -735,7 +889,6 @@ impl Editor {
                     Selection::single(new_pos)
                 };
                 self.set_selection_save_col(new_selection);
-                None
             }
             EditorInputEvent::End => {
                 let new_pos = cur_pos.with_column(self.line_lens[cur_pos.row]);
@@ -745,7 +898,6 @@ impl Editor {
                     Selection::single(new_pos)
                 };
                 self.set_selection_save_col(new_selection);
-                None
             }
             EditorInputEvent::Right => {
                 let new_pos = if cur_pos.column + 1 > self.line_lens[cur_pos.row] {
@@ -765,14 +917,13 @@ impl Editor {
                 let selection = if modifiers.shift {
                     self.selection.extend(new_pos)
                 } else {
-                    if self.selection.end.is_some() {
+                    if self.selection.is_range() {
                         Selection::single(self.selection.get_second())
                     } else {
                         Selection::single(new_pos)
                     }
                 };
                 self.set_selection_save_col(selection);
-                None
             }
             EditorInputEvent::Left => {
                 let new_pos = if cur_pos.column == 0 {
@@ -794,225 +945,191 @@ impl Editor {
                 let selection = if modifiers.shift {
                     self.selection.extend(new_pos)
                 } else {
-                    if self.selection.end.is_some() {
+                    if self.selection.is_range() {
                         Selection::single(self.selection.get_first())
                     } else {
                         Selection::single(new_pos)
                     }
                 };
                 self.set_selection_save_col(selection);
-                None
             }
             EditorInputEvent::Up => {
                 if modifiers.ctrl && modifiers.shift {
-                    if cur_pos.row == 0 {
-                        return InputResult::NoContentChange;
-                    }
-                    self.swap_lines_upward(cur_pos.row, line_data);
-                    self.selection =
-                        Selection::single(Pos::from_row_column(cur_pos.row - 1, cur_pos.column));
-                    Some(EditorCommand {
-                        previously_selected_text: None,
-                        selection: Selection::single(cur_pos),
-                        event: EditorInputEvent::Up,
-                        modifiers,
-                    })
-                } else {
-                    let new_pos = if cur_pos.row == 0 {
-                        cur_pos.with_column(0)
-                    } else {
-                        Pos::from_row_column(
-                            cur_pos.row - 1,
-                            self.last_column_index.min(self.line_lens[cur_pos.row - 1]),
-                        )
-                    };
-                    self.selection = if modifiers.shift {
-                        self.selection.extend(new_pos)
-                    } else {
-                        Selection::single(new_pos)
-                    };
-                    None
+                    return;
                 }
+                let new_pos = if cur_pos.row == 0 {
+                    cur_pos.with_column(0)
+                } else {
+                    Pos::from_row_column(
+                        cur_pos.row - 1,
+                        self.last_column_index.min(self.line_lens[cur_pos.row - 1]),
+                    )
+                };
+                self.selection = if modifiers.shift {
+                    self.selection.extend(new_pos)
+                } else {
+                    Selection::single(new_pos)
+                };
             }
             EditorInputEvent::Down => {
                 if modifiers.ctrl && modifiers.shift {
-                    if cur_pos.row == self.line_count() - 1 {
-                        return InputResult::NoContentChange;
-                    }
-                    self.swap_lines_upward(cur_pos.row + 1, line_data);
-
-                    self.selection =
-                        Selection::single(Pos::from_row_column(cur_pos.row + 1, cur_pos.column));
-                    Some(EditorCommand {
-                        previously_selected_text: None,
-                        selection: Selection::single(cur_pos),
-                        event: EditorInputEvent::Down,
-                        modifiers,
-                    })
-                } else {
-                    let new_pos = if cur_pos.row == self.line_count() - 1 {
-                        cur_pos.with_column(self.line_lens[cur_pos.row])
-                    } else {
-                        Pos::from_row_column(
-                            cur_pos.row + 1,
-                            self.last_column_index.min(self.line_lens[cur_pos.row + 1]),
-                        )
-                    };
-                    self.selection = if modifiers.shift {
-                        self.selection.extend(new_pos)
-                    } else {
-                        Selection::single(new_pos)
-                    };
-                    None
+                    return;
                 }
+                let new_pos = if cur_pos.row == self.line_count() - 1 {
+                    cur_pos.with_column(self.line_lens[cur_pos.row])
+                } else {
+                    Pos::from_row_column(
+                        cur_pos.row + 1,
+                        self.last_column_index.min(self.line_lens[cur_pos.row + 1]),
+                    )
+                };
+                self.selection = if modifiers.shift {
+                    self.selection.extend(new_pos)
+                } else {
+                    Selection::single(new_pos)
+                };
             }
-            EditorInputEvent::Modif(modif_event) => {
+            EditorInputEvent::Char(ch) => {
                 let selection = self.selection;
-                let selected_text = self.get_selected_text(selection);
-                if self.handle_modif_input(&modif_event, modifiers, self.selection, line_data)
-                    == InputResult::ContentWasModified
-                {
-                    Some(EditorCommand {
-                        previously_selected_text: selected_text,
-                        selection,
-                        event: EditorInputEvent::Modif(modif_event),
-                        modifiers,
-                    })
-                } else {
-                    None
+                if *ch == 'w' && modifiers.ctrl {
+                    let prev_index = self.jump_word_backward(
+                        &selection.get_first(),
+                        if selection.is_range() {
+                            JumpMode::IgnoreWhitespaces
+                        } else {
+                            JumpMode::BlockOnWhitespace
+                        },
+                    );
+                    let next_index = self.jump_word_forward(
+                        &selection.get_second(),
+                        if selection.is_range() {
+                            JumpMode::IgnoreWhitespaces
+                        } else {
+                            JumpMode::BlockOnWhitespace
+                        },
+                    );
+                    self.set_selection_save_col(Selection::range(
+                        cur_pos.with_column(prev_index),
+                        cur_pos.with_column(next_index),
+                    ));
+                } else if *ch == 'a' && modifiers.ctrl {
+                    self.set_selection_save_col(Selection::range(
+                        Pos::from_row_column(0, 0),
+                        Pos::from_row_column(
+                            self.line_count() - 1,
+                            self.line_len(self.line_count() - 1),
+                        ),
+                    ));
                 }
             }
-            EditorInputEvent::Esc => {
-                // nothing
-                None
-            }
+            EditorInputEvent::Del
+            | EditorInputEvent::Esc
+            | EditorInputEvent::Enter
+            | EditorInputEvent::Backspace
+            | EditorInputEvent::Text(_) => {}
         };
-        if let Some(command) = command {
-            if self.modif_time_treshold_expires_at < self.time || self.undo_stack.is_empty() {
-                // new undo group
-                self.undo_stack.push(Vec::with_capacity(4));
-            }
-            self.undo_stack.last_mut().unwrap().push(command);
-            self.modif_time_treshold_expires_at = self.time + 500;
-            InputResult::ContentWasModified
-        } else {
-            InputResult::NoContentChange
-        }
     }
 
-    fn undo(&mut self, line_data: &mut Vec<impl Default>) -> InputResult {
-        return if let Some(command_group) = self.undo_stack.pop() {
+    fn undo(&mut self, line_data: &mut Vec<impl Default>) {
+        if let Some(command_group) = self.undo_stack.pop() {
             for command in command_group.iter().rev() {
-                self.execute_undo(command, line_data);
+                self.undo_command(command, line_data);
             }
             self.redo_stack.push(command_group);
-            InputResult::ContentWasModified
-        } else {
-            InputResult::NoContentChange
         };
     }
 
-    fn redo(&mut self, line_data: &mut Vec<impl Default>) -> InputResult {
-        return if let Some(command_group) = self.redo_stack.pop() {
+    fn redo(&mut self, line_data: &mut Vec<impl Default>) {
+        if let Some(command_group) = self.redo_stack.pop() {
             for command in command_group.iter() {
-                self.execute_redo(command, line_data);
+                self.do_command(command, line_data);
             }
             self.undo_stack.push(command_group);
-            InputResult::ContentWasModified
-        } else {
-            InputResult::NoContentChange
         };
     }
 
-    fn execute_undo(&mut self, command: &EditorCommand, line_data: &mut Vec<impl Default>) {
-        match &command.event {
-            EditorInputEvent::Up if command.modifiers.is_ctrl_shift() => {
-                let lower_row_i = command.selection.get_cursor_pos().row;
-                self.swap_lines_upward(lower_row_i, line_data);
-
-                self.selection = Selection::single(Pos::from_row_column(
-                    lower_row_i,
-                    self.selection.get_cursor_pos().column,
-                ));
+    fn undo_command(&mut self, command: &EditorCommand, line_data: &mut Vec<impl Default>) {
+        match command {
+            EditorCommand::DelSelection {
+                removed_text,
+                selection,
+            } => {
+                self.insert_str_at(selection.get_first(), &removed_text, line_data);
             }
-            EditorInputEvent::Down if command.modifiers.is_ctrl_shift() => {
-                let upper_row_i = command.selection.get_cursor_pos().row;
-                self.swap_lines_upward(upper_row_i + 1, line_data);
-
-                self.selection = Selection::single(Pos::from_row_column(
-                    upper_row_i,
-                    self.selection.get_cursor_pos().column,
-                ));
+            EditorCommand::SwapLineUpwards(pos) => {
+                self.swap_lines_upward(pos.row, line_data);
+                self.selection = Selection::single(*pos);
             }
-            EditorInputEvent::Modif(modif) => match modif {
-                EditorContentModifierEvent::Char(ch) => {
-                    self.handle_modif_input(
-                        &EditorContentModifierEvent::Del,
-                        InputModifiers::none(),
-                        Selection::single(command.selection.get_first()),
-                        line_data,
-                    );
-                    if let Some(removed_text) = &command.previously_selected_text {
-                        self.handle_modif_input(
-                            // TODO: clone here is not necessary
-                            &EditorContentModifierEvent::Text(removed_text.clone()),
-                            InputModifiers::none(),
-                            Selection::single(command.selection.get_first()),
-                            line_data,
-                        );
-                    }
-                    self.set_selection_save_col(command.selection);
-                }
-                EditorContentModifierEvent::Enter => {
-                    self.handle_modif_input(
-                        &EditorContentModifierEvent::Backspace,
-                        InputModifiers::none(),
-                        Selection::single(
-                            command.selection.get_first().with_next_row().with_column(0),
-                        ),
-                        line_data,
-                    );
-                    if let Some(removed_text) = &command.previously_selected_text {
-                        self.handle_modif_input(
-                            // TODO: clone here is not necessary
-                            &EditorContentModifierEvent::Text(removed_text.clone()),
-                            InputModifiers::none(),
-                            Selection::single(command.selection.get_first()),
-                            line_data,
-                        );
-                    }
-                    self.set_selection_save_col(command.selection);
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-    }
-
-    fn execute_redo(&mut self, command: &EditorCommand, line_data: &mut Vec<impl Default>) {
-        match &command.event {
-            EditorInputEvent::Up if command.modifiers.is_ctrl_shift() => {
-                let lower_row_i = command.selection.get_cursor_pos().row;
-                self.swap_lines_upward(lower_row_i, line_data);
-
-                self.selection = Selection::single(Pos::from_row_column(
-                    lower_row_i - 1,
-                    self.selection.get_cursor_pos().column,
-                ));
+            EditorCommand::SwapLineDownards(pos) => {
+                self.swap_lines_upward(pos.row + 1, line_data);
+                self.selection = Selection::single(*pos);
             }
-            EditorInputEvent::Down if command.modifiers.is_ctrl_shift() => {
-                let upper_row_i = command.selection.get_cursor_pos().row;
-                self.swap_lines_upward(upper_row_i + 1, line_data);
-
-                self.selection = Selection::single(Pos::from_row_column(
-                    upper_row_i + 1,
-                    self.selection.get_cursor_pos().column,
-                ));
+            EditorCommand::Del { removed_char, pos } => {
+                self.insert_char(pos.row, pos.column, *removed_char);
+                self.set_selection_save_col(Selection::single(*pos));
             }
-            EditorInputEvent::Modif(modif) => {
-                self.handle_modif_input(modif, command.modifiers, command.selection, line_data);
+            EditorCommand::DelCtrl {
+                remove_char_count,
+                pos,
+            } => {}
+            EditorCommand::MergeLineWithNextRow {
+                upper_row_index,
+                pos_before_merge,
+                pos_after_merge,
+            } => {
+                self.split_line(*upper_row_index, pos_after_merge.column, line_data);
+                self.set_selection_save_col(Selection::single(*pos_before_merge));
             }
-            _ => {}
+            EditorCommand::InsertEmptyRow(_) => {}
+            EditorCommand::EnterSelection {
+                selection,
+                selected_text,
+            } => {
+                let first = selection.get_first();
+                self.merge_with_next_row(first.row, first.column, 0, line_data);
+                self.insert_str_at(first, selected_text, line_data);
+                self.set_selection_save_col(*selection);
+            }
+            EditorCommand::Enter(pos) => {
+                self.merge_with_next_row(pos.row, pos.column, 0, line_data);
+                self.set_selection_save_col(Selection::single(*pos));
+            }
+            EditorCommand::Backspace { removed_char, pos } => {
+                self.insert_char(pos.row, pos.column - 1, *removed_char);
+                self.set_selection_save_col(Selection::single(*pos));
+            }
+            EditorCommand::BackspaceSelection {
+                removed_text,
+                selection,
+            } => {
+                self.insert_str_at(selection.get_first(), removed_text, line_data);
+                self.set_selection_save_col(*selection);
+            }
+            EditorCommand::BackspaceCtrl {
+                remove_char_count: _,
+                pos: _,
+            } => {}
+            EditorCommand::InsertChar { pos, ch } => {
+                self.remove_char(pos.row, pos.column);
+                self.set_selection_save_col(Selection::single(*pos));
+            }
+            EditorCommand::InsertCharSelection {
+                ch,
+                selection,
+                selected_text,
+            } => {
+                let first = selection.get_first();
+                self.remove_char(first.row, first.column);
+                self.insert_str_at(first, selected_text, line_data);
+                self.set_selection_save_col(*selection);
+            }
+            EditorCommand::RemoveLine(_) => {}
+            EditorCommand::DuplicateLine(_) => {}
+            EditorCommand::InsertText { pos: _, text: _ } => {}
+            EditorCommand::InsertTextSelection {
+                selection: _,
+                text: _,
+            } => {}
         }
     }
 
@@ -1072,7 +1189,7 @@ impl Editor {
         return new_pos;
     }
 
-    fn jump_word_backward(&mut self, cur_pos: &Pos, mode: JumpMode) -> usize {
+    fn jump_word_backward(&self, cur_pos: &Pos, mode: JumpMode) -> usize {
         let mut col = cur_pos.column;
         let line = self.get_line_chars(cur_pos.row);
         while col > 0 {
@@ -1117,7 +1234,7 @@ impl Editor {
         col
     }
 
-    fn jump_word_forward(&mut self, cur_pos: &Pos, mode: JumpMode) -> usize {
+    fn jump_word_forward(&self, cur_pos: &Pos, mode: JumpMode) -> usize {
         // check the type of the prev char
         let mut col = cur_pos.column;
         let line = self.get_line_chars(cur_pos.row);
@@ -1196,6 +1313,30 @@ impl Editor {
         return Pos::from_row_column(row, col);
     }
 
+    fn handle_enter(&mut self, selection: Selection, line_data: &mut Vec<impl Default>) {
+        if let Some(end) = selection.end {
+            let first_cursor = selection.get_first();
+            self.remove_selection(selection, line_data);
+            self.split_line(first_cursor.row, first_cursor.column, line_data);
+            self.set_selection_save_col(Selection::single(Pos::from_row_column(
+                first_cursor.row + 1,
+                0,
+            )));
+        } else {
+            let cur_pos = selection.get_cursor_pos();
+            if cur_pos.column == 0 {
+                // the whole row is moved down, so take its line data as well
+                self.insert_line_at(cur_pos.row, line_data);
+            } else {
+                self.split_line(cur_pos.row, cur_pos.column, line_data);
+            }
+            self.set_selection_save_col(Selection::single(Pos::from_row_column(
+                cur_pos.row + 1,
+                0,
+            )));
+        }
+    }
+
     fn split_line(&mut self, row_index: usize, split_at: usize, line_data: &mut Vec<impl Default>) {
         self.insert_line_at(row_index + 1, line_data);
         let new_line_pos = self.get_char_pos(row_index + 1, 0);
@@ -1252,6 +1393,13 @@ impl Editor {
         }
         return true;
     }
+}
+
+#[derive(Eq, PartialEq, Copy, Clone)]
+enum JumpMode {
+    IgnoreWhitespaces,
+    ConsiderWhitespaces,
+    BlockOnWhitespace,
 }
 
 #[cfg(test)]
@@ -1409,7 +1557,7 @@ mod tests {
                 editor.selection.start, expected_selection_start,
                 "Selection start"
             );
-            assert!(editor.selection.end.is_some());
+            assert!(editor.selection.is_range());
             assert_eq!(
                 editor.selection.end.unwrap(),
                 expected_selection_end,
@@ -1643,7 +1791,7 @@ mod tests {
                 initial_content: "█111111111\n\
             2222222222\n\
             3333333333",
-                inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+                inputs: &[EditorInputEvent::Enter],
                 delay_after_inputs: &[],
                 modifiers: InputModifiers::none(),
                 undo_count: 0,
@@ -1665,7 +1813,7 @@ mod tests {
                 initial_content: "11█1111111\n\
             2222222222\n\
             3333333333",
-                inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+                inputs: &[EditorInputEvent::Enter],
                 delay_after_inputs: &[],
                 modifiers: InputModifiers::none(),
                 undo_count: 0,
@@ -1687,9 +1835,7 @@ mod tests {
                 initial_content: "\n\
             █2222222222\n\
             3333333333",
-                inputs: &[EditorInputEvent::Modif(
-                    EditorContentModifierEvent::Backspace,
-                )],
+                inputs: &[EditorInputEvent::Backspace],
                 delay_after_inputs: &[],
                 modifiers: InputModifiers::none(),
                 undo_count: 0,
@@ -1708,9 +1854,7 @@ mod tests {
                 initial_content: "111\n\
             █2222222222\n\
             3333333333",
-                inputs: &[EditorInputEvent::Modif(
-                    EditorContentModifierEvent::Backspace,
-                )],
+                inputs: &[EditorInputEvent::Backspace],
                 delay_after_inputs: &[],
                 modifiers: InputModifiers::none(),
                 undo_count: 0,
@@ -1730,7 +1874,7 @@ mod tests {
                 initial_content: "█\n\
             2222222222\n\
             3333333333",
-                inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+                inputs: &[EditorInputEvent::Del],
                 delay_after_inputs: &[],
                 modifiers: InputModifiers::none(),
                 undo_count: 0,
@@ -1749,7 +1893,7 @@ mod tests {
                 initial_content: "111█\n\
             2222222222\n\
             3333333333",
-                inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+                inputs: &[EditorInputEvent::Del],
                 delay_after_inputs: &[],
                 modifiers: InputModifiers::none(),
                 undo_count: 0,
@@ -3376,9 +3520,7 @@ mod tests {
         test(
             "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                '1',
-            ))],
+            &[EditorInputEvent::Char('1')],
             InputModifiers::none(),
             "1█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -3387,9 +3529,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                '1',
-            ))],
+            &[EditorInputEvent::Char('1')],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdef1█ghijklmnopqrstuvwxyz",
@@ -3398,9 +3538,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                '1',
-            ))],
+            &[EditorInputEvent::Char('1')],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz1█\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -3409,9 +3547,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                '1',
-            ))],
+            &[EditorInputEvent::Char('1')],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz1█",
@@ -3421,9 +3557,9 @@ mod tests {
             "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('1')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('❤')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('3')),
+                EditorInputEvent::Char('1'),
+                EditorInputEvent::Char('❤'),
+                EditorInputEvent::Char('3'),
             ],
             InputModifiers::none(),
             "1❤3█abcdefghijklmnopqrstuvwxyz\n\
@@ -3437,9 +3573,9 @@ mod tests {
         test(
             text_80_len,
             &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('1')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('❤')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('3')),
+                EditorInputEvent::Char('1'),
+                EditorInputEvent::Char('❤'),
+                EditorInputEvent::Char('3'),
             ],
             InputModifiers::none(),
             text_80_len,
@@ -3451,9 +3587,7 @@ mod tests {
         test(
             "abcd❰efghijk❱lmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'X',
-            ))],
+            &[EditorInputEvent::Char('X')],
             InputModifiers::none(),
             "abcdX█lmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -3462,9 +3596,7 @@ mod tests {
         test(
             "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'X',
-            ))],
+            &[EditorInputEvent::Char('X')],
             InputModifiers::none(),
             "abcdX█mnopqrstuvwxyz",
         );
@@ -3472,9 +3604,7 @@ mod tests {
         test(
             "❰abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz❱",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'X',
-            ))],
+            &[EditorInputEvent::Char('X')],
             InputModifiers::none(),
             "X█",
         );
@@ -3482,9 +3612,7 @@ mod tests {
         test(
             "ab❰c❱defghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'X',
-            ))],
+            &[EditorInputEvent::Char('X')],
             InputModifiers::none(),
             "abX█defghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -3496,9 +3624,7 @@ mod tests {
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'X',
-            ))],
+            &[EditorInputEvent::Char('X')],
             InputModifiers::none(),
             "abcdX█mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -3510,9 +3636,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
                                abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                '1',
-            ))],
+            inputs: &[EditorInputEvent::Char('1')],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -3524,9 +3648,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                '1',
-            ))],
+            inputs: &[EditorInputEvent::Char('1')],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -3538,9 +3660,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                '1',
-            ))],
+            inputs: &[EditorInputEvent::Char('1')],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -3552,9 +3672,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                '1',
-            ))],
+            inputs: &[EditorInputEvent::Char('1')],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -3567,9 +3685,9 @@ mod tests {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('1')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('❤')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('3')),
+                EditorInputEvent::Char('1'),
+                EditorInputEvent::Char('❤'),
+                EditorInputEvent::Char('3'),
             ],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
@@ -3586,9 +3704,9 @@ mod tests {
         test_undo(TestParams {
             initial_content: text_80_len,
             inputs: &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('1')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('❤')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('3')),
+                EditorInputEvent::Char('1'),
+                EditorInputEvent::Char('❤'),
+                EditorInputEvent::Char('3'),
             ],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
@@ -3601,9 +3719,9 @@ mod tests {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('1')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('❤')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('3')),
+                EditorInputEvent::Char('1'),
+                EditorInputEvent::Char('❤'),
+                EditorInputEvent::Char('3'),
                 EditorInputEvent::Right,
                 EditorInputEvent::Right,
                 EditorInputEvent::Right,
@@ -3622,9 +3740,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
                                abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                '1',
-            ))],
+            inputs: &[EditorInputEvent::Char('1')],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -3636,9 +3752,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                '1',
-            ))],
+            inputs: &[EditorInputEvent::Char('1')],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -3650,9 +3764,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                '1',
-            ))],
+            inputs: &[EditorInputEvent::Char('1')],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -3664,9 +3776,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                '1',
-            ))],
+            inputs: &[EditorInputEvent::Char('1')],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -3679,9 +3789,9 @@ mod tests {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('1')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('❤')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('3')),
+                EditorInputEvent::Char('1'),
+                EditorInputEvent::Char('❤'),
+                EditorInputEvent::Char('3'),
             ],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
@@ -3698,9 +3808,9 @@ mod tests {
         test_undo(TestParams {
             initial_content: text_80_len,
             inputs: &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('1')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('❤')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('3')),
+                EditorInputEvent::Char('1'),
+                EditorInputEvent::Char('❤'),
+                EditorInputEvent::Char('3'),
             ],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
@@ -3713,9 +3823,9 @@ mod tests {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('1')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('❤')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('3')),
+                EditorInputEvent::Char('1'),
+                EditorInputEvent::Char('❤'),
+                EditorInputEvent::Char('3'),
                 EditorInputEvent::Right,
                 EditorInputEvent::Right,
                 EditorInputEvent::Right,
@@ -3735,9 +3845,9 @@ mod tests {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('1')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('❤')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('3')),
+                EditorInputEvent::Char('1'),
+                EditorInputEvent::Char('❤'),
+                EditorInputEvent::Char('3'),
             ],
             delay_after_inputs: &[501, 501, 501],
             modifiers: InputModifiers::none(),
@@ -3751,9 +3861,9 @@ mod tests {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('1')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('❤')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('3')),
+                EditorInputEvent::Char('1'),
+                EditorInputEvent::Char('❤'),
+                EditorInputEvent::Char('3'),
             ],
             delay_after_inputs: &[501, 501, 501],
             modifiers: InputModifiers::none(),
@@ -3767,9 +3877,9 @@ mod tests {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('1')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('❤')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('3')),
+                EditorInputEvent::Char('1'),
+                EditorInputEvent::Char('❤'),
+                EditorInputEvent::Char('3'),
             ],
             delay_after_inputs: &[501, 501, 501],
             modifiers: InputModifiers::none(),
@@ -3783,9 +3893,9 @@ mod tests {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('1')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('❤')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('3')),
+                EditorInputEvent::Char('1'),
+                EditorInputEvent::Char('❤'),
+                EditorInputEvent::Char('3'),
             ],
             delay_after_inputs: &[501, 0],
             modifiers: InputModifiers::none(),
@@ -3799,9 +3909,9 @@ mod tests {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('1')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('❤')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('3')),
+                EditorInputEvent::Char('1'),
+                EditorInputEvent::Char('❤'),
+                EditorInputEvent::Char('3'),
             ],
             delay_after_inputs: &[501, 0, 0],
             modifiers: InputModifiers::none(),
@@ -3815,9 +3925,9 @@ mod tests {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('1')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('❤')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('3')),
+                EditorInputEvent::Char('1'),
+                EditorInputEvent::Char('❤'),
+                EditorInputEvent::Char('3'),
             ],
             delay_after_inputs: &[0, 501],
             modifiers: InputModifiers::none(),
@@ -3831,9 +3941,9 @@ mod tests {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('1')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('❤')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('3')),
+                EditorInputEvent::Char('1'),
+                EditorInputEvent::Char('❤'),
+                EditorInputEvent::Char('3'),
             ],
             delay_after_inputs: &[0, 501],
             modifiers: InputModifiers::none(),
@@ -3849,9 +3959,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "abcd❰efghijk❱lmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'X',
-            ))],
+            inputs: &[EditorInputEvent::Char('X')],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -3863,9 +3971,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'X',
-            ))],
+            inputs: &[EditorInputEvent::Char('X')],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -3877,9 +3983,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "❰abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz❱",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'X',
-            ))],
+            inputs: &[EditorInputEvent::Char('X')],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -3891,9 +3995,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "ab❰c❱defghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'X',
-            ))],
+            inputs: &[EditorInputEvent::Char('X')],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -3908,9 +4010,7 @@ mod tests {
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'X',
-            ))],
+            inputs: &[EditorInputEvent::Char('X')],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -3929,7 +4029,7 @@ mod tests {
             abcdefghijkl❱mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('X')),
+                EditorInputEvent::Char('X'),
                 EditorInputEvent::Right,
                 EditorInputEvent::Right,
                 EditorInputEvent::Right,
@@ -3951,9 +4051,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "abcd❰efghijk❱lmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'X',
-            ))],
+            inputs: &[EditorInputEvent::Char('X')],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -3965,9 +4063,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'X',
-            ))],
+            inputs: &[EditorInputEvent::Char('X')],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -3978,9 +4074,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "❰abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz❱",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'X',
-            ))],
+            inputs: &[EditorInputEvent::Char('X')],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -3991,9 +4085,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "ab❰c❱defghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'X',
-            ))],
+            inputs: &[EditorInputEvent::Char('X')],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -4008,9 +4100,7 @@ mod tests {
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'X',
-            ))],
+            inputs: &[EditorInputEvent::Char('X')],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -4026,7 +4116,7 @@ mod tests {
             abcdefghijkl❱mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('X')),
+                EditorInputEvent::Char('X'),
                 EditorInputEvent::Right,
                 EditorInputEvent::Right,
                 EditorInputEvent::Right,
@@ -4044,9 +4134,7 @@ mod tests {
     fn test_backspace() {
         test(
             "a█",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::none(),
             "█",
         );
@@ -4054,9 +4142,7 @@ mod tests {
         test(
             "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::none(),
             "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -4065,9 +4151,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz\n\
             abcde█ghijklmnopqrstuvwxyz",
@@ -4076,9 +4160,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxy█\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -4087,9 +4169,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxy█",
@@ -4099,9 +4179,9 @@ mod tests {
             "abcde█fghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Backspace),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Backspace),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Backspace),
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Backspace,
             ],
             InputModifiers::none(),
             "ab█fghijklmnopqrstuvwxyz\n\
@@ -4111,9 +4191,9 @@ mod tests {
         test(
             "█",
             &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Backspace),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Backspace),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Backspace),
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Backspace,
             ],
             InputModifiers::none(),
             "█",
@@ -4122,9 +4202,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz\n\
             █abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyz",
         );
@@ -4135,9 +4213,9 @@ mod tests {
             abcdefghijklmnopqrst█uvwxyz",
             &[
                 EditorInputEvent::Home,
-                EditorInputEvent::Modif(EditorContentModifierEvent::Backspace),
+                EditorInputEvent::Backspace,
                 EditorInputEvent::Home,
-                EditorInputEvent::Modif(EditorContentModifierEvent::Backspace),
+                EditorInputEvent::Backspace,
             ],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz",
@@ -4151,11 +4229,11 @@ mod tests {
             abcdefghijklmnopqrst█uvwxyz",
             &[
                 EditorInputEvent::Home,
-                EditorInputEvent::Modif(EditorContentModifierEvent::Backspace),
+                EditorInputEvent::Backspace,
                 EditorInputEvent::Home,
-                EditorInputEvent::Modif(EditorContentModifierEvent::Backspace),
+                EditorInputEvent::Backspace,
                 EditorInputEvent::Home,
-                EditorInputEvent::Modif(EditorContentModifierEvent::Backspace),
+                EditorInputEvent::Backspace,
             ],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz\n\
@@ -4164,11 +4242,296 @@ mod tests {
     }
 
     #[test]
+    fn test_backspace_undo() {
+        test_undo(TestParams {
+            initial_content: "a█",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "a█",
+        });
+
+        test_undo(TestParams {
+            initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdef█ghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdef█ghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijklmnopqrstuvwxyz█\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz█",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz█",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcde█fghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Backspace,
+            ],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcde█fghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "█",
+            inputs: &[
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Backspace,
+            ],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "█",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            █abcdefghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            █abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrst█uvwxyz",
+            inputs: &[
+                EditorInputEvent::Home,
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Home,
+                EditorInputEvent::Backspace,
+            ],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            █abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl\n\
+            abcdefghijkl\n\
+            abcdefghijkl\n\
+            abcdef█ghijkl",
+            inputs: &[
+                EditorInputEvent::Home,
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Home,
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Home,
+                EditorInputEvent::Backspace,
+            ],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijkl\n\
+            abcdefghijkl\n\
+            abcdefghijkl\n\
+            █abcdefghijkl",
+        });
+    }
+
+    #[test]
+    fn test_backspace_redo() {
+        test_undo(TestParams {
+            initial_content: "a█",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "█",
+        });
+
+        test_undo(TestParams {
+            initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdef█ghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcde█ghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijklmnopqrstuvwxy█\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz█",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxy█",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcde█fghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Backspace,
+            ],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "ab█fghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "█",
+            inputs: &[
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Backspace,
+            ],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "█",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            █abcdefghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrst█uvwxyz",
+            inputs: &[
+                EditorInputEvent::Home,
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Home,
+                EditorInputEvent::Backspace,
+            ],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content:
+                "abcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl\n\
+            abcdefghijkl\n\
+            abcdefghijkl\n\
+            abcdef█ghijkl",
+            inputs: &[
+                EditorInputEvent::Home,
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Home,
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Home,
+                EditorInputEvent::Backspace,
+            ],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijkl█abcdefghijklabcdefghijklabcdefghijkl",
+        });
+    }
+
+    #[test]
     fn test_ctrl_del() {
         test(
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::ctrl(),
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
@@ -4178,9 +4541,9 @@ mod tests {
             "abcde█fghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Del),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Del),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Del),
+                EditorInputEvent::Del,
+                EditorInputEvent::Del,
+                EditorInputEvent::Del,
             ],
             InputModifiers::ctrl(),
             "abcde█",
@@ -4189,9 +4552,9 @@ mod tests {
         test(
             "█",
             &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Del),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Del),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Del),
+                EditorInputEvent::Del,
+                EditorInputEvent::Del,
+                EditorInputEvent::Del,
             ],
             InputModifiers::ctrl(),
             "█",
@@ -4200,7 +4563,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::ctrl(),
             "abcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyz",
         );
@@ -4211,9 +4574,9 @@ mod tests {
             abcdefghijklmnopqrstuvwxyz",
             &[
                 EditorInputEvent::End,
-                EditorInputEvent::Modif(EditorContentModifierEvent::Del),
+                EditorInputEvent::Del,
                 EditorInputEvent::End,
-                EditorInputEvent::Modif(EditorContentModifierEvent::Del),
+                EditorInputEvent::Del,
             ],
             InputModifiers::ctrl(),
             "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyz",
@@ -4221,98 +4584,98 @@ mod tests {
 
         test(
             "█abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::ctrl(),
             "█",
         );
 
         test(
             "█abcdefghijkl mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::ctrl(),
             "█ mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl█ mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::ctrl(),
             "abcdefghijkl█mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl █mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::ctrl(),
             "abcdefghijkl █",
         );
 
         test(
             "abcdefghijkl█    mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::ctrl(),
             "abcdefghijkl█mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl█  )  mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::ctrl(),
             "abcdefghijkl█)  mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl█  |()-+%'^%/=?{}#<>&@[]*  mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::ctrl(),
             "abcdefghijkl█|()-+%'^%/=?{}#<>&@[]*  mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl█  \"  mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::ctrl(),
             "abcdefghijkl█\"  mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl█  12  mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::ctrl(),
             "abcdefghijkl█12  mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl█  12a  mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::ctrl(),
             "abcdefghijkl█12a  mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl█  a12  mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::ctrl(),
             "abcdefghijkl█a12  mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl█  _  mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::ctrl(),
             "abcdefghijkl█_  mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl█  _1a  mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::ctrl(),
             "abcdefghijkl█_1a  mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl█  \"❤(  mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::ctrl(),
             "abcdefghijkl█\"❤(  mnopqrstuvwxyz",
         );
@@ -4322,91 +4685,69 @@ mod tests {
     fn test_ctrl_w() {
         test(
             "█",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'w',
-            ))],
+            &[EditorInputEvent::Char('w')],
             InputModifiers::ctrl(),
             "█",
         );
         test(
             "a█",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'w',
-            ))],
+            &[EditorInputEvent::Char('w')],
             InputModifiers::ctrl(),
             "❱a❰",
         );
         test(
             "█a",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'w',
-            ))],
+            &[EditorInputEvent::Char('w')],
             InputModifiers::ctrl(),
             "❱a❰",
         );
 
         test(
             "█asd",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'w',
-            ))],
+            &[EditorInputEvent::Char('w')],
             InputModifiers::ctrl(),
             "❱asd❰",
         );
         test(
             "asd█",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'w',
-            ))],
+            &[EditorInputEvent::Char('w')],
             InputModifiers::ctrl(),
             "❱asd❰",
         );
         test(
             "a█sd",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'w',
-            ))],
+            &[EditorInputEvent::Char('w')],
             InputModifiers::ctrl(),
             "❱asd❰",
         );
         test(
             "as█d",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'w',
-            ))],
+            &[EditorInputEvent::Char('w')],
             InputModifiers::ctrl(),
             "❱asd❰",
         );
 
         test(
             "as█d 12",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'w',
-            ))],
+            &[EditorInputEvent::Char('w')],
             InputModifiers::ctrl(),
             "❱asd❰ 12",
         );
         test(
             "asd █12",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'w',
-            ))],
+            &[EditorInputEvent::Char('w')],
             InputModifiers::ctrl(),
             "asd ❱12❰",
         );
         test(
             "asd 1█2",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'w',
-            ))],
+            &[EditorInputEvent::Char('w')],
             InputModifiers::ctrl(),
             "asd ❱12❰",
         );
         test(
             "asd 12█",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'w',
-            ))],
+            &[EditorInputEvent::Char('w')],
             InputModifiers::ctrl(),
             "asd ❱12❰",
         );
@@ -4414,9 +4755,7 @@ mod tests {
         test(
             "█asdasdasd\n\
             bbbbbbbbbbb",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'w',
-            ))],
+            &[EditorInputEvent::Char('w')],
             InputModifiers::ctrl(),
             "❱asdasdasd❰\n\
             bbbbbbbbbbb",
@@ -4424,49 +4763,35 @@ mod tests {
 
         test(
             "asd 12█",
-            &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('w')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('w')),
-            ],
+            &[EditorInputEvent::Char('w'), EditorInputEvent::Char('w')],
             InputModifiers::ctrl(),
             "❱asd 12❰",
         );
 
         test(
             "█asd 12",
-            &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('w')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('w')),
-            ],
+            &[EditorInputEvent::Char('w'), EditorInputEvent::Char('w')],
             InputModifiers::ctrl(),
             "❱asd 12❰",
         );
 
         test(
             "asd █12 qwe",
-            &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('w')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('w')),
-            ],
+            &[EditorInputEvent::Char('w'), EditorInputEvent::Char('w')],
             InputModifiers::ctrl(),
             "❱asd 12 qwe❰",
         );
 
         test(
             "vvv asd █12 qwe ttt",
-            &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('w')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('w')),
-            ],
+            &[EditorInputEvent::Char('w'), EditorInputEvent::Char('w')],
             InputModifiers::ctrl(),
             "vvv ❱asd 12 qwe❰ ttt",
         );
 
         test(
             "vvv ❱asd 12 qwe❱ ttt",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'w',
-            ))],
+            &[EditorInputEvent::Char('w')],
             InputModifiers::ctrl(),
             "❱vvv asd 12 qwe ttt❰",
         );
@@ -4474,9 +4799,9 @@ mod tests {
         test(
             "vvv asd █12 qwe ttt",
             &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('w')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('w')),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Char('w')),
+                EditorInputEvent::Char('w'),
+                EditorInputEvent::Char('w'),
+                EditorInputEvent::Char('w'),
             ],
             InputModifiers::ctrl(),
             "❱vvv asd 12 qwe ttt❰",
@@ -4487,9 +4812,7 @@ mod tests {
     fn test_ctrl_backspace() {
         test(
             "a█",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::ctrl(),
             "█",
         );
@@ -4497,9 +4820,7 @@ mod tests {
         test(
             "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::ctrl(),
             "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -4508,9 +4829,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::ctrl(),
             "abcdefghijklmnopqrstuvwxyz\n\
             █ghijklmnopqrstuvwxyz",
@@ -4519,9 +4838,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::ctrl(),
             "█\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -4530,9 +4847,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::ctrl(),
             "abcdefghijklmnopqrstuvwxyz\n\
             █",
@@ -4542,9 +4857,9 @@ mod tests {
             "abcde█fghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Backspace),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Backspace),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Backspace),
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Backspace,
             ],
             InputModifiers::ctrl(),
             "█fghijklmnopqrstuvwxyz\n\
@@ -4554,9 +4869,9 @@ mod tests {
         test(
             "█",
             &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Backspace),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Backspace),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Backspace),
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Backspace,
             ],
             InputModifiers::ctrl(),
             "█",
@@ -4565,9 +4880,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz\n\
             █abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::ctrl(),
             "abcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyz",
         );
@@ -4578,9 +4891,9 @@ mod tests {
             abcdefghijklmnopqrst█uvwxyz",
             &[
                 EditorInputEvent::Home,
-                EditorInputEvent::Modif(EditorContentModifierEvent::Backspace),
+                EditorInputEvent::Backspace,
                 EditorInputEvent::Home,
-                EditorInputEvent::Modif(EditorContentModifierEvent::Backspace),
+                EditorInputEvent::Backspace,
             ],
             InputModifiers::ctrl(),
             "abcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz",
@@ -4588,126 +4901,98 @@ mod tests {
 
         test(
             "abcdefghijklmnopqrstuvwxyz█",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::ctrl(),
             "█",
         );
 
         test(
             "abcdefghijkl mnopqrstuvwxyz█",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::ctrl(),
             "abcdefghijkl █",
         );
 
         test(
             "abcdefghijkl █mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::ctrl(),
             "█mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl█ mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::ctrl(),
             "█ mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl    █mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::ctrl(),
             "█mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl  )  █mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::ctrl(),
             "abcdefghijkl  █mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl  |()-+%'^%/=?{}#<>&@[]*  █mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::ctrl(),
             "abcdefghijkl  █mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl  \"  █mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::ctrl(),
             "abcdefghijkl  █mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl  12  █mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::ctrl(),
             "abcdefghijkl  █mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl  12a  █mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::ctrl(),
             "abcdefghijkl  █mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl  a12  █mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::ctrl(),
             "abcdefghijkl  █mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl  _  █mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::ctrl(),
             "abcdefghijkl  █mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl  _1a  █mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::ctrl(),
             "abcdefghijkl  █mnopqrstuvwxyz",
         );
 
         test(
             "abcdefghijkl  \"❤(  █mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::ctrl(),
             "abcdefghijkl  \"█mnopqrstuvwxyz",
         );
@@ -4718,9 +5003,7 @@ mod tests {
         test(
             "abcd❰efghijk❱lmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::none(),
             "abcd█lmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -4729,9 +5012,7 @@ mod tests {
         test(
             "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::none(),
             "abcd█mnopqrstuvwxyz",
         );
@@ -4739,9 +5020,7 @@ mod tests {
         test(
             "❰abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz❱",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::none(),
             "█",
         );
@@ -4749,9 +5028,7 @@ mod tests {
         test(
             "ab❰c❱defghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::none(),
             "ab█defghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -4763,9 +5040,7 @@ mod tests {
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(
-                EditorContentModifierEvent::Backspace,
-            )],
+            &[EditorInputEvent::Backspace],
             InputModifiers::none(),
             "abcd█mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -4777,7 +5052,7 @@ mod tests {
         test(
             "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::none(),
             "█bcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -4786,7 +5061,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█hijklmnopqrstuvwxyz",
@@ -4795,7 +5070,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
@@ -4805,9 +5080,9 @@ mod tests {
             "abcde█fghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Del),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Del),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Del),
+                EditorInputEvent::Del,
+                EditorInputEvent::Del,
+                EditorInputEvent::Del,
             ],
             InputModifiers::none(),
             "abcde█ijklmnopqrstuvwxyz\n\
@@ -4817,9 +5092,9 @@ mod tests {
         test(
             "█",
             &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Del),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Del),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Del),
+                EditorInputEvent::Del,
+                EditorInputEvent::Del,
+                EditorInputEvent::Del,
             ],
             InputModifiers::none(),
             "█",
@@ -4828,7 +5103,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyz",
         );
@@ -4839,9 +5114,9 @@ mod tests {
             abcdefghijklmnopqrstuvwxyz",
             &[
                 EditorInputEvent::End,
-                EditorInputEvent::Modif(EditorContentModifierEvent::Del),
+                EditorInputEvent::Del,
                 EditorInputEvent::End,
-                EditorInputEvent::Modif(EditorContentModifierEvent::Del),
+                EditorInputEvent::Del,
             ],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyz",
@@ -4854,11 +5129,11 @@ mod tests {
             abcdefghijklmnopqrstuvwxyz",
             &[
                 EditorInputEvent::End,
-                EditorInputEvent::Modif(EditorContentModifierEvent::Del),
+                EditorInputEvent::Del,
                 EditorInputEvent::End,
-                EditorInputEvent::Modif(EditorContentModifierEvent::Del),
+                EditorInputEvent::Del,
                 EditorInputEvent::End,
-                EditorInputEvent::Modif(EditorContentModifierEvent::Del),
+                EditorInputEvent::Del,
             ],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz█\n\
@@ -4867,11 +5142,134 @@ mod tests {
     }
 
     #[test]
+    fn test_del_undo() {
+        test_undo(TestParams {
+            initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "█abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdef█ghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdef█ghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz█",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz█",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcde█fghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[
+                EditorInputEvent::Del,
+                EditorInputEvent::Del,
+                EditorInputEvent::Del,
+            ],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcde█fghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "█",
+            inputs: &[
+                EditorInputEvent::Del,
+                EditorInputEvent::Del,
+                EditorInputEvent::Del,
+            ],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "█",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijklmnopqrstuvwxyz█\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnop█qrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[
+                EditorInputEvent::End,
+                EditorInputEvent::Del,
+                EditorInputEvent::End,
+                EditorInputEvent::Del,
+            ],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijklmnopqrstuvwxyz█\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcde█fghijkl\n\
+            abcdefghijkl\n\
+            abcdefghijkl\n\
+            abcdefghijkl",
+            inputs: &[
+                EditorInputEvent::End,
+                EditorInputEvent::Del,
+                EditorInputEvent::End,
+                EditorInputEvent::Del,
+                EditorInputEvent::End,
+                EditorInputEvent::Del,
+            ],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijkl█\n\
+            abcdefghijkl\n\
+            abcdefghijkl\n\
+            abcdefghijkl",
+        });
+    }
+
+    #[test]
     fn press_del_with_selection() {
         test(
             "abcd❰efghijk❱lmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::none(),
             "abcd█lmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -4880,7 +5278,7 @@ mod tests {
         test(
             "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::none(),
             "abcd█mnopqrstuvwxyz",
         );
@@ -4888,7 +5286,7 @@ mod tests {
         test(
             "❰abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz❱",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::none(),
             "█",
         );
@@ -4896,7 +5294,7 @@ mod tests {
         test(
             "ab❰c❱defghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::none(),
             "ab█defghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -4908,7 +5306,7 @@ mod tests {
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::none(),
             "abcd█mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -4921,10 +5319,7 @@ mod tests {
             abcdefghijklmnopqrstuvwxyz\n\
             ❱abcdefghijkl❰mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Del),
-                EditorInputEvent::Up,
-            ],
+            &[EditorInputEvent::Del, EditorInputEvent::Up],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
@@ -4939,7 +5334,7 @@ mod tests {
         test(
             "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+            &[EditorInputEvent::Enter],
             InputModifiers::none(),
             "\n\
             █abcdefghijklmnopqrstuvwxyz\n\
@@ -4949,7 +5344,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+            &[EditorInputEvent::Enter],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdef\n\
@@ -4959,7 +5354,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+            &[EditorInputEvent::Enter],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz\n\
             █\n\
@@ -4969,7 +5364,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+            &[EditorInputEvent::Enter],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
@@ -4980,9 +5375,9 @@ mod tests {
             "abcde█fghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Enter),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Enter),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Enter),
+                EditorInputEvent::Enter,
+                EditorInputEvent::Enter,
+                EditorInputEvent::Enter,
             ],
             InputModifiers::none(),
             "abcde\n\
@@ -4995,9 +5390,9 @@ mod tests {
         test(
             "█",
             &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Enter),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Enter),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Enter),
+                EditorInputEvent::Enter,
+                EditorInputEvent::Enter,
+                EditorInputEvent::Enter,
             ],
             InputModifiers::none(),
             "\n\
@@ -5009,7 +5404,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz\n\
             █abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+            &[EditorInputEvent::Enter],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz\n\
             \n\
@@ -5022,7 +5417,7 @@ mod tests {
         test(
             "abcd❰efghijk❱lmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+            &[EditorInputEvent::Enter],
             InputModifiers::none(),
             "abcd\n\
             █lmnopqrstuvwxyz\n\
@@ -5032,7 +5427,7 @@ mod tests {
         test(
             "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+            &[EditorInputEvent::Enter],
             InputModifiers::none(),
             "abcd\n\
             █mnopqrstuvwxyz",
@@ -5041,7 +5436,7 @@ mod tests {
         test(
             "❰abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz❱",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+            &[EditorInputEvent::Enter],
             InputModifiers::none(),
             "\n\
             █",
@@ -5050,7 +5445,7 @@ mod tests {
         test(
             "ab❰c❱defghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+            &[EditorInputEvent::Enter],
             InputModifiers::none(),
             "ab\n\
             █defghijklmnopqrstuvwxyz\n\
@@ -5063,7 +5458,7 @@ mod tests {
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+            &[EditorInputEvent::Enter],
             InputModifiers::none(),
             "abcd\n\
             █mnopqrstuvwxyz\n\
@@ -5076,7 +5471,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+            inputs: &[EditorInputEvent::Enter],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -5088,7 +5483,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+            inputs: &[EditorInputEvent::Enter],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -5100,7 +5495,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+            inputs: &[EditorInputEvent::Enter],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -5112,7 +5507,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+            inputs: &[EditorInputEvent::Enter],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -5125,9 +5520,9 @@ mod tests {
             initial_content: "abcde█fghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Enter),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Enter),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Enter),
+                EditorInputEvent::Enter,
+                EditorInputEvent::Enter,
+                EditorInputEvent::Enter,
             ],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
@@ -5140,9 +5535,9 @@ mod tests {
         test_undo(TestParams {
             initial_content: "█",
             inputs: &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Enter),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Enter),
-                EditorInputEvent::Modif(EditorContentModifierEvent::Enter),
+                EditorInputEvent::Enter,
+                EditorInputEvent::Enter,
+                EditorInputEvent::Enter,
             ],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
@@ -5154,7 +5549,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             █abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+            inputs: &[EditorInputEvent::Enter],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -5167,7 +5562,7 @@ mod tests {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             █abcdefghijklmnopqrstuvwxyz",
             inputs: &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Enter),
+                EditorInputEvent::Enter,
                 EditorInputEvent::Right,
                 EditorInputEvent::Right,
                 EditorInputEvent::Right,
@@ -5186,7 +5581,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "abcd❰efghijk❱lmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+            inputs: &[EditorInputEvent::Enter],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -5198,7 +5593,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+            inputs: &[EditorInputEvent::Enter],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -5209,7 +5604,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "❰abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz❱",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+            inputs: &[EditorInputEvent::Enter],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -5221,7 +5616,7 @@ mod tests {
         test_undo(TestParams {
             initial_content: "ab❰c❱defghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+            inputs: &[EditorInputEvent::Enter],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -5236,7 +5631,7 @@ mod tests {
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Enter)],
+            inputs: &[EditorInputEvent::Enter],
             delay_after_inputs: &[0],
             modifiers: InputModifiers::none(),
             undo_count: 1,
@@ -5255,7 +5650,7 @@ mod tests {
             abcdefghijkl❱mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
-                EditorInputEvent::Modif(EditorContentModifierEvent::Enter),
+                EditorInputEvent::Enter,
                 EditorInputEvent::Right,
                 EditorInputEvent::Right,
                 EditorInputEvent::Right,
@@ -5277,9 +5672,7 @@ mod tests {
         test(
             "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Text(
-                "long text".to_owned(),
-            ))],
+            &[EditorInputEvent::Text("long text".to_owned())],
             InputModifiers::none(),
             "long text█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -5288,9 +5681,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Text(
-                "long text".to_owned(),
-            ))],
+            &[EditorInputEvent::Text("long text".to_owned())],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdeflong text█ghijklmnopqrstuvwxyz",
@@ -5299,9 +5690,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Text(
-                "long text".to_owned(),
-            ))],
+            &[EditorInputEvent::Text("long text".to_owned())],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyzlong text█\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -5310,9 +5699,7 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Text(
-                "long text".to_owned(),
-            ))],
+            &[EditorInputEvent::Text("long text".to_owned())],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyzlong text█",
@@ -5321,9 +5708,7 @@ mod tests {
         test(
             "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Text(
-                "long text ❤".to_owned(),
-            ))],
+            &[EditorInputEvent::Text("long text ❤".to_owned())],
             InputModifiers::none(),
             "long text ❤█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -5333,9 +5718,7 @@ mod tests {
         test(
             "█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzab\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Text(
-                "long text ❤".to_owned(),
-            ))],
+            &[EditorInputEvent::Text("long text ❤".to_owned())],
             InputModifiers::none(),
             "long text ❤█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopq\n\
             rstuvwxyzab\n\
@@ -5345,9 +5728,9 @@ mod tests {
         test(
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijk█lmnopqrstuvwxyz",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Text(
+            &[EditorInputEvent::Text(
                 "long text ❤\nwith 3\nlines".to_owned(),
-            ))],
+            )],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklong text ❤\n\
@@ -5364,14 +5747,14 @@ mod tests {
             a\n\
             a\n\
             a❰",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::none(),
             "aaaaa█",
         );
 
         test(
             "((0b00101 AND 0xFF) XOR 0xFF00) << 16 >> 16  ❱NOT(0xFF)❰",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Del)],
+            &[EditorInputEvent::Del],
             InputModifiers::none(),
             "((0b00101 AND 0xFF) XOR 0xFF00) << 16 >> 16  █",
         );
@@ -5385,9 +5768,7 @@ mod tests {
             a\n\
             a\n\
             a",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'a',
-            ))],
+            &[EditorInputEvent::Char('a')],
             InputModifiers::ctrl(),
             "❱aaaaa12s aa\n\
             a\n\
@@ -5405,9 +5786,7 @@ mod tests {
             a\n\
             a\n\
             a",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'd',
-            ))],
+            &[EditorInputEvent::Char('d')],
             InputModifiers::ctrl(),
             "aaaaa12s aa\n\
             aaa█aa12s aa\n\
@@ -5422,9 +5801,7 @@ mod tests {
             a\n\
             a\n\
             a█",
-            &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                'd',
-            ))],
+            &[EditorInputEvent::Char('d')],
             InputModifiers::ctrl(),
             "aaaaa12s aa\n\
             a\n\
@@ -5448,9 +5825,7 @@ mod tests {
             a\n\
             a\n\
             a",
-                inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                    'x',
-                ))],
+                inputs: &[EditorInputEvent::Char('x')],
                 delay_after_inputs: &[],
                 modifiers: InputModifiers::ctrl(),
                 undo_count: 0,
@@ -5471,9 +5846,7 @@ mod tests {
             a\n\
             a\n\
             a█",
-                inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                    'x',
-                ))],
+                inputs: &[EditorInputEvent::Char('x')],
                 delay_after_inputs: &[],
                 modifiers: InputModifiers::ctrl(),
                 undo_count: 0,
@@ -5496,9 +5869,7 @@ mod tests {
             a\n\
             a\n\
             a",
-                inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                    'x',
-                ))],
+                inputs: &[EditorInputEvent::Char('x')],
                 delay_after_inputs: &[],
                 modifiers: InputModifiers::ctrl(),
                 undo_count: 0,
@@ -5520,9 +5891,7 @@ mod tests {
             a\n\
             a\n\
             ❰a",
-                inputs: &[EditorInputEvent::Modif(EditorContentModifierEvent::Char(
-                    'x',
-                ))],
+                inputs: &[EditorInputEvent::Char('x')],
                 delay_after_inputs: &[],
                 modifiers: InputModifiers::ctrl(),
                 undo_count: 0,

@@ -2,10 +2,7 @@
 #![feature(const_generics)]
 
 use crate::calc::{evaluate_tokens, CalcResult};
-use crate::editor::{
-    Canvas, Editor, EditorContentModifierEvent, EditorInputEvent, InputModifiers, InputResult, Pos,
-    Selection,
-};
+use crate::editor::{Canvas, Editor, EditorInputEvent, InputModifiers, Pos, Selection};
 use crate::renderer::render_result;
 use crate::shunting_yard::ShuntingYard;
 use crate::token_parser::{OperatorTokenType, Token, TokenParser, TokenType};
@@ -690,12 +687,12 @@ impl<'a> NoteCalcApp<'a> {
         ));
         // TODO: máshogy old meg, mert ez modositja az undo stacket is
         self.editor.handle_input(
-            EditorInputEvent::Modif(EditorContentModifierEvent::Del),
+            EditorInputEvent::Del,
             InputModifiers::none(),
             &mut self.line_datas,
         );
         self.editor.handle_input(
-            EditorInputEvent::Modif(EditorContentModifierEvent::Text(concat)),
+            EditorInputEvent::Text(concat),
             InputModifiers::none(),
             &mut self.line_datas,
         );
@@ -1215,7 +1212,7 @@ impl<'a> NoteCalcApp<'a> {
         };
     }
 
-    pub fn handle_input(&mut self, input: EditorInputEvent, modifiers: InputModifiers) -> bool {
+    pub fn handle_input(&mut self, input: EditorInputEvent, modifiers: InputModifiers) {
         if modifiers.alt && input == EditorInputEvent::Left {
             let cur_pos = self.editor.get_selection().get_cursor_pos();
             let new_format = match &self.line_datas[cur_pos.row].result_format {
@@ -1224,7 +1221,6 @@ impl<'a> NoteCalcApp<'a> {
                 ResultFormat::Hex => ResultFormat::Dec,
             };
             self.line_datas[cur_pos.row].result_format = new_format;
-            false
         } else if modifiers.alt && input == EditorInputEvent::Right {
             let cur_pos = self.editor.get_selection().get_cursor_pos();
             let new_format = match &self.line_datas[cur_pos.row].result_format {
@@ -1233,15 +1229,11 @@ impl<'a> NoteCalcApp<'a> {
                 ResultFormat::Hex => ResultFormat::Bin,
             };
             self.line_datas[cur_pos.row].result_format = new_format;
-            false
         } else if self.matrix_editing.is_some() {
             self.handle_matrix_editor_input(input, modifiers);
-            true
         } else {
-            return self
-                .editor
-                .handle_input(input, modifiers, &mut self.line_datas)
-                == InputResult::ContentWasModified;
+            self.editor
+                .handle_input(input, modifiers, &mut self.line_datas);
         }
     }
 
@@ -1249,7 +1241,7 @@ impl<'a> NoteCalcApp<'a> {
         let mat_edit = self.matrix_editing.as_mut().unwrap();
         let cur_pos = self.editor.get_selection().get_cursor_pos();
 
-        if input == EditorInputEvent::Esc || input.is(EditorContentModifierEvent::Enter) {
+        if input == EditorInputEvent::Esc || input == EditorInputEvent::Enter {
             let newpos = mat_edit.end_text_index;
             self.end_matrix_editing(Some(cur_pos.with_column(newpos)));
         } else if input == EditorInputEvent::Left && mat_edit.editor.is_cursor_at_beginning() {
@@ -1310,9 +1302,7 @@ mod tests {
         let mut app = NoteCalcApp::new(120);
 
         app.handle_input(
-            EditorInputEvent::Modif(EditorContentModifierEvent::Text(
-                "[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]".to_owned(),
-            )),
+            EditorInputEvent::Text("[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]".to_owned()),
             InputModifiers::none(),
         );
         app.editor
@@ -1325,9 +1315,7 @@ mod tests {
     fn bug2() {
         let mut app = NoteCalcApp::new(120);
         app.handle_input(
-            EditorInputEvent::Modif(EditorContentModifierEvent::Text(
-                "[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]".to_owned(),
-            )),
+            EditorInputEvent::Text("[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]".to_owned()),
             InputModifiers::none(),
         );
         app.editor
