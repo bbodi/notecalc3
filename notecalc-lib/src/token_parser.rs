@@ -189,7 +189,7 @@ impl TokenParser {
     pub fn try_extract_number_literal<'text_ptr, 'unit>(
         str: &'text_ptr [char],
     ) -> Option<Token<'text_ptr, 'unit>> {
-        let mut number_str = [b'0'; 32];
+        let mut number_str = [b'0'; 256];
         let mut number_str_index = 0;
         let mut i = 0;
         // unary minus is parsed as part of the number only if

@@ -91,6 +91,13 @@ impl Pos {
         }
     }
 
+    pub fn add_column(&self, col: usize) -> Pos {
+        Pos {
+            column: self.column + col,
+            ..*self
+        }
+    }
+
     pub fn with_next_row(&self) -> Pos {
         Pos {
             row: self.row + 1,
@@ -197,9 +204,9 @@ impl Selection {
 }
 
 pub type Canvas = Vec<char>;
-type EditorCommandGroup = Vec<EditorCommand>;
+type EditorCommandGroup<T: Default + Clone> = Vec<EditorCommand<T>>;
 
-enum EditorCommand {
+enum EditorCommand<T: Default + Clone> {
     SwapLineUpwards(Pos),
     SwapLineDownards(Pos),
     Del {
@@ -208,6 +215,8 @@ enum EditorCommand {
     },
     MergeLineWithNextRow {
         upper_row_index: usize,
+        upper_line_data: Box<T>,
+        lower_line_data: Box<T>,
         pos_before_merge: Pos,
         pos_after_merge: Pos,
     },
@@ -216,7 +225,7 @@ enum EditorCommand {
         selection: Selection,
     },
     DelCtrl {
-        remove_char_count: usize,
+        removed_text: Option<String>,
         pos: Pos,
     },
     InsertEmptyRow(usize),
@@ -234,7 +243,7 @@ enum EditorCommand {
         selection: Selection,
     },
     BackspaceCtrl {
-        remove_char_count: usize,
+        removed_text: Option<String>,
         pos: Pos,
     },
     InsertChar {
@@ -251,16 +260,19 @@ enum EditorCommand {
     InsertText {
         pos: Pos,
         text: String,
+        is_there_line_overflow: bool,
     },
     InsertTextSelection {
         selection: Selection,
         text: String,
+        removed_text: String,
+        is_there_line_overflow: bool,
     },
 }
 
-pub struct Editor {
-    undo_stack: Vec<EditorCommandGroup>,
-    redo_stack: Vec<EditorCommandGroup>,
+pub struct Editor<T: Default + Clone> {
+    undo_stack: Vec<EditorCommandGroup<T>>,
+    redo_stack: Vec<EditorCommandGroup<T>>,
     selection: Selection,
     last_column_index: usize,
     time: u32,
@@ -273,8 +285,8 @@ pub struct Editor {
     pub clipboard: String,
 }
 
-impl Editor {
-    pub fn new(max_len: usize, line_data: &mut Vec<impl Default>) -> Editor {
+impl<T: Default + Clone> Editor<T> {
+    pub fn new(max_len: usize, line_data: &mut Vec<T>) -> Editor<T> {
         let mut ed = Editor {
             undo_stack: Vec::with_capacity(32),
             redo_stack: Vec::with_capacity(32),
@@ -303,7 +315,7 @@ impl Editor {
         cur_pos.column == 0
     }
 
-    pub fn push_line(&mut self, line_data: &mut Vec<impl Default>) {
+    pub fn push_line(&mut self, line_data: &mut Vec<T>) {
         let line = std::iter::repeat(0 as char).take(self.max_line_len);
         self.canvas.extend(line);
         self.line_lens.push(0);
@@ -312,7 +324,7 @@ impl Editor {
         }
     }
 
-    pub fn insert_line_at(&mut self, at: usize, line_data: &mut Vec<impl Default>) {
+    pub fn insert_line_at(&mut self, at: usize, line_data: &mut Vec<T>) {
         let start_pos = self.max_line_len * at;
         let line = std::iter::repeat(0 as char).take(self.max_line_len);
         self.canvas.splice(start_pos..start_pos, line);
@@ -320,7 +332,7 @@ impl Editor {
         line_data.insert(at, Default::default());
     }
 
-    pub fn remove_line_at(&mut self, at: usize, line_data: &mut Vec<impl Default>) {
+    pub fn remove_line_at(&mut self, at: usize, line_data: &mut Vec<T>) {
         let from = self.max_line_len * at;
         let to = from + self.max_line_len;
         self.canvas.splice(from..to, std::iter::empty());
@@ -336,7 +348,7 @@ impl Editor {
         self.clipboard = dst;
     }
 
-    pub fn duplicate_line(&mut self, at: usize, line_data: &mut Vec<impl Default>) {
+    pub fn duplicate_line(&mut self, at: usize, line_data: &mut Vec<T>) {
         self.insert_line_at(at + 1, line_data);
         self.line_lens[at + 1] = self.line_lens[at];
         let from = at * self.max_line_len;
@@ -378,7 +390,7 @@ impl Editor {
         row_index: usize,
         column_index: usize,
         ch: char,
-        line_data: &mut Vec<impl Default>,
+        line_data: &mut Vec<T>,
     ) {
         let current_line_count = self.line_count();
         for _ in current_line_count..=row_index {
@@ -410,7 +422,7 @@ impl Editor {
         return true;
     }
 
-    pub fn set_content(&mut self, text: &str, line_data: &mut Vec<impl Default>) {
+    pub fn set_content(&mut self, text: &str, line_data: &mut Vec<T>) {
         self.clear();
         self.set_cursor_pos_r_c(0, 0);
         self.set_str_at(text, 0, 0, line_data);
@@ -547,7 +559,8 @@ impl Editor {
         &self,
         input: &EditorInputEvent,
         modifiers: InputModifiers,
-    ) -> Option<EditorCommand> {
+        line_data: &Vec<T>,
+    ) -> Option<EditorCommand<T>> {
         let selection = self.selection;
         let cur_pos = selection.get_cursor_pos();
         return match input {
@@ -587,17 +600,25 @@ impl Editor {
                 } else if cur_pos.column == self.line_len(cur_pos.row) {
                     if cur_pos.row == self.line_count() - 1 {
                         None
+                    } else if self.line_len(cur_pos.row) + self.line_len(cur_pos.row + 1)
+                        > self.max_line_len
+                    {
+                        return None;
                     } else {
                         Some(EditorCommand::MergeLineWithNextRow {
                             upper_row_index: cur_pos.row,
+                            upper_line_data: Box::new(line_data[cur_pos.row].clone()),
+                            lower_line_data: Box::new(line_data[cur_pos.row + 1].clone()),
                             pos_before_merge: cur_pos,
                             pos_after_merge: cur_pos,
                         })
                     }
                 } else if modifiers.ctrl {
                     let col = self.jump_word_forward(&cur_pos, JumpMode::ConsiderWhitespaces);
+                    let removed_text =
+                        self.get_selected_text(Selection::range(cur_pos, cur_pos.with_column(col)));
                     Some(EditorCommand::DelCtrl {
-                        remove_char_count: col - cur_pos.column,
+                        removed_text,
                         pos: cur_pos,
                     })
                 } else {
@@ -628,9 +649,15 @@ impl Editor {
                 } else if cur_pos.column == 0 {
                     if cur_pos.row == 0 {
                         None
+                    } else if self.line_len(cur_pos.row) + self.line_len(cur_pos.row - 1)
+                        > self.max_line_len
+                    {
+                        return None;
                     } else {
                         Some(EditorCommand::MergeLineWithNextRow {
                             upper_row_index: cur_pos.row - 1,
+                            upper_line_data: Box::new(line_data[cur_pos.row - 1].clone()),
+                            lower_line_data: Box::new(line_data[cur_pos.row].clone()),
                             pos_before_merge: cur_pos,
                             pos_after_merge: Pos::from_row_column(
                                 cur_pos.row - 1,
@@ -640,8 +667,10 @@ impl Editor {
                     }
                 } else if modifiers.ctrl {
                     let col = self.jump_word_backward(&cur_pos, JumpMode::IgnoreWhitespaces);
+                    let removed_text =
+                        self.get_selected_text(Selection::range(cur_pos.with_column(col), cur_pos));
                     Some(EditorCommand::BackspaceCtrl {
-                        remove_char_count: cur_pos.column - col,
+                        removed_text,
                         pos: cur_pos,
                     })
                 } else {
@@ -691,15 +720,24 @@ impl Editor {
                 }
             }
             EditorInputEvent::Text(str) => {
+                let cur_pos = selection.get_first();
+                let inserted_text_end_pos = self.get_str_range(str, cur_pos.row, cur_pos.column);
+                let remaining_text_len_in_this_row = self.line_len(cur_pos.row) - cur_pos.column;
+                let is_there_line_overflow = inserted_text_end_pos.column
+                    + remaining_text_len_in_this_row
+                    > self.max_line_len;
                 if selection.is_range() {
                     Some(EditorCommand::InsertTextSelection {
                         selection,
+                        removed_text: self.get_selected_text(selection).unwrap(),
                         text: str.clone(),
+                        is_there_line_overflow,
                     })
                 } else {
                     Some(EditorCommand::InsertText {
                         pos: cur_pos,
                         text: str.clone(),
+                        is_there_line_overflow,
                     })
                 }
             }
@@ -710,7 +748,7 @@ impl Editor {
         &mut self,
         input: EditorInputEvent,
         modifiers: InputModifiers,
-        line_data: &mut Vec<impl Default>,
+        line_data: &mut Vec<T>,
     ) {
         if (input == EditorInputEvent::Char('x') || input == EditorInputEvent::Char('c'))
             && modifiers.ctrl
@@ -722,7 +760,7 @@ impl Editor {
             self.redo(line_data);
         } else if input == EditorInputEvent::Char('z') && modifiers.ctrl {
             self.undo(line_data);
-        } else if let Some(command) = self.create_command(&input, modifiers) {
+        } else if let Some(command) = self.create_command(&input, modifiers, line_data) {
             self.do_command(&command, line_data);
             if self.modif_time_treshold_expires_at < self.time || self.undo_stack.is_empty() {
                 // new undo group
@@ -735,16 +773,18 @@ impl Editor {
         };
     }
 
-    fn do_command(&mut self, command: &EditorCommand, line_data: &mut Vec<impl Default>) {
+    fn do_command(&mut self, command: &EditorCommand<T>, line_data: &mut Vec<T>) {
         self.show_cursor = true;
         self.next_blink_at = self.time + 500;
 
         match command {
-            EditorCommand::InsertText { pos, text } => {
+            EditorCommand::InsertText { pos, text, .. } => {
                 let new_pos = self.insert_str_at(*pos, &text, line_data);
                 self.set_selection_save_col(Selection::single(new_pos));
             }
-            EditorCommand::InsertTextSelection { selection, text } => {
+            EditorCommand::InsertTextSelection {
+                selection, text, ..
+            } => {
                 self.remove_selection(*selection, line_data);
                 let new_pos = self.insert_str_at(selection.get_first(), &text, line_data);
                 self.set_selection_save_col(Selection::single(new_pos));
@@ -779,7 +819,7 @@ impl Editor {
                 self.set_selection_save_col(selection);
             }
             EditorCommand::DelCtrl {
-                remove_char_count,
+                removed_text: _removed_text,
                 pos,
             } => {
                 let col = self.jump_word_forward(&pos, JumpMode::ConsiderWhitespaces);
@@ -800,6 +840,8 @@ impl Editor {
             }
             EditorCommand::MergeLineWithNextRow {
                 upper_row_index,
+                upper_line_data,
+                lower_line_data,
                 pos_before_merge,
                 pos_after_merge,
             } => {
@@ -832,10 +874,7 @@ impl Editor {
                 self.remove_selection(*selection, line_data);
                 self.set_selection_save_col(Selection::single(selection.get_first()));
             }
-            EditorCommand::BackspaceCtrl {
-                remove_char_count,
-                pos,
-            } => {
+            EditorCommand::BackspaceCtrl { removed_text, pos } => {
                 let col = self.jump_word_backward(pos, JumpMode::IgnoreWhitespaces);
                 let new_pos = pos.with_column(col);
                 self.remove_selection(Selection::range(new_pos, *pos), line_data);
@@ -1030,7 +1069,7 @@ impl Editor {
         };
     }
 
-    fn undo(&mut self, line_data: &mut Vec<impl Default>) {
+    fn undo(&mut self, line_data: &mut Vec<T>) {
         if let Some(command_group) = self.undo_stack.pop() {
             for command in command_group.iter().rev() {
                 self.undo_command(command, line_data);
@@ -1039,7 +1078,7 @@ impl Editor {
         };
     }
 
-    fn redo(&mut self, line_data: &mut Vec<impl Default>) {
+    fn redo(&mut self, line_data: &mut Vec<T>) {
         if let Some(command_group) = self.redo_stack.pop() {
             for command in command_group.iter() {
                 self.do_command(command, line_data);
@@ -1048,14 +1087,8 @@ impl Editor {
         };
     }
 
-    fn undo_command(&mut self, command: &EditorCommand, line_data: &mut Vec<impl Default>) {
+    fn undo_command(&mut self, command: &EditorCommand<T>, line_data: &mut Vec<T>) {
         match command {
-            EditorCommand::DelSelection {
-                removed_text,
-                selection,
-            } => {
-                self.insert_str_at(selection.get_first(), &removed_text, line_data);
-            }
             EditorCommand::SwapLineUpwards(pos) => {
                 self.swap_lines_upward(pos.row, line_data);
                 self.selection = Selection::single(*pos);
@@ -1068,16 +1101,29 @@ impl Editor {
                 self.insert_char(pos.row, pos.column, *removed_char);
                 self.set_selection_save_col(Selection::single(*pos));
             }
-            EditorCommand::DelCtrl {
-                remove_char_count,
-                pos,
-            } => {}
+            EditorCommand::DelSelection {
+                removed_text,
+                selection,
+            } => {
+                self.insert_str_at(selection.get_first(), &removed_text, line_data);
+                self.set_selection_save_col(*selection);
+            }
+            EditorCommand::DelCtrl { removed_text, pos } => {
+                if let Some(removed_text) = removed_text {
+                    self.insert_str_at(*pos, removed_text, line_data);
+                }
+                self.set_selection_save_col(Selection::single(*pos));
+            }
             EditorCommand::MergeLineWithNextRow {
                 upper_row_index,
+                upper_line_data,
+                lower_line_data,
                 pos_before_merge,
                 pos_after_merge,
             } => {
                 self.split_line(*upper_row_index, pos_after_merge.column, line_data);
+                line_data[*upper_row_index] = upper_line_data.as_ref().clone();
+                line_data[*upper_row_index + 1] = lower_line_data.as_ref().clone();
                 self.set_selection_save_col(Selection::single(*pos_before_merge));
             }
             EditorCommand::InsertEmptyRow(_) => {}
@@ -1105,10 +1151,13 @@ impl Editor {
                 self.insert_str_at(selection.get_first(), removed_text, line_data);
                 self.set_selection_save_col(*selection);
             }
-            EditorCommand::BackspaceCtrl {
-                remove_char_count: _,
-                pos: _,
-            } => {}
+            EditorCommand::BackspaceCtrl { removed_text, pos } => {
+                if let Some(removed_text) = removed_text {
+                    let col = pos.column - removed_text.chars().count();
+                    self.insert_str_at(pos.with_column(col), removed_text, line_data);
+                }
+                self.set_selection_save_col(Selection::single(*pos));
+            }
             EditorCommand::InsertChar { pos, ch } => {
                 self.remove_char(pos.row, pos.column);
                 self.set_selection_save_col(Selection::single(*pos));
@@ -1125,15 +1174,45 @@ impl Editor {
             }
             EditorCommand::RemoveLine(_) => {}
             EditorCommand::DuplicateLine(_) => {}
-            EditorCommand::InsertText { pos: _, text: _ } => {}
+            EditorCommand::InsertText {
+                pos,
+                text,
+                is_there_line_overflow,
+            } => {
+                // calc the range of the pasted text
+                let first = *pos;
+                let inserted_text_range =
+                    Selection::range(first, self.get_str_range(text, first.row, first.column));
+                self.remove_selection(inserted_text_range, line_data);
+                if *is_there_line_overflow {
+                    //originally the next line was part of this line, so merge them
+                    self.merge_with_next_row(first.row, self.line_len(first.row), 0, line_data);
+                }
+
+                self.set_selection_save_col(Selection::single(*pos));
+            }
             EditorCommand::InsertTextSelection {
-                selection: _,
-                text: _,
-            } => {}
+                selection,
+                text,
+                removed_text,
+                is_there_line_overflow,
+            } => {
+                // calc the range of the pasted text
+                let first = selection.get_first();
+                let inserted_text_range =
+                    Selection::range(first, self.get_str_range(text, first.row, first.column));
+                self.remove_selection(inserted_text_range, line_data);
+                let end_pos = self.insert_str_at(first, removed_text, line_data);
+                if *is_there_line_overflow {
+                    //originally the next line was part of this line, so merge them
+                    self.merge_with_next_row(end_pos.row, self.line_len(end_pos.row), 0, line_data);
+                }
+                self.set_selection_save_col(*selection);
+            }
         }
     }
 
-    fn swap_lines_upward(&mut self, lower_row: usize, line_data: &mut Vec<impl Default>) {
+    fn swap_lines_upward(&mut self, lower_row: usize, line_data: &mut Vec<T>) {
         // swap lines
         {
             let upper_i = self.get_char_pos(lower_row - 1, 0);
@@ -1153,7 +1232,7 @@ impl Editor {
         &mut self,
         selection: Selection,
         ch: char,
-        line_data: &mut Vec<impl Default>,
+        line_data: &mut Vec<T>,
     ) {
         let mut first = selection.get_first();
         if self.remove_selection(
@@ -1164,7 +1243,7 @@ impl Editor {
         }
     }
 
-    fn insert_str_at(&mut self, pos: Pos, str: &str, line_data: &mut Vec<impl Default>) -> Pos {
+    fn insert_str_at(&mut self, pos: Pos, str: &str, line_data: &mut Vec<T>) -> Pos {
         // save the content of first row which will be moved
         let mut text_to_move_buf: [u8; /*MAX_EDITOR_WIDTH * 4*/ 1024] = [0; 1024];
         let mut text_to_move_buf_index = 0;
@@ -1286,7 +1365,7 @@ impl Editor {
         str: &str,
         row_index: usize,
         insert_at: usize,
-        line_data: &mut Vec<impl Default>,
+        line_data: &mut Vec<T>,
     ) -> Pos {
         let mut col = insert_at;
         let mut row = row_index;
@@ -1313,7 +1392,27 @@ impl Editor {
         return Pos::from_row_column(row, col);
     }
 
-    fn handle_enter(&mut self, selection: Selection, line_data: &mut Vec<impl Default>) {
+    fn get_str_range(&self, str: &str, row_index: usize, insert_at: usize) -> Pos {
+        let mut col = insert_at;
+        let mut row = row_index;
+        for ch in str.chars() {
+            if ch == '\r' {
+                // ignore
+                continue;
+            } else if ch == '\n' {
+                row += 1;
+                col = 0;
+                continue;
+            } else if col == self.max_line_len {
+                row += 1;
+                col = 0;
+            }
+            col += 1;
+        }
+        return Pos::from_row_column(row, col);
+    }
+
+    fn handle_enter(&mut self, selection: Selection, line_data: &mut Vec<T>) {
         if let Some(end) = selection.end {
             let first_cursor = selection.get_first();
             self.remove_selection(selection, line_data);
@@ -1337,7 +1436,7 @@ impl Editor {
         }
     }
 
-    fn split_line(&mut self, row_index: usize, split_at: usize, line_data: &mut Vec<impl Default>) {
+    fn split_line(&mut self, row_index: usize, split_at: usize, line_data: &mut Vec<T>) {
         self.insert_line_at(row_index + 1, line_data);
         let new_line_pos = self.get_char_pos(row_index + 1, 0);
 
@@ -1355,32 +1454,37 @@ impl Editor {
         row_index: usize,
         first_row_col: usize,
         second_row_col: usize,
-        line_data: &mut Vec<impl Default>,
+        line_data: &mut Vec<T>,
     ) -> bool {
-        if self.line_lens[row_index] + self.line_lens[row_index + 1] > self.max_line_len {
+        if (self.line_len(row_index) - first_row_col)
+            + (self.line_len(row_index + 1) - second_row_col)
+            > self.max_line_len
+        {
             return false;
         }
 
-        let dst = self.get_char_pos(row_index, first_row_col);
-        let src_from = self.get_char_pos(row_index + 1, second_row_col);
-        let src_to = self.get_char_pos(row_index + 1, self.line_lens[row_index + 1]);
-        self.canvas.copy_within(src_from..src_to, dst);
-        self.line_lens[row_index] = first_row_col + (src_to - src_from);
-
-        self.remove_line_at(row_index + 1, line_data);
+        if self.line_len(row_index) == 0 {
+            // keep the data of the 2nd row
+            self.remove_line_at(row_index, line_data);
+        } else if self.line_len(row_index + 1) == 0 {
+            // keep the data of the 1st row
+            self.remove_line_at(row_index + 1, line_data);
+        } else {
+            let dst = self.get_char_pos(row_index, first_row_col);
+            let src_from = self.get_char_pos(row_index + 1, second_row_col);
+            let src_to = self.get_char_pos(row_index + 1, self.line_lens[row_index + 1]);
+            self.canvas.copy_within(src_from..src_to, dst);
+            self.line_lens[row_index] = first_row_col + (src_to - src_from);
+            self.remove_line_at(row_index + 1, line_data);
+        }
 
         return true;
     }
 
-    fn remove_selection(
-        &mut self,
-        selection: Selection,
-        line_data: &mut Vec<impl Default>,
-    ) -> bool {
+    fn remove_selection(&mut self, selection: Selection, line_data: &mut Vec<T>) -> bool {
         let first = selection.get_first();
         let second = selection.get_second();
         if second.row > first.row {
-            // töröld a közbenső egész sorokat teljesen
             for _ in first.row + 1..second.row {
                 self.remove_line_at(first.row + 1, line_data);
             }
@@ -1411,6 +1515,16 @@ mod tests {
     const SELECTION_START_MARK: char = '❱';
     const SELECTION_END_MARK: char = '❰';
 
+    #[derive(Clone)]
+    struct TestParams2<'a> {
+        initial_content: &'a str,
+        inputs: &'a [EditorInputEvent],
+        delay_after_inputs: &'a [u32],
+        modifiers: InputModifiers,
+        expected_content: &'a str,
+    }
+
+    #[derive(Clone)]
     struct TestParams<'a> {
         initial_content: &'a str,
         inputs: &'a [EditorInputEvent],
@@ -1419,6 +1533,57 @@ mod tests {
         undo_count: usize,
         redo_count: usize,
         expected_content: &'a str,
+    }
+
+    fn test_normal_undo_redo(params: TestParams2) {
+        // normal test
+        let mut line_data = Vec::<usize>::new();
+        let mut editor = Editor::new(80, &mut line_data);
+        test0(
+            &mut editor,
+            &mut line_data,
+            TestParams {
+                initial_content: params.initial_content,
+                inputs: params.inputs,
+                delay_after_inputs: params.delay_after_inputs,
+                modifiers: params.modifiers,
+                undo_count: 0,
+                redo_count: 0,
+                expected_content: params.expected_content,
+            },
+        );
+        // undo test
+        let mut line_data = Vec::<usize>::new();
+        let mut editor = Editor::new(80, &mut line_data);
+        test0(
+            &mut editor,
+            &mut line_data,
+            TestParams {
+                initial_content: params.initial_content,
+                inputs: params.inputs,
+                delay_after_inputs: params.delay_after_inputs,
+                modifiers: params.modifiers,
+                undo_count: 1,
+                redo_count: 0,
+                expected_content: params.initial_content,
+            },
+        );
+        // redo test
+        let mut line_data = Vec::<usize>::new();
+        let mut editor = Editor::new(80, &mut line_data);
+        test0(
+            &mut editor,
+            &mut line_data,
+            TestParams {
+                initial_content: params.initial_content,
+                inputs: params.inputs,
+                delay_after_inputs: params.delay_after_inputs,
+                modifiers: params.modifiers,
+                undo_count: 1,
+                redo_count: 1,
+                expected_content: params.expected_content,
+            },
+        );
     }
 
     fn test_undo(params: TestParams) {
@@ -1453,7 +1618,7 @@ mod tests {
     /// the strings in the parameter list are kind of a markup language
     /// '|' marks the cursor's position. If there are two of them, then
     /// it means a selection's begin and end.
-    fn test0(editor: &mut Editor, line_data: &mut Vec<impl Default>, params: TestParams) {
+    fn test0(editor: &mut Editor<usize>, line_data: &mut Vec<usize>, params: TestParams) {
         // we can assume here that it does not contain illegal or complex input
         // so we can just set it as it is
         let mut selection_found = false;
@@ -1504,7 +1669,7 @@ mod tests {
         }
 
         // assert
-        let editor: &Editor = editor;
+        let editor: &Editor<usize> = editor;
         let mut expected_cursor = Selection::single_r_c(0, 0);
         let mut expected_selection_start = Pos { row: 0, column: 0 };
         let mut expected_selection_end = Pos { row: 0, column: 0 };
@@ -1538,6 +1703,11 @@ mod tests {
                 }
             }
 
+            assert_eq!(
+                params.expected_content.lines().count(),
+                editor.line_lens.len(),
+                "expected line count"
+            );
             assert!(
                 editor.line_lens[row_index] <= expected_row_len,
                 "Line {}, Actual data is longer: {:?}",
@@ -1564,7 +1734,15 @@ mod tests {
                 "Selection end"
             );
         } else {
-            assert_eq!(editor.selection, expected_cursor, "Cursor");
+            if !expected_cursor.is_range() && params.undo_count > 0 {
+                // the cursor is not reverted back during undo
+                assert_eq!(
+                    editor.selection.start.row, expected_cursor.start.row,
+                    "Cursor row"
+                );
+            } else {
+                assert_eq!(editor.selection, expected_cursor, "Cursor");
+            }
         }
     }
 
@@ -1806,6 +1984,7 @@ mod tests {
 
         // otherwise...
         let mut line_data = vec![1, 2, 3];
+        let mut editor = Editor::new(80, &mut line_data);
         test0(
             &mut editor,
             &mut line_data,
@@ -1828,6 +2007,7 @@ mod tests {
 
         // if the prev row is empty, the line takes its data with itself
         let mut line_data = vec![1, 2, 3];
+        let mut editor = Editor::new(80, &mut line_data);
         test0(
             &mut editor,
             &mut line_data,
@@ -1847,6 +2027,7 @@ mod tests {
         assert_eq!(line_data, &[2, 3]);
 
         let mut line_data = vec![1, 2, 3];
+        let mut editor = Editor::new(80, &mut line_data);
         test0(
             &mut editor,
             &mut line_data,
@@ -1867,6 +2048,7 @@ mod tests {
 
         // if the current row is empty, the next line brings its data with itself
         let mut line_data = vec![1, 2, 3];
+        let mut editor = Editor::new(80, &mut line_data);
         test0(
             &mut editor,
             &mut line_data,
@@ -1886,6 +2068,7 @@ mod tests {
         assert_eq!(line_data, &[2, 3]);
 
         let mut line_data = vec![1, 2, 3];
+        let mut editor = Editor::new(80, &mut line_data);
         test0(
             &mut editor,
             &mut line_data,
@@ -1903,6 +2086,341 @@ mod tests {
             },
         );
         assert_eq!(line_data, &[1, 3]);
+    }
+
+    #[test]
+    fn test_moving_line_data_undo() {
+        let mut line_data = vec![1, 2, 3];
+        let mut editor = Editor::new(80, &mut line_data);
+
+        test0(
+            &mut editor,
+            &mut line_data,
+            TestParams {
+                initial_content: "█111111111\n\
+            2222222222\n\
+            3333333333",
+                inputs: &[EditorInputEvent::Enter],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 1,
+                redo_count: 0,
+                expected_content: "█111111111\n\
+            2222222222\n\
+            3333333333",
+            },
+        );
+        assert_eq!(line_data, &[1, 2, 3]);
+
+        let mut line_data = vec![1, 2, 3];
+        test0(
+            &mut editor,
+            &mut line_data,
+            TestParams {
+                initial_content: "11█1111111\n\
+            2222222222\n\
+            3333333333",
+                inputs: &[EditorInputEvent::Enter],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 1,
+                redo_count: 0,
+                expected_content: "11█1111111\n\
+            2222222222\n\
+            3333333333",
+            },
+        );
+        assert_eq!(line_data, &[1, 2, 3]);
+
+        let mut line_data = vec![1, 2, 3];
+        test0(
+            &mut editor,
+            &mut line_data,
+            TestParams {
+                initial_content: "\n\
+            █2222222222\n\
+            3333333333",
+                inputs: &[EditorInputEvent::Backspace],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 1,
+                redo_count: 0,
+                expected_content: "\n\
+            █2222222222\n\
+            3333333333",
+            },
+        );
+        assert_eq!(line_data, &[1, 2, 3]);
+
+        let mut line_data = vec![1, 2, 3];
+        test0(
+            &mut editor,
+            &mut line_data,
+            TestParams {
+                initial_content: "111\n\
+            █2222222222\n\
+            3333333333",
+                inputs: &[EditorInputEvent::Backspace],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 1,
+                redo_count: 0,
+                expected_content: "111\n\
+            █2222222222\n\
+            3333333333",
+            },
+        );
+        assert_eq!(line_data, &[1, 2, 3]);
+
+        let mut line_data = vec![1, 2, 3];
+        test0(
+            &mut editor,
+            &mut line_data,
+            TestParams {
+                initial_content: "█\n\
+            2222222222\n\
+            3333333333",
+                inputs: &[EditorInputEvent::Del],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 1,
+                redo_count: 0,
+                expected_content: "█\n\
+            2222222222\n\
+            3333333333",
+            },
+        );
+        assert_eq!(line_data, &[1, 2, 3]);
+
+        let mut line_data = vec![1, 2, 3];
+        test0(
+            &mut editor,
+            &mut line_data,
+            TestParams {
+                initial_content: "111█\n\
+            2222222222\n\
+            3333333333",
+                inputs: &[EditorInputEvent::Del],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 1,
+                redo_count: 0,
+                expected_content: "111█\n\
+            2222222222\n\
+            3333333333",
+            },
+        );
+        assert_eq!(line_data, &[1, 2, 3]);
+
+        let mut line_data = vec![1, 2, 3];
+        test0(
+            &mut editor,
+            &mut line_data,
+            TestParams {
+                initial_content: "111\n\
+            █2222222222\n\
+            3333333333",
+                inputs: &[EditorInputEvent::Up],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::ctrl_shift(),
+                undo_count: 1,
+                redo_count: 0,
+                expected_content: "111\n\
+            █2222222222\n\
+            3333333333",
+            },
+        );
+        assert_eq!(line_data, &[1, 2, 3]);
+
+        let mut line_data = vec![1, 2, 3];
+        test0(
+            &mut editor,
+            &mut line_data,
+            TestParams {
+                initial_content: "111\n\
+            █2222222222\n\
+            3333333333",
+                inputs: &[EditorInputEvent::Down],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::ctrl_shift(),
+                undo_count: 1,
+                redo_count: 0,
+                expected_content: "111\n\
+            █2222222222\n\
+            3333333333",
+            },
+        );
+        assert_eq!(line_data, &[1, 2, 3]);
+    }
+
+    #[test]
+    fn test_moving_line_data_redo() {
+        let mut line_data = vec![1, 2, 3];
+        let mut editor = Editor::new(80, &mut line_data);
+
+        test0(
+            &mut editor,
+            &mut line_data,
+            TestParams {
+                initial_content: "█111111111\n\
+            2222222222\n\
+            3333333333",
+                inputs: &[EditorInputEvent::Enter],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 1,
+                redo_count: 1,
+                expected_content: "\n\
+                █111111111\n\
+            2222222222\n\
+            3333333333",
+            },
+        );
+        assert_eq!(line_data, &[0, 1, 2, 3]);
+
+        let mut line_data = vec![1, 2, 3];
+        let mut editor = Editor::new(80, &mut line_data);
+        test0(
+            &mut editor,
+            &mut line_data,
+            TestParams {
+                initial_content: "11█1111111\n\
+            2222222222\n\
+            3333333333",
+                inputs: &[EditorInputEvent::Enter],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 1,
+                redo_count: 1,
+                expected_content: "11\n\
+                █1111111\n\
+            2222222222\n\
+            3333333333",
+            },
+        );
+        assert_eq!(line_data, &[1, 0, 2, 3]);
+
+        let mut line_data = vec![1, 2, 3];
+        let mut editor = Editor::new(80, &mut line_data);
+        test0(
+            &mut editor,
+            &mut line_data,
+            TestParams {
+                initial_content: "\n\
+            █2222222222\n\
+            3333333333",
+                inputs: &[EditorInputEvent::Backspace],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 1,
+                redo_count: 1,
+                expected_content: "█2222222222\n\
+            3333333333",
+            },
+        );
+        assert_eq!(line_data, &[2, 3]);
+
+        let mut line_data = vec![1, 2, 3];
+        let mut editor = Editor::new(80, &mut line_data);
+        test0(
+            &mut editor,
+            &mut line_data,
+            TestParams {
+                initial_content: "111\n\
+            █2222222222\n\
+            3333333333",
+                inputs: &[EditorInputEvent::Backspace],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 1,
+                redo_count: 1,
+                expected_content: "111█2222222222\n\
+            3333333333",
+            },
+        );
+        assert_eq!(line_data, &[1, 3]);
+
+        let mut line_data = vec![1, 2, 3];
+        let mut editor = Editor::new(80, &mut line_data);
+        test0(
+            &mut editor,
+            &mut line_data,
+            TestParams {
+                initial_content: "█\n\
+            2222222222\n\
+            3333333333",
+                inputs: &[EditorInputEvent::Del],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 1,
+                redo_count: 1,
+                expected_content: "█2222222222\n\
+            3333333333",
+            },
+        );
+        assert_eq!(line_data, &[2, 3]);
+
+        let mut line_data = vec![1, 2, 3];
+        let mut editor = Editor::new(80, &mut line_data);
+        test0(
+            &mut editor,
+            &mut line_data,
+            TestParams {
+                initial_content: "111█\n\
+            2222222222\n\
+            3333333333",
+                inputs: &[EditorInputEvent::Del],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 1,
+                redo_count: 1,
+                expected_content: "111█2222222222\n\
+            3333333333",
+            },
+        );
+        assert_eq!(line_data, &[1, 3]);
+
+        let mut line_data = vec![1, 2, 3];
+        let mut editor = Editor::new(80, &mut line_data);
+        test0(
+            &mut editor,
+            &mut line_data,
+            TestParams {
+                initial_content: "111\n\
+            █2222222222\n\
+            3333333333",
+                inputs: &[EditorInputEvent::Up],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::ctrl_shift(),
+                undo_count: 1,
+                redo_count: 1,
+                expected_content: "█2222222222\n\
+            111\n\
+            3333333333",
+            },
+        );
+        assert_eq!(line_data, &[2, 1, 3]);
+
+        let mut line_data = vec![1, 2, 3];
+        let mut editor = Editor::new(80, &mut line_data);
+        test0(
+            &mut editor,
+            &mut line_data,
+            TestParams {
+                initial_content: "111\n\
+            █2222222222\n\
+            3333333333",
+                inputs: &[EditorInputEvent::Down],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::ctrl_shift(),
+                undo_count: 1,
+                redo_count: 1,
+                expected_content: "111\n\
+            3333333333\n\
+            █2222222222",
+            },
+        );
+        assert_eq!(line_data, &[1, 3, 2]);
     }
 
     #[test]
@@ -3583,55 +4101,6 @@ mod tests {
     }
 
     #[test]
-    fn insert_char_with_selection() {
-        test(
-            "abcd❰efghijk❱lmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Char('X')],
-            InputModifiers::none(),
-            "abcdX█lmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-        );
-
-        test(
-            "abcd❰efghijklmnopqrstuvwxyz\n\
-            abcdefghijkl❱mnopqrstuvwxyz",
-            &[EditorInputEvent::Char('X')],
-            InputModifiers::none(),
-            "abcdX█mnopqrstuvwxyz",
-        );
-
-        test(
-            "❰abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz❱",
-            &[EditorInputEvent::Char('X')],
-            InputModifiers::none(),
-            "X█",
-        );
-
-        test(
-            "ab❰c❱defghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Char('X')],
-            InputModifiers::none(),
-            "abX█defghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-        );
-
-        test(
-            "abcd❰efghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijkl❱mnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Char('X')],
-            InputModifiers::none(),
-            "abcdX█mnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-        );
-    }
-
-    #[test]
     fn test_insert_char_undo() {
         test_undo(TestParams {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
@@ -3952,6 +4421,55 @@ mod tests {
             expected_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
         });
+    }
+
+    #[test]
+    fn insert_char_with_selection() {
+        test(
+            "abcd❰efghijk❱lmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            &[EditorInputEvent::Char('X')],
+            InputModifiers::none(),
+            "abcdX█lmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        );
+
+        test(
+            "abcd❰efghijklmnopqrstuvwxyz\n\
+            abcdefghijkl❱mnopqrstuvwxyz",
+            &[EditorInputEvent::Char('X')],
+            InputModifiers::none(),
+            "abcdX█mnopqrstuvwxyz",
+        );
+
+        test(
+            "❰abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz❱",
+            &[EditorInputEvent::Char('X')],
+            InputModifiers::none(),
+            "X█",
+        );
+
+        test(
+            "ab❰c❱defghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            &[EditorInputEvent::Char('X')],
+            InputModifiers::none(),
+            "abX█defghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        );
+
+        test(
+            "abcd❰efghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijkl❱mnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            &[EditorInputEvent::Char('X')],
+            InputModifiers::none(),
+            "abcdX█mnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        );
     }
 
     #[test]
@@ -4384,6 +4902,25 @@ mod tests {
             abcdefghijkl\n\
             █abcdefghijkl",
         });
+        // the last backspace is not allowed, there is no enough space for it
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrst█uvwxyz",
+            inputs: &[
+                EditorInputEvent::Home,
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Home,
+                EditorInputEvent::Backspace,
+                EditorInputEvent::Home,
+                EditorInputEvent::Backspace,
+            ],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            █abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz",
+        });
     }
 
     #[test]
@@ -4682,6 +5219,433 @@ mod tests {
     }
 
     #[test]
+    fn test_ctrl_del_undo() {
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz█",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz█",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcde█fghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[
+                EditorInputEvent::Del,
+                EditorInputEvent::Del,
+                EditorInputEvent::Del,
+            ],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcde█fghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "█",
+            inputs: &[
+                EditorInputEvent::Del,
+                EditorInputEvent::Del,
+                EditorInputEvent::Del,
+            ],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "█",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijklmnopqrstuvwxyz█\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnop█qrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[
+                EditorInputEvent::End,
+                EditorInputEvent::Del,
+                EditorInputEvent::End,
+                EditorInputEvent::Del,
+            ],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijklmnopqrstuvwxyz█\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "█abcdefghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "█abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "█abcdefghijkl mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "█abcdefghijkl mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█ mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijkl█ mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl █mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijkl █mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█    mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijkl█    mnopqrstuvwxyz",
+        });
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█  )  mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijkl█  )  mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█  |()-+%'^%/=?{}#<>&@[]*  mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijkl█  |()-+%'^%/=?{}#<>&@[]*  mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█  \"  mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijkl█  \"  mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█  12  mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijkl█  12  mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█  12a  mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijkl█  12a  mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█  a12  mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijkl█  a12  mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█  _  mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijkl█  _  mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█  _1a  mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijkl█  _1a  mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█  \"❤(  mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 0,
+            expected_content: "abcdefghijkl█  \"❤(  mnopqrstuvwxyz",
+        });
+    }
+
+    #[test]
+    fn test_ctrl_del_redo() {
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz█",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz█",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcde█fghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[
+                EditorInputEvent::Del,
+                EditorInputEvent::Del,
+                EditorInputEvent::Del,
+            ],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcde█",
+        });
+
+        test_undo(TestParams {
+            initial_content: "█",
+            inputs: &[
+                EditorInputEvent::Del,
+                EditorInputEvent::Del,
+                EditorInputEvent::Del,
+            ],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "█",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijklmnop█qrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[
+                EditorInputEvent::End,
+                EditorInputEvent::Del,
+                EditorInputEvent::End,
+                EditorInputEvent::Del,
+            ],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content:
+                "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "█abcdefghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "█",
+        });
+
+        test_undo(TestParams {
+            initial_content: "█abcdefghijkl mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "█ mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█ mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijkl█mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl █mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijkl █",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█    mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijkl█mnopqrstuvwxyz",
+        });
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█  )  mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijkl█)  mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█  |()-+%'^%/=?{}#<>&@[]*  mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijkl█|()-+%'^%/=?{}#<>&@[]*  mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█  \"  mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijkl█\"  mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█  12  mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijkl█12  mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█  12a  mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijkl█12a  mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█  a12  mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijkl█a12  mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█  _  mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijkl█_  mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█  _1a  mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijkl█_1a  mnopqrstuvwxyz",
+        });
+
+        test_undo(TestParams {
+            initial_content: "abcdefghijkl█  \"❤(  mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            undo_count: 1,
+            redo_count: 1,
+            expected_content: "abcdefghijkl█\"❤(  mnopqrstuvwxyz",
+        });
+    }
+
+    #[test]
     fn test_ctrl_w() {
         test(
             "█",
@@ -4810,376 +5774,305 @@ mod tests {
 
     #[test]
     fn test_ctrl_backspace() {
-        test(
-            "a█",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::ctrl(),
-            "█",
-        );
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "a█",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "█",
+        });
 
-        test(
-            "█abcdefghijklmnopqrstuvwxyz\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::ctrl(),
-            "█abcdefghijklmnopqrstuvwxyz\n\
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-        );
+        });
 
-        test(
-            "abcdefghijklmnopqrstuvwxyz\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::ctrl(),
-            "abcdefghijklmnopqrstuvwxyz\n\
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
             █ghijklmnopqrstuvwxyz",
-        );
+        });
 
-        test(
-            "abcdefghijklmnopqrstuvwxyz█\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::ctrl(),
-            "█\n\
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "█\n\
             abcdefghijklmnopqrstuvwxyz",
-        );
+        });
 
-        test(
-            "abcdefghijklmnopqrstuvwxyz\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::ctrl(),
-            "abcdefghijklmnopqrstuvwxyz\n\
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
             █",
-        );
+        });
 
-        test(
-            "abcde█fghijklmnopqrstuvwxyz\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcde█fghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[
+            inputs: &[
                 EditorInputEvent::Backspace,
                 EditorInputEvent::Backspace,
                 EditorInputEvent::Backspace,
             ],
-            InputModifiers::ctrl(),
-            "█fghijklmnopqrstuvwxyz\n\
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "█fghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-        );
+        });
 
-        test(
-            "█",
-            &[
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "█",
+            inputs: &[
                 EditorInputEvent::Backspace,
                 EditorInputEvent::Backspace,
                 EditorInputEvent::Backspace,
             ],
-            InputModifiers::ctrl(),
-            "█",
-        );
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "█",
+        });
 
-        test(
-            "abcdefghijklmnopqrstuvwxyz\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             █abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::ctrl(),
-            "abcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyz",
-        );
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "abcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyz",
+        });
 
-        test(
-            "abcdefghijklmnopqrstuvwxyz\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrst█uvwxyz",
-            &[
+            inputs: &[
                 EditorInputEvent::Home,
                 EditorInputEvent::Backspace,
                 EditorInputEvent::Home,
                 EditorInputEvent::Backspace,
             ],
-            InputModifiers::ctrl(),
-            "abcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz",
-        );
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content:
+                "abcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz",
+        });
 
-        test(
-            "abcdefghijklmnopqrstuvwxyz█",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::ctrl(),
-            "█",
-        );
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijklmnopqrstuvwxyz█",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "█",
+        });
 
-        test(
-            "abcdefghijkl mnopqrstuvwxyz█",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::ctrl(),
-            "abcdefghijkl █",
-        );
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijkl mnopqrstuvwxyz█",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "abcdefghijkl █",
+        });
 
-        test(
-            "abcdefghijkl █mnopqrstuvwxyz",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::ctrl(),
-            "█mnopqrstuvwxyz",
-        );
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijkl █mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "█mnopqrstuvwxyz",
+        });
 
-        test(
-            "abcdefghijkl█ mnopqrstuvwxyz",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::ctrl(),
-            "█ mnopqrstuvwxyz",
-        );
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijkl█ mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "█ mnopqrstuvwxyz",
+        });
 
-        test(
-            "abcdefghijkl    █mnopqrstuvwxyz",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::ctrl(),
-            "█mnopqrstuvwxyz",
-        );
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijkl    █mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "█mnopqrstuvwxyz",
+        });
 
-        test(
-            "abcdefghijkl  )  █mnopqrstuvwxyz",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::ctrl(),
-            "abcdefghijkl  █mnopqrstuvwxyz",
-        );
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijkl  )  █mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "abcdefghijkl  █mnopqrstuvwxyz",
+        });
 
-        test(
-            "abcdefghijkl  |()-+%'^%/=?{}#<>&@[]*  █mnopqrstuvwxyz",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::ctrl(),
-            "abcdefghijkl  █mnopqrstuvwxyz",
-        );
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijkl  |()-+%'^%/=?{}#<>&@[]*  █mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "abcdefghijkl  █mnopqrstuvwxyz",
+        });
 
-        test(
-            "abcdefghijkl  \"  █mnopqrstuvwxyz",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::ctrl(),
-            "abcdefghijkl  █mnopqrstuvwxyz",
-        );
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijkl  \"  █mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "abcdefghijkl  █mnopqrstuvwxyz",
+        });
 
-        test(
-            "abcdefghijkl  12  █mnopqrstuvwxyz",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::ctrl(),
-            "abcdefghijkl  █mnopqrstuvwxyz",
-        );
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijkl  12  █mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "abcdefghijkl  █mnopqrstuvwxyz",
+        });
 
-        test(
-            "abcdefghijkl  12a  █mnopqrstuvwxyz",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::ctrl(),
-            "abcdefghijkl  █mnopqrstuvwxyz",
-        );
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijkl  12a  █mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "abcdefghijkl  █mnopqrstuvwxyz",
+        });
 
-        test(
-            "abcdefghijkl  a12  █mnopqrstuvwxyz",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::ctrl(),
-            "abcdefghijkl  █mnopqrstuvwxyz",
-        );
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijkl  a12  █mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "abcdefghijkl  █mnopqrstuvwxyz",
+        });
 
-        test(
-            "abcdefghijkl  _  █mnopqrstuvwxyz",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::ctrl(),
-            "abcdefghijkl  █mnopqrstuvwxyz",
-        );
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijkl  _  █mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "abcdefghijkl  █mnopqrstuvwxyz",
+        });
 
-        test(
-            "abcdefghijkl  _1a  █mnopqrstuvwxyz",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::ctrl(),
-            "abcdefghijkl  █mnopqrstuvwxyz",
-        );
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijkl  _1a  █mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "abcdefghijkl  █mnopqrstuvwxyz",
+        });
 
-        test(
-            "abcdefghijkl  \"❤(  █mnopqrstuvwxyz",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::ctrl(),
-            "abcdefghijkl  \"█mnopqrstuvwxyz",
-        );
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijkl  \"❤(  █mnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "abcdefghijkl  \"█mnopqrstuvwxyz",
+        });
     }
 
     #[test]
     fn press_backspace_with_selection() {
-        test(
-            "abcd❰efghijk❱lmnopqrstuvwxyz\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcd❰efghijk❱lmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::none(),
-            "abcd█lmnopqrstuvwxyz\n\
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "abcd█lmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-        );
+        });
 
-        test(
-            "abcd❰efghijklmnopqrstuvwxyz\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::none(),
-            "abcd█mnopqrstuvwxyz",
-        );
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "abcd█mnopqrstuvwxyz",
+        });
 
-        test(
-            "❰abcdefghijklmnopqrstuvwxyz\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "❰abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz❱",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::none(),
-            "█",
-        );
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "█",
+        });
 
-        test(
-            "ab❰c❱defghijklmnopqrstuvwxyz\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "ab❰c❱defghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::none(),
-            "ab█defghijklmnopqrstuvwxyz\n\
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "ab█defghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-        );
+        });
 
-        test(
-            "abcd❰efghijklmnopqrstuvwxyz\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Backspace],
-            InputModifiers::none(),
-            "abcd█mnopqrstuvwxyz\n\
+            inputs: &[EditorInputEvent::Backspace],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "abcd█mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-        );
+        });
     }
 
     #[test]
     fn test_del() {
-        test(
-            "█abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Del],
-            InputModifiers::none(),
-            "█bcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-        );
-
-        test(
-            "abcdefghijklmnopqrstuvwxyz\n\
-            abcdef█ghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Del],
-            InputModifiers::none(),
-            "abcdefghijklmnopqrstuvwxyz\n\
-            abcdef█hijklmnopqrstuvwxyz",
-        );
-
-        test(
-            "abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz█",
-            &[EditorInputEvent::Del],
-            InputModifiers::none(),
-            "abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz█",
-        );
-
-        test(
-            "abcde█fghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-            &[
-                EditorInputEvent::Del,
-                EditorInputEvent::Del,
-                EditorInputEvent::Del,
-            ],
-            InputModifiers::none(),
-            "abcde█ijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-        );
-
-        test(
-            "█",
-            &[
-                EditorInputEvent::Del,
-                EditorInputEvent::Del,
-                EditorInputEvent::Del,
-            ],
-            InputModifiers::none(),
-            "█",
-        );
-
-        test(
-            "abcdefghijklmnopqrstuvwxyz█\n\
-            abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Del],
-            InputModifiers::none(),
-            "abcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyz",
-        );
-
-        test(
-            "abcdefghijklmnop█qrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-            &[
-                EditorInputEvent::End,
-                EditorInputEvent::Del,
-                EditorInputEvent::End,
-                EditorInputEvent::Del,
-            ],
-            InputModifiers::none(),
-            "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyz",
-        );
-
-        test(
-            "abcdefghijklmnop█qrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-            &[
-                EditorInputEvent::End,
-                EditorInputEvent::Del,
-                EditorInputEvent::End,
-                EditorInputEvent::Del,
-                EditorInputEvent::End,
-                EditorInputEvent::Del,
-            ],
-            InputModifiers::none(),
-            "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz█\n\
-            abcdefghijklmnopqrstuvwxyz",
-        );
-    }
-
-    #[test]
-    fn test_del_undo() {
-        test_undo(TestParams {
+        test_normal_undo_redo(TestParams2 {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
-            expected_content: "█abcdefghijklmnopqrstuvwxyz\n\
+            expected_content: "█bcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
         });
 
-        test_undo(TestParams {
+        test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
             expected_content: "abcdefghijklmnopqrstuvwxyz\n\
-            abcdef█ghijklmnopqrstuvwxyz",
+            abcdef█hijklmnopqrstuvwxyz",
         });
 
-        test_undo(TestParams {
+        test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
             expected_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
         });
 
-        test_undo(TestParams {
+        test_normal_undo_redo(TestParams2 {
             initial_content: "abcde█fghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
@@ -5189,13 +6082,11 @@ mod tests {
             ],
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
-            expected_content: "abcde█fghijklmnopqrstuvwxyz\n\
+            expected_content: "abcde█ijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
         });
 
-        test_undo(TestParams {
+        test_normal_undo_redo(TestParams2 {
             initial_content: "█",
             inputs: &[
                 EditorInputEvent::Del,
@@ -5204,24 +6095,19 @@ mod tests {
             ],
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
             expected_content: "█",
         });
 
-        test_undo(TestParams {
+        test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
-            expected_content: "abcdefghijklmnopqrstuvwxyz█\n\
-            abcdefghijklmnopqrstuvwxyz",
+            expected_content: "abcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyz",
         });
 
-        test_undo(TestParams {
+        test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijklmnop█qrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -5233,18 +6119,15 @@ mod tests {
             ],
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
-            expected_content: "abcdefghijklmnopqrstuvwxyz█\n\
-            abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
+            expected_content:
+                "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyz",
         });
 
-        test_undo(TestParams {
-            initial_content: "abcde█fghijkl\n\
-            abcdefghijkl\n\
-            abcdefghijkl\n\
-            abcdefghijkl",
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijklmnop█qrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
             inputs: &[
                 EditorInputEvent::End,
                 EditorInputEvent::Del,
@@ -5255,62 +6138,80 @@ mod tests {
             ],
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
-            expected_content: "abcdefghijkl█\n\
-            abcdefghijkl\n\
-            abcdefghijkl\n\
-            abcdefghijkl",
+            expected_content:
+                "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz█\n\
+            abcdefghijklmnopqrstuvwxyz",
         });
     }
 
     #[test]
     fn press_del_with_selection() {
-        test(
-            "abcd❰efghijk❱lmnopqrstuvwxyz\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcd❰efghijk❱lmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Del],
-            InputModifiers::none(),
-            "abcd█lmnopqrstuvwxyz\n\
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "abcd█lmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-        );
+        });
 
-        test(
-            "abcd❰efghijklmnopqrstuvwxyz\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz",
-            &[EditorInputEvent::Del],
-            InputModifiers::none(),
-            "abcd█mnopqrstuvwxyz",
-        );
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "abcd█mnopqrstuvwxyz",
+        });
 
-        test(
-            "❰abcdefghijklmnopqrstuvwxyz\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "❰abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz❱",
-            &[EditorInputEvent::Del],
-            InputModifiers::none(),
-            "█",
-        );
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "█",
+        });
 
-        test(
-            "ab❰c❱defghijklmnopqrstuvwxyz\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "ab❰c❱defghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Del],
-            InputModifiers::none(),
-            "ab█defghijklmnopqrstuvwxyz\n\
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "ab█defghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-        );
+        });
 
-        test(
-            "abcd❰efghijklmnopqrstuvwxyz\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Del],
-            InputModifiers::none(),
-            "abcd█mnopqrstuvwxyz\n\
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "abcd█mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-        );
+        });
+
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            ❱abcdefghijkl❰mnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz\n\
+            █mnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
 
         // the last cursor pos should set to zero after del
         test(
@@ -5331,192 +6232,51 @@ mod tests {
 
     #[test]
     fn test_enter() {
-        test(
-            "█abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Enter],
-            InputModifiers::none(),
-            "\n\
-            █abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-        );
-
-        test(
-            "abcdefghijklmnopqrstuvwxyz\n\
-            abcdef█ghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Enter],
-            InputModifiers::none(),
-            "abcdefghijklmnopqrstuvwxyz\n\
-            abcdef\n\
-            █ghijklmnopqrstuvwxyz",
-        );
-
-        test(
-            "abcdefghijklmnopqrstuvwxyz█\n\
-            abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Enter],
-            InputModifiers::none(),
-            "abcdefghijklmnopqrstuvwxyz\n\
-            █\n\
-            abcdefghijklmnopqrstuvwxyz",
-        );
-
-        test(
-            "abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz█",
-            &[EditorInputEvent::Enter],
-            InputModifiers::none(),
-            "abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz\n\
-            █",
-        );
-
-        test(
-            "abcde█fghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-            &[
-                EditorInputEvent::Enter,
-                EditorInputEvent::Enter,
-                EditorInputEvent::Enter,
-            ],
-            InputModifiers::none(),
-            "abcde\n\
-            \n\
-            \n\
-            █fghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-        );
-
-        test(
-            "█",
-            &[
-                EditorInputEvent::Enter,
-                EditorInputEvent::Enter,
-                EditorInputEvent::Enter,
-            ],
-            InputModifiers::none(),
-            "\n\
-            \n\
-            \n\
-            █",
-        );
-
-        test(
-            "abcdefghijklmnopqrstuvwxyz\n\
-            █abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Enter],
-            InputModifiers::none(),
-            "abcdefghijklmnopqrstuvwxyz\n\
-            \n\
-            █abcdefghijklmnopqrstuvwxyz",
-        );
-    }
-
-    #[test]
-    fn press_enter_with_selection() {
-        test(
-            "abcd❰efghijk❱lmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Enter],
-            InputModifiers::none(),
-            "abcd\n\
-            █lmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-        );
-
-        test(
-            "abcd❰efghijklmnopqrstuvwxyz\n\
-            abcdefghijkl❱mnopqrstuvwxyz",
-            &[EditorInputEvent::Enter],
-            InputModifiers::none(),
-            "abcd\n\
-            █mnopqrstuvwxyz",
-        );
-
-        test(
-            "❰abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz❱",
-            &[EditorInputEvent::Enter],
-            InputModifiers::none(),
-            "\n\
-            █",
-        );
-
-        test(
-            "ab❰c❱defghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Enter],
-            InputModifiers::none(),
-            "ab\n\
-            █defghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-        );
-
-        test(
-            "abcd❰efghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijkl❱mnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Enter],
-            InputModifiers::none(),
-            "abcd\n\
-            █mnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-        );
-    }
-
-    #[test]
-    fn test_enter_undo() {
-        test_undo(TestParams {
+        test_normal_undo_redo(TestParams2 {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Enter],
-            delay_after_inputs: &[0],
+            delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
-            expected_content: "█abcdefghijklmnopqrstuvwxyz\n\
+            expected_content: "\n\
+            █abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
         });
 
-        test_undo(TestParams {
+        test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Enter],
-            delay_after_inputs: &[0],
+            delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
             expected_content: "abcdefghijklmnopqrstuvwxyz\n\
-            abcdef█ghijklmnopqrstuvwxyz",
+            abcdef\n\
+            █ghijklmnopqrstuvwxyz",
         });
 
-        test_undo(TestParams {
+        test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Enter],
-            delay_after_inputs: &[0],
+            delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
-            expected_content: "abcdefghijklmnopqrstuvwxyz█\n\
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            █\n\
             abcdefghijklmnopqrstuvwxyz",
         });
 
-        test_undo(TestParams {
+        test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
             inputs: &[EditorInputEvent::Enter],
-            delay_after_inputs: &[0],
+            delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
             expected_content: "abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz█",
+            abcdefghijklmnopqrstuvwxyz\n\
+            █",
         });
 
-        test_undo(TestParams {
+        test_normal_undo_redo(TestParams2 {
             initial_content: "abcde█fghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
@@ -5524,219 +6284,239 @@ mod tests {
                 EditorInputEvent::Enter,
                 EditorInputEvent::Enter,
             ],
-            delay_after_inputs: &[0],
+            delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
-            expected_content: "abcde█fghijklmnopqrstuvwxyz\n\
+            expected_content: "abcde\n\
+            \n\
+            \n\
+            █fghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
         });
 
-        test_undo(TestParams {
+        test_normal_undo_redo(TestParams2 {
             initial_content: "█",
             inputs: &[
                 EditorInputEvent::Enter,
                 EditorInputEvent::Enter,
                 EditorInputEvent::Enter,
             ],
-            delay_after_inputs: &[0],
+            delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
-            expected_content: "█",
+            expected_content: "\n\
+            \n\
+            \n\
+            █",
         });
 
-        test_undo(TestParams {
+        test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             █abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Enter],
-            delay_after_inputs: &[0],
+            delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
             expected_content: "abcdefghijklmnopqrstuvwxyz\n\
-            █abcdefghijklmnopqrstuvwxyz",
-        });
-
-        test_undo(TestParams {
-            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
-            █abcdefghijklmnopqrstuvwxyz",
-            inputs: &[
-                EditorInputEvent::Enter,
-                EditorInputEvent::Right,
-                EditorInputEvent::Right,
-                EditorInputEvent::Right,
-            ],
-            delay_after_inputs: &[0],
-            modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
-            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
+            \n\
             █abcdefghijklmnopqrstuvwxyz",
         });
     }
 
     #[test]
-    fn press_enter_with_selection_undo() {
-        test_undo(TestParams {
+    fn press_enter_with_selection() {
+        test_normal_undo_redo(TestParams2 {
             initial_content: "abcd❰efghijk❱lmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Enter],
-            delay_after_inputs: &[0],
+            delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
-            expected_content: "abcd❰efghijk❱lmnopqrstuvwxyz\n\
+            expected_content: "abcd\n\
+            █lmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
         });
 
-        test_undo(TestParams {
+        test_normal_undo_redo(TestParams2 {
             initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Enter],
-            delay_after_inputs: &[0],
+            delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
-            expected_content: "abcd❰efghijklmnopqrstuvwxyz\n\
-            abcdefghijkl❱mnopqrstuvwxyz",
+            expected_content: "abcd\n\
+            █mnopqrstuvwxyz",
         });
-        test_undo(TestParams {
+
+        test_normal_undo_redo(TestParams2 {
             initial_content: "❰abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz❱",
             inputs: &[EditorInputEvent::Enter],
-            delay_after_inputs: &[0],
+            delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
-            expected_content: "❰abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz❱",
+            expected_content: "\n\
+            █",
         });
 
-        test_undo(TestParams {
+        test_normal_undo_redo(TestParams2 {
             initial_content: "ab❰c❱defghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Enter],
-            delay_after_inputs: &[0],
+            delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
-            expected_content: "ab❰c❱defghijklmnopqrstuvwxyz\n\
+            expected_content: "ab\n\
+            █defghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
         });
 
-        test_undo(TestParams {
+        test_normal_undo_redo(TestParams2 {
             initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Enter],
-            delay_after_inputs: &[0],
+            delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
-            expected_content: "abcd❰efghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijkl❱mnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-        });
-
-        test_undo(TestParams {
-            initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijkl❱mnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz",
-            inputs: &[
-                EditorInputEvent::Enter,
-                EditorInputEvent::Right,
-                EditorInputEvent::Right,
-                EditorInputEvent::Right,
-            ],
-            delay_after_inputs: &[0],
-            modifiers: InputModifiers::none(),
-            undo_count: 1,
-            redo_count: 0,
-            expected_content: "abcd❰efghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijklmnopqrstuvwxyz\n\
-            abcdefghijkl❱mnopqrstuvwxyz\n\
+            expected_content: "abcd\n\
+            █mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
         });
     }
 
     #[test]
     fn test_insert_text() {
-        test(
-            "█abcdefghijklmnopqrstuvwxyz\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Text("long text".to_owned())],
-            InputModifiers::none(),
-            "long text█abcdefghijklmnopqrstuvwxyz\n\
+            inputs: &[EditorInputEvent::Text("long text".to_owned())],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "long text█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-        );
+        });
 
-        test(
-            "abcdefghijklmnopqrstuvwxyz\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Text("long text".to_owned())],
-            InputModifiers::none(),
-            "abcdefghijklmnopqrstuvwxyz\n\
+            inputs: &[EditorInputEvent::Text("long text".to_owned())],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdeflong text█ghijklmnopqrstuvwxyz",
-        );
+        });
 
-        test(
-            "abcdefghijklmnopqrstuvwxyz█\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Text("long text".to_owned())],
-            InputModifiers::none(),
-            "abcdefghijklmnopqrstuvwxyzlong text█\n\
+            inputs: &[EditorInputEvent::Text("long text".to_owned())],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "abcdefghijklmnopqrstuvwxyzlong text█\n\
             abcdefghijklmnopqrstuvwxyz",
-        );
+        });
 
-        test(
-            "abcdefghijklmnopqrstuvwxyz\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
-            &[EditorInputEvent::Text("long text".to_owned())],
-            InputModifiers::none(),
-            "abcdefghijklmnopqrstuvwxyz\n\
+            inputs: &[EditorInputEvent::Text("long text".to_owned())],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyzlong text█",
-        );
+        });
 
-        test(
-            "█abcdefghijklmnopqrstuvwxyz\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Text("long text ❤".to_owned())],
-            InputModifiers::none(),
-            "long text ❤█abcdefghijklmnopqrstuvwxyz\n\
+            inputs: &[EditorInputEvent::Text("long text ❤".to_owned())],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "long text ❤█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-        );
+        });
 
         // on insertion, characters are moved to the next line if exceeds line limit
-        test(
-            "█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzab\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzab\n\
             abcdefghijklmnopqrstuvwxyz",
-            &[EditorInputEvent::Text("long text ❤".to_owned())],
-            InputModifiers::none(),
-            "long text ❤█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopq\n\
+            inputs: &[EditorInputEvent::Text("long text ❤".to_owned())],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "long text ❤█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopq\n\
             rstuvwxyzab\n\
             abcdefghijklmnopqrstuvwxyz",
-        );
+        });
 
-        test(
-            "abcdefghijklmnopqrstuvwxyz\n\
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijk█lmnopqrstuvwxyz",
-            &[EditorInputEvent::Text(
+            inputs: &[EditorInputEvent::Text(
                 "long text ❤\nwith 3\nlines".to_owned(),
             )],
-            InputModifiers::none(),
-            "abcdefghijklmnopqrstuvwxyz\n\
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklong text ❤\n\
             with 3\n\
             lines█lmnopqrstuvwxyz",
-        );
+        });
+
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "aaaaaaaaaXaaaaaaaaaXaaaaaaaaaXaaaaa█aaaaXaaaaaaaaaXaaaaaaaaaX\n\
+            abcdefghijkXlmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Text(
+                "xxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxX".to_owned(),
+            )],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "aaaaaaaaaXaaaaaaaaaXaaaaaaaaaXaaaaaxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxx\n\
+            xxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxX█aaaaX\n\
+            aaaaaaaaaXaaaaaaaaaX\n\
+            abcdefghijkXlmnopqrstuvwxyz",
+        });
+    }
+
+    #[test]
+    fn test_insert_text_with_selection() {
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "❰abcdefg❱ijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Text("long text".to_owned())],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "long text█ijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "❰abcdefgijklmnopqrstuvwxyz\n\
+            abcdefghijklmnopqrstuvwxyz❱",
+            inputs: &[EditorInputEvent::Text("long text".to_owned())],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "long text█",
+        });
+        // on insertion, characters are moved to the next line if exceeds line limit
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "❰ab❱cdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzab\n\
+            abcdefghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Text("long text ❤".to_owned())],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "long text ❤█cdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrs\n\
+            tuvwxyzab\n\
+            abcdefghijklmnopqrstuvwxyz",
+        });
+
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "aaaaaaaaaXaaaaaaaaaXaaaaaaaaaXaaaaa❰ab❱aaXaaaaaaaaaXaaaaaaaaaX\n\
+            abcdefghijkXlmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Text(
+                "xxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxX".to_owned(),
+            )],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "aaaaaaaaaXaaaaaaaaaXaaaaaaaaaXaaaaaxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxx\n\
+            xxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxX█aaXaa\n\
+            aaaaaaaXaaaaaaaaaX\n\
+            abcdefghijkXlmnopqrstuvwxyz",
+        });
     }
 
     #[test]

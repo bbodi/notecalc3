@@ -1,5 +1,6 @@
 #![feature(ptr_offset_from, const_if_match, const_fn, const_panic, drain_filter)]
 #![feature(const_generics)]
+#![feature(type_alias_impl_trait)]
 
 use crate::calc::{evaluate_tokens, CalcResult};
 use crate::editor::{Canvas, Editor, EditorInputEvent, InputModifiers, Pos, Selection};
@@ -387,6 +388,7 @@ pub enum ResultFormat {
     Hex,
 }
 
+#[derive(Clone)]
 pub struct LineData {
     result_format: ResultFormat,
 }
@@ -400,7 +402,7 @@ impl Default for LineData {
 }
 
 pub struct MatrixEditing {
-    editor: Editor,
+    editor: Editor<usize>,
     row_count: usize,
     col_count: usize,
     current_cell: Pos,
@@ -632,7 +634,7 @@ impl MatrixEditing {
 pub struct NoteCalcApp<'a> {
     client_width: usize,
     units: Units<'a>,
-    pub editor: Editor,
+    pub editor: Editor<LineData>,
     line_datas: Vec<LineData>,
     prefixes: &'static UnitPrefixes,
     result_buffer: [char; 1024],
