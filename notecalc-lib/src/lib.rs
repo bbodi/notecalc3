@@ -639,6 +639,8 @@ pub struct NoteCalcApp<'a> {
     prefixes: &'static UnitPrefixes,
     result_buffer: [char; 1024],
     matrix_editing: Option<MatrixEditing>,
+    // editor_y_to_render_y: [usize; 64],
+    editor_click: Option<Pos>,
 }
 
 impl<'a> NoteCalcApp<'a> {
@@ -654,6 +656,8 @@ impl<'a> NoteCalcApp<'a> {
             line_datas,
             result_buffer: [0 as char; 1024],
             matrix_editing: None,
+            // editor_y_to_render_y: [0; 64],
+            editor_click: None,
         }
     }
 
@@ -737,6 +741,7 @@ impl<'a> NoteCalcApp<'a> {
         // contains the y position for each editor line
         let mut editor_y_to_render_y = [0; 64];
         let mut editor_y_to_vert_align = [0; 64];
+        let mut clicked_editor_pos = None;
         for (editor_y, line) in self.editor.lines().take(64).enumerate() {
             editor_y_to_render_y[editor_y] = render_y;
 
@@ -833,6 +838,12 @@ impl<'a> NoteCalcApp<'a> {
 
                     token_index = end_token_index;
 
+                    if let Some(clicked_pos) = self.editor_click {
+                        if clicked_pos.row == render_y && new_render_x > clicked_pos.column {
+                            clicked_editor_pos = Some(Pos::from_row_column(editor_y, editor_x));
+                            self.editor_click = None;
+                        }
+                    }
                     render_x = new_render_x;
                     editor_x += text_width;
                 } else {
@@ -858,18 +869,6 @@ impl<'a> NoteCalcApp<'a> {
             }
 
             if cursor_pos.row == editor_y {
-                if self.editor.show_cursor
-                    && self.matrix_editing.is_none()
-                    && ((cursor_pos.column as isize + cursor_render_x_offset) as usize)
-                        < current_editor_width
-                {
-                    render_buckets.texts.push(RenderTextMsg {
-                        text: &['▏'],
-                        row: render_y + vert_align_offset,
-                        column: ((cursor_pos.column + LEFT_GUTTER_WIDTH) as isize
-                            + cursor_render_x_offset) as usize,
-                    });
-                }
                 // highlight current line
                 render_buckets.set_color(Layer::BehindText, 0xFCFAED_C8);
                 render_buckets.draw_rect(
@@ -879,6 +878,21 @@ impl<'a> NoteCalcApp<'a> {
                     result_gutter_x + RIGHT_GUTTER_WIDTH + MIN_RESULT_PANEL_WIDTH,
                     rendered_row_height,
                 );
+                // cursor is above it, so it is easier to spot
+                render_buckets.set_color(Layer::BehindText, 0x000000_FF);
+                if self.editor.show_cursor
+                    && self.matrix_editing.is_none()
+                    && ((cursor_pos.column as isize + cursor_render_x_offset) as usize)
+                        < current_editor_width
+                {
+                    render_buckets.draw_char(
+                        Layer::BehindText,
+                        ((cursor_pos.column + LEFT_GUTTER_WIDTH) as isize + cursor_render_x_offset)
+                            as usize,
+                        render_y + vert_align_offset,
+                        '▏',
+                    );
+                }
             }
 
             if let Some(result) = evaluate_tokens(&mut shunting_output_stack, &self.units, &vars) {
@@ -939,6 +953,11 @@ impl<'a> NoteCalcApp<'a> {
                 ResultFormat::Dec => {}
             }
             render_y += rendered_row_height;
+        }
+
+        if let Some(clicked_editor_pos) = clicked_editor_pos {
+            self.editor
+                .handle_click(clicked_editor_pos.column, clicked_editor_pos.row)
         }
 
         for (row_i, pos) in result_str_positions.iter().enumerate() {
@@ -1189,7 +1208,23 @@ impl<'a> NoteCalcApp<'a> {
         if x < LEFT_GUTTER_WIDTH {
             // clicked on gutter
         } else if x - LEFT_GUTTER_WIDTH < MAX_EDITOR_WIDTH {
-            editor.handle_click(x - LEFT_GUTTER_WIDTH, y);
+            self.editor_click = Some(Pos::from_row_column(y, x));
+            // let mut editor_y = 0;
+            // while editor_y < 64 {
+            //     if editor_y == 63 {
+            //         editor.handle_click(x - LEFT_GUTTER_WIDTH, 63);
+            //         break;
+            //     }
+            //     let next_line_render_y = self.editor_y_to_render_y[editor_y + 1];
+            //     if next_line_render_y > y {
+            //         editor.handle_click(x - LEFT_GUTTER_WIDTH, editor_y);
+            //         break;
+            //     }
+            //     editor_y += 1;
+            // }
+            // if self.matrix_editing.is_some() {
+            //     self.end_matrix_editing(Some(Pos::from_row_column(editor_y, x)));
+            // }
         }
     }
 

@@ -163,11 +163,10 @@ impl ShuntingYard {
                         }
                     }
                     OperatorTokenType::BracketOpen => {
-                        if v.open_brackets > 0 {
+                        if v.open_brackets > 0 || !v.expect_expression {
                             dbg!("error [");
                             operator_stack.clear();
-                            v.reset(output_stack.len(), input_index + 1);
-                            continue;
+                            v.reset(output_stack.len(), input_index);
                         }
                         v.open_brackets += 1;
                         v.prev_token_type = ValidationTokenType::Nothing;
@@ -890,89 +889,89 @@ pub mod tests {
 
     #[test]
     fn test_shunting_matrices() {
-        // test_output(
-        //     "[2] + 1",
-        //     &[
-        //         num(2),
-        //         op(OperatorTokenType::Matrix {
-        //             row_count: 1,
-        //             col_count: 1,
-        //         }),
-        //         num(1),
-        //         op(OperatorTokenType::Add),
-        //     ],
-        // );
-        // test_output(
-        //     "[2, 3] + 1",
-        //     &[
-        //         num(2),
-        //         num(3),
-        //         op(OperatorTokenType::Matrix {
-        //             row_count: 1,
-        //             col_count: 2,
-        //         }),
-        //         num(1),
-        //         op(OperatorTokenType::Add),
-        //     ],
-        // );
-        //
-        // test_output(
-        //     "[2, 3, 4; 5, 6, 7] + 1",
-        //     &[
-        //         num(2),
-        //         num(3),
-        //         num(4),
-        //         num(5),
-        //         num(6),
-        //         num(7),
-        //         op(OperatorTokenType::Matrix {
-        //             row_count: 2,
-        //             col_count: 3,
-        //         }),
-        //         num(1),
-        //         op(OperatorTokenType::Add),
-        //     ],
-        // );
-        //
-        // // invalid, only 2 elements in the second row
-        // test_output("[2, 3, 4; 5, 6] + 1", &[num(1)]);
-        //
-        // // invalid
-        // test_tokens(
-        //     "[[2, 3, 4], [5, 6, 7]] + 1",
-        //     &[
-        //         str("["),
-        //         str("["),
-        //         str("2"),
-        //         str(","),
-        //         str(" "),
-        //         str("3"),
-        //         str(","),
-        //         str(" "),
-        //         str("4"),
-        //         str("]"),
-        //         str(","),
-        //         str(" "),
-        //         op(OperatorTokenType::Matrix {
-        //             row_count: 1,
-        //             col_count: 3,
-        //         }),
-        //         op(OperatorTokenType::BracketOpen),
-        //         num(5),
-        //         op(OperatorTokenType::Comma),
-        //         str(" "),
-        //         num(6),
-        //         op(OperatorTokenType::Comma),
-        //         str(" "),
-        //         num(7),
-        //         op(OperatorTokenType::BracketClose),
-        //         str("]"),
-        //         str(" "),
-        //         str("+"),
-        //         str(" "),
-        //         str("1"),
-        //     ],
-        // );
+        test_output(
+            "[2] + 1",
+            &[
+                num(2),
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 1,
+                }),
+                num(1),
+                op(OperatorTokenType::Add),
+            ],
+        );
+        test_output(
+            "[2, 3] + 1",
+            &[
+                num(2),
+                num(3),
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 2,
+                }),
+                num(1),
+                op(OperatorTokenType::Add),
+            ],
+        );
+
+        test_output(
+            "[2, 3, 4; 5, 6, 7] + 1",
+            &[
+                num(2),
+                num(3),
+                num(4),
+                num(5),
+                num(6),
+                num(7),
+                op(OperatorTokenType::Matrix {
+                    row_count: 2,
+                    col_count: 3,
+                }),
+                num(1),
+                op(OperatorTokenType::Add),
+            ],
+        );
+
+        // invalid, only 2 elements in the second row
+        test_output("[2, 3, 4; 5, 6] + 1", &[num(1)]);
+
+        // invalid
+        test_tokens(
+            "[[2, 3, 4], [5, 6, 7]] + 1",
+            &[
+                str("["),
+                str("["),
+                str("2"),
+                str(","),
+                str(" "),
+                str("3"),
+                str(","),
+                str(" "),
+                str("4"),
+                str("]"),
+                str(","),
+                str(" "),
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 3,
+                }),
+                op(OperatorTokenType::BracketOpen),
+                num(5),
+                op(OperatorTokenType::Comma),
+                str(" "),
+                num(6),
+                op(OperatorTokenType::Comma),
+                str(" "),
+                num(7),
+                op(OperatorTokenType::BracketClose),
+                str("]"),
+                str(" "),
+                str("+"),
+                str(" "),
+                str("1"),
+            ],
+        );
 
         test_tokens(
             "[1,2,3] *- [4;5;6]",
@@ -1043,6 +1042,46 @@ pub mod tests {
                 op(OperatorTokenType::Semicolon),
                 num(6),
                 op(OperatorTokenType::BracketClose),
+            ],
+        );
+
+        test_tokens(
+            "ez meg vala[41;2] [321,2] * [1;2] adasdsad",
+            &[
+                str("ez"),
+                str(" "),
+                str("meg"),
+                str(" "),
+                str("vala"),
+                str("["),
+                str("41"),
+                str(";"),
+                str("2"),
+                str("]"),
+                str(" "),
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 2,
+                }),
+                op(OperatorTokenType::BracketOpen),
+                num(321),
+                op(OperatorTokenType::Comma),
+                num(2),
+                op(OperatorTokenType::BracketClose),
+                str(" "),
+                op(OperatorTokenType::Mult),
+                str(" "),
+                op(OperatorTokenType::Matrix {
+                    row_count: 2,
+                    col_count: 1,
+                }),
+                op(OperatorTokenType::BracketOpen),
+                num(1),
+                op(OperatorTokenType::Semicolon),
+                num(2),
+                op(OperatorTokenType::BracketClose),
+                str(" "),
+                str("adasdsad"),
             ],
         );
 
@@ -1384,57 +1423,57 @@ pub mod tests {
 
     #[test]
     fn variable_test() {
-        test_tokens(
-            "a = 12",
-            &[
-                str("a"),
-                str(" "),
-                op(OperatorTokenType::Assign),
-                str(" "),
-                num(12),
-            ],
-        );
-        test_output("a = 12", &[op(OperatorTokenType::Assign), num(12)]);
-
-        test_tokens(
-            "alfa béta = 12*4",
-            &[
-                str("alfa"),
-                str(" "),
-                str("béta"),
-                str(" "),
-                op(OperatorTokenType::Assign),
-                str(" "),
-                num(12),
-                op(OperatorTokenType::Mult),
-                num(4),
-            ],
-        );
-        test_output(
-            "alfa béta = 12*4",
-            &[
-                op(OperatorTokenType::Assign),
-                num(12),
-                num(4),
-                op(OperatorTokenType::Mult),
-            ],
-        );
-
-        test_tokens(
-            "var(12*4) = 13",
-            &[
-                str("var"),
-                str("("),
-                str("12"),
-                str("*"),
-                str("4"),
-                str(")"),
-                str(" "),
-                op(OperatorTokenType::Assign),
-                str(" "),
-                num(13),
-            ],
-        );
+        // test_tokens(
+        //     "a = 12",
+        //     &[
+        //         str("a"),
+        //         str(" "),
+        //         op(OperatorTokenType::Assign),
+        //         str(" "),
+        //         num(12),
+        //     ],
+        // );
+        // test_output("a = 12", &[op(OperatorTokenType::Assign), num(12)]);
+        //
+        // test_tokens(
+        //     "alfa béta = 12*4",
+        //     &[
+        //         str("alfa"),
+        //         str(" "),
+        //         str("béta"),
+        //         str(" "),
+        //         op(OperatorTokenType::Assign),
+        //         str(" "),
+        //         num(12),
+        //         op(OperatorTokenType::Mult),
+        //         num(4),
+        //     ],
+        // );
+        // test_output(
+        //     "alfa béta = 12*4",
+        //     &[
+        //         op(OperatorTokenType::Assign),
+        //         num(12),
+        //         num(4),
+        //         op(OperatorTokenType::Mult),
+        //     ],
+        // );
+        //
+        // test_tokens(
+        //     "var(12*4) = 13",
+        //     &[
+        //         str("var"),
+        //         str("("),
+        //         str("12"),
+        //         str("*"),
+        //         str("4"),
+        //         str(")"),
+        //         str(" "),
+        //         op(OperatorTokenType::Assign),
+        //         str(" "),
+        //         num(13),
+        //     ],
+        // );
         test_output("var(12*4) = 13", &[op(OperatorTokenType::Assign), num(13)]);
     }
 

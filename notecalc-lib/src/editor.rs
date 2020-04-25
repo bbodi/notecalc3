@@ -270,6 +270,30 @@ enum EditorCommand<T: Default + Clone> {
     },
 }
 
+pub struct EditorContent<T: Default + Clone> {
+    undo_stack: Vec<EditorCommandGroup<T>>,
+    redo_stack: Vec<EditorCommandGroup<T>>,
+    selection: Selection,
+    max_line_len: usize,
+    line_lens: Vec<usize>,
+    canvas: Canvas,
+    line_data: Vec<T>,
+}
+
+impl<T: Default + Clone> EditorContent<T> {
+    pub fn new() -> EditorContent<T> {
+        EditorContent {
+            undo_stack: Vec::with_capacity(32),
+            redo_stack: Vec::with_capacity(32),
+            canvas: Vec::with_capacity(max_len * 32),
+            line_lens: Vec::with_capacity(32),
+            line_data: Vec::with_capacity(32),
+            max_line_len: max_len,
+            selection: Selection::single_r_c(0, 0),
+        }
+    }
+}
+
 pub struct Editor<T: Default + Clone> {
     undo_stack: Vec<EditorCommandGroup<T>>,
     redo_stack: Vec<EditorCommandGroup<T>>,
