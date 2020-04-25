@@ -749,7 +749,7 @@ impl<T: Default + Clone> Editor<T> {
         input: EditorInputEvent,
         modifiers: InputModifiers,
         line_data: &mut Vec<T>,
-    ) {
+    ) -> bool {
         if (input == EditorInputEvent::Char('x') || input == EditorInputEvent::Char('c'))
             && modifiers.ctrl
         {
@@ -758,9 +758,13 @@ impl<T: Default + Clone> Editor<T> {
 
         if input == EditorInputEvent::Char('z') && modifiers.is_ctrl_shift() {
             self.redo(line_data);
+            true
         } else if input == EditorInputEvent::Char('z') && modifiers.ctrl {
             self.undo(line_data);
+            true
         } else if let Some(command) = self.create_command(&input, modifiers, line_data) {
+            self.next_blink_at = self.time + 500;
+            self.show_cursor = true;
             self.do_command(&command, line_data);
             if self.modif_time_treshold_expires_at < self.time || self.undo_stack.is_empty() {
                 // new undo group
@@ -768,15 +772,17 @@ impl<T: Default + Clone> Editor<T> {
             }
             self.undo_stack.last_mut().unwrap().push(command);
             self.modif_time_treshold_expires_at = self.time + 500;
+            true
         } else {
+            self.next_blink_at = self.time + 500;
+            self.show_cursor = true;
             self.handle_navigation_input(&input, modifiers);
-        };
+            false
+        }
     }
 
     fn do_command(&mut self, command: &EditorCommand<T>, line_data: &mut Vec<T>) {
         self.show_cursor = true;
-        self.next_blink_at = self.time + 500;
-
         match command {
             EditorCommand::InsertText { pos, text, .. } => {
                 let new_pos = self.insert_str_at(*pos, &text, line_data);

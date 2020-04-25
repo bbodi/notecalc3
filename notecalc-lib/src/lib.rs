@@ -1214,7 +1214,7 @@ impl<'a> NoteCalcApp<'a> {
         };
     }
 
-    pub fn handle_input(&mut self, input: EditorInputEvent, modifiers: InputModifiers) {
+    pub fn handle_input(&mut self, input: EditorInputEvent, modifiers: InputModifiers) -> bool {
         if modifiers.alt && input == EditorInputEvent::Left {
             let cur_pos = self.editor.get_selection().get_cursor_pos();
             let new_format = match &self.line_datas[cur_pos.row].result_format {
@@ -1223,6 +1223,7 @@ impl<'a> NoteCalcApp<'a> {
                 ResultFormat::Hex => ResultFormat::Dec,
             };
             self.line_datas[cur_pos.row].result_format = new_format;
+            false
         } else if modifiers.alt && input == EditorInputEvent::Right {
             let cur_pos = self.editor.get_selection().get_cursor_pos();
             let new_format = match &self.line_datas[cur_pos.row].result_format {
@@ -1231,10 +1232,13 @@ impl<'a> NoteCalcApp<'a> {
                 ResultFormat::Hex => ResultFormat::Bin,
             };
             self.line_datas[cur_pos.row].result_format = new_format;
+            false
         } else if self.matrix_editing.is_some() {
             self.handle_matrix_editor_input(input, modifiers);
+            true
         } else {
-            self.editor
+            return self
+                .editor
                 .handle_input(input, modifiers, &mut self.line_datas);
         }
     }
