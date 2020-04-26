@@ -211,7 +211,7 @@ pub struct Editor {
     time: u32,
     next_blink_at: u32,
     modif_time_treshold_expires_at: u32,
-    pub show_cursor: bool,
+    show_cursor: bool,
     pub clipboard: String,
 }
 
@@ -319,6 +319,15 @@ impl Editor {
     pub fn set_selection_save_col(&mut self, selection: Selection) {
         self.selection = selection;
         self.last_column_index = selection.get_cursor_pos().column;
+    }
+
+    pub fn is_cursor_shown(&self) -> bool {
+        self.show_cursor
+    }
+
+    pub fn blink_cursor(&mut self) {
+        self.show_cursor = true;
+        self.next_blink_at += 500;
     }
 
     pub fn handle_tick(&mut self, now: u32) -> bool {
