@@ -287,6 +287,19 @@ impl Editor {
     pub fn get_selected_text<T: Default + Clone>(
         selection: Selection,
         content: &EditorContent<T>,
+    ) -> Option<&[char]> {
+        return if selection.end.is_none() || selection.start.row != selection.end.unwrap().row {
+            None
+        } else {
+            let start = selection.get_first();
+            let end = selection.get_second();
+            Some(&content.get_line_chars(start.row)[start.column..end.column])
+        };
+    }
+
+    pub fn clone_selected_text<T: Default + Clone>(
+        selection: Selection,
+        content: &EditorContent<T>,
     ) -> Option<String> {
         return if selection.end.is_none() {
             None
@@ -327,7 +340,7 @@ impl Editor {
 
     pub fn blink_cursor(&mut self) {
         self.show_cursor = true;
-        self.next_blink_at += 500;
+        self.next_blink_at = self.time + 500;
     }
 
     pub fn handle_tick(&mut self, now: u32) -> bool {
@@ -380,7 +393,7 @@ impl Editor {
             EditorInputEvent::Del => {
                 if let Some(end) = selection.end {
                     Some(EditorCommand::DelSelection {
-                        removed_text: Editor::get_selected_text(selection, content).unwrap(),
+                        removed_text: Editor::clone_selected_text(selection, content).unwrap(),
                         selection,
                     })
                 } else if cur_pos.column == content.line_len(cur_pos.row) {
@@ -401,7 +414,7 @@ impl Editor {
                     }
                 } else if modifiers.ctrl {
                     let col = content.jump_word_forward(&cur_pos, JumpMode::ConsiderWhitespaces);
-                    let removed_text = Editor::get_selected_text(
+                    let removed_text = Editor::clone_selected_text(
                         Selection::range(cur_pos, cur_pos.with_column(col)),
                         content,
                     );
@@ -422,7 +435,7 @@ impl Editor {
                 } else if selection.is_range() {
                     Some(EditorCommand::EnterSelection {
                         selection,
-                        selected_text: Editor::get_selected_text(selection, content).unwrap(),
+                        selected_text: Editor::clone_selected_text(selection, content).unwrap(),
                     })
                 } else {
                     Some(EditorCommand::Enter(cur_pos))
@@ -431,7 +444,7 @@ impl Editor {
             EditorInputEvent::Backspace => {
                 if selection.is_range() {
                     Some(EditorCommand::BackspaceSelection {
-                        removed_text: Editor::get_selected_text(selection, content).unwrap(),
+                        removed_text: Editor::clone_selected_text(selection, content).unwrap(),
                         selection,
                     })
                 } else if cur_pos.column == 0 {
@@ -455,7 +468,7 @@ impl Editor {
                     }
                 } else if modifiers.ctrl {
                     let col = content.jump_word_backward(&cur_pos, JumpMode::IgnoreWhitespaces);
-                    let removed_text = Editor::get_selected_text(
+                    let removed_text = Editor::clone_selected_text(
                         Selection::range(cur_pos.with_column(col), cur_pos),
                         content,
                     );
@@ -479,7 +492,7 @@ impl Editor {
                     if selection.is_range() {
                         Some(EditorCommand::DelSelection {
                             selection,
-                            removed_text: Editor::get_selected_text(selection, content).unwrap(),
+                            removed_text: Editor::clone_selected_text(selection, content).unwrap(),
                         })
                     } else {
                         Some(EditorCommand::CutLine(cur_pos))
@@ -496,7 +509,7 @@ impl Editor {
                     Some(EditorCommand::InsertCharSelection {
                         ch: *ch,
                         selection,
-                        selected_text: Editor::get_selected_text(selection, content).unwrap(),
+                        selected_text: Editor::clone_selected_text(selection, content).unwrap(),
                     })
                 } else {
                     if content.line_len(cur_pos.row) == content.max_line_len() {
@@ -520,7 +533,7 @@ impl Editor {
                 if selection.is_range() {
                     Some(EditorCommand::InsertTextSelection {
                         selection,
-                        removed_text: Editor::get_selected_text(selection, content).unwrap(),
+                        removed_text: Editor::clone_selected_text(selection, content).unwrap(),
                         text: str.clone(),
                         is_there_line_overflow,
                     })

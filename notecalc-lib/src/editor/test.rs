@@ -5234,7 +5234,7 @@ mod tests {
             },
         );
         assert_eq!(
-            Editor::get_selected_text(*editor.get_selection(), &content),
+            Editor::clone_selected_text(*editor.get_selection(), &content),
             Some("12s aa\na\na\na\na".to_owned())
         )
     }

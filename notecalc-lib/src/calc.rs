@@ -34,6 +34,7 @@ pub enum CalcResult<'units> {
 
 pub struct EvaluationResult<'units> {
     pub there_was_unit_conversion: bool,
+    pub there_was_operation: bool,
     pub assignment: bool,
     pub result: CalcResult<'units>,
 }
@@ -82,11 +83,13 @@ pub fn evaluate_tokens<'text_ptr, 'units>(
             // in this case prefer the result of 1+2 and ignore the number 3
             Some(EvaluationResult {
                 there_was_unit_conversion,
+                there_was_operation: last_success_operation_result_index.is_some(),
                 assignment,
                 result: stack[last_success_operation_index].clone(),
             })
         }
         None => stack.pop().map(|it| EvaluationResult {
+            there_was_operation: last_success_operation_result_index.is_some(),
             there_was_unit_conversion,
             assignment,
             result: it,
@@ -703,6 +706,7 @@ mod tests {
 
         if let Some(EvaluationResult {
             there_was_unit_conversion,
+            there_was_operation,
             assignment: _assignment,
             result: CalcResult::Quantity(num, unit),
         }) = &result

@@ -14,6 +14,7 @@ use crate::units::UnitPrefixes;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::mem::MaybeUninit;
+use std::panic::resume_unwind;
 
 mod calc;
 mod matrix;
@@ -285,6 +286,11 @@ const LINE_NUM_CONSTS: [[char; 3]; 256] = [
 
 const MAX_EDITOR_WIDTH: usize = 120;
 const LEFT_GUTTER_WIDTH: usize = 1 + 3 + 1;
+
+pub enum Click {
+    Simple(Pos),
+    Drag(Pos),
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -563,7 +569,7 @@ impl MatrixEditing {
                 );
 
                 if self.current_cell == Pos::from_row_column(row_i, col_i) {
-                    render_buckets.set_color(Layer::AboveText, 0xBBBBBB_FF);
+                    render_buckets.set_color(Layer::AboveText, 0xBBBBBB_55);
                     render_buckets.draw_rect(
                         Layer::AboveText,
                         render_x + padding_x + LEFT_GUTTER_WIDTH,
@@ -646,7 +652,7 @@ pub struct NoteCalcApp<'a> {
     result_buffer: [char; 1024],
     matrix_editing: Option<MatrixEditing>,
     // editor_y_to_render_y: [usize; 64],
-    editor_click: Option<Pos>,
+    editor_click: Option<Click>,
 }
 
 impl<'a> NoteCalcApp<'a> {
@@ -857,13 +863,22 @@ impl<'a> NoteCalcApp<'a> {
                     }
 
                     // HANDLE CLICK
-                    if let Some(clicked_pos) = self.editor_click {
-                        if render_y + rendered_row_height > clicked_pos.row
-                            && new_render_x >= clicked_pos.column
-                        {
-                            clicked_editor_pos = Some(Pos::from_row_column(editor_y, editor_x + 1));
-                            self.editor_click = None;
+                    match self.editor_click {
+                        Some(Click::Simple(clicked_pos)) | Some(Click::Drag(clicked_pos)) => {
+                            if (render_y..render_y + rendered_row_height).contains(&clicked_pos.row)
+                                && new_render_x >= clicked_pos.column
+                            {
+                                let fixed_pos = Pos::from_row_column(editor_y, editor_x + 1);
+                                clicked_editor_pos =
+                                    if matches!(self.editor_click, Some(Click::Simple(_))) {
+                                        Some(Click::Simple(fixed_pos))
+                                    } else {
+                                        Some(Click::Drag(fixed_pos))
+                                    };
+                                self.editor_click = None;
+                            }
                         }
+                        None => {}
                     }
 
                     token_index = end_token_index;
@@ -879,22 +894,52 @@ impl<'a> NoteCalcApp<'a> {
                     );
 
                     // HANDLE CLICK
-                    if let Some(clicked_pos) = self.editor_click {
-                        let new_x = render_x + token.ptr.len();
-                        if render_y + rendered_row_height > clicked_pos.row
-                            && new_x >= clicked_pos.column
-                        {
-                            let click_offset_x = clicked_pos.column - render_x;
-                            clicked_editor_pos =
-                                Some(Pos::from_row_column(editor_y, editor_x + click_offset_x));
-                            self.editor_click = None;
+                    match self.editor_click {
+                        Some(Click::Simple(clicked_pos)) | Some(Click::Drag(clicked_pos)) => {
+                            let new_x = render_x + token.ptr.len();
+                            if render_y + rendered_row_height > clicked_pos.row
+                                && new_x >= clicked_pos.column
+                            {
+                                let click_offset_x =
+                                    (clicked_pos.column as isize - render_x as isize).max(0)
+                                        as usize;
+                                let fixed_pos =
+                                    Pos::from_row_column(editor_y, editor_x + click_offset_x);
+                                clicked_editor_pos =
+                                    if matches!(self.editor_click, Some(Click::Simple(_))) {
+                                        Some(Click::Simple(fixed_pos))
+                                    } else {
+                                        Some(Click::Drag(fixed_pos))
+                                    };
+                                self.editor_click = None;
+                            }
                         }
+                        None => {}
                     }
+
                     token_index += 1;
                     render_x += token.ptr.len();
                     editor_x += token.ptr.len();
                 }
             }
+            // CLICKING AFTER LAST TOKEN
+            // HANDLE CLICK
+            match self.editor_click {
+                Some(Click::Simple(clicked_pos)) | Some(Click::Drag(clicked_pos)) => {
+                    if render_y + rendered_row_height > clicked_pos.row {
+                        let fixed_pos = Pos::from_row_column(editor_y, editor_x);
+                        clicked_editor_pos = if matches!(self.editor_click, Some(Click::Simple(_)))
+                        {
+                            Some(Click::Simple(fixed_pos))
+                        } else {
+                            Some(Click::Drag(fixed_pos))
+                        };
+                        self.editor_click = None;
+                    }
+                }
+                None => {}
+            }
+
             if render_x > current_editor_width {
                 render_buckets.draw_char(
                     Layer::AboveText,
@@ -991,13 +1036,18 @@ impl<'a> NoteCalcApp<'a> {
             render_y += rendered_row_height;
         }
 
-        if let Some(clicked_editor_pos) = clicked_editor_pos {
-            self.editor.handle_click(
-                clicked_editor_pos.column,
-                clicked_editor_pos.row,
-                &self.editor_content,
-            );
-            self.editor.blink_cursor();
+        match clicked_editor_pos {
+            Some(Click::Simple(pos)) => {
+                self.editor
+                    .handle_click(pos.column, pos.row, &self.editor_content);
+                self.editor.blink_cursor();
+            }
+            Some(Click::Drag(pos)) => {
+                self.editor
+                    .handle_drag(pos.column, pos.row, &self.editor_content);
+                self.editor.blink_cursor();
+            }
+            None => {}
         }
 
         for (row_i, pos) in result_str_positions.iter().enumerate() {
@@ -1086,10 +1136,55 @@ impl<'a> NoteCalcApp<'a> {
                     (end.column - start.column).min(current_editor_width),
                     height,
                 );
+
+                // evaluated result of selection
+                if let Some(partial_result) = self.evaluate_selection(&vars) {
+                    let selection_center = start.column + ((end.column - start.column) / 2);
+                    let result_w = partial_result.chars().count();
+                    let centered_x = selection_center - (result_w / 2);
+                    render_buckets.draw_rect(
+                        Layer::AboveText,
+                        LEFT_GUTTER_WIDTH + centered_x,
+                        editor_y_to_render_y[start.row] - 1,
+                        result_w,
+                        1,
+                    );
+                    render_buckets.set_color(Layer::AboveText, 0x000000_FF);
+                    render_buckets.draw_string(
+                        Layer::AboveText,
+                        LEFT_GUTTER_WIDTH + centered_x,
+                        editor_y_to_render_y[start.row] - 1,
+                        partial_result,
+                    );
+                }
             }
         }
 
         return render_buckets;
+    }
+
+    fn evaluate_selection(&self, vars: &Vec<(&[char], CalcResult)>) -> Option<String> {
+        let sel = self.editor.get_selection();
+        // TODO optimize vec allocations
+        let mut tokens = Vec::with_capacity(128);
+        if let Some(selected_text) = Editor::get_selected_text(*sel, &self.editor_content) {
+            TokenParser::parse_line(selected_text, vars, &[], &mut tokens, &self.units);
+
+            let mut shunting_output_stack = Vec::with_capacity(4);
+            ShuntingYard::shunting_yard(&mut tokens, &[], &mut shunting_output_stack);
+            if let Some(result) = evaluate_tokens(&mut shunting_output_stack, &self.units, &vars) {
+                if result.there_was_operation {
+                    let result_str = render_result(
+                        &self.units,
+                        &result.result,
+                        &self.editor_content.get_data(sel.start.row).result_format,
+                        result.there_was_unit_conversion,
+                    );
+                    return Some(result_str);
+                }
+            }
+        }
+        return None;
     }
 
     fn render_matrix<'b>(
@@ -1271,7 +1366,10 @@ impl<'a> NoteCalcApp<'a> {
         if x < LEFT_GUTTER_WIDTH {
             // clicked on gutter
         } else if x - LEFT_GUTTER_WIDTH < MAX_EDITOR_WIDTH {
-            self.editor_click = Some(Pos::from_row_column(y, x - LEFT_GUTTER_WIDTH));
+            self.editor_click = Some(Click::Simple(Pos::from_row_column(
+                y,
+                x - LEFT_GUTTER_WIDTH,
+            )));
             if self.matrix_editing.is_some() {
                 self.end_matrix_editing(None);
             }
@@ -1279,11 +1377,10 @@ impl<'a> NoteCalcApp<'a> {
     }
 
     pub fn handle_drag(&mut self, x: usize, y: usize) {
-        let editor = &mut self.editor;
         if x < LEFT_GUTTER_WIDTH {
             // clicked on gutter
         } else if x - LEFT_GUTTER_WIDTH < MAX_EDITOR_WIDTH {
-            editor.handle_drag(x - LEFT_GUTTER_WIDTH, y, &self.editor_content);
+            self.editor_click = Some(Click::Drag(Pos::from_row_column(y, x - LEFT_GUTTER_WIDTH)));
         }
     }
 
