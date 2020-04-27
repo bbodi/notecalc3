@@ -3,6 +3,7 @@
 #![feature(type_alias_impl_trait)]
 
 use crate::calc::{evaluate_tokens, CalcResult};
+use crate::consts::{LINE_NUM_CONSTS, STATIC_LINE_IDS};
 use crate::editor::editor::{Editor, EditorInputEvent, InputModifiers, Pos, Selection};
 use crate::editor::editor_content::EditorContent;
 use crate::renderer::render_result;
@@ -22,267 +23,9 @@ mod shunting_yard;
 mod token_parser;
 mod units;
 
+pub mod consts;
 pub mod editor;
 pub mod renderer;
-
-const LINE_NUM_CONSTS: [[char; 3]; 256] = [
-    [' ', ' ', '1'],
-    [' ', ' ', '2'],
-    [' ', ' ', '3'],
-    [' ', ' ', '4'],
-    [' ', ' ', '5'],
-    [' ', ' ', '6'],
-    [' ', ' ', '7'],
-    [' ', ' ', '8'],
-    [' ', ' ', '9'],
-    [' ', '1', '0'],
-    [' ', '1', '1'],
-    [' ', '1', '2'],
-    [' ', '1', '3'],
-    [' ', '1', '4'],
-    [' ', '1', '5'],
-    [' ', '1', '6'],
-    [' ', '1', '7'],
-    [' ', '1', '8'],
-    [' ', '1', '9'],
-    [' ', '2', '0'],
-    [' ', '2', '1'],
-    [' ', '2', '2'],
-    [' ', '2', '3'],
-    [' ', '2', '4'],
-    [' ', '2', '5'],
-    [' ', '2', '6'],
-    [' ', '2', '7'],
-    [' ', '2', '8'],
-    [' ', '2', '9'],
-    [' ', '3', '0'],
-    [' ', '3', '1'],
-    [' ', '3', '2'],
-    [' ', '3', '3'],
-    [' ', '3', '4'],
-    [' ', '3', '5'],
-    [' ', '3', '6'],
-    [' ', '3', '7'],
-    [' ', '3', '8'],
-    [' ', '3', '9'],
-    [' ', '4', '0'],
-    [' ', '4', '1'],
-    [' ', '4', '2'],
-    [' ', '4', '3'],
-    [' ', '4', '4'],
-    [' ', '4', '5'],
-    [' ', '4', '6'],
-    [' ', '4', '7'],
-    [' ', '4', '8'],
-    [' ', '4', '9'],
-    [' ', '5', '0'],
-    [' ', '5', '1'],
-    [' ', '5', '2'],
-    [' ', '5', '3'],
-    [' ', '5', '4'],
-    [' ', '5', '5'],
-    [' ', '5', '6'],
-    [' ', '5', '7'],
-    [' ', '5', '8'],
-    [' ', '5', '9'],
-    [' ', '6', '0'],
-    [' ', '6', '1'],
-    [' ', '6', '2'],
-    [' ', '6', '3'],
-    [' ', '6', '4'],
-    [' ', '6', '5'],
-    [' ', '6', '6'],
-    [' ', '6', '7'],
-    [' ', '6', '8'],
-    [' ', '6', '9'],
-    [' ', '7', '0'],
-    [' ', '7', '1'],
-    [' ', '7', '2'],
-    [' ', '7', '3'],
-    [' ', '7', '4'],
-    [' ', '7', '5'],
-    [' ', '7', '6'],
-    [' ', '7', '7'],
-    [' ', '7', '8'],
-    [' ', '7', '9'],
-    [' ', '8', '0'],
-    [' ', '8', '1'],
-    [' ', '8', '2'],
-    [' ', '8', '3'],
-    [' ', '8', '4'],
-    [' ', '8', '5'],
-    [' ', '8', '6'],
-    [' ', '8', '7'],
-    [' ', '8', '8'],
-    [' ', '8', '9'],
-    [' ', '9', '0'],
-    [' ', '9', '1'],
-    [' ', '9', '2'],
-    [' ', '9', '3'],
-    [' ', '9', '4'],
-    [' ', '9', '5'],
-    [' ', '9', '6'],
-    [' ', '9', '7'],
-    [' ', '9', '8'],
-    [' ', '9', '9'],
-    ['1', '0', '0'],
-    ['1', '0', '1'],
-    ['1', '0', '2'],
-    ['1', '0', '3'],
-    ['1', '0', '4'],
-    ['1', '0', '5'],
-    ['1', '0', '6'],
-    ['1', '0', '7'],
-    ['1', '0', '8'],
-    ['1', '0', '9'],
-    ['1', '1', '0'],
-    ['1', '1', '1'],
-    ['1', '1', '2'],
-    ['1', '1', '3'],
-    ['1', '1', '4'],
-    ['1', '1', '5'],
-    ['1', '1', '6'],
-    ['1', '1', '7'],
-    ['1', '1', '8'],
-    ['1', '1', '9'],
-    ['1', '2', '0'],
-    ['1', '2', '1'],
-    ['1', '2', '2'],
-    ['1', '2', '3'],
-    ['1', '2', '4'],
-    ['1', '2', '5'],
-    ['1', '2', '6'],
-    ['1', '2', '7'],
-    ['1', '2', '8'],
-    ['1', '2', '9'],
-    ['1', '3', '0'],
-    ['1', '3', '1'],
-    ['1', '3', '2'],
-    ['1', '3', '3'],
-    ['1', '3', '4'],
-    ['1', '3', '5'],
-    ['1', '3', '6'],
-    ['1', '3', '7'],
-    ['1', '3', '8'],
-    ['1', '3', '9'],
-    ['1', '4', '0'],
-    ['1', '4', '1'],
-    ['1', '4', '2'],
-    ['1', '4', '3'],
-    ['1', '4', '4'],
-    ['1', '4', '5'],
-    ['1', '4', '6'],
-    ['1', '4', '7'],
-    ['1', '4', '8'],
-    ['1', '4', '9'],
-    ['1', '5', '0'],
-    ['1', '5', '1'],
-    ['1', '5', '2'],
-    ['1', '5', '3'],
-    ['1', '5', '4'],
-    ['1', '5', '5'],
-    ['1', '5', '6'],
-    ['1', '5', '7'],
-    ['1', '5', '8'],
-    ['1', '5', '9'],
-    ['1', '6', '0'],
-    ['1', '6', '1'],
-    ['1', '6', '2'],
-    ['1', '6', '3'],
-    ['1', '6', '4'],
-    ['1', '6', '5'],
-    ['1', '6', '6'],
-    ['1', '6', '7'],
-    ['1', '6', '8'],
-    ['1', '6', '9'],
-    ['1', '7', '0'],
-    ['1', '7', '1'],
-    ['1', '7', '2'],
-    ['1', '7', '3'],
-    ['1', '7', '4'],
-    ['1', '7', '5'],
-    ['1', '7', '6'],
-    ['1', '7', '7'],
-    ['1', '7', '8'],
-    ['1', '7', '9'],
-    ['1', '8', '0'],
-    ['1', '8', '1'],
-    ['1', '8', '2'],
-    ['1', '8', '3'],
-    ['1', '8', '4'],
-    ['1', '8', '5'],
-    ['1', '8', '6'],
-    ['1', '8', '7'],
-    ['1', '8', '8'],
-    ['1', '8', '9'],
-    ['1', '9', '0'],
-    ['1', '9', '1'],
-    ['1', '9', '2'],
-    ['1', '9', '3'],
-    ['1', '9', '4'],
-    ['1', '9', '5'],
-    ['1', '9', '6'],
-    ['1', '9', '7'],
-    ['1', '9', '8'],
-    ['1', '9', '9'],
-    ['2', '0', '0'],
-    ['2', '0', '1'],
-    ['2', '0', '2'],
-    ['2', '0', '3'],
-    ['2', '0', '4'],
-    ['2', '0', '5'],
-    ['2', '0', '6'],
-    ['2', '0', '7'],
-    ['2', '0', '8'],
-    ['2', '0', '9'],
-    ['2', '1', '0'],
-    ['2', '1', '1'],
-    ['2', '1', '2'],
-    ['2', '1', '3'],
-    ['2', '1', '4'],
-    ['2', '1', '5'],
-    ['2', '1', '6'],
-    ['2', '1', '7'],
-    ['2', '1', '8'],
-    ['2', '1', '9'],
-    ['2', '2', '0'],
-    ['2', '2', '1'],
-    ['2', '2', '2'],
-    ['2', '2', '3'],
-    ['2', '2', '4'],
-    ['2', '2', '5'],
-    ['2', '2', '6'],
-    ['2', '2', '7'],
-    ['2', '2', '8'],
-    ['2', '2', '9'],
-    ['2', '3', '0'],
-    ['2', '3', '1'],
-    ['2', '3', '2'],
-    ['2', '3', '3'],
-    ['2', '3', '4'],
-    ['2', '3', '5'],
-    ['2', '3', '6'],
-    ['2', '3', '7'],
-    ['2', '3', '8'],
-    ['2', '3', '9'],
-    ['2', '4', '0'],
-    ['2', '4', '1'],
-    ['2', '4', '2'],
-    ['2', '4', '3'],
-    ['2', '4', '4'],
-    ['2', '4', '5'],
-    ['2', '4', '6'],
-    ['2', '4', '7'],
-    ['2', '4', '8'],
-    ['2', '4', '9'],
-    ['2', '5', '0'],
-    ['2', '5', '1'],
-    ['2', '5', '2'],
-    ['2', '5', '3'],
-    ['2', '5', '4'],
-    ['2', '5', '5'],
-    ['2', '5', '6'],
-];
 
 const MAX_EDITOR_WIDTH: usize = 120;
 const LEFT_GUTTER_WIDTH: usize = 1 + 3 + 1;
@@ -397,12 +140,14 @@ pub enum ResultFormat {
 
 #[derive(Clone)]
 pub struct LineData {
+    line_id: usize,
     result_format: ResultFormat,
 }
 
 impl Default for LineData {
     fn default() -> Self {
         LineData {
+            line_id: 0,
             result_format: ResultFormat::Dec,
         }
     }
@@ -417,8 +162,6 @@ pub struct MatrixEditing {
     start_text_index: usize,
     end_text_index: usize,
     row_index: usize,
-    render_x: usize,
-    render_y: usize,
     cell_strings: Vec<String>,
 }
 
@@ -432,13 +175,9 @@ impl MatrixEditing {
         start_text_index: usize,
         end_text_index: usize,
         step_in_pos: Pos,
-        render_x: usize,
-        render_y: usize,
     ) -> MatrixEditing {
         let mut editor_content = EditorContent::new(32);
         let mut mat_edit = MatrixEditing {
-            render_x,
-            render_y,
             row_index,
             start_text_index,
             end_text_index,
@@ -643,6 +382,17 @@ impl MatrixEditing {
     }
 }
 
+enum EditorObjectType {
+    Matrix { row_count: usize, col_count: usize },
+    LineReference,
+}
+struct EditorObject {
+    typ: EditorObjectType,
+    row: usize,
+    start_x: usize,
+    end_x: usize,
+}
+
 pub struct NoteCalcApp<'a> {
     client_width: usize,
     units: Units<'a>,
@@ -651,8 +401,10 @@ pub struct NoteCalcApp<'a> {
     prefixes: &'static UnitPrefixes,
     result_buffer: [char; 1024],
     matrix_editing: Option<MatrixEditing>,
-    // editor_y_to_render_y: [usize; 64],
     editor_click: Option<Click>,
+    editor_objects: Vec<EditorObject>,
+    line_selector: Option<usize>,
+    line_id_generator: usize,
 }
 
 impl<'a> NoteCalcApp<'a> {
@@ -661,6 +413,7 @@ impl<'a> NoteCalcApp<'a> {
         let units = Units::new(&prefixes);
         let mut editor_content = EditorContent::new(MAX_EDITOR_WIDTH);
         NoteCalcApp {
+            line_selector: None,
             client_width,
             prefixes,
             units,
@@ -668,8 +421,9 @@ impl<'a> NoteCalcApp<'a> {
             editor_content,
             result_buffer: [0 as char; 1024],
             matrix_editing: None,
-            // editor_y_to_render_y: [0; 64],
             editor_click: None,
+            editor_objects: Vec::with_capacity(8),
+            line_id_generator: 1,
         }
     }
 
@@ -738,6 +492,7 @@ impl<'a> NoteCalcApp<'a> {
         let mut result_str_positions: SmallVec<[Option<(usize, usize)>; 256]> =
             SmallVec::with_capacity(256);
         let mut longest_row_len = 0;
+        self.editor_objects.clear();
 
         // result gutter
         render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
@@ -808,26 +563,22 @@ impl<'a> NoteCalcApp<'a> {
                     text_width += 1;
                     end_token_index += 1;
 
+                    self.editor_objects.push(EditorObject {
+                        typ: EditorObjectType::Matrix {
+                            row_count: *row_count,
+                            col_count: *col_count,
+                        },
+                        row: editor_y,
+                        start_x: editor_x,
+                        end_x: editor_x + text_width,
+                    });
+
                     let cursor_isnide_matrix: bool = if !self.editor.get_selection().is_range()
                         && cursor_pos.row == editor_y
                         && cursor_pos.column > editor_x
                         && cursor_pos.column < editor_x + text_width
                     {
-                        // cursor is in this line
                         // cursor is inside the matrix
-                        if self.matrix_editing.is_none() {
-                            self.matrix_editing = Some(MatrixEditing::new(
-                                *row_count,
-                                *col_count,
-                                &line[editor_x..editor_x + text_width],
-                                editor_y,
-                                editor_x,
-                                editor_x + text_width,
-                                Pos::from_row_column(0, 0),
-                                render_x,
-                                render_y,
-                            ));
-                        }
                         true
                     } else {
                         false
@@ -949,6 +700,20 @@ impl<'a> NoteCalcApp<'a> {
                 );
             }
 
+            // highlight current select line
+            if let Some(selection_row) = self.line_selector {
+                if selection_row == editor_y {
+                    render_buckets.set_color(Layer::BehindText, 0xFFCCCC_FF);
+                    render_buckets.draw_rect(
+                        Layer::BehindText,
+                        0,
+                        render_y,
+                        result_gutter_x + RIGHT_GUTTER_WIDTH + MIN_RESULT_PANEL_WIDTH,
+                        rendered_row_height,
+                    );
+                }
+            }
+
             if cursor_pos.row == editor_y {
                 // highlight current line
                 render_buckets.set_color(Layer::BehindText, 0xFCFAED_C8);
@@ -1010,7 +775,10 @@ impl<'a> NoteCalcApp<'a> {
                         let end = i;
                         &line[start..=end]
                     };
-                    vars.push((var_name, result.result))
+                    vars.push((var_name, result.result));
+                } else if self.editor_content.get_data(editor_y).line_id != 0 {
+                    let asd = self.editor_content.get_data(editor_y);
+                    vars.push((STATIC_LINE_IDS[asd.line_id], result.result));
                 }
             } else {
                 result_str_positions.push(None);
@@ -1138,10 +906,12 @@ impl<'a> NoteCalcApp<'a> {
                 );
 
                 // evaluated result of selection
-                if let Some(partial_result) = self.evaluate_selection(&vars) {
+                if let Some(mut partial_result) = self.evaluate_selection(&vars) {
                     let selection_center = start.column + ((end.column - start.column) / 2);
+                    partial_result.insert_str(0, "= ");
                     let result_w = partial_result.chars().count();
                     let centered_x = selection_center - (result_w / 2);
+                    render_buckets.set_color(Layer::AboveText, 0xAAFFAA_FF);
                     render_buckets.draw_rect(
                         Layer::AboveText,
                         LEFT_GUTTER_WIDTH + centered_x,
@@ -1167,7 +937,7 @@ impl<'a> NoteCalcApp<'a> {
         let sel = self.editor.get_selection();
         // TODO optimize vec allocations
         let mut tokens = Vec::with_capacity(128);
-        if let Some(selected_text) = Editor::get_selected_text(*sel, &self.editor_content) {
+        if let Some(selected_text) = Editor::get_selected_text(sel, &self.editor_content) {
             TokenParser::parse_line(selected_text, vars, &[], &mut tokens, &self.units);
 
             let mut shunting_output_stack = Vec::with_capacity(4);
@@ -1396,33 +1166,122 @@ impl<'a> NoteCalcApp<'a> {
         };
     }
 
+    pub fn alt_key_released(&mut self) {
+        if self.line_selector.is_none() {
+            return;
+        }
+        let cur_row = self.editor.get_selection().get_cursor_pos().row;
+        let row_index = self.line_selector.unwrap();
+        self.line_selector = None;
+        if cur_row == row_index {
+            return;
+        }
+        let line_id = {
+            let line_data = self.editor_content.mut_data(row_index);
+            if line_data.line_id == 0 {
+                line_data.line_id = self.line_id_generator;
+                self.line_id_generator += 1;
+            }
+            line_data.line_id
+        };
+        let inserting_text = format!("$[{}]", line_id);
+        self.editor.handle_input(
+            EditorInputEvent::Text(inserting_text),
+            InputModifiers::none(),
+            &mut self.editor_content,
+        );
+    }
+
     pub fn handle_input(&mut self, input: EditorInputEvent, modifiers: InputModifiers) -> bool {
-        if modifiers.alt && input == EditorInputEvent::Left {
-            let cur_pos = self.editor.get_selection().get_cursor_pos();
-            let new_format = match &self.editor_content.get_data(cur_pos.row).result_format {
-                ResultFormat::Bin => ResultFormat::Hex,
-                ResultFormat::Dec => ResultFormat::Bin,
-                ResultFormat::Hex => ResultFormat::Dec,
-            };
-            self.editor_content.mut_data(cur_pos.row).result_format = new_format;
-            false
-        } else if modifiers.alt && input == EditorInputEvent::Right {
-            let cur_pos = self.editor.get_selection().get_cursor_pos();
-            let new_format = match &self.editor_content.get_data(cur_pos.row).result_format {
-                ResultFormat::Bin => ResultFormat::Dec,
-                ResultFormat::Dec => ResultFormat::Hex,
-                ResultFormat::Hex => ResultFormat::Bin,
-            };
-            self.editor_content.mut_data(cur_pos.row).result_format = new_format;
+        if self.matrix_editing.is_none() && modifiers.alt {
+            if input == EditorInputEvent::Left {
+                let cur_pos = self.editor.get_selection().get_cursor_pos();
+                let new_format = match &self.editor_content.get_data(cur_pos.row).result_format {
+                    ResultFormat::Bin => ResultFormat::Hex,
+                    ResultFormat::Dec => ResultFormat::Bin,
+                    ResultFormat::Hex => ResultFormat::Dec,
+                };
+                self.editor_content.mut_data(cur_pos.row).result_format = new_format;
+            } else if input == EditorInputEvent::Right {
+                let cur_pos = self.editor.get_selection().get_cursor_pos();
+                let new_format = match &self.editor_content.get_data(cur_pos.row).result_format {
+                    ResultFormat::Bin => ResultFormat::Dec,
+                    ResultFormat::Dec => ResultFormat::Hex,
+                    ResultFormat::Hex => ResultFormat::Bin,
+                };
+                self.editor_content.mut_data(cur_pos.row).result_format = new_format;
+            } else if input == EditorInputEvent::Up {
+                let cur_pos = self.editor.get_selection().get_cursor_pos();
+                self.line_selector = if let Some(selector_row) = self.line_selector {
+                    if selector_row > 0 {
+                        Some(selector_row - 1)
+                    } else {
+                        Some(selector_row)
+                    }
+                } else if cur_pos.row > 0 {
+                    Some(cur_pos.row - 1)
+                } else {
+                    None
+                }
+            } else if input == EditorInputEvent::Down {
+                let cur_pos = self.editor.get_selection().get_cursor_pos();
+                self.line_selector = if let Some(selector_row) = self.line_selector {
+                    if selector_row < self.editor_content.line_count() {
+                        Some(selector_row + 1)
+                    } else {
+                        Some(selector_row)
+                    }
+                } else if cur_pos.row < self.editor_content.line_count() {
+                    Some(cur_pos.row + 1)
+                } else {
+                    None
+                }
+            }
             false
         } else if self.matrix_editing.is_some() {
             self.handle_matrix_editor_input(input, modifiers);
             true
         } else {
-            return self
+            let before_cursor_pos = self.editor.get_selection();
+            let modified = self
                 .editor
                 .handle_input(input, modifiers, &mut self.editor_content);
+            if let Some(editor_obj) =
+                self.find_editor_object_at(self.editor.get_selection().get_cursor_pos())
+            {
+                match editor_obj.typ {
+                    EditorObjectType::Matrix {
+                        row_count,
+                        col_count,
+                    } => {
+                        if self.matrix_editing.is_none() && !self.editor.get_selection().is_range()
+                        {
+                            self.matrix_editing = Some(MatrixEditing::new(
+                                row_count,
+                                col_count,
+                                &self.editor_content.get_line_chars(editor_obj.row)
+                                    [editor_obj.start_x..editor_obj.end_x],
+                                editor_obj.row,
+                                editor_obj.start_x,
+                                editor_obj.end_x,
+                                before_cursor_pos.get_cursor_pos(),
+                            ));
+                        }
+                    }
+                    EditorObjectType::LineReference => {}
+                }
+            }
+            return modified;
         }
+    }
+
+    fn find_editor_object_at(&self, pos: Pos) -> Option<&EditorObject> {
+        for obj in &self.editor_objects {
+            if obj.row == pos.row && (obj.start_x..obj.end_x).contains(&pos.column) {
+                return Some(obj);
+            }
+        }
+        return None;
     }
 
     fn handle_matrix_editor_input(&mut self, input: EditorInputEvent, modifiers: InputModifiers) {
@@ -1513,6 +1372,24 @@ mod tests {
         app.handle_input(EditorInputEvent::Right, InputModifiers::alt());
         app.render();
         app.handle_input(EditorInputEvent::Down, InputModifiers::none());
+        app.render();
+    }
+
+    #[test]
+    fn bug3() {
+        let mut app = NoteCalcApp::new(120);
+        app.handle_input(
+            EditorInputEvent::Text(
+                "1\n\
+            2+"
+                .to_owned(),
+            ),
+            InputModifiers::none(),
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(1, 2));
+        app.handle_input(EditorInputEvent::Up, InputModifiers::alt());
+        app.alt_key_released();
         app.render();
     }
 }

@@ -237,7 +237,7 @@ mod tests {
                     "Cursor row"
                 );
             } else {
-                assert_eq!(*editor.get_selection(), expected_cursor, "Cursor");
+                assert_eq!(editor.get_selection(), expected_cursor, "Cursor");
             }
         }
     }
@@ -5234,7 +5234,7 @@ mod tests {
             },
         );
         assert_eq!(
-            Editor::clone_selected_text(*editor.get_selection(), &content),
+            Editor::clone_selected_text(editor.get_selection(), &content),
             Some("12s aa\na\na\na\na".to_owned())
         )
     }

@@ -252,8 +252,8 @@ impl Editor {
         self.clipboard = dst;
     }
 
-    pub fn get_selection(&self) -> &Selection {
-        &self.selection
+    pub fn get_selection(&self) -> Selection {
+        self.selection
     }
 
     pub fn handle_click<T: Default + Clone>(

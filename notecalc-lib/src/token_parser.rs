@@ -1234,5 +1234,17 @@ mod tests {
                 var("var(12*4)"),
             ],
         );
+
+        test_vars(
+            &[&['$', '[', '1', ']']],
+            "3 + $[1]",
+            &[
+                num(3),
+                str(" "),
+                op(OperatorTokenType::Add),
+                str(" "),
+                var("$[1]"),
+            ],
+        );
     }
 }
