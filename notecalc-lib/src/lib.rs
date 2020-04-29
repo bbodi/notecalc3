@@ -431,6 +431,7 @@ pub struct NoteCalcApp<'a> {
     editor_objects: Vec<EditorObject>,
     line_selector: Option<usize>,
     line_id_generator: usize,
+    has_result_bitset: u64,
 }
 
 impl<'a> NoteCalcApp<'a> {
@@ -450,12 +451,17 @@ impl<'a> NoteCalcApp<'a> {
             editor_click: None,
             editor_objects: Vec::with_capacity(8),
             line_id_generator: 1,
+            has_result_bitset: 0,
         }
     }
 
-    pub fn set_content(&mut self, text: &str) {
+    pub fn set_normalized_content(&mut self, text: &str) {
         self.editor_content.set_content(text);
         self.editor.set_cursor_pos_r_c(0, 0);
+        for (i, data) in self.editor_content.data_mut().iter_mut().enumerate() {
+            data.line_id = i + 1;
+        }
+        self.line_id_generator = self.editor_content.line_count() + 1;
     }
 
     pub fn end_matrix_editing(&mut self, new_cursor_pos: Option<Pos>) {
@@ -532,6 +538,7 @@ impl<'a> NoteCalcApp<'a> {
 
         let mut vars: Vec<(&[char], CalcResult)> = Vec::new();
         let mut render_y = 0;
+        self.has_result_bitset = 0;
         let cursor_pos = self.editor.get_selection().get_cursor_pos();
 
         // contains the y position for each editor line
@@ -806,6 +813,7 @@ impl<'a> NoteCalcApp<'a> {
             }
 
             if let Some(result) = evaluate_tokens(&mut shunting_output_stack, &self.units, &vars) {
+                self.has_result_bitset |= 1u64 << editor_y as u64;
                 let result_str = render_result(
                     &self.units,
                     &result.result,
@@ -1236,6 +1244,71 @@ impl<'a> NoteCalcApp<'a> {
         };
     }
 
+    pub fn get_normalized_content(&self) -> String {
+        let mut result: String = String::with_capacity(self.editor_content.line_count() * 40);
+        for line in self.editor_content.lines() {
+            let mut i = 0;
+            'i: while i < line.len() {
+                if i + 3 < line.len() && line[i] == '$' && line[i + 1] == '[' {
+                    let mut end = i + 2;
+                    let mut num: u32 = 0;
+                    while end < line.len() {
+                        if line[end] == ']' && num > 0 {
+                            // which row has the id of 'num'?
+                            let row_index = self
+                                .editor_content
+                                .data()
+                                .iter()
+                                .position(|it| it.line_id == num as usize)
+                                .unwrap_or(0)
+                                + 1; // '+1' line id cannot be 0
+                            result.push('$');
+                            result.push('[');
+                            let mut line_id = row_index;
+                            while line_id > 0 {
+                                let to_insert = line_id % 10;
+                                result.push((48 + to_insert as u8) as char);
+                                line_id /= 10;
+                            }
+                            // reverse the number
+                            {
+                                let last_i = result.len() - 1;
+                                let replace_i = if row_index > 99 {
+                                    2
+                                } else if row_index > 9 {
+                                    1
+                                } else {
+                                    0
+                                };
+                                if replace_i != 0 {
+                                    unsafe {
+                                        let tmp = result.as_bytes()[last_i];
+                                        result.as_bytes_mut()[last_i] =
+                                            result.as_bytes()[last_i - replace_i];
+                                        result.as_bytes_mut()[last_i - replace_i] = tmp;
+                                    }
+                                }
+                            }
+                            result.push(']');
+                            i = end + 1;
+                            continue 'i;
+                        } else if let Some(digit) = line[end].to_digit(10) {
+                            num = if num == 0 { digit } else { num * 10 + digit };
+                        } else {
+                            break;
+                        }
+                        end += 1;
+                    }
+                }
+                result.push(line[i]);
+                i += 1;
+            }
+            result.push('\n');
+        }
+
+        return result;
+    }
+
     pub fn alt_key_released(&mut self) {
         if self.line_selector.is_none() {
             return;
@@ -1243,7 +1316,7 @@ impl<'a> NoteCalcApp<'a> {
         let cur_row = self.editor.get_selection().get_cursor_pos().row;
         let row_index = self.line_selector.unwrap();
         self.line_selector = None;
-        if cur_row == row_index {
+        if cur_row == row_index || (self.has_result_bitset & (1u64 << row_index as u64)) == 0 {
             return;
         }
         let line_id = {
@@ -1912,5 +1985,40 @@ mod tests {
         app.handle_input(EditorInputEvent::Right, InputModifiers::none());
         app.handle_input(EditorInputEvent::Char('c'), InputModifiers::none());
         assert_eq!("16892313\n14 * a c$[1]b", app.editor_content.get_content());
+    }
+
+    #[test]
+    fn test_line_ref_normalization() {
+        let mut app = NoteCalcApp::new(120);
+        app.handle_input(
+            EditorInputEvent::Text("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n".to_owned()),
+            InputModifiers::none(),
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(12, 2));
+        app.render();
+        app.handle_input(EditorInputEvent::Up, InputModifiers::alt());
+        app.alt_key_released();
+        app.handle_input(EditorInputEvent::Up, InputModifiers::alt());
+        app.alt_key_released();
+        app.handle_input(EditorInputEvent::Up, InputModifiers::alt());
+        app.alt_key_released();
+        assert_eq!(
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13$[1]$[1]$[1]\n",
+            &app.editor_content.get_content()
+        );
+        assert_eq!(
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13$[12]$[12]$[12]\n\n",
+            &app.get_normalized_content()
+        );
+    }
+
+    #[test]
+    fn test_line_ref_denormalization() {
+        let mut app = NoteCalcApp::new(120);
+        app.set_normalized_content("1111\n2222\n14 * $[2]$[2]$[2]\n");
+        assert_eq!(1, app.editor_content.get_data(0).line_id);
+        assert_eq!(2, app.editor_content.get_data(1).line_id);
+        assert_eq!(3, app.editor_content.get_data(2).line_id);
     }
 }

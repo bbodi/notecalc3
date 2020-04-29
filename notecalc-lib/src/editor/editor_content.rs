@@ -172,6 +172,14 @@ impl<T: Default + Clone> EditorContent<T> {
         }
     }
 
+    pub fn data_mut(&mut self) -> &mut [T] {
+        &mut self.line_data
+    }
+
+    pub fn data(&self) -> &[T] {
+        &self.line_data
+    }
+
     pub fn get_data(&self, i: usize) -> &T {
         &self.line_data[i]
     }
