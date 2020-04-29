@@ -106,14 +106,12 @@ impl ShuntingYard {
         // TODO extract out so no alloc SmallVec?
         let mut operator_stack: Vec<OperatorTokenType> = vec![];
 
-        dbg!(&tokens);
         let mut v = ValidationState::new();
         let mut input_index: isize = -1;
 
         while input_index + 1 < tokens.len() as isize {
             input_index += 1; // it is here so it is incremented always when "continue"
             let input_token = &tokens[input_index as usize];
-            dbg!(&input_token);
             match &input_token.typ {
                 TokenType::StringLiteral => {
                     if !input_token.ptr[0].is_ascii_whitespace() {
@@ -441,15 +439,12 @@ impl ShuntingYard {
                         }
 
                         if v.last_valid_output_range.is_none() || v.had_operator {
-                            dbg!("close2");
-                            dbg!(&operator_stack);
-                            dbg!(&output_stack);
+                            dbg!("close num");
                             ShuntingYard::send_everything_to_output(
                                 &mut operator_stack,
                                 output_stack,
                             );
                             // set everything to string which is in front of this expr
-                            dbg!(v.first_nonvalidated_token_index);
                             v.close_valid_range(output_stack.len(), input_index);
                         }
                     }
@@ -459,7 +454,7 @@ impl ShuntingYard {
                 // Token::UnitOfMeasure(str, unit) => {
                 // output.push(input_token.clone());
                 // }
-                TokenType::Variable(_var_index) => {
+                TokenType::Variable { .. } | TokenType::LineReference { .. } => {
                     if !v.expect_expression {
                         dbg!("error8");
                         operator_stack.clear();
@@ -526,7 +521,10 @@ impl ShuntingYard {
         to: usize,
     ) {
         for token in tokens[from..=to].iter_mut() {
-            token.typ = TokenType::StringLiteral
+            match token.typ {
+                TokenType::LineReference { .. } => continue,
+                _ => token.typ = TokenType::StringLiteral,
+            }
         }
     }
 
@@ -673,7 +671,14 @@ pub mod tests {
     pub fn var<'text_ptr, 'units>(op_repr: &'static str) -> Token<'text_ptr, 'units> {
         Token {
             ptr: unsafe { std::mem::transmute(op_repr) },
-            typ: TokenType::Variable(0),
+            typ: TokenType::Variable { var_index: 0 },
+        }
+    }
+
+    pub fn line_ref<'text_ptr, 'units>(op_repr: &'static str) -> Token<'text_ptr, 'units> {
+        Token {
+            ptr: unsafe { std::mem::transmute(op_repr) },
+            typ: TokenType::LineReference { var_index: 0 },
         }
     }
 
@@ -732,7 +737,8 @@ pub mod tests {
                         &actual_tokens
                     )
                 }
-                (TokenType::Variable(_), TokenType::Variable(_)) => {
+                (TokenType::Variable { .. }, TokenType::Variable { .. })
+                | (TokenType::LineReference { .. }, TokenType::LineReference { .. }) => {
                     // expected_op is an &str
                     let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
                     let expected_chars = str_slice.chars().collect::<Vec<char>>();
@@ -807,7 +813,18 @@ pub mod tests {
         let prefixes = create_prefixes();
         let units = Units::new(&prefixes);
         let mut tokens = vec![];
-        let output = do_shunting_yard(&temp, &units, &mut tokens, &Vec::new());
+        let output = do_shunting_yard(
+            &temp,
+            &units,
+            &mut tokens,
+            &vec![
+                (&['b', '0'], CalcResult::Number(BigDecimal::zero())),
+                (
+                    &['$', '[', '1', ']'],
+                    CalcResult::Number(BigDecimal::zero()),
+                ),
+            ],
+        );
         compare_tokens(expected_tokens, &tokens);
     }
 
@@ -1423,57 +1440,57 @@ pub mod tests {
 
     #[test]
     fn variable_test() {
-        // test_tokens(
-        //     "a = 12",
-        //     &[
-        //         str("a"),
-        //         str(" "),
-        //         op(OperatorTokenType::Assign),
-        //         str(" "),
-        //         num(12),
-        //     ],
-        // );
-        // test_output("a = 12", &[op(OperatorTokenType::Assign), num(12)]);
-        //
-        // test_tokens(
-        //     "alfa béta = 12*4",
-        //     &[
-        //         str("alfa"),
-        //         str(" "),
-        //         str("béta"),
-        //         str(" "),
-        //         op(OperatorTokenType::Assign),
-        //         str(" "),
-        //         num(12),
-        //         op(OperatorTokenType::Mult),
-        //         num(4),
-        //     ],
-        // );
-        // test_output(
-        //     "alfa béta = 12*4",
-        //     &[
-        //         op(OperatorTokenType::Assign),
-        //         num(12),
-        //         num(4),
-        //         op(OperatorTokenType::Mult),
-        //     ],
-        // );
-        //
-        // test_tokens(
-        //     "var(12*4) = 13",
-        //     &[
-        //         str("var"),
-        //         str("("),
-        //         str("12"),
-        //         str("*"),
-        //         str("4"),
-        //         str(")"),
-        //         str(" "),
-        //         op(OperatorTokenType::Assign),
-        //         str(" "),
-        //         num(13),
-        //     ],
-        // );
+        test_tokens(
+            "a = 12",
+            &[
+                str("a"),
+                str(" "),
+                op(OperatorTokenType::Assign),
+                str(" "),
+                num(12),
+            ],
+        );
+        test_output("a = 12", &[op(OperatorTokenType::Assign), num(12)]);
+
+        test_tokens(
+            "alfa béta = 12*4",
+            &[
+                str("alfa"),
+                str(" "),
+                str("béta"),
+                str(" "),
+                op(OperatorTokenType::Assign),
+                str(" "),
+                num(12),
+                op(OperatorTokenType::Mult),
+                num(4),
+            ],
+        );
+        test_output(
+            "alfa béta = 12*4",
+            &[
+                op(OperatorTokenType::Assign),
+                num(12),
+                num(4),
+                op(OperatorTokenType::Mult),
+            ],
+        );
+
+        test_tokens(
+            "var(12*4) = 13",
+            &[
+                str("var"),
+                str("("),
+                str("12"),
+                str("*"),
+                str("4"),
+                str(")"),
+                str(" "),
+                op(OperatorTokenType::Assign),
+                str(" "),
+                num(13),
+            ],
+        );
         test_output("var(12*4) = 13", &[op(OperatorTokenType::Assign), num(13)]);
     }
 
@@ -1506,6 +1523,16 @@ pub mod tests {
             "12 = 13",
             &[str("12"), str(" "), str("="), str(" "), str("13")],
         );
+    }
+
+    #[test]
+    fn simple_variables_are_reverted_to_str_in_case_of_error() {
+        test_tokens("100 b0", &[num(100), str(" "), str("b0")]);
+    }
+
+    #[test]
+    fn line_references_are_not_reverted_back_to_str() {
+        test_tokens("100 $[1]", &[num(100), str(" "), line_ref("$[1]")]);
     }
 
     #[test]

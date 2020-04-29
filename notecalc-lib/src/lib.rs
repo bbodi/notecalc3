@@ -81,6 +81,7 @@ pub struct RenderBuckets<'a> {
     pub units: Vec<RenderTextMsg<'a>>,
     pub operators: Vec<RenderTextMsg<'a>>,
     pub variable: Vec<RenderTextMsg<'a>>,
+    pub line_ref_results: Vec<RenderStringMsg>,
     pub custom_commands: [Vec<OutputMessage<'a>>; 2],
 }
 
@@ -99,6 +100,7 @@ impl<'a> RenderBuckets<'a> {
             units: Vec::with_capacity(32),
             operators: Vec::with_capacity(32),
             variable: Vec::with_capacity(32),
+            line_ref_results: Vec::with_capacity(32),
         }
     }
 
@@ -176,6 +178,22 @@ impl MatrixEditing {
         end_text_index: usize,
         step_in_pos: Pos,
     ) -> MatrixEditing {
+        let current_cell = if step_in_pos.row == row_index {
+            if step_in_pos.column > start_text_index {
+                // from right
+                Pos::from_row_column(0, col_count - 1)
+            } else {
+                // from left
+                Pos::from_row_column(0, 0)
+            }
+        } else if step_in_pos.row < row_index {
+            // from above
+            Pos::from_row_column(0, 0)
+        } else {
+            // from below
+            Pos::from_row_column(row_count - 1, 0)
+        };
+
         let mut editor_content = EditorContent::new(32);
         let mut mat_edit = MatrixEditing {
             row_index,
@@ -185,7 +203,7 @@ impl MatrixEditing {
             editor_content,
             row_count,
             col_count,
-            current_cell: Pos::from_row_column(0, 0),
+            current_cell,
             cell_strings: Vec::with_capacity(row_count * col_count),
         };
         let mut str: String = String::with_capacity(8);
@@ -227,10 +245,18 @@ impl MatrixEditing {
             mat_edit.cell_strings.push(str);
         }
 
+        let cell_index = mat_edit.current_cell.row * col_count + mat_edit.current_cell.column;
         mat_edit
             .editor_content
-            .set_content(&mat_edit.cell_strings[0]);
-        mat_edit.editor.set_cursor_pos_r_c(0, 0);
+            .set_content(&mat_edit.cell_strings[cell_index]);
+        if step_in_pos.row == row_index && step_in_pos.column > start_text_index {
+            // from right
+            mat_edit
+                .editor
+                .set_cursor_pos_r_c(0, mat_edit.editor_content.line_len(0));
+        } else {
+            mat_edit.editor.set_cursor_pos_r_c(0, 0);
+        }
 
         mat_edit
     }
@@ -240,7 +266,6 @@ impl MatrixEditing {
 
         let new_content = &self.cell_strings[new_pos.row * self.col_count + new_pos.column];
         self.editor_content.set_content(new_content);
-        self.editor.set_cursor_pos_r_c(0, 0);
 
         self.current_cell = new_pos;
     }
@@ -382,6 +407,7 @@ impl MatrixEditing {
     }
 }
 
+#[derive(Eq, PartialEq)]
 enum EditorObjectType {
     Matrix { row_count: usize, col_count: usize },
     LineReference,
@@ -635,6 +661,44 @@ impl<'a> NoteCalcApp<'a> {
                     token_index = end_token_index;
                     render_x = new_render_x;
                     editor_x += text_width;
+                } else if let (TokenType::LineReference { var_index }, true) =
+                    (&token.typ, need_matrix_renderer)
+                {
+                    let (var_name, result) = &vars[*var_index];
+                    let var_name_len = var_name.len();
+                    let result_str = render_result(
+                        &self.units,
+                        &result,
+                        &self.editor_content.get_data(editor_y).result_format,
+                        // TODO: ide kellene a result.there_was_unit_conversion
+                        false,
+                    );
+                    self.editor_objects.push(EditorObject {
+                        typ: EditorObjectType::LineReference,
+                        row: editor_y,
+                        start_x: editor_x,
+                        end_x: editor_x + var_name_len,
+                    });
+                    let text_len = result_str
+                        .chars()
+                        .count()
+                        .min((current_editor_width as isize - render_x as isize).max(0) as usize);
+                    render_buckets.line_ref_results.push(RenderStringMsg {
+                        text: result_str[0..text_len].to_owned(),
+                        row: render_y,
+                        column: render_x + LEFT_GUTTER_WIDTH,
+                    });
+
+                    token_index += 1;
+                    render_x += text_len;
+                    editor_x += var_name_len;
+                    cursor_render_x_offset += if cursor_pos.column >= editor_x {
+                        let rendered_width = text_len as isize;
+                        let diff = rendered_width - var_name_len as isize;
+                        diff
+                    } else {
+                        0
+                    };
                 } else {
                     NoteCalcApp::draw_token(
                         token,
@@ -700,7 +764,7 @@ impl<'a> NoteCalcApp<'a> {
                 );
             }
 
-            // highlight current select line
+            // highlight current line reference selector
             if let Some(selection_row) = self.line_selector {
                 if selection_row == editor_y {
                     render_buckets.set_color(Layer::BehindText, 0xFFCCCC_FF);
@@ -714,8 +778,8 @@ impl<'a> NoteCalcApp<'a> {
                 }
             }
 
+            // highlight current line
             if cursor_pos.row == editor_y {
-                // highlight current line
                 render_buckets.set_color(Layer::BehindText, 0xFCFAED_C8);
                 render_buckets.draw_rect(
                     Layer::BehindText,
@@ -725,14 +789,14 @@ impl<'a> NoteCalcApp<'a> {
                     rendered_row_height,
                 );
                 // cursor is above it, so it is easier to spot
-                render_buckets.set_color(Layer::BehindText, 0x000000_FF);
+                render_buckets.set_color(Layer::AboveText, 0x000000_FF);
                 if self.editor.is_cursor_shown()
                     && self.matrix_editing.is_none()
                     && ((cursor_pos.column as isize + cursor_render_x_offset) as usize)
                         < current_editor_width
                 {
                     render_buckets.draw_char(
-                        Layer::BehindText,
+                        Layer::AboveText,
                         ((cursor_pos.column + LEFT_GUTTER_WIDTH) as isize + cursor_render_x_offset)
                             as usize,
                         render_y + vert_align_offset,
@@ -847,8 +911,6 @@ impl<'a> NoteCalcApp<'a> {
         // selected text
         render_buckets.set_color(Layer::BehindText, 0xA6D2FF_FF);
         if self.editor.get_selection().is_range() {
-            // let mut editor_y_to_render_y = [0; 64];
-            // let mut editor_y_to_vert_align = [0; 64];
             let start = self.editor.get_selection().get_first();
             let end = self.editor.get_selection().get_second();
             if end.row > start.row {
@@ -895,7 +957,13 @@ impl<'a> NoteCalcApp<'a> {
             } else {
                 let height = editor_y_to_render_y
                     .get(start.row + 1)
-                    .map(|it| it - editor_y_to_render_y[start.row])
+                    .map(|it| {
+                        if *it != 0 {
+                            it - editor_y_to_render_y[start.row]
+                        } else {
+                            1
+                        }
+                    })
                     .unwrap_or(1);
                 render_buckets.draw_rect(
                     Layer::BehindText,
@@ -910,7 +978,8 @@ impl<'a> NoteCalcApp<'a> {
                     let selection_center = start.column + ((end.column - start.column) / 2);
                     partial_result.insert_str(0, "= ");
                     let result_w = partial_result.chars().count();
-                    let centered_x = selection_center - (result_w / 2);
+                    let centered_x =
+                        (selection_center as isize - (result_w / 2) as isize).max(0) as usize;
                     render_buckets.set_color(Layer::AboveText, 0xAAFFAA_FF);
                     render_buckets.draw_rect(
                         Layer::AboveText,
@@ -1093,7 +1162,8 @@ impl<'a> NoteCalcApp<'a> {
     ) {
         let dst = match &token.typ {
             TokenType::StringLiteral => &mut render_buckets.texts,
-            TokenType::Variable(_) => &mut render_buckets.variable,
+            TokenType::Variable { .. } => &mut render_buckets.variable,
+            TokenType::LineReference { .. } => &mut render_buckets.variable,
             TokenType::NumberLiteral(_) => &mut render_buckets.numbers,
             TokenType::Operator(op_type) => match op_type {
                 OperatorTokenType::Unit(_) => &mut render_buckets.units,
@@ -1243,11 +1313,74 @@ impl<'a> NoteCalcApp<'a> {
             true
         } else {
             let before_cursor_pos = self.editor.get_selection();
+            if input == EditorInputEvent::Backspace
+                && !before_cursor_pos.is_range()
+                && before_cursor_pos.start.column > 0
+            {
+                if let Some(index) = self
+                    .index_of_editor_object_at(before_cursor_pos.get_cursor_pos().with_prev_col())
+                {
+                    // remove it
+                    let obj = self.editor_objects.remove(index);
+                    let sel = Selection::range(
+                        Pos::from_row_column(obj.row, obj.start_x),
+                        Pos::from_row_column(obj.row, obj.end_x),
+                    );
+                    self.editor.set_selection_save_col(sel);
+                    self.editor.handle_input(
+                        EditorInputEvent::Backspace,
+                        InputModifiers::none(),
+                        &mut self.editor_content,
+                    );
+                    return true;
+                }
+            } else if input == EditorInputEvent::Del && !before_cursor_pos.is_range() {
+                if let Some(index) = self
+                    .index_of_editor_object_at(before_cursor_pos.get_cursor_pos().with_next_col())
+                {
+                    // remove it
+                    let obj = self.editor_objects.remove(index);
+                    let sel = Selection::range(
+                        Pos::from_row_column(obj.row, obj.start_x),
+                        Pos::from_row_column(obj.row, obj.end_x),
+                    );
+                    self.editor.set_selection_save_col(sel);
+                    self.editor.handle_input(
+                        EditorInputEvent::Del,
+                        InputModifiers::none(),
+                        &mut self.editor_content,
+                    );
+                    return true;
+                }
+            } else if input == EditorInputEvent::Left
+                && !before_cursor_pos.is_range()
+                && before_cursor_pos.start.column > 0
+            {
+                if let Some(obj) =
+                    self.find_editor_object_at(before_cursor_pos.get_cursor_pos().with_prev_col())
+                {
+                    if obj.typ == EditorObjectType::LineReference {
+                        //  jump over it
+                        self.editor.set_cursor_pos_r_c(obj.row, obj.start_x);
+                        return false;
+                    }
+                }
+            } else if input == EditorInputEvent::Right && !before_cursor_pos.is_range() {
+                if let Some(obj) = self.find_editor_object_at(before_cursor_pos.get_cursor_pos()) {
+                    if obj.typ == EditorObjectType::LineReference {
+                        //  jump over it
+                        self.editor.set_cursor_pos_r_c(obj.row, obj.end_x);
+                        return false;
+                    }
+                }
+            }
+
             let modified = self
                 .editor
                 .handle_input(input, modifiers, &mut self.editor_content);
+
             if let Some(editor_obj) =
-                self.find_editor_object_at(self.editor.get_selection().get_cursor_pos())
+                self.is_pos_inside_an_obj(self.editor.get_selection().get_cursor_pos())
             {
                 match editor_obj.typ {
                     EditorObjectType::Matrix {
@@ -1284,16 +1417,34 @@ impl<'a> NoteCalcApp<'a> {
         return None;
     }
 
+    fn is_pos_inside_an_obj(&self, pos: Pos) -> Option<&EditorObject> {
+        for obj in &self.editor_objects {
+            if obj.row == pos.row && (obj.start_x + 1..obj.end_x).contains(&pos.column) {
+                return Some(obj);
+            }
+        }
+        return None;
+    }
+
+    fn index_of_editor_object_at(&self, pos: Pos) -> Option<usize> {
+        return self
+            .editor_objects
+            .iter()
+            .position(|obj| obj.row == pos.row && (obj.start_x..obj.end_x).contains(&pos.column));
+    }
+
     fn handle_matrix_editor_input(&mut self, input: EditorInputEvent, modifiers: InputModifiers) {
         let mat_edit = self.matrix_editing.as_mut().unwrap();
         let cur_pos = self.editor.get_selection().get_cursor_pos();
 
         if input == EditorInputEvent::Esc || input == EditorInputEvent::Enter {
-            let newpos = mat_edit.end_text_index;
-            self.end_matrix_editing(Some(cur_pos.with_column(newpos)));
+            self.end_matrix_editing(None);
         } else if input == EditorInputEvent::Left && mat_edit.editor.is_cursor_at_beginning() {
             if mat_edit.current_cell.column > 0 {
-                mat_edit.change_cell(mat_edit.current_cell.with_prev_col())
+                mat_edit.change_cell(mat_edit.current_cell.with_prev_col());
+                // cursor at end of line
+                let cell_len = mat_edit.editor_content.line_len(0);
+                mat_edit.editor.set_cursor_pos_r_c(0, cell_len);
             } else {
                 let start_text_index = mat_edit.start_text_index;
                 self.end_matrix_editing(Some(cur_pos.with_column(start_text_index)));
@@ -1302,14 +1453,21 @@ impl<'a> NoteCalcApp<'a> {
             && mat_edit.editor.is_cursor_at_eol(&mat_edit.editor_content)
         {
             if mat_edit.current_cell.column + 1 < mat_edit.col_count {
-                mat_edit.change_cell(mat_edit.current_cell.with_next_col())
+                mat_edit.change_cell(mat_edit.current_cell.with_next_col());
+                mat_edit.editor.set_cursor_pos_r_c(0, 0);
             } else {
                 let end_text_index = mat_edit.end_text_index;
                 self.end_matrix_editing(Some(cur_pos.with_column(end_text_index)));
             }
         } else if input == EditorInputEvent::Up {
             if mat_edit.current_cell.row > 0 {
-                mat_edit.change_cell(mat_edit.current_cell.with_prev_row())
+                let pos = mat_edit.editor.get_selection().get_cursor_pos();
+                let cols_from_right = mat_edit.editor_content.line_len(0) - pos.column;
+                mat_edit.change_cell(mat_edit.current_cell.with_prev_row());
+                let cell_len = mat_edit.editor_content.line_len(0);
+                mat_edit
+                    .editor
+                    .set_cursor_pos_r_c(0, cell_len - cols_from_right.min(cell_len));
             } else {
                 self.end_matrix_editing(None);
                 self.editor
@@ -1317,9 +1475,36 @@ impl<'a> NoteCalcApp<'a> {
             }
         } else if input == EditorInputEvent::Down {
             if mat_edit.current_cell.row + 1 < mat_edit.row_count {
-                mat_edit.change_cell(mat_edit.current_cell.with_next_row())
+                let pos = mat_edit.editor.get_selection().get_cursor_pos();
+                let cols_from_right = mat_edit.editor_content.line_len(0) - pos.column;
+                mat_edit.change_cell(mat_edit.current_cell.with_next_row());
+                let cell_len = mat_edit.editor_content.line_len(0);
+                mat_edit
+                    .editor
+                    .set_cursor_pos_r_c(0, cell_len - cols_from_right.min(cell_len));
             } else {
                 self.end_matrix_editing(None);
+                self.editor
+                    .handle_input(input, modifiers, &mut self.editor_content);
+            }
+        } else if input == EditorInputEvent::End {
+            if mat_edit.current_cell.column != mat_edit.col_count - 1 {
+                mat_edit.change_cell(mat_edit.current_cell.with_column(mat_edit.col_count - 1));
+                let cell_len = mat_edit.editor_content.line_len(0);
+                mat_edit.editor.set_cursor_pos_r_c(0, cell_len);
+            } else {
+                let end_text_index = mat_edit.end_text_index;
+                self.end_matrix_editing(Some(cur_pos.with_column(end_text_index)));
+                self.editor
+                    .handle_input(input, modifiers, &mut self.editor_content);
+            }
+        } else if input == EditorInputEvent::Home {
+            if mat_edit.current_cell.column != 0 {
+                mat_edit.change_cell(mat_edit.current_cell.with_column(0));
+                mat_edit.editor.set_cursor_pos_r_c(0, 0);
+            } else {
+                let start_index = mat_edit.start_text_index;
+                self.end_matrix_editing(Some(cur_pos.with_column(start_index)));
                 self.editor
                     .handle_input(input, modifiers, &mut self.editor_content);
             }
@@ -1391,5 +1576,341 @@ mod tests {
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt());
         app.alt_key_released();
         app.render();
+    }
+
+    #[test]
+    fn remove_matrix_backspace() {
+        let mut app = NoteCalcApp::new(120);
+        app.handle_input(
+            EditorInputEvent::Text("abcd [1,2,3;4,5,6]".to_owned()),
+            InputModifiers::none(),
+        );
+        app.render();
+        app.handle_input(EditorInputEvent::Backspace, InputModifiers::none());
+        assert_eq!("abcd ", app.editor_content.get_content());
+    }
+
+    #[test]
+    fn matrix_step_in_dir() {
+        // from right
+        {
+            let mut app = NoteCalcApp::new(120);
+            app.handle_input(
+                EditorInputEvent::Text("abcd [1,2,3;4,5,6]".to_owned()),
+                InputModifiers::none(),
+            );
+            app.render();
+            app.handle_input(EditorInputEvent::Left, InputModifiers::none());
+            app.handle_input(EditorInputEvent::Char('1'), InputModifiers::none());
+            app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!("abcd [1,2,31;4,5,6]", app.editor_content.get_content());
+        }
+        // from left
+        {
+            let mut app = NoteCalcApp::new(120);
+            app.handle_input(
+                EditorInputEvent::Text("abcd [1,2,3;4,5,6]".to_owned()),
+                InputModifiers::none(),
+            );
+            app.editor
+                .set_selection_save_col(Selection::single_r_c(0, 5));
+            app.render();
+            app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+            app.handle_input(EditorInputEvent::Char('2'), InputModifiers::none());
+            app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!("abcd [21,2,3;4,5,6]", app.editor_content.get_content());
+        }
+        // from below
+        {
+            let mut app = NoteCalcApp::new(120);
+            app.handle_input(
+                EditorInputEvent::Text("abcd [1,2,3;4,5,6]\naaaaaaaaaaaaaaaaaa".to_owned()),
+                InputModifiers::none(),
+            );
+            app.editor
+                .set_selection_save_col(Selection::single_r_c(1, 7));
+            app.render();
+            app.handle_input(EditorInputEvent::Up, InputModifiers::none());
+            app.handle_input(EditorInputEvent::Char('2'), InputModifiers::none());
+            app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!(
+                "abcd [1,2,3;24,5,6]\naaaaaaaaaaaaaaaaaa",
+                app.editor_content.get_content()
+            );
+        }
+        // from above
+        {
+            let mut app = NoteCalcApp::new(120);
+            app.handle_input(
+                EditorInputEvent::Text("aaaaaaaaaaaaaaaaaa\nabcd [1,2,3;4,5,6]".to_owned()),
+                InputModifiers::none(),
+            );
+            app.editor
+                .set_selection_save_col(Selection::single_r_c(0, 7));
+            app.render();
+            app.handle_input(EditorInputEvent::Down, InputModifiers::none());
+            app.handle_input(EditorInputEvent::Char('2'), InputModifiers::none());
+            app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!(
+                "aaaaaaaaaaaaaaaaaa\nabcd [21,2,3;4,5,6]",
+                app.editor_content.get_content()
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_is_put_after_the_matrix_after_finished_editing() {
+        let mut app = NoteCalcApp::new(120);
+        app.handle_input(
+            EditorInputEvent::Text("abcd [1,2,3;4,5,6]".to_owned()),
+            InputModifiers::none(),
+        );
+        app.render();
+        app.handle_input(EditorInputEvent::Left, InputModifiers::none());
+        app.handle_input(EditorInputEvent::Char('6'), InputModifiers::none());
+        app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
+        app.render();
+        app.handle_input(EditorInputEvent::Char('9'), InputModifiers::none());
+        assert_eq!("abcd [1,2,36;4,5,6]9", app.editor_content.get_content());
+    }
+
+    #[test]
+    fn remove_matrix_del() {
+        let mut app = NoteCalcApp::new(120);
+        app.handle_input(
+            EditorInputEvent::Text("abcd [1,2,3;4,5,6]".to_owned()),
+            InputModifiers::none(),
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 5));
+        app.render();
+        app.handle_input(EditorInputEvent::Del, InputModifiers::none());
+        assert_eq!("abcd ", app.editor_content.get_content());
+    }
+
+    #[test]
+    fn test_moving_inside_a_matrix() {
+        // right to left, cursor at end
+        {
+            let mut app = NoteCalcApp::new(120);
+            app.handle_input(
+                EditorInputEvent::Text("abcd [1,2,3;4,5,6]".to_owned()),
+                InputModifiers::none(),
+            );
+            app.render();
+            app.handle_input(EditorInputEvent::Left, InputModifiers::none());
+            app.handle_input(EditorInputEvent::Left, InputModifiers::none());
+            app.handle_input(EditorInputEvent::Left, InputModifiers::none());
+            app.handle_input(EditorInputEvent::Char('6'), InputModifiers::none());
+            app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
+            app.render();
+            assert_eq!("abcd [1,26,3;4,5,6]", app.editor_content.get_content());
+        }
+        // left to right, cursor at start
+        {
+            let mut app = NoteCalcApp::new(120);
+            app.handle_input(
+                EditorInputEvent::Text("abcd [1,2,3;4,5,6]".to_owned()),
+                InputModifiers::none(),
+            );
+            app.editor
+                .set_selection_save_col(Selection::single_r_c(0, 5));
+            app.render();
+            app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+            app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+            app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+            app.handle_input(EditorInputEvent::Char('6'), InputModifiers::none());
+            app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
+            app.render();
+            assert_eq!("abcd [1,62,3;4,5,6]", app.editor_content.get_content());
+        }
+        // vertical movement down, cursor tries to keep its position
+        {
+            let mut app = NoteCalcApp::new(120);
+            app.handle_input(
+                EditorInputEvent::Text("abcd [1111,22,3;44,55555,666]".to_owned()),
+                InputModifiers::none(),
+            );
+            app.editor
+                .set_selection_save_col(Selection::single_r_c(0, 5));
+            app.render();
+            app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+            // inside the matrix
+            app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+            app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+            app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+            app.handle_input(EditorInputEvent::Down, InputModifiers::none());
+            app.render();
+            app.handle_input(EditorInputEvent::Char('6'), InputModifiers::none());
+            app.render();
+            app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
+            app.render();
+            assert_eq!(
+                "abcd [1111,22,3;464,55555,666]",
+                app.editor_content.get_content()
+            );
+        }
+
+        // vertical movement up, cursor tries to keep its position
+        {
+            let mut app = NoteCalcApp::new(120);
+            app.handle_input(
+                EditorInputEvent::Text("abcd [1111,22,3;44,55555,666]".to_owned()),
+                InputModifiers::none(),
+            );
+            app.editor
+                .set_selection_save_col(Selection::single_r_c(0, 5));
+            app.render();
+            app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+            // inside the matrix
+            app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+            app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+            app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+            app.handle_input(EditorInputEvent::Down, InputModifiers::none());
+            app.handle_input(EditorInputEvent::Up, InputModifiers::none());
+            app.render();
+            app.handle_input(EditorInputEvent::Char('6'), InputModifiers::none());
+            app.render();
+            app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
+            app.render();
+            assert_eq!(
+                "abcd [11161,22,3;44,55555,666]",
+                app.editor_content.get_content()
+            );
+        }
+    }
+
+    #[test]
+    fn end_btn_matrix() {
+        {
+            let mut app = NoteCalcApp::new(120);
+            app.handle_input(
+                EditorInputEvent::Text("abcd [1111,22,3;44,55555,666] qq".to_owned()),
+                InputModifiers::none(),
+            );
+            app.editor
+                .set_selection_save_col(Selection::single_r_c(0, 5));
+            app.render();
+            app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+            // inside the matrix
+            app.handle_input(EditorInputEvent::End, InputModifiers::none());
+            app.render();
+            app.handle_input(EditorInputEvent::Char('9'), InputModifiers::none());
+            app.render();
+            app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
+            app.render();
+            assert_eq!(
+                "abcd [1111,22,39;44,55555,666] qq",
+                app.editor_content.get_content()
+            );
+        }
+        // pressing twice, exits the matrix
+        {
+            let mut app = NoteCalcApp::new(120);
+            app.handle_input(
+                EditorInputEvent::Text("abcd [1111,22,3;44,55555,666] qq".to_owned()),
+                InputModifiers::none(),
+            );
+            app.editor
+                .set_selection_save_col(Selection::single_r_c(0, 5));
+            app.render();
+            app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+            // inside the matrix
+            app.handle_input(EditorInputEvent::End, InputModifiers::none());
+            app.render();
+            app.handle_input(EditorInputEvent::End, InputModifiers::none());
+            app.render();
+            app.handle_input(EditorInputEvent::Char('9'), InputModifiers::none());
+            app.render();
+            assert_eq!(
+                "abcd [1111,22,3;44,55555,666] qq9",
+                app.editor_content.get_content()
+            );
+        }
+    }
+
+    #[test]
+    fn home_btn_matrix() {
+        {
+            let mut app = NoteCalcApp::new(120);
+            app.handle_input(
+                EditorInputEvent::Text("abcd [1111,22,3;44,55555,666]".to_owned()),
+                InputModifiers::none(),
+            );
+            app.render();
+            app.handle_input(EditorInputEvent::Left, InputModifiers::none());
+            // inside the matrix
+            app.handle_input(EditorInputEvent::Home, InputModifiers::none());
+            app.render();
+            app.handle_input(EditorInputEvent::Char('9'), InputModifiers::none());
+            app.render();
+            app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
+            app.render();
+            assert_eq!(
+                "abcd [91111,22,3;44,55555,666]",
+                app.editor_content.get_content()
+            );
+        }
+        {
+            let mut app = NoteCalcApp::new(120);
+            app.handle_input(
+                EditorInputEvent::Text("abcd [1111,22,3;44,55555,666]".to_owned()),
+                InputModifiers::none(),
+            );
+            app.render();
+            app.handle_input(EditorInputEvent::Left, InputModifiers::none());
+            // inside the matrix
+            app.handle_input(EditorInputEvent::Home, InputModifiers::none());
+            app.render();
+            app.handle_input(EditorInputEvent::Home, InputModifiers::none());
+            app.render();
+            app.handle_input(EditorInputEvent::Char('6'), InputModifiers::none());
+            app.render();
+            assert_eq!(
+                "6abcd [1111,22,3;44,55555,666]",
+                app.editor_content.get_content()
+            );
+        }
+    }
+
+    #[test]
+    fn bug8() {
+        let mut app = NoteCalcApp::new(120);
+        app.handle_input(
+            EditorInputEvent::Text("16892313\n14 * ".to_owned()),
+            InputModifiers::none(),
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(1, 5));
+        app.render();
+        app.handle_input(EditorInputEvent::Up, InputModifiers::alt());
+        app.alt_key_released();
+        assert_eq!("16892313\n14 * $[1]", app.editor_content.get_content());
+        app.render();
+        app.handle_time(1000);
+        app.handle_input(EditorInputEvent::Backspace, InputModifiers::none());
+        assert_eq!("16892313\n14 * ", app.editor_content.get_content());
+
+        app.handle_input(EditorInputEvent::Char('z'), InputModifiers::ctrl());
+        assert_eq!("16892313\n14 * $[1]", app.editor_content.get_content());
+
+        app.handle_input(EditorInputEvent::Right, InputModifiers::none()); // end selection
+        app.render();
+        app.handle_input(EditorInputEvent::Left, InputModifiers::none());
+        app.handle_input(EditorInputEvent::Char('a'), InputModifiers::none());
+        assert_eq!("16892313\n14 * a$[1]", app.editor_content.get_content());
+
+        app.handle_input(EditorInputEvent::Char(' '), InputModifiers::none());
+        app.render();
+        app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+        app.handle_input(EditorInputEvent::Char('b'), InputModifiers::none());
+        assert_eq!("16892313\n14 * a $[1]b", app.editor_content.get_content());
+
+        app.handle_input(EditorInputEvent::Left, InputModifiers::none());
+        app.handle_input(EditorInputEvent::Left, InputModifiers::none());
+        app.handle_input(EditorInputEvent::Left, InputModifiers::none());
+        app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+        app.handle_input(EditorInputEvent::Char('c'), InputModifiers::none());
+        assert_eq!("16892313\n14 * a c$[1]b", app.editor_content.get_content());
     }
 }

@@ -7,7 +7,8 @@ use std::str::FromStr;
 pub enum TokenType<'units> {
     StringLiteral,
     // index to the variable vec
-    Variable(usize),
+    Variable { var_index: usize },
+    LineReference { var_index: usize },
     NumberLiteral(BigDecimal),
     Operator(OperatorTokenType<'units>),
 }
@@ -174,7 +175,7 @@ impl TokenParser {
                             || matches!(typ, OperatorTokenType::UnitConverter);
                         index += token.ptr.len()
                     }
-                    TokenType::Variable(_) => {
+                    TokenType::Variable { .. } | TokenType::LineReference { .. } => {
                         can_be_unit = true;
                         index += token.ptr.len()
                     }
@@ -414,9 +415,20 @@ impl TokenParser {
             }
         }
         if longest_match > 0 {
-            return Some(Token {
-                typ: TokenType::Variable(longest_match_index),
-                ptr: &str[0..longest_match],
+            return Some(if longest_match > 2 && str[0] == '$' && str[1] == '[' {
+                Token {
+                    typ: TokenType::LineReference {
+                        var_index: longest_match_index,
+                    },
+                    ptr: &str[0..longest_match],
+                }
+            } else {
+                Token {
+                    typ: TokenType::Variable {
+                        var_index: longest_match_index,
+                    },
+                    ptr: &str[0..longest_match],
+                }
             });
         }
         return None;
@@ -631,7 +643,8 @@ mod tests {
                     let expected_chars = str_slice.chars().collect::<Vec<char>>();
                     assert_eq!(expected_chars.as_slice(), actual_token.ptr)
                 }
-                (TokenType::Variable(_), TokenType::Variable(_)) => {
+                (TokenType::Variable { .. }, TokenType::Variable { .. })
+                | (TokenType::LineReference { .. }, TokenType::LineReference { .. }) => {
                     // expected_op is an &str
                     let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
                     let expected_chars = str_slice.chars().collect::<Vec<char>>();
@@ -1243,7 +1256,7 @@ mod tests {
                 str(" "),
                 op(OperatorTokenType::Add),
                 str(" "),
-                var("$[1]"),
+                line_ref("$[1]"),
             ],
         );
     }

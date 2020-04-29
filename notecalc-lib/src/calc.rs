@@ -48,7 +48,6 @@ pub fn evaluate_tokens<'text_ptr, 'units>(
     let mut there_was_unit_conversion = false;
     let mut assignment = false;
     let mut last_success_operation_result_index = None;
-    dbg!(&tokens);
     for token in tokens.iter_mut() {
         match &token {
             TokenType::NumberLiteral(num) => stack.push(CalcResult::Number(num.clone())),
@@ -62,17 +61,20 @@ pub fn evaluate_tokens<'text_ptr, 'units>(
                         if matches!(typ, OperatorTokenType::UnitConverter) {
                             there_was_unit_conversion = true;
                         }
-                        dbg!(&stack);
-                        last_success_operation_result_index = dbg!(Some(stack.len() - 1));
+                        last_success_operation_result_index = Some(stack.len() - 1);
                     } else {
                         // the operation failed, it is not an operator but a string ?
                     }
                 }
             }
             TokenType::StringLiteral => panic!(),
-            TokenType::Variable(index) => {
+            TokenType::Variable { var_index } => {
                 // TODO clone :(
-                stack.push(variables[*index].1.clone());
+                stack.push(variables[*var_index].1.clone());
+            }
+            TokenType::LineReference { var_index } => {
+                // TODO clone :(
+                stack.push(variables[*var_index].1.clone());
             }
         }
     }
