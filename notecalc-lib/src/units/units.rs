@@ -3,7 +3,7 @@ use crate::renderer::strip_trailing_zeroes;
 use crate::units::consts::{
     get_base_unit_for, init_aliases, init_units, BASE_UNIT_DIMENSIONS, BASE_UNIT_DIMENSION_COUNT,
 };
-use crate::units::{Prefix, Unit, UnitPrefixes, BASE_DIMENSION_COUNT};
+use crate::units::{Prefix, Unit, UnitPrefixes};
 use bigdecimal::BigDecimal;
 use smallvec::alloc::fmt::{Debug, Display, Formatter};
 use smallvec::SmallVec;
@@ -18,7 +18,7 @@ fn next(str: &[char]) -> &[char] {
 fn parse_unit(str: &[char]) -> Option<&[char]> {
     let mut i = 0;
     for ch in str {
-        if !ch.is_ascii_alphanumeric() {
+        if !ch.is_ascii_alphanumeric() && *ch != '$' {
             break;
         }
         i += 1;
@@ -133,8 +133,6 @@ impl<'a> Units<'a> {
             output.add_unit(UnitInstance::new(res.0, res.1, power));
             // Add the unit to the list
 
-            // TODO refactor into UnitInstance::new
-
             c = skip_whitespaces(c);
 
             // Check for and consume closing parentheses, popping from the stack.
@@ -173,15 +171,6 @@ impl<'a> Units<'a> {
                     break;
                 }
             }
-            // Replace the unit into the auto unit system
-            // ???????
-            // if (res.unit.base) {
-            //     const baseDim = res.unit.base.key
-            //     UNIT_SYSTEMS.auto[baseDim] = {
-            //         unit: res.unit,
-            //         prefix: res.prefix
-            //     }
-            // }
             if !expecting_unit {
                 last_valid_cursor_pos = Units::calc_parsed_len(text, c);
             }
@@ -323,7 +312,7 @@ fn skip(c: &[char], len: usize) -> &[char] {
 pub struct UnitOutput<'a> {
     // TOOD: replace it with a fixed array Some None?
     pub units: Vec<UnitInstance<'a>>,
-    pub dimensions: [isize; BASE_DIMENSION_COUNT],
+    pub dimensions: [isize; BASE_UNIT_DIMENSION_COUNT],
 }
 
 impl<'a> Debug for UnitOutput<'a> {
@@ -416,12 +405,12 @@ impl<'a> UnitOutput<'a> {
     pub fn new() -> UnitOutput<'a> {
         UnitOutput {
             units: vec![],
-            dimensions: [0; BASE_DIMENSION_COUNT],
+            dimensions: [0; BASE_UNIT_DIMENSION_COUNT],
         }
     }
 
     pub fn add_unit(&mut self, unit: UnitInstance<'a>) {
-        for i in 0..BASE_DIMENSION_COUNT {
+        for i in 0..BASE_UNIT_DIMENSION_COUNT {
             self.dimensions[i] += unit.unit.base[i] * unit.power;
         }
         self.units.push(unit);
@@ -433,8 +422,6 @@ impl<'a> UnitOutput<'a> {
 
     pub fn simplify(&self, units: &'a Units, num: &BigDecimal) -> Option<UnitOutput<'a>> {
         if let Some(base_unit) = dbg!(units.simplify(self)) {
-            let current_num = self.denormalize(num);
-            // let (_, cur_scale) = dbg!(strip_trailing_zeroes(&current_num).as_bigint_and_exponent());
             let base_unit_num = base_unit.denormalize(num);
             let (_, base_scale) =
                 dbg!(strip_trailing_zeroes(&base_unit_num).as_bigint_and_exponent());
@@ -635,7 +622,7 @@ impl<'a> Debug for UnitInstance<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::units::consts::create_prefixes;
+    use crate::units::consts::{create_prefixes, EMPTY_UNIT_DIMENSIONS};
     use bigdecimal::*;
 
     fn parse<'a>(str: &'a str, units: &'a Units) -> UnitOutput<'a> {
@@ -973,6 +960,10 @@ mod tests {
         assert_eq!(unit1.units[1].prefix.name, &[]);
         assert_eq!(unit1.units[1].unit.name, &['h']);
         assert_eq!(-1, unit1.units[1].power);
+
+        let unit1 = units.parse(&"km/m".chars().collect::<Vec<char>>());
+        assert_eq!(EMPTY_UNIT_DIMENSIONS, unit1.0.dimensions);
+        assert_eq!(4, unit1.1);
     }
 
     #[test]

@@ -415,7 +415,7 @@ impl TokenParser {
             }
         }
         if longest_match > 0 {
-            return Some(if longest_match > 2 && str[0] == '$' && str[1] == '[' {
+            return Some(if longest_match > 2 && str[0] == '&' && str[1] == '[' {
                 Token {
                     typ: TokenType::LineReference {
                         var_index: longest_match_index,
@@ -1249,15 +1249,37 @@ mod tests {
         );
 
         test_vars(
-            &[&['$', '[', '1', ']']],
-            "3 + $[1]",
+            &[&['&', '[', '1', ']']],
+            "3 + &[1]",
             &[
                 num(3),
                 str(" "),
                 op(OperatorTokenType::Add),
                 str(" "),
-                line_ref("$[1]"),
+                line_ref("&[1]"),
             ],
         );
+    }
+
+    #[test]
+    fn test_line_ref_parsing() {
+        test_vars(
+            &[&['&', '[', '2', '1', ']']],
+            "3 years * &[21]",
+            &[
+                num(3),
+                str(" "),
+                unit("years"),
+                str(" "),
+                op(OperatorTokenType::Mult),
+                str(" "),
+                line_ref("&[21]"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_unit_cancelling() {
+        test("1 km/m", &[num(1), str(" "), unit("km/m")]);
     }
 }

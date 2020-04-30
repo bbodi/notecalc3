@@ -17,6 +17,7 @@ enum UnitType {
     AmountOfSubstance,
     Angle,
     Bit,
+    Money,
     Force,
     Surface,
     Volume,
@@ -34,34 +35,39 @@ enum UnitType {
     Frequency,
 }
 
-pub const BASE_UNIT_DIMENSION_COUNT: usize = 9;
-pub const ALL_UNIT_COUNT: usize = 24;
+pub const BASE_UNIT_DIMENSION_COUNT: usize = 10;
+pub const ALL_UNIT_COUNT: usize = 25;
+
+pub const EMPTY_UNIT_DIMENSIONS: [isize; BASE_UNIT_DIMENSION_COUNT] =
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
 pub(crate) const BASE_UNIT_DIMENSIONS: [[isize; BASE_UNIT_DIMENSION_COUNT]; ALL_UNIT_COUNT] = [
-    [0, 1, 0, 0, 0, 0, 0, 0, 0],   // Length
-    [1, 0, 0, 0, 0, 0, 0, 0, 0],   // Mass
-    [0, 0, 1, 0, 0, 0, 0, 0, 0],   // Time
-    [0, 0, 0, 1, 0, 0, 0, 0, 0],   // Current
-    [0, 0, 0, 0, 1, 0, 0, 0, 0],   // Temperature
-    [0, 0, 0, 0, 0, 1, 0, 0, 0],   // LuminousIntensity
-    [0, 0, 0, 0, 0, 0, 1, 0, 0],   // AmountOfSubstance
-    [0, 0, 0, 0, 0, 0, 0, 1, 0],   // Angle
-    [0, 0, 0, 0, 0, 0, 0, 0, 1],   // Bit
-    [1, 1, -2, 0, 0, 0, 0, 0, 0],  // Force
-    [0, 2, 0, 0, 0, 0, 0, 0, 0],   // Surface
-    [0, 3, 0, 0, 0, 0, 0, 0, 0],   // Volume
-    [1, 2, -2, 0, 0, 0, 0, 0, 0],  // Energy
-    [1, 2, -3, 0, 0, 0, 0, 0, 0],  // Power
-    [1, -1, -2, 0, 0, 0, 0, 0, 0], // Pressure
-    [0, 0, 1, 1, 0, 0, 0, 0, 0],   // ElectricCharge
-    [-1, -2, 4, 2, 0, 0, 0, 0, 0], // ElectricCapacitance
-    [1, 2, -3, -1, 0, 0, 0, 0, 0], // ElectricPotential
-    [1, 2, -3, -2, 0, 0, 0, 0, 0], // ElectricResistance
-    [1, 2, -2, -2, 0, 0, 0, 0, 0], // ElectricInductance
-    [-1, -2, 3, 2, 0, 0, 0, 0, 0], // ElectricConductance
-    [1, 2, -2, -1, 0, 0, 0, 0, 0], // MagneticFlux
-    [1, 0, -2, -1, 0, 0, 0, 0, 0], // MagneticFluxDensity
-    [0, 0, -1, 0, 0, 0, 0, 0, 0],  // Frequency
+    [0, 1, 0, 0, 0, 0, 0, 0, 0, 0], // Length
+    [1, 0, 0, 0, 0, 0, 0, 0, 0, 0], // Mass
+    [0, 0, 1, 0, 0, 0, 0, 0, 0, 0], // Time
+    [0, 0, 0, 1, 0, 0, 0, 0, 0, 0], // Current
+    [0, 0, 0, 0, 1, 0, 0, 0, 0, 0], // Temperature
+    [0, 0, 0, 0, 0, 1, 0, 0, 0, 0], // LuminousIntensity
+    [0, 0, 0, 0, 0, 0, 1, 0, 0, 0], // AmountOfSubstance
+    [0, 0, 0, 0, 0, 0, 0, 1, 0, 0], // Angle
+    [0, 0, 0, 0, 0, 0, 0, 0, 1, 0], // Bit
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 1], // Money
+    /// derived
+    [1, 1, -2, 0, 0, 0, 0, 0, 0, 0], // Force
+    [0, 2, 0, 0, 0, 0, 0, 0, 0, 0], // Surface
+    [0, 3, 0, 0, 0, 0, 0, 0, 0, 0], // Volume
+    [1, 2, -2, 0, 0, 0, 0, 0, 0, 0], // Energy
+    [1, 2, -3, 0, 0, 0, 0, 0, 0, 0], // Power
+    [1, -1, -2, 0, 0, 0, 0, 0, 0, 0], // Pressure
+    [0, 0, 1, 1, 0, 0, 0, 0, 0, 0], // ElectricCharge
+    [-1, -2, 4, 2, 0, 0, 0, 0, 0, 0], // ElectricCapacitance
+    [1, 2, -3, -1, 0, 0, 0, 0, 0, 0], // ElectricPotential
+    [1, 2, -3, -2, 0, 0, 0, 0, 0, 0], // ElectricResistance
+    [1, 2, -2, -2, 0, 0, 0, 0, 0, 0], // ElectricInductance
+    [-1, -2, 3, 2, 0, 0, 0, 0, 0, 0], // ElectricConductance
+    [1, 2, -2, -1, 0, 0, 0, 0, 0, 0], // MagneticFlux
+    [1, 0, -2, -1, 0, 0, 0, 0, 0, 0], // MagneticFluxDensity
+    [0, 0, -1, 0, 0, 0, 0, 0, 0, 0], // Frequency
 ];
 
 pub fn create_prefixes() -> UnitPrefixes {
@@ -1891,6 +1897,17 @@ pub fn init_units<'a>(prefixes: &'a UnitPrefixes) -> HashMap<&'static str, Unit<
         },
     );
 
+    map.insert(
+        "$",
+        Unit {
+            name: &['$'],
+            base: BASE_UNIT_DIMENSIONS[UnitType::Money as usize],
+            prefix_groups: (None, None),
+            value: BigDecimal::from_i64(1).unwrap(),
+            offset: BigDecimal::from_i64(0).unwrap(),
+        },
+    );
+
     return map;
 }
 
@@ -1998,7 +2015,7 @@ pub fn init_aliases() -> HashMap<&'static str, &'static str> {
 
 pub fn get_base_unit_for<'units>(
     units: &'units Units,
-    dimensions: &[isize; 9],
+    dimensions: &[isize; BASE_UNIT_DIMENSION_COUNT],
 ) -> Option<UnitInstance<'units>> {
     if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::Length as usize] {
         Some(UnitInstance {
@@ -2124,6 +2141,12 @@ pub fn get_base_unit_for<'units>(
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::Frequency as usize] {
         Some(UnitInstance {
             unit: &units.units["Hz"],
+            prefix: &units.no_prefix,
+            power: 1,
+        })
+    } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::Money as usize] {
+        Some(UnitInstance {
+            unit: &units.units["$"],
             prefix: &units.no_prefix,
             power: 1,
         })

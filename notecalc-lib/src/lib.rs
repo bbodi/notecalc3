@@ -1249,7 +1249,7 @@ impl<'a> NoteCalcApp<'a> {
         for line in self.editor_content.lines() {
             let mut i = 0;
             'i: while i < line.len() {
-                if i + 3 < line.len() && line[i] == '$' && line[i + 1] == '[' {
+                if i + 3 < line.len() && line[i] == '&' && line[i + 1] == '[' {
                     let mut end = i + 2;
                     let mut num: u32 = 0;
                     while end < line.len() {
@@ -1262,7 +1262,7 @@ impl<'a> NoteCalcApp<'a> {
                                 .position(|it| it.line_id == num as usize)
                                 .unwrap_or(0)
                                 + 1; // '+1' line id cannot be 0
-                            result.push('$');
+                            result.push('&');
                             result.push('[');
                             let mut line_id = row_index;
                             while line_id > 0 {
@@ -1327,7 +1327,7 @@ impl<'a> NoteCalcApp<'a> {
             }
             line_data.line_id
         };
-        let inserting_text = format!("$[{}]", line_id);
+        let inserting_text = format!("&[{}]", line_id);
         self.editor.handle_input(
             EditorInputEvent::Text(inserting_text),
             InputModifiers::none(),
@@ -1958,33 +1958,33 @@ mod tests {
         app.render();
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt());
         app.alt_key_released();
-        assert_eq!("16892313\n14 * $[1]", app.editor_content.get_content());
+        assert_eq!("16892313\n14 * &[1]", app.editor_content.get_content());
         app.render();
         app.handle_time(1000);
         app.handle_input(EditorInputEvent::Backspace, InputModifiers::none());
         assert_eq!("16892313\n14 * ", app.editor_content.get_content());
 
         app.handle_input(EditorInputEvent::Char('z'), InputModifiers::ctrl());
-        assert_eq!("16892313\n14 * $[1]", app.editor_content.get_content());
+        assert_eq!("16892313\n14 * &[1]", app.editor_content.get_content());
 
         app.handle_input(EditorInputEvent::Right, InputModifiers::none()); // end selection
         app.render();
         app.handle_input(EditorInputEvent::Left, InputModifiers::none());
         app.handle_input(EditorInputEvent::Char('a'), InputModifiers::none());
-        assert_eq!("16892313\n14 * a$[1]", app.editor_content.get_content());
+        assert_eq!("16892313\n14 * a&[1]", app.editor_content.get_content());
 
         app.handle_input(EditorInputEvent::Char(' '), InputModifiers::none());
         app.render();
         app.handle_input(EditorInputEvent::Right, InputModifiers::none());
         app.handle_input(EditorInputEvent::Char('b'), InputModifiers::none());
-        assert_eq!("16892313\n14 * a $[1]b", app.editor_content.get_content());
+        assert_eq!("16892313\n14 * a &[1]b", app.editor_content.get_content());
 
         app.handle_input(EditorInputEvent::Left, InputModifiers::none());
         app.handle_input(EditorInputEvent::Left, InputModifiers::none());
         app.handle_input(EditorInputEvent::Left, InputModifiers::none());
         app.handle_input(EditorInputEvent::Right, InputModifiers::none());
         app.handle_input(EditorInputEvent::Char('c'), InputModifiers::none());
-        assert_eq!("16892313\n14 * a c$[1]b", app.editor_content.get_content());
+        assert_eq!("16892313\n14 * a c&[1]b", app.editor_content.get_content());
     }
 
     #[test]
@@ -2004,11 +2004,11 @@ mod tests {
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt());
         app.alt_key_released();
         assert_eq!(
-            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13$[1]$[1]$[1]\n",
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13&[1]&[1]&[1]\n",
             &app.editor_content.get_content()
         );
         assert_eq!(
-            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13$[12]$[12]$[12]\n\n",
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13&[12]&[12]&[12]\n\n",
             &app.get_normalized_content()
         );
     }
@@ -2016,7 +2016,7 @@ mod tests {
     #[test]
     fn test_line_ref_denormalization() {
         let mut app = NoteCalcApp::new(120);
-        app.set_normalized_content("1111\n2222\n14 * $[2]$[2]$[2]\n");
+        app.set_normalized_content("1111\n2222\n14 * &[2]&[2]&[2]\n");
         assert_eq!(1, app.editor_content.get_data(0).line_id);
         assert_eq!(2, app.editor_content.get_data(1).line_id);
         assert_eq!(3, app.editor_content.get_data(2).line_id);

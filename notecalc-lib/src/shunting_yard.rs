@@ -820,7 +820,7 @@ pub mod tests {
             &vec![
                 (&['b', '0'], CalcResult::Number(BigDecimal::zero())),
                 (
-                    &['$', '[', '1', ']'],
+                    &['&', '[', '1', ']'],
                     CalcResult::Number(BigDecimal::zero()),
                 ),
             ],
@@ -1532,7 +1532,7 @@ pub mod tests {
 
     #[test]
     fn line_references_are_not_reverted_back_to_str() {
-        test_tokens("100 $[1]", &[num(100), str(" "), line_ref("$[1]")]);
+        test_tokens("100 &[1]", &[num(100), str(" "), line_ref("&[1]")]);
     }
 
     #[test]

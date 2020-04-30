@@ -10,6 +10,7 @@ use std::str::FromStr;
 use crate::matrix::MatrixData;
 use crate::token_parser::TokenType::StringLiteral;
 use crate::token_parser::{OperatorTokenType, Token, TokenType};
+use crate::units::consts::EMPTY_UNIT_DIMENSIONS;
 use crate::units::units::{UnitOutput, Units};
 use std::collections::HashMap;
 use std::io::BufWriter;
@@ -195,10 +196,15 @@ fn unary_operation<'text_ptr, 'units>(
         OperatorTokenType::Perc => percentage_operator(top),
         OperatorTokenType::Not => binary_complement(top),
         OperatorTokenType::Unit(target_unit) => match top {
-            CalcResult::Number(num) => Some(CalcResult::Quantity(
-                dbg!(target_unit.normalize(dbg!(num))),
-                target_unit.clone(),
-            )),
+            CalcResult::Number(num) => {
+                let norm = target_unit.normalize(num);
+                if false || target_unit.dimensions == EMPTY_UNIT_DIMENSIONS {
+                    // the units cancelled each other, e.g. km/m
+                    Some(CalcResult::Number(norm))
+                } else {
+                    Some(CalcResult::Quantity(norm, target_unit.clone()))
+                }
+            }
             _ => None,
         },
         _ => None,
@@ -1141,5 +1147,20 @@ mod tests {
             CalcResult::Number(BigDecimal::from_str("12").unwrap()),
         ));
         test_vars(&vars, "var * 2", "24");
+    }
+
+    #[test]
+    fn test_unit_cancelling() {
+        test_tokens("1 km/m", &[num(1), str(" "), unit("km / m")]);
+        test("1 km/m", "1000");
+        test("1 m/km", "0.001");
+        test("140k h/ month", "191.6495550992470910335386721423682409308692676249144421629021218343600273785078713210130047912388774992");
+    }
+
+    #[test]
+    fn test_unit_money() {
+        test_tokens("10 $/month", &[num(10), str(" "), unit("$ / month")]);
+        test("1 $/month", "1 $ / month");
+        test("140k $ / month * 3 years", "5040000 $");
     }
 }

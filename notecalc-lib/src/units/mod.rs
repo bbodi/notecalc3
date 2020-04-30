@@ -1,5 +1,6 @@
 // Credits to https://mathjs.org, most of this code based on their implementation
 
+use crate::units::consts::BASE_UNIT_DIMENSION_COUNT;
 use bigdecimal::*;
 use smallvec::alloc::fmt::Formatter;
 use std::str::FromStr;
@@ -7,23 +8,10 @@ use std::str::FromStr;
 pub mod consts;
 pub mod units;
 
-const BASE_DIMENSION_COUNT: usize = 9;
-const BASE_DIMENSIONS: [&str; BASE_DIMENSION_COUNT] = [
-    "MASS",
-    "LENGTH",
-    "TIME",
-    "CURRENT",
-    "TEMPERATURE",
-    "LUMINOUS_INTENSITY",
-    "AMOUNT_OF_SUBSTANCE",
-    "ANGLE",
-    "BIT",
-];
-
 #[derive(Eq, PartialEq, Clone)]
 pub struct Unit<'a> {
     name: &'static [char],
-    base: [isize; BASE_DIMENSION_COUNT],
+    base: [isize; BASE_UNIT_DIMENSION_COUNT],
     // e.g. prefix_groups: (Some(&prefixes.short), Some(&prefixes.long)),
     prefix_groups: (Option<&'a [Prefix]>, Option<&'a [Prefix]>),
     value: BigDecimal,
