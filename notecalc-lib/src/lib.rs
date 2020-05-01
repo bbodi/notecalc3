@@ -12,10 +12,10 @@ use crate::token_parser::{OperatorTokenType, Token, TokenParser, TokenType};
 use crate::units::consts::{create_prefixes, init_units};
 use crate::units::units::Units;
 use crate::units::UnitPrefixes;
+use bigdecimal::BigDecimal;
+use bigdecimal::Zero;
 use smallvec::SmallVec;
-use std::collections::HashMap;
 use std::mem::MaybeUninit;
-use std::panic::resume_unwind;
 
 mod calc;
 mod matrix;
@@ -511,6 +511,8 @@ impl<'a> NoteCalcApp<'a> {
         self.editor.blink_cursor();
     }
 
+    const SUM_VARIABLE_INDEX: usize = 0;
+
     pub fn render<'b>(&'b mut self) -> RenderBuckets<'b> {
         let RIGHT_GUTTER_WIDTH = 3;
         let MIN_RESULT_PANEL_WIDTH = 20;
@@ -537,7 +539,11 @@ impl<'a> NoteCalcApp<'a> {
             255,
         );
 
-        let mut vars: Vec<(&[char], CalcResult)> = Vec::new();
+        // TODO avoid alloc
+        let mut vars: Vec<(&[char], CalcResult)> = Vec::with_capacity(32);
+        vars.push((&['s', 'u', 'm'], CalcResult::empty()));
+        let mut sum_is_null = true;
+
         let mut render_y = 0;
         self.has_result_bitset = 0;
         let cursor_pos = self.editor.get_selection().get_cursor_pos();
@@ -829,6 +835,7 @@ impl<'a> NoteCalcApp<'a> {
                 }
                 result_str_positions.push(Some((start, result_buffer_index)));
                 results.push(Some(result.result.clone()));
+
                 if result.assignment {
                     let var_name = {
                         let mut i = 0;
@@ -849,10 +856,47 @@ impl<'a> NoteCalcApp<'a> {
                         let end = i;
                         &line[start..=end]
                     };
-                    vars.push((var_name, result.result));
+                    if var_name == &['s', 'u', 'm'] {
+                        sum_is_null = true;
+                    } else {
+                        if sum_is_null {
+                            vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 = result.result.clone();
+                            sum_is_null = false;
+                        } else {
+                            vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 =
+                                add_op(&vars[NoteCalcApp::SUM_VARIABLE_INDEX].1, &result.result)
+                                    .unwrap_or(CalcResult::zero());
+                        }
+                    }
+                    // variable redeclaration
+                    if let Some(i) = vars.iter().position(|it| it.0 == var_name) {
+                        vars[i].1 = result.result;
+                    } else {
+                        vars.push((var_name, result.result));
+                    }
                 } else if self.editor_content.get_data(editor_y).line_id != 0 {
                     let line_id = self.editor_content.get_data(editor_y).line_id;
+                    {
+                        if sum_is_null {
+                            vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 = result.result.clone();
+                            sum_is_null = false;
+                        } else {
+                            vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 =
+                                add_op(&vars[NoteCalcApp::SUM_VARIABLE_INDEX].1, &result.result)
+                                    .unwrap_or(CalcResult::zero());
+                        }
+                    }
                     vars.push((STATIC_LINE_IDS[line_id], result.result));
+                } else {
+                    // TODO extract the sum addition
+                    if sum_is_null {
+                        vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 = result.result.clone();
+                        sum_is_null = false;
+                    } else {
+                        vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 =
+                            add_op(&vars[NoteCalcApp::SUM_VARIABLE_INDEX].1, &result.result)
+                                .unwrap_or(CalcResult::zero());
+                    }
                 }
             } else {
                 result_str_positions.push(None);
@@ -957,7 +1001,13 @@ impl<'a> NoteCalcApp<'a> {
                 // last line
                 let height = editor_y_to_render_y
                     .get(end.row + 1)
-                    .map(|it| it - editor_y_to_render_y[end.row])
+                    .map(|it| {
+                        if *it > editor_y_to_render_y[end.row] {
+                            it - editor_y_to_render_y[end.row]
+                        } else {
+                            1
+                        }
+                    })
                     .unwrap_or(1);
                 render_buckets.draw_rect(
                     Layer::BehindText,
@@ -1089,13 +1139,15 @@ impl<'a> NoteCalcApp<'a> {
             }
         } else {
             let mut sum: Option<&CalcResult> = None;
-            let mut tmp_sum: CalcResult = unsafe { MaybeUninit::uninit().assume_init() };
+            let mut tmp_sum = CalcResult::empty();
             for row_index in sel.get_first().row..=sel.get_second().row {
                 if let Some(line_result) = &results[row_index] {
                     if let Some(sum_r) = &sum {
                         if let Some(add_result) = add_op(sum_r, &line_result) {
                             tmp_sum = add_result;
                             sum = Some(&tmp_sum);
+                        } else {
+                            return None; // don't show anything if can't add all the rows
                         }
                     } else {
                         sum = Some(&line_result);
@@ -1501,8 +1553,8 @@ impl<'a> NoteCalcApp<'a> {
                     return true;
                 }
             } else if input == EditorInputEvent::Del && !before_cursor_pos.is_range() {
-                if let Some(index) = self
-                    .index_of_editor_object_at(before_cursor_pos.get_cursor_pos().with_next_col())
+                if let Some(index) =
+                    self.index_of_editor_object_at(before_cursor_pos.get_cursor_pos())
                 {
                     // remove it
                     let obj = self.editor_objects.remove(index);
@@ -2113,5 +2165,94 @@ mod tests {
         assert_eq!(1, app.editor_content.get_data(0).line_id);
         assert_eq!(2, app.editor_content.get_data(1).line_id);
         assert_eq!(3, app.editor_content.get_data(2).line_id);
+    }
+
+    #[test]
+    fn no_memory_deallocation_bug_in_line_selection() {
+        let mut app = NoteCalcApp::new(120);
+        app.handle_input(
+            EditorInputEvent::Text("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n".to_owned()),
+            InputModifiers::none(),
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(12, 2));
+        app.render();
+        app.handle_input(EditorInputEvent::Up, InputModifiers::shift());
+        app.render();
+    }
+
+    #[test]
+    fn matrix_deletion() {
+        let mut app = NoteCalcApp::new(120);
+        app.handle_input(
+            EditorInputEvent::Text(" [1,2,3]".to_owned()),
+            InputModifiers::none(),
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 0));
+        app.render();
+        app.handle_input(EditorInputEvent::Del, InputModifiers::none());
+        assert_eq!("[1,2,3]", app.editor_content.get_content());
+    }
+
+    fn assert_results(app: NoteCalcApp, expected_results: &[&str]) {
+        let mut i = 0;
+        let mut ok_chars = Vec::with_capacity(32);
+        for r in expected_results.iter() {
+            for ch in r.bytes() {
+                assert_eq!(
+                    app.result_buffer[i],
+                    ch as char,
+                    "at {}: {:?}",
+                    i,
+                    String::from_utf8(ok_chars).unwrap()
+                );
+                ok_chars.push(ch);
+                i += 1;
+            }
+            ok_chars.push(',' as u8);
+            ok_chars.push(' ' as u8);
+        }
+        assert_eq!(
+            app.result_buffer[i], 0 as char,
+            "more results than expected",
+        );
+    }
+
+    #[test]
+    fn sum_can_be_nullified() {
+        let mut app = NoteCalcApp::new(120);
+        app.handle_input(
+            EditorInputEvent::Text(
+                "3m * 2m
+sum = 0
+[1,2,3]
+[4,5,6]
+sum"
+                .to_owned(),
+            ),
+            InputModifiers::none(),
+        );
+        app.render();
+        assert_results(
+            app,
+            &["6 m^2", "0", "[1, 2, 3]", "[4, 5, 6]", "[5, 7, 9]"][..],
+        );
+    }
+
+    #[test]
+    fn no_sum_value_in_case_of_error() {
+        let mut app = NoteCalcApp::new(120);
+        app.handle_input(
+            EditorInputEvent::Text(
+                "3m * 2m\n\
+                [1,2,3]\n\
+                sum"
+                .to_owned(),
+            ),
+            InputModifiers::none(),
+        );
+        app.render();
+        assert_results(app, &["6 m^2", "[1, 2, 3]", "0"][..]);
     }
 }

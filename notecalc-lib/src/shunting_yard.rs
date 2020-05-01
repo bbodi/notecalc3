@@ -461,6 +461,8 @@ impl ShuntingYard {
                         v.reset(output_stack.len(), input_index + 1);
                         continue;
                     }
+                    // so variables can be reassigned
+                    v.had_non_ws_string_literal = true;
                     output_stack.push(input_token.typ.clone());
                     if v.last_valid_output_range.is_none() || v.had_operator {
                         dbg!("close variable");
@@ -1547,5 +1549,14 @@ pub mod tests {
 
         test_output_vars(&[&['b'], &['b', '0']], "b1 + 100", &[num(100)]);
         test_output_vars(&[&['b'], &['b', '0']], "b", &[var("")]);
+    }
+
+    #[test]
+    fn test_var_reassignment() {
+        test_output_vars(
+            &[&['b'], &['b', '0']],
+            "b0 = 100",
+            &[op(OperatorTokenType::Assign), num(100)],
+        );
     }
 }

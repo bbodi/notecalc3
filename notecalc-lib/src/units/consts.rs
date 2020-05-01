@@ -8,8 +8,8 @@ use crate::units::{Prefix, Unit, UnitPrefixes};
 
 #[repr(C)]
 enum UnitType {
-    Length,
     Mass,
+    Length,
     Time,
     Current,
     Temperature,
@@ -42,8 +42,8 @@ pub const EMPTY_UNIT_DIMENSIONS: [isize; BASE_UNIT_DIMENSION_COUNT] =
     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
 pub(crate) const BASE_UNIT_DIMENSIONS: [[isize; BASE_UNIT_DIMENSION_COUNT]; ALL_UNIT_COUNT] = [
-    [0, 1, 0, 0, 0, 0, 0, 0, 0, 0], // Length
     [1, 0, 0, 0, 0, 0, 0, 0, 0, 0], // Mass
+    [0, 1, 0, 0, 0, 0, 0, 0, 0, 0], // Length
     [0, 0, 1, 0, 0, 0, 0, 0, 0, 0], // Time
     [0, 0, 0, 1, 0, 0, 0, 0, 0, 0], // Current
     [0, 0, 0, 0, 1, 0, 0, 0, 0, 0], // Temperature
@@ -1490,6 +1490,16 @@ pub fn init_units<'a>(prefixes: &'a UnitPrefixes) -> HashMap<&'static str, Unit<
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
             prefix_groups: (Some(&prefixes.short), None),
             value: BigDecimal::from_i64(1).unwrap(),
+            offset: BigDecimal::from_i64(0).unwrap(),
+        },
+    );
+    map.insert(
+        "cal",
+        Unit {
+            name: &['c', 'a', 'l'],
+            base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
+            prefix_groups: (Some(&prefixes.short), None),
+            value: BigDecimal::from_str("4.1868").unwrap(),
             offset: BigDecimal::from_i64(0).unwrap(),
         },
     );

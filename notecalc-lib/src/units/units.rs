@@ -18,7 +18,7 @@ fn next(str: &[char]) -> &[char] {
 fn parse_unit(str: &[char]) -> Option<&[char]> {
     let mut i = 0;
     for ch in str {
-        if !ch.is_ascii_alphanumeric() && *ch != '$' {
+        if !ch.is_alphanumeric() && *ch != '$' {
             break;
         }
         i += 1;
@@ -62,20 +62,6 @@ impl<'a> Units<'a> {
         // Optional number at the start of the string
         let mut last_valid_cursor_pos = 0;
         let mut c = text;
-        let value = parse_number(&mut c);
-
-        c = skip_whitespaces(c);
-        if value.is_some() && !c.is_empty() {
-            // handle multiplication or division right after the value, like '1/s'
-            if parse_char(&mut c, '*') {
-                power_multiplier_current = 1;
-            } else if parse_char(&mut c, '/') {
-                power_multiplier_current = -1;
-            } else {
-                return (output, last_valid_cursor_pos);
-            }
-            expecting_unit = true;
-        }
 
         // Stack to keep track of powerMultipliers applied to each parentheses group
         let mut power_multiplier_stack = vec![];
@@ -94,6 +80,21 @@ impl<'a> Units<'a> {
                 power_multiplier_current = 1;
                 c = next(c);
                 c = skip_whitespaces(c);
+            }
+
+            let value = parse_number(&mut c);
+
+            c = skip_whitespaces(c);
+            if value.is_some() && !c.is_empty() {
+                // handle multiplication or division right after the value, like '1/s'
+                if parse_char(&mut c, '*') {
+                    power_multiplier_current = 1;
+                } else if parse_char(&mut c, '/') {
+                    power_multiplier_current = -1;
+                } else {
+                    return (output, last_valid_cursor_pos);
+                }
+                expecting_unit = true;
             }
 
             // Is there something here?
@@ -543,8 +544,6 @@ impl<'a> UnitOutput<'a> {
     }
 
     pub fn denormalize(&self, value: &BigDecimal) -> BigDecimal {
-        dbg!(value);
-        dbg!(self);
         return if self.is_derived() {
             let mut result = value.clone();
             for unit in &self.units {

@@ -30,9 +30,13 @@ fn render_result_into(
                 unit.simplify(units, &num)
             };
             let unit = final_unit.as_ref().unwrap_or(unit);
-            num_to_string(f, &unit.denormalize(num), &ResultFormat::Dec);
-            f.write_char(' ');
-            f.write_str(&unit.to_string());
+            if unit.units.is_empty() {
+                num_to_string(f, &num, &ResultFormat::Dec);
+            } else {
+                num_to_string(f, &unit.denormalize(num), &ResultFormat::Dec);
+                f.write_char(' ');
+                f.write_str(&unit.to_string());
+            }
         }
         CalcResult::Number(num) => {
             // TODO optimize
@@ -54,7 +58,7 @@ fn render_result_into(
                         f.write_char(',');
                         f.write_char(' ');
                     }
-                    let cell = &mat.cols[row_i * mat.col_count + col_i];
+                    let cell = &mat.cells[row_i * mat.col_count + col_i];
                     render_result_into(units, cell, format, false, f);
                 }
             }

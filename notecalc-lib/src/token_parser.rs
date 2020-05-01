@@ -132,10 +132,6 @@ impl TokenParser {
         dst: &mut Vec<Token<'text_ptr, 'units>>,
         units: &'units Units,
     ) {
-        // let text = text.trim();
-        // sort them
-        // val sortedVariableNames = variableNames.sortedByDescending { it.length }
-        // val sortedFunctionNames = functionNames.sortedByDescending { it.length }
         let mut index = 0;
         let mut can_be_unit = false;
         while index < line.len() {
@@ -153,10 +149,6 @@ impl TokenParser {
             });
             if let Some(token) = parse_result {
                 match &token.typ {
-                    // Token::UnitOfMeasure(ptr, ..) => {
-                    //     can_be_unit = false;
-                    //     index += ptr.len()
-                    // }
                     TokenType::StringLiteral => {
                         if token.ptr[0].is_ascii_whitespace() {
                             // keep can_be_unit as it was
@@ -1281,5 +1273,10 @@ mod tests {
     #[test]
     fn test_unit_cancelling() {
         test("1 km/m", &[num(1), str(" "), unit("km/m")]);
+    }
+
+    #[test]
+    fn test_unit_parsing_latin_chars() {
+        test("1 hónap", &[num(1), str(" "), str("hónap")]);
     }
 }
