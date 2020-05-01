@@ -2,7 +2,7 @@
 #![feature(const_generics)]
 #![feature(type_alias_impl_trait)]
 
-use crate::calc::{evaluate_tokens, CalcResult};
+use crate::calc::{add_op, evaluate_tokens, CalcResult, EvaluationResult};
 use crate::consts::{LINE_NUM_CONSTS, STATIC_LINE_IDS};
 use crate::editor::editor::{Editor, EditorInputEvent, InputModifiers, Pos, Selection};
 use crate::editor::editor_content::EditorContent;
@@ -521,8 +521,9 @@ impl<'a> NoteCalcApp<'a> {
         // TODO: improve vec alloc
         let mut render_buckets = RenderBuckets::new();
         let mut result_buffer_index = 0;
-        let mut result_str_positions: SmallVec<[Option<(usize, usize)>; 256]> =
-            SmallVec::with_capacity(256);
+        let mut result_str_positions: SmallVec<[Option<(usize, usize)>; 64]> =
+            SmallVec::with_capacity(64);
+        let mut results: SmallVec<[Option<CalcResult>; 64]> = SmallVec::with_capacity(64);
         let mut longest_row_len = 0;
         self.editor_objects.clear();
 
@@ -827,6 +828,7 @@ impl<'a> NoteCalcApp<'a> {
                     result_buffer_index += 1;
                 }
                 result_str_positions.push(Some((start, result_buffer_index)));
+                results.push(Some(result.result.clone()));
                 if result.assignment {
                     let var_name = {
                         let mut i = 0;
@@ -849,11 +851,12 @@ impl<'a> NoteCalcApp<'a> {
                     };
                     vars.push((var_name, result.result));
                 } else if self.editor_content.get_data(editor_y).line_id != 0 {
-                    let asd = self.editor_content.get_data(editor_y);
-                    vars.push((STATIC_LINE_IDS[asd.line_id], result.result));
+                    let line_id = self.editor_content.get_data(editor_y).line_id;
+                    vars.push((STATIC_LINE_IDS[line_id], result.result));
                 }
             } else {
                 result_str_positions.push(None);
+                results.push(None);
             };
 
             match self.editor_content.get_data(editor_y).result_format {
@@ -931,7 +934,8 @@ impl<'a> NoteCalcApp<'a> {
                     Layer::BehindText,
                     start.column + LEFT_GUTTER_WIDTH,
                     editor_y_to_render_y[start.row],
-                    (MAX_EDITOR_WIDTH - start.column - LEFT_GUTTER_WIDTH + 1)
+                    self.editor_content
+                        .line_len(start.row)
                         .min(current_editor_width),
                     height,
                 );
@@ -946,7 +950,7 @@ impl<'a> NoteCalcApp<'a> {
                         Layer::BehindText,
                         LEFT_GUTTER_WIDTH,
                         editor_y_to_render_y[i],
-                        current_editor_width,
+                        self.editor_content.line_len(i).min(current_editor_width),
                         height,
                     );
                 }
@@ -980,9 +984,10 @@ impl<'a> NoteCalcApp<'a> {
                     (end.column - start.column).min(current_editor_width),
                     height,
                 );
-
-                // evaluated result of selection
-                if let Some(mut partial_result) = self.evaluate_selection(&vars) {
+            }
+            // evaluated result of selection, selected text
+            if let Some(mut partial_result) = self.evaluate_selection(&vars, &results) {
+                if start.row == end.row {
                     let selection_center = start.column + ((end.column - start.column) / 2);
                     partial_result.insert_str(0, "= ");
                     let result_w = partial_result.chars().count();
@@ -1003,6 +1008,54 @@ impl<'a> NoteCalcApp<'a> {
                         editor_y_to_render_y[start.row] - 1,
                         partial_result,
                     );
+                } else {
+                    partial_result.insert_str(0, "⎬ ∑ = ");
+                    let result_w = partial_result.chars().count();
+                    let x = (start.row..=end.row)
+                        .map(|it| self.editor_content.line_len(it))
+                        .max_by(|a, b| a.cmp(b))
+                        .unwrap()
+                        + 3;
+                    let height =
+                        editor_y_to_render_y[end.row] - editor_y_to_render_y[start.row] + 1;
+                    render_buckets.set_color(Layer::AboveText, 0xAAFFAA_FF);
+                    render_buckets.draw_rect(
+                        Layer::AboveText,
+                        LEFT_GUTTER_WIDTH + x,
+                        editor_y_to_render_y[start.row],
+                        result_w + 1,
+                        height,
+                    );
+                    // draw the parenthesis
+                    render_buckets.set_color(Layer::AboveText, 0x000000_FF);
+
+                    render_buckets.draw_char(
+                        Layer::AboveText,
+                        LEFT_GUTTER_WIDTH + x,
+                        editor_y_to_render_y[start.row],
+                        '⎫',
+                    );
+                    render_buckets.draw_char(
+                        Layer::AboveText,
+                        LEFT_GUTTER_WIDTH + x,
+                        editor_y_to_render_y[end.row],
+                        '⎭',
+                    );
+                    for i in 1..height {
+                        render_buckets.draw_char(
+                            Layer::AboveText,
+                            LEFT_GUTTER_WIDTH + x,
+                            editor_y_to_render_y[start.row] + i,
+                            '⎪',
+                        );
+                    }
+                    // center
+                    render_buckets.draw_string(
+                        Layer::AboveText,
+                        LEFT_GUTTER_WIDTH + x,
+                        editor_y_to_render_y[start.row] + height / 2,
+                        partial_result,
+                    );
                 }
             }
         }
@@ -1010,28 +1063,68 @@ impl<'a> NoteCalcApp<'a> {
         return render_buckets;
     }
 
-    fn evaluate_selection(&self, vars: &Vec<(&[char], CalcResult)>) -> Option<String> {
+    fn evaluate_selection(
+        &self,
+        vars: &Vec<(&[char], CalcResult)>,
+        results: &SmallVec<[Option<CalcResult>; 64]>,
+    ) -> Option<String> {
         let sel = self.editor.get_selection();
         // TODO optimize vec allocations
         let mut tokens = Vec::with_capacity(128);
-        if let Some(selected_text) = Editor::get_selected_text(sel, &self.editor_content) {
-            TokenParser::parse_line(selected_text, vars, &[], &mut tokens, &self.units);
-
-            let mut shunting_output_stack = Vec::with_capacity(4);
-            ShuntingYard::shunting_yard(&mut tokens, &[], &mut shunting_output_stack);
-            if let Some(result) = evaluate_tokens(&mut shunting_output_stack, &self.units, &vars) {
-                if result.there_was_operation {
-                    let result_str = render_result(
-                        &self.units,
-                        &result.result,
-                        &self.editor_content.get_data(sel.start.row).result_format,
-                        result.there_was_unit_conversion,
-                    );
-                    return Some(result_str);
+        if sel.start.row == sel.end.unwrap().row {
+            if let Some(selected_text) =
+                Editor::get_selected_text_single_line(sel, &self.editor_content)
+            {
+                if let Some(result) = self.evaluate_text(selected_text, &vars, &mut tokens) {
+                    if result.there_was_operation {
+                        let result_str = render_result(
+                            &self.units,
+                            &result.result,
+                            &self.editor_content.get_data(sel.start.row).result_format,
+                            result.there_was_unit_conversion,
+                        );
+                        return Some(result_str);
+                    }
                 }
+            }
+        } else {
+            let mut sum: Option<&CalcResult> = None;
+            let mut tmp_sum: CalcResult = unsafe { MaybeUninit::uninit().assume_init() };
+            for row_index in sel.get_first().row..=sel.get_second().row {
+                if let Some(line_result) = &results[row_index] {
+                    if let Some(sum_r) = &sum {
+                        if let Some(add_result) = add_op(sum_r, &line_result) {
+                            tmp_sum = add_result;
+                            sum = Some(&tmp_sum);
+                        }
+                    } else {
+                        sum = Some(&line_result);
+                    }
+                }
+            }
+            if let Some(sum) = sum {
+                let result_str = render_result(
+                    &self.units,
+                    sum,
+                    &self.editor_content.get_data(sel.start.row).result_format,
+                    false,
+                );
+                return Some(result_str);
             }
         }
         return None;
+    }
+
+    fn evaluate_text<'text_ptr, 'units>(
+        &'units self,
+        text: &'text_ptr [char],
+        vars: &'units Vec<(&'text_ptr [char], CalcResult)>,
+        tokens: &mut Vec<Token<'text_ptr, 'units>>,
+    ) -> Option<EvaluationResult> {
+        TokenParser::parse_line(text, vars, &[], tokens, &self.units);
+        let mut shunting_output_stack = Vec::with_capacity(4);
+        ShuntingYard::shunting_yard(tokens, &[], &mut shunting_output_stack);
+        return evaluate_tokens(&mut shunting_output_stack, &self.units, &vars);
     }
 
     fn render_matrix<'b>(

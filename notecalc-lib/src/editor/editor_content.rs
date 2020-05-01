@@ -201,6 +201,12 @@ impl<T: Default + Clone> EditorContent<T> {
         row_index * self.max_line_len + column_index
     }
 
+    pub fn get_line_valid_chars(&self, row_index: usize) -> &[char] {
+        let from = row_index * self.max_line_len;
+        let to = from + self.line_len(row_index);
+        &self.canvas[from..to]
+    }
+
     pub fn get_line_chars(&self, row_index: usize) -> &[char] {
         let from = row_index * self.max_line_len;
         let to = from + self.max_line_len;

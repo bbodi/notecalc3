@@ -452,7 +452,7 @@ fn multiply_op<'units>(
     }
 }
 
-fn add_op<'a>(lhs: &CalcResult<'a>, rhs: &CalcResult<'a>) -> Option<CalcResult<'a>> {
+pub fn add_op<'a>(lhs: &CalcResult<'a>, rhs: &CalcResult<'a>) -> Option<CalcResult<'a>> {
     match (lhs, rhs) {
         //////////////
         // 12 + x

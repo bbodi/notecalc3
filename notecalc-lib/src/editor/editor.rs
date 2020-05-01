@@ -284,7 +284,7 @@ impl Editor {
         self.set_selection_save_col(self.selection.extend(Pos::from_row_column(y, col)));
     }
 
-    pub fn get_selected_text<T: Default + Clone>(
+    pub fn get_selected_text_single_line<T: Default + Clone>(
         selection: Selection,
         content: &EditorContent<T>,
     ) -> Option<&[char]> {

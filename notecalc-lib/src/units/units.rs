@@ -444,14 +444,10 @@ impl<'a> UnitOutput<'a> {
                             power: self.dimensions[i],
                         });
                     } else {
-                        dbg!(BASE_UNIT_DIMENSIONS[i]);
-                        dbg!(get_base_unit_for(units, &BASE_UNIT_DIMENSIONS[i]));
                         return None;
                     }
                 }
             }
-            dbg!(&proposed_unit_list);
-            dbg!(&self);
             // Is the proposed unit list "simpler" than the existing one?
             if proposed_unit_list.len() < self.units.len() {
                 Some(UnitOutput {
