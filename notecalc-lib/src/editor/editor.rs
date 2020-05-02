@@ -72,7 +72,7 @@ impl InputModifiers {
     }
 }
 
-#[derive(Eq, PartialEq, Debug, Clone, Copy)]
+#[derive(Default, Eq, PartialEq, Debug, Clone, Copy)]
 pub struct Pos {
     pub row: usize,
     pub column: usize,

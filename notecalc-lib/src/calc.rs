@@ -56,7 +56,6 @@ pub struct EvaluationResult<'units> {
 
 pub fn evaluate_tokens<'text_ptr, 'units>(
     tokens: &mut Vec<TokenType<'units>>,
-    units: &'units Units,
     variables: &[(&'text_ptr [char], CalcResult<'units>)],
 ) -> Option<EvaluationResult<'units>> {
     let mut stack = vec![];
@@ -675,30 +674,46 @@ pub fn divide_op<'a>(lhs: &CalcResult<'a>, rhs: &CalcResult<'a>) -> Option<CalcR
         //////////////
         (CalcResult::Number(lhs), CalcResult::Number(rhs)) => {
             // 100 / 2
-            Some(CalcResult::Number(lhs / rhs))
+            if rhs.is_zero() {
+                None
+            } else {
+                Some(CalcResult::Number(lhs / rhs))
+            }
         }
         (CalcResult::Number(lhs), CalcResult::Quantity(rhs, unit)) => {
             // 100 / 2km => 100 / (2 km)
             let mut new_unit = unit.pow(-1);
 
             let denormalized_num = unit.denormalize(rhs);
+            if denormalized_num.is_zero() {
+                return None;
+            }
             let num_part = new_unit.normalize(&(lhs / &denormalized_num));
             Some(CalcResult::Quantity(num_part, new_unit.clone()))
         }
         (CalcResult::Number(lhs), CalcResult::Percentage(rhs)) => {
+            if rhs.is_zero() {
+                return None;
+            }
             // 100 / 50%
-            Some(CalcResult::Number(lhs / rhs * dec(100)))
+            Some(CalcResult::Percentage(lhs / rhs * dec(100)))
         }
         (CalcResult::Number(..), CalcResult::Matrix(..)) => None,
         //////////////
         // 12km / x
         //////////////
         (CalcResult::Quantity(lhs, lhs_unit), CalcResult::Number(rhs)) => {
-            // 2m * 5
+            // 2m / 5
+            if rhs.is_zero() {
+                return None;
+            }
             Some(CalcResult::Quantity(lhs / rhs, lhs_unit.clone()))
         }
         (CalcResult::Quantity(lhs, lhs_unit), CalcResult::Quantity(rhs, rhs_unit)) => {
             // 12 km / 3s
+            if rhs.is_zero() {
+                return None;
+            }
             Some(CalcResult::Quantity(lhs / rhs, lhs_unit / rhs_unit))
         }
         (CalcResult::Quantity(lhs, lhs_unit), CalcResult::Percentage(rhs)) => {
@@ -722,9 +737,9 @@ pub fn divide_op<'a>(lhs: &CalcResult<'a>, rhs: &CalcResult<'a>) -> Option<CalcR
             None
         }
         (CalcResult::Percentage(..), CalcResult::Matrix(..)) => None,
-        (CalcResult::Matrix(mat), CalcResult::Number(..)) => mat.div_scalar(rhs),
-        (CalcResult::Matrix(mat), CalcResult::Quantity(..)) => mat.div_scalar(rhs),
-        (CalcResult::Matrix(mat), CalcResult::Percentage(..)) => mat.div_scalar(rhs),
+        (CalcResult::Matrix(mat), CalcResult::Number(..))
+        | (CalcResult::Matrix(mat), CalcResult::Quantity(..))
+        | (CalcResult::Matrix(mat), CalcResult::Percentage(..)) => mat.div_scalar(rhs),
         (CalcResult::Matrix(mat), CalcResult::Matrix(..)) => None,
         _ => None,
     };
@@ -801,7 +816,7 @@ mod tests {
         let vars = Vec::new();
         let mut shunting_output =
             crate::shunting_yard::tests::do_shunting_yard(&temp, &units, &mut tokens, &vars);
-        let mut result_stack = evaluate_tokens(&mut shunting_output, &units, &vars);
+        let mut result_stack = evaluate_tokens(&mut shunting_output, &vars);
 
         crate::shunting_yard::tests::compare_tokens(expected_tokens, &tokens);
     }
@@ -819,7 +834,7 @@ mod tests {
         let mut shunting_output =
             crate::shunting_yard::tests::do_shunting_yard(&temp, &units, &mut tokens, vars);
 
-        let result = evaluate_tokens(&mut shunting_output, &units, vars);
+        let result = evaluate_tokens(&mut shunting_output, vars);
 
         if let Some(EvaluationResult {
             there_was_unit_conversion,
@@ -962,6 +977,8 @@ mod tests {
         test("10% * 200", "20");
         test("0% * 200", "0");
         test("(10 + 20)%", "30%");
+
+        test("30/200%", "15%");
     }
 
     #[test]
@@ -1224,6 +1241,16 @@ mod tests {
         test("[2, 3; 4, 5] * 2", "[4, 6; 8, 10]");
 
         test("2km * [2]", "[4 km]");
+    }
+
+    #[test]
+    fn div_by_zero() {
+        // TODO: vezess be egy error-t a resulthoiz
+        test("1 / 0", " ");
+        test("1kg / 0", " ");
+        test("1m / 0s", " ");
+        test("1% / 0", " ");
+        test("10 / 0%", " ");
     }
 
     #[test]
