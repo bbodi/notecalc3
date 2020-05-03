@@ -29,6 +29,14 @@ impl<'text_ptr, 'units> Token<'text_ptr, 'units> {
     }
 }
 
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum FnType {
+    Sin,
+    Cos,
+    Nth,
+    Sum,
+}
+
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum OperatorTokenType<'units> {
     Comma,
@@ -54,6 +62,7 @@ pub enum OperatorTokenType<'units> {
     Assign,
     UnitConverter,
     Matrix { row_count: usize, col_count: usize },
+    Fn { arg_count: usize, typ: FnType },
     Unit(UnitOutput<'units>),
 }
 
@@ -89,6 +98,7 @@ impl<'a> OperatorTokenType<'a> {
             OperatorTokenType::BracketOpen => 0,
             OperatorTokenType::BracketClose => 0,
             OperatorTokenType::Matrix { .. } => 0,
+            OperatorTokenType::Fn { .. } => 0,
         }
     }
 
@@ -118,6 +128,7 @@ impl<'a> OperatorTokenType<'a> {
             OperatorTokenType::BracketOpen => Assoc::Left,
             OperatorTokenType::BracketClose => Assoc::Left,
             OperatorTokenType::Matrix { .. } => Assoc::Left,
+            OperatorTokenType::Fn { .. } => Assoc::Left,
         }
     }
 }
@@ -128,7 +139,6 @@ impl TokenParser {
     pub fn parse_line<'text_ptr, 'units>(
         line: &'text_ptr [char],
         variable_names: &[(&'text_ptr [char], CalcResult)],
-        function_names: &[&str],
         dst: &mut Vec<Token<'text_ptr, 'units>>,
         units: &'units Units,
     ) {
@@ -393,6 +403,14 @@ impl TokenParser {
                     continue 'asd;
                 }
             }
+            // if the next char is '(', it can't be a var name
+            if str
+                .get(var_name.len())
+                .map(|it| *it == '(')
+                .unwrap_or(false)
+            {
+                continue 'asd;
+            }
             // only full match allowed e.g. if there is variable 'b', it should not match "b0" as 'b' and '0'
             let not_full_match = str
                 .get(var_name.len())
@@ -542,7 +560,7 @@ mod tests {
             let temp = str.chars().collect::<Vec<_>>();
             let prefixes = create_prefixes();
             let units = Units::new(&prefixes);
-            TokenParser::parse_line(&temp, &Vec::new(), &[], &mut vec, &units);
+            TokenParser::parse_line(&temp, &Vec::new(), &mut vec, &units);
             match vec.get(0) {
                 Some(Token {
                     ptr,
@@ -560,7 +578,7 @@ mod tests {
             let temp = str.chars().collect::<Vec<_>>();
             let prefixes = create_prefixes();
             let units = Units::new(&prefixes);
-            TokenParser::parse_line(&temp, &Vec::new(), &[], &mut vec, &units);
+            TokenParser::parse_line(&temp, &Vec::new(), &mut vec, &units);
             match vec.get(0) {
                 Some(Token {
                     ptr,
@@ -604,7 +622,7 @@ mod tests {
         let temp = text.chars().collect::<Vec<_>>();
         let prefixes = create_prefixes();
         let units = Units::new(&prefixes);
-        TokenParser::parse_line(&temp, &var_names, &[], &mut vec, &units);
+        TokenParser::parse_line(&temp, &var_names, &mut vec, &units);
         assert_eq!(
             expected_tokens.len(),
             vec.len(),
@@ -1200,6 +1218,21 @@ mod tests {
                 num(100),
             ],
         );
+
+        test_vars(
+            &[&['b']],
+            "1 + b(2)",
+            &[
+                num(1),
+                str(" "),
+                op(OperatorTokenType::Add),
+                str(" "),
+                str("b"),
+                op(OperatorTokenType::ParenOpen),
+                num(2),
+                op(OperatorTokenType::ParenClose),
+            ],
+        );
     }
 
     #[test]
@@ -1278,5 +1311,37 @@ mod tests {
     #[test]
     fn test_unit_parsing_latin_chars() {
         test("1 hónap", &[num(1), str(" "), str("hónap")]);
+    }
+
+    #[test]
+    fn test_fn_parsing() {
+        test(
+            "sin(60 degree)",
+            &[
+                str("sin"),
+                op(OperatorTokenType::ParenOpen),
+                num(60),
+                str(" "),
+                unit("degree"),
+                op(OperatorTokenType::ParenClose),
+            ],
+        );
+        test(
+            "nth([5,6,7],1)",
+            &[
+                str("nth"),
+                op(OperatorTokenType::ParenOpen),
+                op(OperatorTokenType::BracketOpen),
+                num(5),
+                op(OperatorTokenType::Comma),
+                num(6),
+                op(OperatorTokenType::Comma),
+                num(7),
+                op(OperatorTokenType::BracketClose),
+                op(OperatorTokenType::Comma),
+                num(1),
+                op(OperatorTokenType::ParenClose),
+            ],
+        );
     }
 }

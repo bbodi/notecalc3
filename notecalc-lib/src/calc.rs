@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 use crate::matrix::MatrixData;
 use crate::token_parser::TokenType::StringLiteral;
-use crate::token_parser::{OperatorTokenType, Token, TokenType};
+use crate::token_parser::{FnType, OperatorTokenType, Token, TokenType};
 use crate::units::consts::EMPTY_UNIT_DIMENSIONS;
 use crate::units::units::{UnitOutput, Units};
 use std::collections::HashMap;
@@ -182,6 +182,58 @@ fn apply_operation<'units>(
                 false
             }
         }
+        OperatorTokenType::Fn { arg_count, typ } => match typ {
+            FnType::Nth => {
+                if *arg_count < 2 {
+                    false
+                } else {
+                    let index = &stack[stack.len() - 1];
+                    let mat = &stack[stack.len() - 2];
+                    match (index, mat) {
+                        (CalcResult::Number(n), CalcResult::Matrix(mat)) => {
+                            if let Some(index) = n.to_u32() {
+                                if mat.col_count < (index + 1) as usize {
+                                    false
+                                } else {
+                                    let result = mat.cell(0, index as usize).clone();
+                                    stack.truncate(stack.len() - 2);
+                                    stack.push(result);
+                                    true
+                                }
+                            } else {
+                                false
+                            }
+                        }
+                        _ => false,
+                    }
+                }
+            }
+            FnType::Sum => {
+                if *arg_count < 1 {
+                    false
+                } else {
+                    let param = &stack[stack.len() - 1];
+                    match param {
+                        CalcResult::Matrix(mat) => {
+                            let mut sum = mat.cells[0].clone();
+                            for cell in mat.cells.iter().skip(1) {
+                                if let Some(result) = add_op(&sum, cell) {
+                                    sum = result;
+                                } else {
+                                    return false;
+                                }
+                            }
+                            stack.truncate(stack.len() - 1);
+                            stack.push(sum);
+                            true
+                        }
+                        _ => false,
+                    }
+                }
+            }
+            FnType::Sin => true,
+            FnType::Cos => true,
+        },
         OperatorTokenType::Semicolon | OperatorTokenType::Comma => {
             // ignore
             true
@@ -849,15 +901,15 @@ mod tests {
                     &units,
                     &result.as_ref().unwrap().result,
                     &ResultFormat::Dec,
-                    *there_was_unit_conversion
+                    *there_was_unit_conversion,
                 )
             );
         } else {
             assert_eq!(
-                expected,
                 result
                     .map(|it| render_result(&units, &it.result, &ResultFormat::Dec, false))
-                    .unwrap_or(" ".to_string())
+                    .unwrap_or(" ".to_string()),
+                expected,
             );
         }
     }
@@ -1067,7 +1119,7 @@ mod tests {
                 str("]"),
             ],
         );
-        test("[2, asda]", " ");
+        test("[2, asda]", "2");
 
         test(
             "2+3 - this minus sign is part of the text, should not affect the result",
@@ -1387,5 +1439,17 @@ mod tests {
         test_tokens("10 $/month", &[num(10), str(" "), unit("$ / month")]);
         test("1 $/month", "1 $ / month");
         test("140k $ / month * 3 years", "5040000 $");
+    }
+
+    #[test]
+    fn test_func_nth() {
+        test("nth([5, 6, 7], 0)", "5");
+        test("nth([5, 6, 7], 1)", "6");
+        test("nth([5, 6, 7], 2)", "7");
+    }
+
+    #[test]
+    fn test_func_sum() {
+        test("sum([5, 6, 7])", "18");
     }
 }

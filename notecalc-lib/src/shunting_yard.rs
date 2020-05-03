@@ -1,6 +1,8 @@
-use crate::token_parser::{Assoc, OperatorTokenType, Token, TokenType};
+use crate::token_parser::{Assoc, FnType, OperatorTokenType, Token, TokenType};
 use bigdecimal::*;
 use std::ops::Neg;
+
+pub const FUNCTION_NAMES: &'static [&'static str] = &["sin"];
 
 #[derive(Eq, PartialEq, Debug)]
 enum ValidationTokenType {
@@ -9,11 +11,52 @@ enum ValidationTokenType {
     Op,
 }
 
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Debug)]
+struct MatrixStackEntry {
+    pub matrix_start_input_pos: usize,
+    pub matrix_row_count: usize,
+    pub matrix_prev_row_len: Option<usize>,
+    pub matrix_current_row_len: usize,
+}
+
+#[derive(Debug)]
+struct FnStackEntry {
+    pub typ: FnType,
+    pub fn_arg_count: usize,
+}
+
+#[derive(Debug)]
+enum ParenStackEntry {
+    /// e.g. [1, 2]
+    Matrix(MatrixStackEntry),
+    /// e.g. sin(60)
+    Fn(FnStackEntry),
+    /// e.g. (12 + 3)
+    Simple,
+}
+
+impl ParenStackEntry {
+    fn new_mat(index: isize) -> ParenStackEntry {
+        ParenStackEntry::Matrix(MatrixStackEntry {
+            matrix_start_input_pos: index as usize,
+            matrix_row_count: 1,
+            matrix_prev_row_len: None,
+            matrix_current_row_len: 1,
+        })
+    }
+
+    fn new_fn(typ: FnType) -> ParenStackEntry {
+        ParenStackEntry::Fn(FnStackEntry {
+            typ,
+            fn_arg_count: 1,
+        })
+    }
+}
+
+#[derive(Debug)]
 struct ValidationState {
     expect_expression: bool,
     open_brackets: usize,
-    open_parens: usize,
     prev_token_type: ValidationTokenType,
     tmp_output_stack_start_index: usize,
     first_nonvalidated_token_index: usize,
@@ -26,10 +69,8 @@ struct ValidationState {
     had_assign_op: bool,
     assign_op_input_token_pos: Option<usize>,
     had_non_ws_string_literal: bool,
-    matrix_start_input_pos: usize,
-    matrix_row_count: usize,
-    matrix_prev_row_len: Option<usize>,
-    matrix_current_row_len: usize,
+
+    parenthesis_stack: Vec<ParenStackEntry>,
 }
 
 impl ValidationState {
@@ -39,9 +80,7 @@ impl ValidationState {
             Some((self.valid_range_start_token_index, token_index as usize));
         self.last_valid_output_range =
             Some((self.tmp_output_stack_start_index, output_stack_len - 1));
-        self.matrix_row_count = 1;
-        self.matrix_prev_row_len = None;
-        self.matrix_current_row_len = 1;
+        self.parenthesis_stack.clear();
     }
 
     fn reset(&mut self, output_stack_index: usize, token_index: isize) {
@@ -50,25 +89,20 @@ impl ValidationState {
         self.valid_range_start_token_index = token_index as usize;
         self.expect_expression = true;
         self.open_brackets = 0;
-        self.open_parens = 0;
         self.prev_token_type = ValidationTokenType::Nothing;
         self.neg = false;
         self.had_operator = false;
-        self.matrix_row_count = 1;
-        self.matrix_prev_row_len = None;
-        self.matrix_current_row_len = 1;
+        self.parenthesis_stack.clear();
     }
 
     fn new() -> ValidationState {
         ValidationState {
-            matrix_start_input_pos: 0,
             had_non_ws_string_literal: false,
             last_valid_output_range: None,
             last_valid_input_token_range: None,
             expect_expression: true,
             open_brackets: 0,
             valid_range_start_token_index: 0,
-            open_parens: 0,
             prev_token_type: ValidationTokenType::Nothing,
             tmp_output_stack_start_index: 0,
             first_nonvalidated_token_index: 0,
@@ -76,14 +110,101 @@ impl ValidationState {
             had_operator: false,
             had_assign_op: false,
             assign_op_input_token_pos: None,
-            matrix_row_count: 1,
-            matrix_prev_row_len: None,
-            matrix_current_row_len: 1,
+            parenthesis_stack: Vec::with_capacity(0),
+        }
+    }
+
+    fn is_fn_at_top(&self) -> bool {
+        match self.parenthesis_stack.last() {
+            Some(ParenStackEntry::Fn(FnStackEntry { .. })) => true,
+            _ => false,
+        }
+    }
+
+    fn pop_as_mat(&mut self) -> MatrixStackEntry {
+        match self.parenthesis_stack.pop() {
+            Some(ParenStackEntry::Matrix(entry)) => entry,
+            _ => panic!(),
+        }
+    }
+
+    fn pop_as_fn(&mut self) -> Option<FnStackEntry> {
+        match self.parenthesis_stack.pop() {
+            Some(ParenStackEntry::Fn(entry)) => Some(entry),
+            _ => None,
+        }
+    }
+
+    fn is_matrix_row_len_err(&self) -> bool {
+        match self.parenthesis_stack.last() {
+            Some(ParenStackEntry::Matrix(MatrixStackEntry {
+                matrix_start_input_pos,
+                matrix_row_count,
+                matrix_prev_row_len,
+                matrix_current_row_len,
+            })) => matrix_prev_row_len.map(|it| it != *matrix_current_row_len),
+            _ => Some(true), // if there is no matrix at the top of stack, it is an error
+        }
+        .unwrap_or(false)
+    }
+
+    fn matrix_new_row(&mut self) {
+        match self.parenthesis_stack.last_mut() {
+            Some(ParenStackEntry::Matrix(MatrixStackEntry {
+                matrix_start_input_pos,
+                matrix_row_count,
+                matrix_prev_row_len,
+                matrix_current_row_len,
+            })) => {
+                *matrix_prev_row_len = Some(*matrix_current_row_len);
+                *matrix_current_row_len = 1;
+                *matrix_row_count += 1;
+            }
+            _ => panic!(),
+        }
+    }
+
+    fn is_comma_not_allowed(&self) -> bool {
+        match self.parenthesis_stack.last() {
+            Some(ParenStackEntry::Matrix(MatrixStackEntry {
+                matrix_start_input_pos,
+                matrix_row_count,
+                matrix_prev_row_len,
+                matrix_current_row_len,
+            })) => {
+                self.open_brackets == 0
+                    || matrix_prev_row_len
+                        .map(|it| matrix_current_row_len + 1 > it)
+                        .unwrap_or(false)
+            }
+            Some(ParenStackEntry::Fn(..)) => {
+                // fn always allows comma
+                false
+            }
+            Some(ParenStackEntry::Simple) => true,
+            None => true, // if there is no matrix/fn at the top of stack, it is an error
+        }
+    }
+
+    fn do_comma(&mut self) {
+        match self.parenthesis_stack.last_mut() {
+            Some(ParenStackEntry::Matrix(MatrixStackEntry {
+                matrix_start_input_pos,
+                matrix_row_count,
+                matrix_prev_row_len,
+                matrix_current_row_len,
+            })) => {
+                *matrix_current_row_len += 1;
+            }
+            Some(ParenStackEntry::Fn(FnStackEntry { typ, fn_arg_count })) => {
+                *fn_arg_count += 1;
+            }
+            Some(ParenStackEntry::Simple) | None => panic!(),
         }
     }
 
     fn can_be_valid_closing_token(&self) -> bool {
-        self.open_brackets == 0 && self.open_parens == 0
+        self.parenthesis_stack.is_empty()
     }
 
     fn is_valid_assignment_expression(&self) -> bool {
@@ -99,7 +220,6 @@ pub struct ShuntingYard {}
 impl ShuntingYard {
     pub fn shunting_yard<'text_ptr, 'units>(
         tokens: &mut Vec<Token<'text_ptr, 'units>>,
-        function_names: &[String],
         output_stack: &mut Vec<TokenType<'units>>,
     ) {
         // TODO: into iter!!!
@@ -114,36 +234,63 @@ impl ShuntingYard {
             let input_token = &tokens[input_index as usize];
             match &input_token.typ {
                 TokenType::StringLiteral => {
+                    let is_fn_name = match input_token.ptr {
+                        &['s', 'i', 'n'] => Some(FnType::Sin),
+                        &['c', 'o', 's'] => Some(FnType::Cos),
+                        &['n', 't', 'h'] => Some(FnType::Nth),
+                        &['s', 'u', 'm'] => Some(FnType::Sum),
+                        _ => None,
+                    };
+                    if let Some(fn_type) = is_fn_name {
+                        // next token is parenthesis
+                        if tokens
+                            .get(input_index as usize + 1)
+                            .map(|it| it.ptr[0] == '(')
+                            .unwrap_or(false)
+                            && v.expect_expression
+                        {
+                            tokens[input_index as usize].typ =
+                                TokenType::Operator(OperatorTokenType::Fn {
+                                    arg_count: 0, // unsued in tokens, so can be fixed 0
+                                    typ: fn_type,
+                                });
+
+                            v.parenthesis_stack.push(ParenStackEntry::new_fn(fn_type));
+                            v.prev_token_type = ValidationTokenType::Nothing;
+                            v.expect_expression = true;
+                            operator_stack.push(OperatorTokenType::ParenOpen);
+                            // skip the next paren
+                            input_index += 1;
+                            continue;
+                        }
+                    }
+
                     if !input_token.ptr[0].is_ascii_whitespace() {
                         v.had_non_ws_string_literal = true;
                     }
                     if v.valid_range_start_token_index == input_index as usize {
                         v.valid_range_start_token_index += 1;
                     }
-                    // it ignores strings
-                    if false {
-                        // if function_names.iter().any(|it| it == str) {
-                        //  ShuntingYardStacks((operatorStack + Token.Operator("fun " + inputToken.str)), output + inputToken)
-                    } else {
-                        // ignore it
-                        // output.push(input_token.clone());
-                    }
                 }
                 TokenType::Operator(op) => match op {
                     OperatorTokenType::ParenOpen => {
                         operator_stack.push(op.clone());
-                        v.open_parens += 1;
+                        v.parenthesis_stack.push(ParenStackEntry::Simple);
                         v.prev_token_type = ValidationTokenType::Nothing;
                     }
                     OperatorTokenType::ParenClose => {
-                        if v.expect_expression || v.open_parens == 0 {
-                            dbg!("error1");
+                        let is_error = match v.parenthesis_stack.last() {
+                            None | Some(ParenStackEntry::Matrix(..)) => true,
+                            Some(ParenStackEntry::Simple) | Some(ParenStackEntry::Fn(..)) => false,
+                        };
+
+                        if v.expect_expression || is_error {
+                            dbg!("error ')'");
                             operator_stack.clear();
                             v.reset(output_stack.len(), input_index + 1);
                             continue;
                         } else {
                             v.expect_expression = false;
-                            v.open_parens -= 1;
                             v.prev_token_type = ValidationTokenType::Expr;
                         }
                         ShuntingYard::send_anything_until_opening_bracket(
@@ -151,6 +298,13 @@ impl ShuntingYard {
                             output_stack,
                             &OperatorTokenType::ParenOpen,
                         );
+                        if let Some(fn_entry) = v.pop_as_fn() {
+                            let fn_token_type = TokenType::Operator(OperatorTokenType::Fn {
+                                arg_count: fn_entry.fn_arg_count,
+                                typ: fn_entry.typ,
+                            });
+                            output_stack.push(fn_token_type.clone());
+                        }
                         if v.can_be_valid_closing_token() {
                             dbg!("close");
                             ShuntingYard::send_everything_to_output(
@@ -168,15 +322,12 @@ impl ShuntingYard {
                         }
                         v.open_brackets += 1;
                         v.prev_token_type = ValidationTokenType::Nothing;
-                        v.matrix_start_input_pos = input_index as usize;
+                        v.parenthesis_stack
+                            .push(ParenStackEntry::new_mat(input_index));
                         operator_stack.push(op.clone());
                     }
                     OperatorTokenType::BracketClose => {
-                        if v.expect_expression
-                            || v.open_brackets <= 0
-                            || v.matrix_prev_row_len
-                                .map(|it| it != v.matrix_current_row_len)
-                                .unwrap_or(false)
+                        if v.expect_expression || v.open_brackets == 0 || v.is_matrix_row_len_err()
                         {
                             dbg!("error ']'");
                             operator_stack.clear();
@@ -187,29 +338,29 @@ impl ShuntingYard {
                             v.open_brackets -= 1;
                             v.prev_token_type = ValidationTokenType::Expr;
                         }
-                        // todo számmal térjen vissza ne tokentypeal..
                         ShuntingYard::send_anything_until_opening_bracket(
                             &mut operator_stack,
                             output_stack,
                             &OperatorTokenType::BracketOpen,
                         );
+                        // at this point it is sure that there is a matrix on top of paren_stack
+                        let mat_entry = v.pop_as_mat();
                         let matrix_token_type = TokenType::Operator(OperatorTokenType::Matrix {
-                            row_count: v.matrix_row_count,
-                            col_count: v.matrix_current_row_len,
+                            row_count: mat_entry.matrix_row_count,
+                            col_count: mat_entry.matrix_current_row_len,
                         });
                         output_stack.push(matrix_token_type.clone());
-
+                        tokens.insert(
+                            mat_entry.matrix_start_input_pos,
+                            Token {
+                                ptr: &[],
+                                typ: matrix_token_type.clone(),
+                            },
+                        );
+                        // we inserted one element so increase it
+                        input_index += 1;
                         if v.can_be_valid_closing_token() {
                             dbg!("close ']'");
-                            tokens.insert(
-                                v.matrix_start_input_pos,
-                                Token {
-                                    ptr: &[],
-                                    typ: matrix_token_type.clone(),
-                                },
-                            );
-                            // we inserted one element so increase it
-                            input_index += 1;
                             ShuntingYard::send_everything_to_output(
                                 &mut operator_stack,
                                 output_stack,
@@ -290,12 +441,7 @@ impl ShuntingYard {
                         continue;
                     }
                     OperatorTokenType::Comma => {
-                        if v.open_brackets == 0 && v.open_parens == 0
-                            || (v.open_brackets > 0
-                                && v.matrix_prev_row_len
-                                    .map(|it| v.matrix_current_row_len + 1 > it)
-                                    .unwrap_or(false))
-                        {
+                        if v.is_comma_not_allowed() {
                             dbg!("error ','");
                             operator_stack.clear();
                             v.reset(output_stack.len(), input_index + 1);
@@ -303,17 +449,11 @@ impl ShuntingYard {
                         }
                         v.prev_token_type = ValidationTokenType::Nothing;
                         v.expect_expression = true;
-                        if v.open_brackets > 0 {
-                            v.matrix_current_row_len += 1;
-                        }
+                        v.do_comma();
                         ShuntingYard::operator_rule(op, &mut operator_stack, output_stack);
                     }
                     OperatorTokenType::Semicolon => {
-                        if v.open_brackets == 0
-                            || v.matrix_prev_row_len
-                                .map(|it| v.matrix_current_row_len != it)
-                                .unwrap_or(false)
-                        {
+                        if v.open_brackets == 0 || v.is_matrix_row_len_err() {
                             dbg!("error ';'");
                             operator_stack.clear();
                             v.reset(output_stack.len(), input_index + 1);
@@ -321,9 +461,7 @@ impl ShuntingYard {
                         }
                         v.prev_token_type = ValidationTokenType::Nothing;
                         v.expect_expression = true;
-                        v.matrix_prev_row_len = Some(v.matrix_current_row_len);
-                        v.matrix_current_row_len = 1;
-                        v.matrix_row_count += 1;
+                        v.matrix_new_row();
                         ShuntingYard::operator_rule(op, &mut operator_stack, output_stack);
                     }
                     OperatorTokenType::Perc | OperatorTokenType::Unit(_) => {
@@ -451,9 +589,6 @@ impl ShuntingYard {
                     v.prev_token_type = ValidationTokenType::Expr;
                     v.expect_expression = false;
                 }
-                // Token::UnitOfMeasure(str, unit) => {
-                // output.push(input_token.clone());
-                // }
                 TokenType::Variable { .. } | TokenType::LineReference { .. } => {
                     if !v.expect_expression {
                         dbg!("error8");
@@ -464,7 +599,9 @@ impl ShuntingYard {
                     // so variables can be reassigned
                     v.had_non_ws_string_literal = true;
                     output_stack.push(input_token.typ.clone());
-                    if v.last_valid_output_range.is_none() || v.had_operator {
+                    if (v.last_valid_output_range.is_none() || v.had_operator)
+                        && v.parenthesis_stack.is_empty()
+                    {
                         dbg!("close variable");
                         ShuntingYard::send_everything_to_output(&mut operator_stack, output_stack);
                         // set everything to string which is in front of this expr
@@ -506,14 +643,6 @@ impl ShuntingYard {
         if let Some((last_valid_start_index, last_valid_end_index)) = v.last_valid_output_range {
             output_stack.drain(last_valid_end_index + 1..);
             output_stack.drain(0..last_valid_start_index);
-        } else if input_index > 0 {
-            // TODO what is this branch, can happen?
-            output_stack.clear();
-            ShuntingYard::set_tokens_to_string(
-                tokens,
-                v.first_nonvalidated_token_index,
-                input_index as usize,
-            );
         }
     }
 
@@ -635,7 +764,7 @@ impl ShuntingYard {
 pub mod tests {
     use super::*;
     use crate::calc::CalcResult;
-    use crate::token_parser::TokenParser;
+    use crate::token_parser::{FnType, TokenParser};
     use crate::units::consts::{create_prefixes, init_units};
     use crate::units::units::{UnitOutput, Units};
     use bigdecimal::BigDecimal;
@@ -772,8 +901,8 @@ pub mod tests {
         vars: &Vec<(&'text_ptr [char], CalcResult)>,
     ) -> Vec<TokenType<'units>> {
         let mut output = vec![];
-        TokenParser::parse_line(&text, &vars, &[], tokens, &units);
-        ShuntingYard::shunting_yard(tokens, &[], &mut output);
+        TokenParser::parse_line(&text, &vars, tokens, &units);
+        ShuntingYard::shunting_yard(tokens, &mut output);
         return output;
     }
 
@@ -1039,17 +1168,6 @@ pub mod tests {
                 op(OperatorTokenType::Mult),
                 str(" "),
                 op(OperatorTokenType::Sub),
-                // str("["),
-                // str("1"),
-                // str(","),
-                // str("2"),
-                // str(","),
-                // str("3"),
-                // str("]"),
-                // str(" "),
-                // str("*"),
-                // str(" "),
-                // str("-"),
                 op(OperatorTokenType::Matrix {
                     row_count: 3,
                     col_count: 1,
@@ -1557,6 +1675,206 @@ pub mod tests {
             &[&['b'], &['b', '0']],
             "b0 = 100",
             &[op(OperatorTokenType::Assign), num(100)],
+        );
+    }
+
+    #[test]
+    fn test_fn_parsing() {
+        test_tokens(
+            "sin(60 degree)",
+            &[
+                op(OperatorTokenType::Fn {
+                    arg_count: 0,
+                    typ: FnType::Sin,
+                }),
+                op(OperatorTokenType::ParenOpen),
+                num(60),
+                str(" "),
+                unit("degree"),
+                op(OperatorTokenType::ParenClose),
+            ],
+        );
+        test_tokens(
+            "-sin(60 degree)",
+            &[
+                op(OperatorTokenType::Sub),
+                op(OperatorTokenType::Fn {
+                    arg_count: 0,
+                    typ: FnType::Sin,
+                }),
+                op(OperatorTokenType::ParenOpen),
+                num(60),
+                str(" "),
+                unit("degree"),
+                op(OperatorTokenType::ParenClose),
+            ],
+        );
+
+        test_tokens(
+            "[sin(60), cos(30)]",
+            &[
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 2,
+                }),
+                op(OperatorTokenType::BracketOpen),
+                op(OperatorTokenType::Fn {
+                    arg_count: 0,
+                    typ: FnType::Sin,
+                }),
+                op(OperatorTokenType::ParenOpen),
+                num(60),
+                op(OperatorTokenType::ParenClose),
+                op(OperatorTokenType::Comma),
+                str(" "),
+                op(OperatorTokenType::Fn {
+                    arg_count: 0,
+                    typ: FnType::Cos,
+                }),
+                op(OperatorTokenType::ParenOpen),
+                num(30),
+                op(OperatorTokenType::ParenClose),
+                op(OperatorTokenType::BracketClose),
+            ],
+        );
+
+        test_tokens(
+            "sin([60, 30])",
+            &[
+                op(OperatorTokenType::Fn {
+                    arg_count: 0,
+                    typ: FnType::Sin,
+                }),
+                op(OperatorTokenType::ParenOpen),
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 2,
+                }),
+                op(OperatorTokenType::BracketOpen),
+                num(60),
+                op(OperatorTokenType::Comma),
+                str(" "),
+                num(30),
+                op(OperatorTokenType::BracketClose),
+                op(OperatorTokenType::ParenClose),
+            ],
+        );
+
+        test_tokens(
+            "nth([5,6,7],1)",
+            &[
+                op(OperatorTokenType::Fn {
+                    arg_count: 0,
+                    typ: FnType::Nth,
+                }),
+                op(OperatorTokenType::ParenOpen),
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 3,
+                }),
+                op(OperatorTokenType::BracketOpen),
+                num(5),
+                op(OperatorTokenType::Comma),
+                num(6),
+                op(OperatorTokenType::Comma),
+                num(7),
+                op(OperatorTokenType::BracketClose),
+                op(OperatorTokenType::Comma),
+                num(1),
+                op(OperatorTokenType::ParenClose),
+            ],
+        );
+
+        test_output_vars(
+            &[&['b']],
+            "nth(b, 1)",
+            &[
+                var(""),
+                num(1),
+                op(OperatorTokenType::Fn {
+                    arg_count: 2,
+                    typ: FnType::Nth,
+                }),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_fn_output() {
+        test_output(
+            "sin(60 degree)",
+            &[
+                num(60),
+                unit("degree"),
+                op(OperatorTokenType::Fn {
+                    arg_count: 1,
+                    typ: FnType::Sin,
+                }),
+            ],
+        );
+        test_output(
+            "-sin(60 degree)",
+            &[
+                num(60),
+                unit("degree"),
+                op(OperatorTokenType::Fn {
+                    arg_count: 1,
+                    typ: FnType::Sin,
+                }),
+                op(OperatorTokenType::UnaryMinus),
+            ],
+        );
+
+        test_output(
+            "[sin(60), cos(30)]",
+            &[
+                num(60),
+                op(OperatorTokenType::Fn {
+                    arg_count: 1,
+                    typ: FnType::Sin,
+                }),
+                num(30),
+                op(OperatorTokenType::Fn {
+                    arg_count: 1,
+                    typ: FnType::Cos,
+                }),
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 2,
+                }),
+            ],
+        );
+
+        test_output(
+            "sin([60, 30])",
+            &[
+                num(60),
+                num(30),
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 2,
+                }),
+                op(OperatorTokenType::Fn {
+                    arg_count: 1,
+                    typ: FnType::Sin,
+                }),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_fn_errors() {
+        test_tokens(
+            "nth([1,2]",
+            &[
+                str("nth"),
+                str("("),
+                str("["),
+                str("1"),
+                str(","),
+                str("2"),
+                str("]"),
+            ],
         );
     }
 }

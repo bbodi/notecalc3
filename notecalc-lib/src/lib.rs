@@ -641,7 +641,6 @@ impl<'a> NoteCalcApp<'a> {
         let mut sum_is_null = true;
 
         self.has_result_bitset = 0;
-        let cursor_pos = self.editor.get_selection().get_cursor_pos();
 
         for line in self.editor_content.lines().take(64) {
             r.new_line_started(line);
@@ -661,10 +660,10 @@ impl<'a> NoteCalcApp<'a> {
             } else {
                 // TODO optimize vec allocations
                 let mut tokens = Vec::with_capacity(128);
-                TokenParser::parse_line(line, &vars, &[], &mut tokens, &self.units);
+                TokenParser::parse_line(line, &vars, &mut tokens, &self.units);
 
                 let mut shunting_output_stack = Vec::with_capacity(128);
-                ShuntingYard::shunting_yard(&mut tokens, &[], &mut shunting_output_stack);
+                ShuntingYard::shunting_yard(&mut tokens, &mut shunting_output_stack);
 
                 // Todo: refactor the parameters into a struct
                 NoteCalcApp::render_tokens(
@@ -1411,9 +1410,9 @@ impl<'a> NoteCalcApp<'a> {
         vars: &'units Vec<(&'text_ptr [char], CalcResult)>,
         tokens: &mut Vec<Token<'text_ptr, 'units>>,
     ) -> Option<EvaluationResult> {
-        TokenParser::parse_line(text, vars, &[], tokens, &self.units);
+        TokenParser::parse_line(text, vars, tokens, &self.units);
         let mut shunting_output_stack = Vec::with_capacity(4);
-        ShuntingYard::shunting_yard(tokens, &[], &mut shunting_output_stack);
+        ShuntingYard::shunting_yard(tokens, &mut shunting_output_stack);
         return evaluate_tokens(&mut shunting_output_stack, &vars);
     }
 
@@ -2444,7 +2443,7 @@ mod tests {
         app.handle_input(
             EditorInputEvent::Text(
                 "3m * 2m
-sum = 0
+--
 [1,2,3]
 [4,5,6]
 sum"
@@ -2455,7 +2454,7 @@ sum"
         app.render();
         assert_results(
             app,
-            &["6 m^2", "0", "[1, 2, 3]", "[4, 5, 6]", "[5, 7, 9]"][..],
+            &["6 m^2", "", "[1, 2, 3]", "[4, 5, 6]", "[5, 7, 9]"][..],
         );
     }
 
