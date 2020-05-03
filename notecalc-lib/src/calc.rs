@@ -857,6 +857,8 @@ mod tests {
     use super::*;
     use crate::renderer::render_result;
 
+    static mut DECIMAL_COUNT: usize = 4;
+
     fn test_tokens(text: &str, expected_tokens: &[Token]) {
         println!("===================================================");
         println!("{}", text);
@@ -902,12 +904,19 @@ mod tests {
                     &result.as_ref().unwrap().result,
                     &ResultFormat::Dec,
                     *there_was_unit_conversion,
+                    unsafe { DECIMAL_COUNT }
                 )
             );
         } else {
             assert_eq!(
                 result
-                    .map(|it| render_result(&units, &it.result, &ResultFormat::Dec, false))
+                    .map(|it| render_result(
+                        &units,
+                        &it.result,
+                        &ResultFormat::Dec,
+                        false,
+                        unsafe { DECIMAL_COUNT }
+                    ))
                     .unwrap_or(" ".to_string()),
                 expected,
             );

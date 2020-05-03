@@ -9,8 +9,8 @@ pub enum EditorInputEvent {
     Home,
     End,
     Esc,
-    // PageUp,
-    // PageDown,
+    PageUp,
+    PageDown,
     Enter,
     Backspace,
     Del,
@@ -365,6 +365,8 @@ impl Editor {
         return match input {
             EditorInputEvent::Home => None,
             EditorInputEvent::End => None,
+            EditorInputEvent::PageUp => None,
+            EditorInputEvent::PageDown => None,
             EditorInputEvent::Right => None,
             EditorInputEvent::Up => {
                 if modifiers.ctrl && modifiers.shift {
@@ -765,6 +767,27 @@ impl Editor {
         let cur_pos = self.selection.get_cursor_pos();
 
         match input {
+            EditorInputEvent::PageUp => {
+                let new_pos = Pos::from_row_column(0, 0);
+                let new_selection = if modifiers.shift {
+                    self.selection.extend(new_pos)
+                } else {
+                    Selection::single(new_pos)
+                };
+                self.set_selection_save_col(new_selection);
+            }
+            EditorInputEvent::PageDown => {
+                let new_pos = Pos::from_row_column(
+                    content.line_count() - 1,
+                    content.line_len(content.line_count() - 1),
+                );
+                let new_selection = if modifiers.shift {
+                    self.selection.extend(new_pos)
+                } else {
+                    Selection::single(new_pos)
+                };
+                self.set_selection_save_col(new_selection);
+            }
             EditorInputEvent::Home => {
                 let new_pos = cur_pos.with_column(0);
                 let new_selection = if modifiers.shift {

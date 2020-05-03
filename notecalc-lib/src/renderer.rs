@@ -9,9 +9,17 @@ pub fn render_result(
     result: &CalcResult,
     format: &ResultFormat,
     there_was_unit_conversion: bool,
+    decimal_count: usize,
 ) -> String {
     let mut f = String::new();
-    render_result_into(units, result, format, there_was_unit_conversion, &mut f);
+    render_result_into(
+        units,
+        result,
+        format,
+        there_was_unit_conversion,
+        &mut f,
+        decimal_count,
+    );
     return f;
 }
 
@@ -21,6 +29,7 @@ fn render_result_into(
     format: &ResultFormat,
     there_was_unit_conversion: bool,
     f: &mut impl Write,
+    decimal_count: usize,
 ) {
     match &result {
         CalcResult::Quantity(num, unit) => {
@@ -31,19 +40,19 @@ fn render_result_into(
             };
             let unit = final_unit.as_ref().unwrap_or(unit);
             if unit.units.is_empty() {
-                num_to_string(f, &num, &ResultFormat::Dec);
+                num_to_string(f, &num, &ResultFormat::Dec, decimal_count);
             } else {
-                num_to_string(f, &unit.denormalize(num), &ResultFormat::Dec);
+                num_to_string(f, &unit.denormalize(num), &ResultFormat::Dec, decimal_count);
                 f.write_char(' ');
                 f.write_str(&unit.to_string());
             }
         }
         CalcResult::Number(num) => {
             // TODO optimize
-            num_to_string(f, num, format);
+            num_to_string(f, num, format, decimal_count);
         }
         CalcResult::Percentage(num) => {
-            num_to_string(f, num, &ResultFormat::Dec);
+            num_to_string(f, num, &ResultFormat::Dec, decimal_count);
             f.write_char('%');
         }
         CalcResult::Matrix(mat) => {
@@ -59,7 +68,7 @@ fn render_result_into(
                         f.write_char(' ');
                     }
                     let cell = &mat.cells[row_i * mat.col_count + col_i];
-                    render_result_into(units, cell, format, false, f);
+                    render_result_into(units, cell, format, false, f, decimal_count);
                 }
             }
             f.write_char(']');
@@ -67,12 +76,14 @@ fn render_result_into(
     }
 }
 
-fn num_to_string(f: &mut impl Write, num: &BigDecimal, format: &ResultFormat) {
-    let num = if num.is_integer() {
-        num.with_scale(0)
-    } else {
-        strip_trailing_zeroes(num)
-    };
+fn num_to_string(
+    f: &mut impl Write,
+    num: &BigDecimal,
+    format: &ResultFormat,
+    decimal_count: usize,
+) {
+    // let num = strip_trailing_zeroes(&num.with_scale(decimal_count as i64));
+    let num = num.with_scale(decimal_count as i64);
 
     if *format == ResultFormat::Bin || *format == ResultFormat::Hex {
         if let Some(n) = num.to_i64() {

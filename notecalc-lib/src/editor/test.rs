@@ -1341,6 +1341,36 @@ mod tests {
     }
 
     #[test]
+    fn test_page_up_btn() {
+        test(
+            "abcdefghijklmnopqrstuvwxyz█",
+            &[EditorInputEvent::PageUp],
+            InputModifiers::none(),
+            "█abcdefghijklmnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijklmnop█qrstuvwxyz",
+            &[EditorInputEvent::PageUp],
+            InputModifiers::none(),
+            "█abcdefghijklmnopqrstuvwxyz",
+        );
+
+        test(
+            "█abcdefghijklmnopqrstuvwxyz",
+            &[EditorInputEvent::PageUp],
+            InputModifiers::none(),
+            "█abcdefghijklmnopqrstuvwxyz",
+        );
+        test(
+            "abcdefghijklmnopqrstuvwxyz\naaaaaa█aaaaaaaa",
+            &[EditorInputEvent::PageUp],
+            InputModifiers::none(),
+            "█abcdefghijklmnopqrstuvwxyz\naaaaaaaaaaaaaa",
+        );
+    }
+
+    #[test]
     fn test_end_btn() {
         test(
             "█abcdefghijklmnopqrstuvwxyz",
@@ -1361,6 +1391,36 @@ mod tests {
             &[EditorInputEvent::End],
             InputModifiers::none(),
             "abcdefghijklmnopqrstuvwxyz█",
+        );
+    }
+
+    #[test]
+    fn test_page_down_btn() {
+        test(
+            "█abcdefghijklmnopqrstuvwxyz",
+            &[EditorInputEvent::PageDown],
+            InputModifiers::none(),
+            "abcdefghijklmnopqrstuvwxyz█",
+        );
+
+        test(
+            "abcdefghijklmnop█qrstuvwxyz",
+            &[EditorInputEvent::PageDown],
+            InputModifiers::none(),
+            "abcdefghijklmnopqrstuvwxyz█",
+        );
+
+        test(
+            "abcdefghijklmnopqrstuvwxyz█",
+            &[EditorInputEvent::PageDown],
+            InputModifiers::none(),
+            "abcdefghijklmnopqrstuvwxyz█",
+        );
+        test(
+            "abcdef█ghijklmnopqrstuvwxyz\naaaaaaaaaaaaaa",
+            &[EditorInputEvent::PageDown],
+            InputModifiers::none(),
+            "abcdefghijklmnopqrstuvwxyz\naaaaaaaaaaaaaa█",
         );
     }
 
@@ -2011,6 +2071,37 @@ mod tests {
     }
 
     #[test]
+    fn test_pageup_btn_selection() {
+        test(
+            "abcdefghijklmnopqrstuvwxyz█",
+            &[EditorInputEvent::PageUp],
+            InputModifiers::shift(),
+            "❰abcdefghijklmnopqrstuvwxyz❱",
+        );
+
+        test(
+            "abcdefghijklmnop█qrstuvwxyz",
+            &[EditorInputEvent::PageUp],
+            InputModifiers::shift(),
+            "❰abcdefghijklmnop❱qrstuvwxyz",
+        );
+
+        test(
+            "█abcdefghijklmnopqrstuvwxyz",
+            &[EditorInputEvent::PageUp],
+            InputModifiers::shift(),
+            "█abcdefghijklmnopqrstuvwxyz",
+        );
+
+        test(
+            "abcdefghijklmnopqrstuvwxyz\naaaaaaaaaaaaaa\nbbbb█bbbbb",
+            &[EditorInputEvent::PageUp],
+            InputModifiers::shift(),
+            "❰abcdefghijklmnopqrstuvwxyz\naaaaaaaaaaaaaa\nbbbb❱bbbbb",
+        );
+    }
+
+    #[test]
     fn test_end_btn_selection() {
         test(
             "█abcdefghijklmnopqrstuvwxyz",
@@ -2031,6 +2122,37 @@ mod tests {
             &[EditorInputEvent::End],
             InputModifiers::shift(),
             "abcdefghijklmnopqrstuvwxyz█",
+        );
+    }
+
+    #[test]
+    fn test_pagedown_btn_selection() {
+        test(
+            "█abcdefghijklmnopqrstuvwxyz",
+            &[EditorInputEvent::PageDown],
+            InputModifiers::shift(),
+            "❱abcdefghijklmnopqrstuvwxyz❰",
+        );
+
+        test(
+            "abcdefghijklmnop█qrstuvwxyz",
+            &[EditorInputEvent::PageDown],
+            InputModifiers::shift(),
+            "abcdefghijklmnop❱qrstuvwxyz❰",
+        );
+
+        test(
+            "abcdefghijklmnopqrstuvwxyz█",
+            &[EditorInputEvent::PageDown],
+            InputModifiers::shift(),
+            "abcdefghijklmnopqrstuvwxyz█",
+        );
+
+        test(
+            "abcdefgh█ijklmnopqrstuvwxyz\naaaaaaaaaaaaaa\nbbbbbbbbb",
+            &[EditorInputEvent::PageDown],
+            InputModifiers::shift(),
+            "abcdefgh❱ijklmnopqrstuvwxyz\naaaaaaaaaaaaaa\nbbbbbbbbb❰",
         );
     }
 

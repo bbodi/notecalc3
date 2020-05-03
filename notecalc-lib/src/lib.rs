@@ -154,6 +154,7 @@ pub enum ResultFormat {
 pub struct LineData {
     line_id: usize,
     result_format: ResultFormat,
+    decimal_count: usize,
 }
 
 impl Default for LineData {
@@ -161,6 +162,7 @@ impl Default for LineData {
         LineData {
             line_id: 0,
             result_format: ResultFormat::Dec,
+            decimal_count: 4,
         }
     }
 }
@@ -434,6 +436,7 @@ pub struct NoteCalcApp<'a> {
     units: Units<'a>,
     pub editor: Editor,
     pub editor_content: EditorContent<LineData>,
+    prev_cursor_pos: Pos,
     prefixes: &'static UnitPrefixes,
     result_buffer: [char; 1024],
     matrix_editing: Option<MatrixEditing>,
@@ -540,6 +543,7 @@ impl<'a> NoteCalcApp<'a> {
         let units = Units::new(&prefixes);
         let mut editor_content = EditorContent::new(MAX_EDITOR_WIDTH);
         NoteCalcApp {
+            prev_cursor_pos: Pos::from_row_column(0, 0),
             line_reference_chooser: None,
             client_width,
             prefixes,
@@ -730,6 +734,31 @@ impl<'a> NoteCalcApp<'a> {
             }
 
             r.line_render_ended();
+        }
+
+        if let Some(editor_obj) =
+            self.is_pos_inside_an_obj(self.editor.get_selection().get_cursor_pos())
+        {
+            match editor_obj.typ {
+                EditorObjectType::Matrix {
+                    row_count,
+                    col_count,
+                } => {
+                    if self.matrix_editing.is_none() && !self.editor.get_selection().is_range() {
+                        self.matrix_editing = Some(MatrixEditing::new(
+                            row_count,
+                            col_count,
+                            &self.editor_content.get_line_chars(editor_obj.row)
+                                [editor_obj.start_x..editor_obj.end_x],
+                            editor_obj.row,
+                            editor_obj.start_x,
+                            editor_obj.end_x,
+                            self.prev_cursor_pos,
+                        ));
+                    }
+                }
+                EditorObjectType::LineReference => {}
+            }
         }
 
         match r.clicked_editor_pos {
@@ -997,9 +1026,10 @@ impl<'a> NoteCalcApp<'a> {
                 let result_str = render_result(
                     &units,
                     &result,
-                    &editor_content.get_data(r.editor_pos.row).result_format,
+                    &ResultFormat::Dec,
                     // TODO: ide kellene a result.there_was_unit_conversion
                     false,
+                    2,
                 );
                 editor_objects.push(EditorObject {
                     typ: EditorObjectType::LineReference,
@@ -1021,7 +1051,7 @@ impl<'a> NoteCalcApp<'a> {
                 r.token_render_done(
                     var_name_len,
                     text_len,
-                    if cursor_pos.column >= r.editor_pos.column {
+                    if cursor_pos.column > r.editor_pos.column {
                         let rendered_width = text_len as isize;
                         let diff = rendered_width - var_name_len as isize;
                         diff
@@ -1130,11 +1160,13 @@ impl<'a> NoteCalcApp<'a> {
     ) {
         if let Some(result) = evaluate_tokens(shunting_output_stack, &vars) {
             *has_result_bitset |= 1u64 << editor_y as u64;
+            let line_data = editor_content.get_data(editor_y);
             let result_str = render_result(
                 &units,
                 &result.result,
-                &editor_content.get_data(editor_y).result_format,
+                &line_data.result_format,
                 result.there_was_unit_conversion,
+                line_data.decimal_count,
             );
 
             let start = *result_buffer_index;
@@ -1179,8 +1211,8 @@ impl<'a> NoteCalcApp<'a> {
                 } else {
                     vars.push((var_name, result.result));
                 }
-            } else if editor_content.get_data(editor_y).line_id != 0 {
-                let line_id = editor_content.get_data(editor_y).line_id;
+            } else if line_data.line_id != 0 {
+                let line_id = line_data.line_id;
                 {
                     if *sum_is_null {
                         vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 = result.result.clone();
@@ -1369,6 +1401,7 @@ impl<'a> NoteCalcApp<'a> {
                             &result.result,
                             &self.editor_content.get_data(sel.start.row).result_format,
                             result.there_was_unit_conversion,
+                            4,
                         );
                         return Some(result_str);
                     }
@@ -1397,6 +1430,7 @@ impl<'a> NoteCalcApp<'a> {
                     sum,
                     &self.editor_content.get_data(sel.start.row).result_format,
                     false,
+                    4,
                 );
                 return Some(result_str);
             }
@@ -1697,23 +1731,48 @@ impl<'a> NoteCalcApp<'a> {
     }
 
     pub fn handle_input(&mut self, input: EditorInputEvent, modifiers: InputModifiers) -> bool {
-        if self.matrix_editing.is_none() && modifiers.alt {
+        if self.matrix_editing.is_none() && modifiers.ctrl {
+            if input == EditorInputEvent::Down {
+                let cur_pos = self.editor.get_selection().get_cursor_pos();
+                let line_data = self.editor_content.mut_data(cur_pos.row);
+                if line_data.decimal_count > 0 {
+                    line_data.decimal_count -= 1;
+                }
+            } else if input == EditorInputEvent::Up {
+                let cur_pos = self.editor.get_selection().get_cursor_pos();
+                self.editor_content.mut_data(cur_pos.row).decimal_count += 1;
+            }
+            false
+        } else if self.matrix_editing.is_none() && modifiers.alt {
             if input == EditorInputEvent::Left {
                 let cur_pos = self.editor.get_selection().get_cursor_pos();
-                let new_format = match &self.editor_content.get_data(cur_pos.row).result_format {
-                    ResultFormat::Bin => ResultFormat::Hex,
-                    ResultFormat::Dec => ResultFormat::Bin,
-                    ResultFormat::Hex => ResultFormat::Dec,
-                };
-                self.editor_content.mut_data(cur_pos.row).result_format = new_format;
+                if modifiers.ctrl {
+                    let line_data = self.editor_content.mut_data(cur_pos.row);
+                    if line_data.decimal_count > 0 {
+                        line_data.decimal_count -= 1;
+                    }
+                } else {
+                    let new_format = match &self.editor_content.get_data(cur_pos.row).result_format
+                    {
+                        ResultFormat::Bin => ResultFormat::Hex,
+                        ResultFormat::Dec => ResultFormat::Bin,
+                        ResultFormat::Hex => ResultFormat::Dec,
+                    };
+                    self.editor_content.mut_data(cur_pos.row).result_format = new_format;
+                }
             } else if input == EditorInputEvent::Right {
                 let cur_pos = self.editor.get_selection().get_cursor_pos();
-                let new_format = match &self.editor_content.get_data(cur_pos.row).result_format {
-                    ResultFormat::Bin => ResultFormat::Dec,
-                    ResultFormat::Dec => ResultFormat::Hex,
-                    ResultFormat::Hex => ResultFormat::Bin,
-                };
-                self.editor_content.mut_data(cur_pos.row).result_format = new_format;
+                if modifiers.ctrl {
+                    self.editor_content.mut_data(cur_pos.row).decimal_count += 1;
+                } else {
+                    let new_format = match &self.editor_content.get_data(cur_pos.row).result_format
+                    {
+                        ResultFormat::Bin => ResultFormat::Dec,
+                        ResultFormat::Dec => ResultFormat::Hex,
+                        ResultFormat::Hex => ResultFormat::Bin,
+                    };
+                    self.editor_content.mut_data(cur_pos.row).result_format = new_format;
+                }
             } else if input == EditorInputEvent::Up {
                 let cur_pos = self.editor.get_selection().get_cursor_pos();
                 self.line_reference_chooser =
@@ -1748,13 +1807,14 @@ impl<'a> NoteCalcApp<'a> {
             self.handle_matrix_editor_input(input, modifiers);
             true
         } else {
-            let before_cursor_pos = self.editor.get_selection();
+            let cursor_pos = self.editor.get_selection();
+            self.prev_cursor_pos = cursor_pos.get_cursor_pos();
             if input == EditorInputEvent::Backspace
-                && !before_cursor_pos.is_range()
-                && before_cursor_pos.start.column > 0
+                && !cursor_pos.is_range()
+                && cursor_pos.start.column > 0
             {
-                if let Some(index) = self
-                    .index_of_editor_object_at(before_cursor_pos.get_cursor_pos().with_prev_col())
+                if let Some(index) =
+                    self.index_of_editor_object_at(cursor_pos.get_cursor_pos().with_prev_col())
                 {
                     // remove it
                     let obj = self.editor_objects.remove(index);
@@ -1770,10 +1830,8 @@ impl<'a> NoteCalcApp<'a> {
                     );
                     return true;
                 }
-            } else if input == EditorInputEvent::Del && !before_cursor_pos.is_range() {
-                if let Some(index) =
-                    self.index_of_editor_object_at(before_cursor_pos.get_cursor_pos())
-                {
+            } else if input == EditorInputEvent::Del && !cursor_pos.is_range() {
+                if let Some(index) = self.index_of_editor_object_at(cursor_pos.get_cursor_pos()) {
                     // remove it
                     let obj = self.editor_objects.remove(index);
                     let sel = Selection::range(
@@ -1789,11 +1847,11 @@ impl<'a> NoteCalcApp<'a> {
                     return true;
                 }
             } else if input == EditorInputEvent::Left
-                && !before_cursor_pos.is_range()
-                && before_cursor_pos.start.column > 0
+                && !cursor_pos.is_range()
+                && cursor_pos.start.column > 0
             {
                 if let Some(obj) =
-                    self.find_editor_object_at(before_cursor_pos.get_cursor_pos().with_prev_col())
+                    self.find_editor_object_at(cursor_pos.get_cursor_pos().with_prev_col())
                 {
                     if obj.typ == EditorObjectType::LineReference {
                         //  jump over it
@@ -1801,8 +1859,8 @@ impl<'a> NoteCalcApp<'a> {
                         return false;
                     }
                 }
-            } else if input == EditorInputEvent::Right && !before_cursor_pos.is_range() {
-                if let Some(obj) = self.find_editor_object_at(before_cursor_pos.get_cursor_pos()) {
+            } else if input == EditorInputEvent::Right && !cursor_pos.is_range() {
+                if let Some(obj) = self.find_editor_object_at(cursor_pos.get_cursor_pos()) {
                     if obj.typ == EditorObjectType::LineReference {
                         //  jump over it
                         self.editor.set_cursor_pos_r_c(obj.row, obj.end_x);
@@ -1815,31 +1873,7 @@ impl<'a> NoteCalcApp<'a> {
                 .editor
                 .handle_input(input, modifiers, &mut self.editor_content);
 
-            if let Some(editor_obj) =
-                self.is_pos_inside_an_obj(self.editor.get_selection().get_cursor_pos())
-            {
-                match editor_obj.typ {
-                    EditorObjectType::Matrix {
-                        row_count,
-                        col_count,
-                    } => {
-                        if self.matrix_editing.is_none() && !self.editor.get_selection().is_range()
-                        {
-                            self.matrix_editing = Some(MatrixEditing::new(
-                                row_count,
-                                col_count,
-                                &self.editor_content.get_line_chars(editor_obj.row)
-                                    [editor_obj.start_x..editor_obj.end_x],
-                                editor_obj.row,
-                                editor_obj.start_x,
-                                editor_obj.end_x,
-                                before_cursor_pos.get_cursor_pos(),
-                            ));
-                        }
-                    }
-                    EditorObjectType::LineReference => {}
-                }
-            }
+            // asddd
             return modified;
         }
     }
@@ -2037,6 +2071,7 @@ mod tests {
             );
             app.render();
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
+            app.render();
             app.handle_input(EditorInputEvent::Char('1'), InputModifiers::none());
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!("abcd [1,2,31;4,5,6]", app.editor_content.get_content());
@@ -2052,6 +2087,7 @@ mod tests {
                 .set_selection_save_col(Selection::single_r_c(0, 5));
             app.render();
             app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+            app.render();
             app.handle_input(EditorInputEvent::Char('2'), InputModifiers::none());
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!("abcd [21,2,3;4,5,6]", app.editor_content.get_content());
@@ -2067,6 +2103,7 @@ mod tests {
                 .set_selection_save_col(Selection::single_r_c(1, 7));
             app.render();
             app.handle_input(EditorInputEvent::Up, InputModifiers::none());
+            app.render();
             app.handle_input(EditorInputEvent::Char('2'), InputModifiers::none());
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!(
@@ -2085,6 +2122,7 @@ mod tests {
                 .set_selection_save_col(Selection::single_r_c(0, 7));
             app.render();
             app.handle_input(EditorInputEvent::Down, InputModifiers::none());
+            app.render();
             app.handle_input(EditorInputEvent::Char('2'), InputModifiers::none());
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!(
@@ -2103,7 +2141,9 @@ mod tests {
         );
         app.render();
         app.handle_input(EditorInputEvent::Left, InputModifiers::none());
+        app.render();
         app.handle_input(EditorInputEvent::Char('6'), InputModifiers::none());
+        app.render();
         app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
         app.render();
         app.handle_input(EditorInputEvent::Char('9'), InputModifiers::none());
@@ -2135,6 +2175,7 @@ mod tests {
             );
             app.render();
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
+            app.render();
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.handle_input(EditorInputEvent::Char('6'), InputModifiers::none());
@@ -2153,6 +2194,7 @@ mod tests {
                 .set_selection_save_col(Selection::single_r_c(0, 5));
             app.render();
             app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+            app.render();
             app.handle_input(EditorInputEvent::Right, InputModifiers::none());
             app.handle_input(EditorInputEvent::Right, InputModifiers::none());
             app.handle_input(EditorInputEvent::Char('6'), InputModifiers::none());
@@ -2171,6 +2213,7 @@ mod tests {
                 .set_selection_save_col(Selection::single_r_c(0, 5));
             app.render();
             app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+            app.render();
             // inside the matrix
             app.handle_input(EditorInputEvent::Right, InputModifiers::none());
             app.handle_input(EditorInputEvent::Right, InputModifiers::none());
@@ -2198,6 +2241,7 @@ mod tests {
                 .set_selection_save_col(Selection::single_r_c(0, 5));
             app.render();
             app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+            app.render();
             // inside the matrix
             app.handle_input(EditorInputEvent::Right, InputModifiers::none());
             app.handle_input(EditorInputEvent::Right, InputModifiers::none());
@@ -2228,6 +2272,7 @@ mod tests {
                 .set_selection_save_col(Selection::single_r_c(0, 5));
             app.render();
             app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+            app.render();
             // inside the matrix
             app.handle_input(EditorInputEvent::End, InputModifiers::none());
             app.render();
@@ -2275,6 +2320,7 @@ mod tests {
             );
             app.render();
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
+            app.render();
             // inside the matrix
             app.handle_input(EditorInputEvent::Home, InputModifiers::none());
             app.render();
@@ -2411,6 +2457,22 @@ mod tests {
         app.render();
         app.handle_input(EditorInputEvent::Del, InputModifiers::none());
         assert_eq!("[1,2,3]", app.editor_content.get_content());
+    }
+
+    #[test]
+    fn matrix_insertion_bug() {
+        let mut app = NoteCalcApp::new(120);
+        app.handle_input(
+            EditorInputEvent::Text("[1,2,3]".to_owned()),
+            InputModifiers::none(),
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 0));
+        app.render();
+        app.handle_input(EditorInputEvent::Char('a'), InputModifiers::none());
+        assert_eq!("a[1,2,3]", app.editor_content.get_content());
+        app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
+        assert_eq!("a\n[1,2,3]", app.editor_content.get_content());
     }
 
     fn assert_results(app: NoteCalcApp, expected_results: &[&str]) {
