@@ -82,8 +82,13 @@ fn num_to_string(
     format: &ResultFormat,
     decimal_count: usize,
 ) {
+    let num = if num.is_integer() {
+        num.with_scale(0)
+    } else {
+        strip_trailing_zeroes(num)
+    };
     // let num = strip_trailing_zeroes(&num.with_scale(decimal_count as i64));
-    let num = num.with_scale(decimal_count as i64);
+    // let num = num.with_scale(decimal_count as i64);
 
     if *format == ResultFormat::Bin || *format == ResultFormat::Hex {
         if let Some(n) = num.to_i64() {

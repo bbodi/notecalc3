@@ -35,6 +35,7 @@ pub enum FnType {
     Cos,
     Nth,
     Sum,
+    Transpose,
 }
 
 #[derive(PartialEq, Eq, Clone, Debug)]

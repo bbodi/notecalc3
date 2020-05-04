@@ -239,6 +239,7 @@ impl ShuntingYard {
                         &['c', 'o', 's'] => Some(FnType::Cos),
                         &['n', 't', 'h'] => Some(FnType::Nth),
                         &['s', 'u', 'm'] => Some(FnType::Sum),
+                        &['t', 'r', 'a', 'n', 's', 'p', 'o', 's', 'e'] => Some(FnType::Transpose),
                         _ => None,
                     };
                     if let Some(fn_type) = is_fn_name {

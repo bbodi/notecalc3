@@ -52,4 +52,23 @@ impl<'units> MatrixData<'units> {
             .collect();
         cells.map(|it| CalcResult::Matrix(MatrixData::new(it, self.row_count, self.col_count)))
     }
+
+    // TODO inplace
+    pub fn transposed(&self) -> MatrixData<'units> {
+        let mut result = MatrixData::new(
+            Vec::with_capacity(self.cells.len()),
+            self.col_count,
+            self.row_count,
+        );
+        for _ in 0..self.cells.len() {
+            result.cells.push(CalcResult::empty());
+        }
+        for (i, cell) in self.cells.iter().enumerate() {
+            let row_i = i % result.row_count;
+            let col_i = i / result.row_count;
+            result.cells[row_i * result.col_count + col_i] = cell.clone();
+        }
+
+        return result;
+    }
 }

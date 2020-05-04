@@ -231,6 +231,22 @@ fn apply_operation<'units>(
                     }
                 }
             }
+            FnType::Transpose => {
+                if *arg_count < 1 {
+                    false
+                } else {
+                    let param = &stack[stack.len() - 1];
+                    match param {
+                        CalcResult::Matrix(mat) => {
+                            let t = CalcResult::Matrix(mat.transposed());
+                            stack.truncate(stack.len() - 1);
+                            stack.push(t);
+                            true
+                        }
+                        _ => false,
+                    }
+                }
+            }
             FnType::Sin => true,
             FnType::Cos => true,
         },
@@ -1460,5 +1476,12 @@ mod tests {
     #[test]
     fn test_func_sum() {
         test("sum([5, 6, 7])", "18");
+    }
+
+    #[test]
+    fn test_func_transpose() {
+        test("transpose([5, 6, 7])", "[5; 6; 7]");
+        test("transpose([1, 2; 3, 4])", "[1, 3; 2, 4]");
+        test("transpose([1, 2; 3, 4; 5, 6])", "[1, 3, 5; 2, 4, 6]");
     }
 }
