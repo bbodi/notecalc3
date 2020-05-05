@@ -1175,7 +1175,6 @@ impl<'a> NoteCalcApp<'a> {
                         r.render_pos.row,
                         mat,
                         render_buckets,
-                        mat.row_count,
                     );
                     result_str_positions.push(None);
                     mat.row_count
@@ -1610,7 +1609,6 @@ impl<'a> NoteCalcApp<'a> {
         mut render_y: usize,
         mat: &MatrixData<'units>,
         render_buckets: &mut RenderBuckets<'text_ptr>,
-        rendered_row_height: usize,
     ) {
         render_buckets.operators.push(RenderTextMsg {
             text: &['⎡'],
@@ -1643,27 +1641,88 @@ impl<'a> NoteCalcApp<'a> {
             tokens_per_cell
         };
 
+        fn get_int_frac_part_len(cell_str: &str) -> (usize, usize, usize) {
+            let mut int_part_len = 0;
+            let mut frac_part_len = 0;
+            let mut unit_part_len = 0;
+            let mut was_point = false;
+            let mut was_space = false;
+            for ch in cell_str.as_bytes() {
+                if *ch == b'.' {
+                    was_point = true;
+                } else if *ch == b' ' {
+                    was_space = true;
+                }
+                if was_space {
+                    unit_part_len += 1;
+                } else if was_point {
+                    frac_part_len += 1;
+                } else {
+                    int_part_len += 1;
+                }
+            }
+            return (int_part_len, frac_part_len, unit_part_len);
+        }
+        let (int_part_max_len, frac_part_max_len, max_unit_part_len) = {
+            let mut int_part_max_len = 0;
+            let mut frac_part_max_len = 0;
+            let mut unit_part_max_len = 0;
+            for cell_str in &cells_str {
+                let (int_part_len, frac_part_len, unit_part_len) = get_int_frac_part_len(cell_str);
+                if int_part_max_len < int_part_len {
+                    int_part_max_len = int_part_len;
+                }
+                if frac_part_max_len < frac_part_len {
+                    frac_part_max_len = frac_part_len;
+                }
+                if unit_part_max_len < unit_part_len {
+                    unit_part_max_len = unit_part_len;
+                }
+            }
+            (int_part_max_len, frac_part_max_len, unit_part_max_len)
+        };
         for col_i in 0..mat.col_count {
-            let max_col_width: usize = (0..mat.row_count)
-                .map(|row_i| cells_str[row_i * mat.col_count + col_i].len())
-                .max()
-                .unwrap();
             for row_i in 0..mat.row_count {
                 let cell_str = &cells_str[row_i * mat.col_count + col_i];
-                let len: usize = cell_str.len();
-                let offset_x = max_col_width - len;
+                let (int_part_len, frac_part_len, unit_part_len) = get_int_frac_part_len(cell_str);
+                // Draw integer part
+                let offset_x = int_part_max_len - int_part_len;
                 render_buckets.draw_string(
                     Layer::AboveText,
                     render_x + offset_x + LEFT_GUTTER_WIDTH,
                     render_y + row_i,
                     // TOOD nem kell clone, csinálj iter into vhogy
-                    cell_str.clone(),
-                )
+                    cell_str[0..int_part_len].to_owned(),
+                );
+                if frac_part_len > 0 {
+                    render_buckets.draw_string(
+                        Layer::AboveText,
+                        render_x + offset_x + LEFT_GUTTER_WIDTH + int_part_len,
+                        render_y + row_i,
+                        // TOOD nem kell clone, csinálj iter into vhogy
+                        cell_str[int_part_len..int_part_len + frac_part_len].to_owned(),
+                    )
+                }
+                if unit_part_len > 0 {
+                    render_buckets.draw_string(
+                        Layer::AboveText,
+                        render_x
+                            + offset_x
+                            + LEFT_GUTTER_WIDTH
+                            + int_part_len
+                            + frac_part_max_len
+                            + 1,
+                        render_y + row_i,
+                        // TOOD nem kell clone, csinálj iter into vhogy
+                        // +1, skip space
+                        cell_str[int_part_len + frac_part_len + 1..].to_owned(),
+                    )
+                }
             }
             render_x += if col_i + 1 < mat.col_count {
-                max_col_width + 2
+                (int_part_max_len + frac_part_max_len + max_unit_part_len) + 2
             } else {
-                max_col_width
+                (int_part_max_len + frac_part_max_len + max_unit_part_len)
             };
         }
 
