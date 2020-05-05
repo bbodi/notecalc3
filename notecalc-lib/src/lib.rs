@@ -7,7 +7,7 @@ use crate::consts::{LINE_NUM_CONSTS, STATIC_LINE_IDS};
 use crate::editor::editor::{Editor, EditorInputEvent, InputModifiers, Pos, Selection};
 use crate::editor::editor_content::EditorContent;
 use crate::matrix::MatrixData;
-use crate::renderer::render_result;
+use crate::renderer::{render_result, render_result_into};
 use crate::shunting_yard::ShuntingYard;
 use crate::token_parser::{OperatorTokenType, Token, TokenParser, TokenType};
 use crate::units::consts::{create_prefixes, init_units};
@@ -16,7 +16,9 @@ use crate::units::UnitPrefixes;
 use bigdecimal::BigDecimal;
 use bigdecimal::Zero;
 use smallvec::SmallVec;
+use std::io::Cursor;
 use std::mem::MaybeUninit;
+use std::ops::Range;
 
 mod calc;
 mod matrix;
@@ -30,6 +32,7 @@ pub mod renderer;
 
 const MAX_EDITOR_WIDTH: usize = 120;
 const LEFT_GUTTER_WIDTH: usize = 1 + 3 + 1;
+const MAX_LINE_COUNT: usize = 64;
 
 pub enum Click {
     Simple(Pos),
@@ -56,8 +59,15 @@ pub enum TextStyle {
 }
 
 #[derive(Debug)]
-pub struct RenderTextMsg<'a> {
+pub struct RenderUtf8TextMsg<'a> {
     pub text: &'a [char],
+    pub row: usize,
+    pub column: usize,
+}
+
+#[derive(Debug)]
+pub struct RenderAsciiTextMsg<'a> {
+    pub text: &'a [u8],
     pub row: usize,
     pub column: usize,
 }
@@ -75,7 +85,8 @@ pub enum OutputMessage<'a> {
     SetStyle(TextStyle),
     SetColor(u32),
     RenderChar(usize, usize, char),
-    RenderText(RenderTextMsg<'a>),
+    RenderUtf8Text(RenderUtf8TextMsg<'a>),
+    RenderAsciiText(RenderAsciiTextMsg<'a>),
     RenderString(RenderStringMsg),
     RenderRectangle {
         x: usize,
@@ -87,11 +98,12 @@ pub enum OutputMessage<'a> {
 
 #[derive(Debug)]
 pub struct RenderBuckets<'a> {
-    pub texts: Vec<RenderTextMsg<'a>>,
-    pub numbers: Vec<RenderTextMsg<'a>>,
-    pub units: Vec<RenderTextMsg<'a>>,
-    pub operators: Vec<RenderTextMsg<'a>>,
-    pub variable: Vec<RenderTextMsg<'a>>,
+    pub ascii_texts: Vec<RenderAsciiTextMsg<'a>>,
+    pub utf8_texts: Vec<RenderUtf8TextMsg<'a>>,
+    pub numbers: Vec<RenderUtf8TextMsg<'a>>,
+    pub units: Vec<RenderUtf8TextMsg<'a>>,
+    pub operators: Vec<RenderUtf8TextMsg<'a>>,
+    pub variable: Vec<RenderUtf8TextMsg<'a>>,
     pub line_ref_results: Vec<RenderStringMsg>,
     pub custom_commands: [Vec<OutputMessage<'a>>; 2],
 }
@@ -105,7 +117,8 @@ pub enum Layer {
 impl<'a> RenderBuckets<'a> {
     pub fn new() -> RenderBuckets<'a> {
         RenderBuckets {
-            texts: Vec::with_capacity(128),
+            ascii_texts: Vec::with_capacity(128),
+            utf8_texts: Vec::with_capacity(128),
             custom_commands: [Vec::with_capacity(128), Vec::with_capacity(128)],
             numbers: Vec::with_capacity(32),
             units: Vec::with_capacity(32),
@@ -128,11 +141,23 @@ impl<'a> RenderBuckets<'a> {
     }
 
     pub fn draw_text(&mut self, layer: Layer, x: usize, y: usize, text: &'static [char]) {
-        self.custom_commands[layer as usize].push(OutputMessage::RenderText(RenderTextMsg {
-            text,
-            row: y,
-            column: x,
-        }));
+        self.custom_commands[layer as usize].push(OutputMessage::RenderUtf8Text(
+            RenderUtf8TextMsg {
+                text,
+                row: y,
+                column: x,
+            },
+        ));
+    }
+
+    pub fn draw_ascii_text(&mut self, layer: Layer, x: usize, y: usize, text: &'static [u8]) {
+        self.custom_commands[layer as usize].push(OutputMessage::RenderAsciiText(
+            RenderAsciiTextMsg {
+                text,
+                row: y,
+                column: x,
+            },
+        ));
     }
 
     pub fn draw_string(&mut self, layer: Layer, x: usize, y: usize, text: String) {
@@ -300,19 +325,19 @@ impl MatrixEditing {
     ) -> usize {
         let vert_align_offset = (rendered_row_height - self.row_count) / 2;
 
-        render_buckets.operators.push(RenderTextMsg {
+        render_buckets.operators.push(RenderUtf8TextMsg {
             text: &['⎡'],
             row: render_y + vert_align_offset,
             column: render_x + LEFT_GUTTER_WIDTH,
         });
         for i in 1..self.row_count - 1 {
-            render_buckets.operators.push(RenderTextMsg {
+            render_buckets.operators.push(RenderUtf8TextMsg {
                 text: &['⎢'],
                 row: render_y + i + vert_align_offset,
                 column: render_x + LEFT_GUTTER_WIDTH,
             });
         }
-        render_buckets.operators.push(RenderTextMsg {
+        render_buckets.operators.push(RenderUtf8TextMsg {
             text: &['⎣'],
             row: render_y + self.row_count - 1 + vert_align_offset,
             column: render_x + LEFT_GUTTER_WIDTH,
@@ -397,19 +422,19 @@ impl MatrixEditing {
             };
         }
 
-        render_buckets.operators.push(RenderTextMsg {
+        render_buckets.operators.push(RenderUtf8TextMsg {
             text: &['⎤'],
             row: render_y + vert_align_offset,
             column: render_x + LEFT_GUTTER_WIDTH,
         });
         for i in 1..self.row_count - 1 {
-            render_buckets.operators.push(RenderTextMsg {
+            render_buckets.operators.push(RenderUtf8TextMsg {
                 text: &['⎥'],
                 row: render_y + i + vert_align_offset,
                 column: render_x + LEFT_GUTTER_WIDTH,
             });
         }
-        render_buckets.operators.push(RenderTextMsg {
+        render_buckets.operators.push(RenderUtf8TextMsg {
             text: &['⎦'],
             row: render_y + self.row_count - 1 + vert_align_offset,
             column: render_x + LEFT_GUTTER_WIDTH,
@@ -439,7 +464,7 @@ pub struct NoteCalcApp<'a> {
     pub editor_content: EditorContent<LineData>,
     prev_cursor_pos: Pos,
     prefixes: &'static UnitPrefixes,
-    result_buffer: [char; 1024],
+    result_buffer: [u8; 1024],
     matrix_editing: Option<MatrixEditing>,
     editor_click: Option<Click>,
     editor_objects: Vec<EditorObject>,
@@ -453,8 +478,8 @@ struct RenderPass {
     editor_pos: Pos,
     render_pos: Pos,
     // contains the y position for each editor line
-    editor_y_to_render_y: [usize; 64],
-    editor_y_to_vert_align: [usize; 64],
+    editor_y_to_render_y: [usize; MAX_LINE_COUNT],
+    editor_y_to_vert_align: [usize; MAX_LINE_COUNT],
     clicked_editor_pos: Option<Click>,
     longest_row_len: usize,
     rendered_row_height: usize,
@@ -472,8 +497,8 @@ impl RenderPass {
             current_editor_width: 0,
             editor_pos: Default::default(),
             render_pos: Default::default(),
-            editor_y_to_render_y: [0; 64],
-            editor_y_to_vert_align: [0; 64],
+            editor_y_to_render_y: [0; MAX_LINE_COUNT],
+            editor_y_to_vert_align: [0; MAX_LINE_COUNT],
             clicked_editor_pos: None,
             longest_row_len: 0,
             rendered_row_height: 0,
@@ -551,7 +576,7 @@ impl<'a> NoteCalcApp<'a> {
             units,
             editor: Editor::new(&mut editor_content),
             editor_content,
-            result_buffer: [0 as char; 1024],
+            result_buffer: [0; 1024],
             matrix_editing: None,
             editor_click: None,
             editor_objects: Vec::with_capacity(8),
@@ -624,9 +649,8 @@ impl<'a> NoteCalcApp<'a> {
         // TODO: improve vec alloc
         let mut render_buckets = RenderBuckets::new();
         let mut result_buffer_index = 0;
-        let mut result_str_positions: SmallVec<[Option<(usize, usize)>; 64]> =
-            SmallVec::with_capacity(64);
-        let mut results: SmallVec<[Option<CalcResult>; 64]> = SmallVec::with_capacity(64);
+        let mut results: SmallVec<[Option<CalcResult>; MAX_LINE_COUNT]> =
+            SmallVec::with_capacity(MAX_LINE_COUNT);
 
         self.editor_objects.clear();
 
@@ -647,7 +671,7 @@ impl<'a> NoteCalcApp<'a> {
 
         self.has_result_bitset = 0;
 
-        for line in self.editor_content.lines().take(64) {
+        for line in self.editor_content.lines().take(MAX_LINE_COUNT) {
             r.new_line_started(line);
 
             if line.starts_with(&['-', '-']) || line.starts_with(&['\'']) {
@@ -660,7 +684,6 @@ impl<'a> NoteCalcApp<'a> {
                     &mut render_buckets,
                     &mut self.editor_click,
                 );
-                result_str_positions.push(None);
                 results.push(None);
             } else {
                 // TODO optimize vec allocations
@@ -672,19 +695,13 @@ impl<'a> NoteCalcApp<'a> {
 
                 let result_row_height = NoteCalcApp::evaluate_tokens(
                     &mut self.has_result_bitset,
-                    &self.units,
                     &mut vars,
                     r.editor_pos.row,
                     &self.editor_content,
-                    &mut self.result_buffer,
                     &mut results,
-                    &mut result_buffer_index,
                     &mut shunting_output_stack,
-                    &mut result_str_positions,
                     line,
                     &mut sum_is_null,
-                    &r,
-                    &mut render_buckets,
                 );
 
                 r.calc_rendered_row_height(&tokens, result_row_height);
@@ -722,14 +739,14 @@ impl<'a> NoteCalcApp<'a> {
 
             match self.editor_content.get_data(r.editor_pos.row).result_format {
                 ResultFormat::Hex => {
-                    render_buckets.operators.push(RenderTextMsg {
+                    render_buckets.operators.push(RenderUtf8TextMsg {
                         text: &['0', 'x'],
                         row: r.render_pos.row,
                         column: r.result_gutter_x + 1,
                     });
                 }
                 ResultFormat::Bin => {
-                    render_buckets.operators.push(RenderTextMsg {
+                    render_buckets.operators.push(RenderUtf8TextMsg {
                         text: &['0', 'b'],
                         row: r.render_pos.row,
                         column: r.result_gutter_x + 1,
@@ -780,25 +797,15 @@ impl<'a> NoteCalcApp<'a> {
             None => {}
         }
 
-        for (row_i, pos) in result_str_positions.iter().enumerate() {
-            if let Some((start, end)) = pos {
-                render_buckets.texts.push(RenderTextMsg {
-                    text: &self.result_buffer[*start..*end],
-                    row: r.editor_y_to_render_y[row_i] + r.editor_y_to_vert_align[row_i],
-                    column: r.result_gutter_x + RenderPass::RIGHT_GUTTER_WIDTH,
-                });
-            }
-        }
-
         // gutter
         render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
         render_buckets.draw_rect(Layer::BehindText, 0, 0, LEFT_GUTTER_WIDTH, 255);
 
         // line numbers
         render_buckets.set_color(Layer::BehindText, 0xADADAD_FF);
-        for i in 0..64 {
+        for i in 0..MAX_LINE_COUNT {
             render_buckets.custom_commands[Layer::BehindText as usize].push(
-                OutputMessage::RenderText(RenderTextMsg {
+                OutputMessage::RenderUtf8Text(RenderUtf8TextMsg {
                     text: &(LINE_NUM_CONSTS[i][..]),
                     row: r.editor_y_to_render_y[i],
                     column: 1,
@@ -957,6 +964,16 @@ impl<'a> NoteCalcApp<'a> {
             }
         }
 
+        NoteCalcApp::render_results(
+            &self.units,
+            &mut render_buckets,
+            &results,
+            &mut self.result_buffer,
+            &mut result_buffer_index,
+            &self.editor_content,
+            &r,
+        );
+
         return render_buckets;
     }
 
@@ -969,7 +986,7 @@ impl<'a> NoteCalcApp<'a> {
         r.set_fix_row_height(1);
         let text_len = line.len().min(r.current_editor_width);
 
-        render_buckets.texts.push(RenderTextMsg {
+        render_buckets.utf8_texts.push(RenderUtf8TextMsg {
             text: &line[0..text_len],
             row: r.render_pos.row,
             column: LEFT_GUTTER_WIDTH,
@@ -1150,52 +1167,20 @@ impl<'a> NoteCalcApp<'a> {
 
     fn evaluate_tokens<'text_ptr, 'units>(
         has_result_bitset: &mut u64,
-        units: &Units<'units>,
         vars: &mut Vec<(&'text_ptr [char], CalcResult<'units>)>,
         editor_y: usize,
         editor_content: &EditorContent<LineData>,
-        result_buffer: &mut [char],
-        results: &mut SmallVec<[Option<CalcResult<'units>>; 64]>,
-        result_buffer_index: &mut usize,
+        results: &mut SmallVec<[Option<CalcResult<'units>>; MAX_LINE_COUNT]>,
         shunting_output_stack: &mut Vec<TokenType<'units>>,
-        result_str_positions: &mut SmallVec<[Option<(usize, usize)>; 64]>,
         line: &'text_ptr [char],
         sum_is_null: &mut bool,
-        r: &RenderPass,
-        render_buckets: &mut RenderBuckets<'text_ptr>,
     ) -> usize {
         if let Some(result) = evaluate_tokens(shunting_output_stack, &vars) {
             *has_result_bitset |= 1u64 << editor_y as u64;
             let line_data = editor_content.get_data(editor_y);
             let result_row_height = match &result.result {
-                CalcResult::Matrix(mat) => {
-                    NoteCalcApp::render_matrix_result(
-                        units,
-                        LEFT_GUTTER_WIDTH + MAX_EDITOR_WIDTH + RenderPass::RIGHT_GUTTER_WIDTH,
-                        r.render_pos.row,
-                        mat,
-                        render_buckets,
-                    );
-                    result_str_positions.push(None);
-                    mat.row_count
-                }
-                _ => {
-                    let result_str = render_result(
-                        &units,
-                        &result.result,
-                        &line_data.result_format,
-                        result.there_was_unit_conversion,
-                        line_data.decimal_count,
-                    );
-
-                    let start = *result_buffer_index;
-                    for ch in result_str.chars() {
-                        result_buffer[*result_buffer_index] = ch;
-                        *result_buffer_index += 1;
-                    }
-                    result_str_positions.push(Some((start, *result_buffer_index)));
-                    1
-                }
+                CalcResult::Matrix(mat) => mat.row_count,
+                _ => 1,
             };
 
             results.push(Some(result.result.clone()));
@@ -1260,7 +1245,6 @@ impl<'a> NoteCalcApp<'a> {
             }
             return result_row_height;
         } else {
-            result_str_positions.push(None);
             results.push(None);
             return 0;
         };
@@ -1410,7 +1394,7 @@ impl<'a> NoteCalcApp<'a> {
     fn evaluate_selection(
         &self,
         vars: &Vec<(&[char], CalcResult)>,
-        results: &SmallVec<[Option<CalcResult>; 64]>,
+        results: &SmallVec<[Option<CalcResult>; MAX_LINE_COUNT]>,
     ) -> Option<String> {
         let sel = self.editor.get_selection();
         // TODO optimize vec allocations
@@ -1487,19 +1471,19 @@ impl<'a> NoteCalcApp<'a> {
     ) -> usize {
         let vert_align_offset = (rendered_row_height - row_count) / 2;
 
-        render_buckets.operators.push(RenderTextMsg {
+        render_buckets.operators.push(RenderUtf8TextMsg {
             text: &['⎡'],
             row: render_y + vert_align_offset,
             column: render_x + LEFT_GUTTER_WIDTH,
         });
         for i in 1..row_count - 1 {
-            render_buckets.operators.push(RenderTextMsg {
+            render_buckets.operators.push(RenderUtf8TextMsg {
                 text: &['⎢'],
                 row: render_y + i + vert_align_offset,
                 column: render_x + LEFT_GUTTER_WIDTH,
             });
         }
-        render_buckets.operators.push(RenderTextMsg {
+        render_buckets.operators.push(RenderUtf8TextMsg {
             text: &['⎣'],
             row: render_y + row_count - 1 + vert_align_offset,
             column: render_x + LEFT_GUTTER_WIDTH,
@@ -1581,19 +1565,19 @@ impl<'a> NoteCalcApp<'a> {
             };
         }
 
-        render_buckets.operators.push(RenderTextMsg {
+        render_buckets.operators.push(RenderUtf8TextMsg {
             text: &['⎤'],
             row: render_y + vert_align_offset,
             column: render_x + LEFT_GUTTER_WIDTH,
         });
         for i in 1..row_count - 1 {
-            render_buckets.operators.push(RenderTextMsg {
+            render_buckets.operators.push(RenderUtf8TextMsg {
                 text: &['⎥'],
                 row: render_y + i + vert_align_offset,
                 column: render_x + LEFT_GUTTER_WIDTH,
             });
         }
-        render_buckets.operators.push(RenderTextMsg {
+        render_buckets.operators.push(RenderUtf8TextMsg {
             text: &['⎦'],
             row: render_y + row_count - 1 + vert_align_offset,
             column: render_x + LEFT_GUTTER_WIDTH,
@@ -1610,19 +1594,19 @@ impl<'a> NoteCalcApp<'a> {
         mat: &MatrixData<'units>,
         render_buckets: &mut RenderBuckets<'text_ptr>,
     ) {
-        render_buckets.operators.push(RenderTextMsg {
+        render_buckets.operators.push(RenderUtf8TextMsg {
             text: &['⎡'],
             row: render_y,
             column: render_x + LEFT_GUTTER_WIDTH,
         });
         for i in 1..mat.row_count - 1 {
-            render_buckets.operators.push(RenderTextMsg {
+            render_buckets.operators.push(RenderUtf8TextMsg {
                 text: &['⎢'],
                 row: render_y + i,
                 column: render_x + LEFT_GUTTER_WIDTH,
             });
         }
-        render_buckets.operators.push(RenderTextMsg {
+        render_buckets.operators.push(RenderUtf8TextMsg {
             text: &['⎣'],
             row: render_y + mat.row_count - 1,
             column: render_x + LEFT_GUTTER_WIDTH,
@@ -1641,28 +1625,6 @@ impl<'a> NoteCalcApp<'a> {
             tokens_per_cell
         };
 
-        fn get_int_frac_part_len(cell_str: &str) -> (usize, usize, usize) {
-            let mut int_part_len = 0;
-            let mut frac_part_len = 0;
-            let mut unit_part_len = 0;
-            let mut was_point = false;
-            let mut was_space = false;
-            for ch in cell_str.as_bytes() {
-                if *ch == b'.' {
-                    was_point = true;
-                } else if *ch == b' ' {
-                    was_space = true;
-                }
-                if was_space {
-                    unit_part_len += 1;
-                } else if was_point {
-                    frac_part_len += 1;
-                } else {
-                    int_part_len += 1;
-                }
-            }
-            return (int_part_len, frac_part_len, unit_part_len);
-        }
         let (int_part_max_len, frac_part_max_len, max_unit_part_len) = {
             let mut int_part_max_len = 0;
             let mut frac_part_max_len = 0;
@@ -1726,23 +1688,118 @@ impl<'a> NoteCalcApp<'a> {
             };
         }
 
-        render_buckets.operators.push(RenderTextMsg {
+        render_buckets.operators.push(RenderUtf8TextMsg {
             text: &['⎤'],
             row: render_y,
             column: render_x + LEFT_GUTTER_WIDTH,
         });
         for i in 1..mat.row_count - 1 {
-            render_buckets.operators.push(RenderTextMsg {
+            render_buckets.operators.push(RenderUtf8TextMsg {
                 text: &['⎥'],
                 row: render_y + i,
                 column: render_x + LEFT_GUTTER_WIDTH,
             });
         }
-        render_buckets.operators.push(RenderTextMsg {
+        render_buckets.operators.push(RenderUtf8TextMsg {
             text: &['⎦'],
             row: render_y + mat.row_count - 1,
             column: render_x + LEFT_GUTTER_WIDTH,
         });
+    }
+
+    fn render_results<'text_ptr, 'units>(
+        units: &Units<'units>,
+        render_buckets: &mut RenderBuckets<'text_ptr>,
+        results: &[Option<CalcResult<'units>>],
+        result_buffer: &'text_ptr mut [u8],
+        result_buffer_index: &mut usize,
+        editor_content: &EditorContent<LineData>,
+        r: &RenderPass,
+    ) {
+        let mut result_ranges: SmallVec<[Option<Range<usize>>; MAX_LINE_COUNT]> =
+            SmallVec::with_capacity(MAX_LINE_COUNT);
+
+        let mut int_part_max_len = 0;
+        let mut frac_part_max_len = 0;
+        let mut unit_part_max_len = 0;
+        for (editor_y, result) in results.iter().enumerate() {
+            if let Some(result) = result {
+                match &result {
+                    CalcResult::Matrix(mat) => {
+                        NoteCalcApp::render_matrix_result(
+                            units,
+                            LEFT_GUTTER_WIDTH + MAX_EDITOR_WIDTH + RenderPass::RIGHT_GUTTER_WIDTH,
+                            r.editor_y_to_render_y[editor_y],
+                            mat,
+                            render_buckets,
+                        );
+                        result_ranges.push(None);
+                    }
+                    _ => {
+                        let start = *result_buffer_index;
+                        let mut c = Cursor::new(&mut result_buffer[start..]);
+                        render_result_into(
+                            &units,
+                            &result,
+                            &editor_content.get_data(editor_y).result_format,
+                            false,
+                            &mut c,
+                            4,
+                        );
+                        let len = c.position() as usize;
+                        let range = start..start + len;
+                        let s =
+                            unsafe { std::str::from_utf8_unchecked(&result_buffer[range.clone()]) };
+                        let (int_part_len, frac_part_len, unit_part_len) = get_int_frac_part_len(s);
+                        if int_part_max_len < int_part_len {
+                            int_part_max_len = int_part_len;
+                        }
+                        if frac_part_max_len < frac_part_len {
+                            frac_part_max_len = frac_part_len;
+                        }
+                        if unit_part_max_len < unit_part_len {
+                            unit_part_max_len = unit_part_len;
+                        }
+                        result_ranges.push(Some((range)));
+                        *result_buffer_index += len;
+                    }
+                };
+            } else {
+                result_ranges.push(None);
+            }
+        }
+        for (editor_y, result_range) in result_ranges.iter().enumerate() {
+            if let Some(result_range) = result_range {
+                let s =
+                    unsafe { std::str::from_utf8_unchecked(&result_buffer[result_range.clone()]) };
+                let (int_part_len, frac_part_len, unit_part_len) = get_int_frac_part_len(s);
+                let from = result_range.start;
+                let row = r.editor_y_to_render_y[editor_y] + r.editor_y_to_vert_align[editor_y];
+                let offset_x = int_part_max_len - int_part_len;
+                let x = r.result_gutter_x + RenderPass::RIGHT_GUTTER_WIDTH + offset_x;
+                render_buckets.ascii_texts.push(RenderAsciiTextMsg {
+                    text: &result_buffer[from..from + int_part_len],
+                    row,
+                    column: x,
+                });
+                if frac_part_len > 0 {
+                    let from = result_range.start + int_part_len;
+                    render_buckets.ascii_texts.push(RenderAsciiTextMsg {
+                        text: &result_buffer[from..from + frac_part_len],
+                        row,
+                        column: x + int_part_len,
+                    });
+                }
+                if unit_part_len > 0 {
+                    let from = result_range.start + int_part_len + frac_part_len + 1;
+                    render_buckets.ascii_texts.push(RenderAsciiTextMsg {
+                        text: &result_buffer[from..result_range.end],
+                        row,
+                        column: x + int_part_len + frac_part_len + 1,
+                    });
+                }
+            }
+        }
     }
 
     fn draw_token<'text_ptr, 'units>(
@@ -1753,7 +1810,7 @@ impl<'a> NoteCalcApp<'a> {
         render_buckets: &mut RenderBuckets<'text_ptr>,
     ) {
         let dst = match &token.typ {
-            TokenType::StringLiteral => &mut render_buckets.texts,
+            TokenType::StringLiteral => &mut render_buckets.utf8_texts,
             TokenType::Variable { .. } => &mut render_buckets.variable,
             TokenType::LineReference { .. } => &mut render_buckets.variable,
             TokenType::NumberLiteral(_) => &mut render_buckets.numbers,
@@ -1766,7 +1823,7 @@ impl<'a> NoteCalcApp<'a> {
             .ptr
             .len()
             .min((current_editor_width as isize - render_x as isize).max(0) as usize);
-        dst.push(RenderTextMsg {
+        dst.push(RenderUtf8TextMsg {
             text: &token.ptr[0..text_len],
             row: render_y,
             column: render_x + LEFT_GUTTER_WIDTH,
@@ -2162,6 +2219,29 @@ fn digit_count(n: usize) -> usize {
         n = n / 10;
     }
     return count;
+}
+
+fn get_int_frac_part_len(cell_str: &str) -> (usize, usize, usize) {
+    let mut int_part_len = 0;
+    let mut frac_part_len = 0;
+    let mut unit_part_len = 0;
+    let mut was_point = false;
+    let mut was_space = false;
+    for ch in cell_str.as_bytes() {
+        if *ch == b'.' {
+            was_point = true;
+        } else if *ch == b' ' {
+            was_space = true;
+        }
+        if was_space {
+            unit_part_len += 1;
+        } else if was_point {
+            frac_part_len += 1;
+        } else {
+            int_part_len += 1;
+        }
+    }
+    return (int_part_len, frac_part_len, unit_part_len);
 }
 
 #[cfg(test)]
@@ -2650,7 +2730,7 @@ mod tests {
             for ch in r.bytes() {
                 assert_eq!(
                     app.result_buffer[i],
-                    ch as char,
+                    ch,
                     "at {}: {:?}",
                     i,
                     String::from_utf8(ok_chars).unwrap()
@@ -2661,10 +2741,7 @@ mod tests {
             ok_chars.push(',' as u8);
             ok_chars.push(' ' as u8);
         }
-        assert_eq!(
-            app.result_buffer[i], 0 as char,
-            "more results than expected",
-        );
+        assert_eq!(app.result_buffer[i], 0, "more results than expected",);
     }
 
     #[test]

@@ -2,7 +2,8 @@ use crate::calc::CalcResult;
 use crate::units::units::Units;
 use crate::ResultFormat;
 use bigdecimal::{BigDecimal, ToPrimitive};
-use std::fmt::Write;
+use byteorder::WriteBytesExt;
+use std::io::Cursor;
 
 pub fn render_result(
     units: &Units,
@@ -11,26 +12,28 @@ pub fn render_result(
     there_was_unit_conversion: bool,
     decimal_count: usize,
 ) -> String {
-    let mut f = String::new();
+    let mut c = Cursor::new(Vec::with_capacity(64));
     render_result_into(
         units,
         result,
         format,
         there_was_unit_conversion,
-        &mut f,
+        &mut c,
         decimal_count,
     );
-    return f;
+    return unsafe { String::from_utf8_unchecked(c.into_inner()) };
 }
 
-fn render_result_into(
+pub fn render_result_into(
     units: &Units,
     result: &CalcResult,
     format: &ResultFormat,
     there_was_unit_conversion: bool,
-    f: &mut impl Write,
+    f: &mut impl std::io::Write,
     decimal_count: usize,
 ) {
+    use byteorder::{LittleEndian, WriteBytesExt};
+
     match &result {
         CalcResult::Quantity(num, unit) => {
             let final_unit = if there_was_unit_conversion {
@@ -43,8 +46,11 @@ fn render_result_into(
                 num_to_string(f, &num, &ResultFormat::Dec, decimal_count);
             } else {
                 num_to_string(f, &unit.denormalize(num), &ResultFormat::Dec, decimal_count);
-                f.write_char(' ');
-                f.write_str(&unit.to_string());
+                f.write_u8(b' ');
+                // TODO to_string -> into(buf)
+                for ch in unit.to_string().as_bytes() {
+                    f.write_u8(*ch);
+                }
             }
         }
         CalcResult::Number(num) => {
@@ -53,31 +59,31 @@ fn render_result_into(
         }
         CalcResult::Percentage(num) => {
             num_to_string(f, num, &ResultFormat::Dec, decimal_count);
-            f.write_char('%');
+            f.write_u8(b'%');
         }
         CalcResult::Matrix(mat) => {
-            f.write_char('[');
+            f.write_u8(b'[');
             for row_i in 0..mat.row_count {
                 if row_i > 0 {
-                    f.write_char(';');
-                    f.write_char(' ');
+                    f.write_u8(b';');
+                    f.write_u8(b' ');
                 }
                 for col_i in 0..mat.col_count {
                     if col_i > 0 {
-                        f.write_char(',');
-                        f.write_char(' ');
+                        f.write_u8(b',');
+                        f.write_u8(b' ');
                     }
                     let cell = &mat.cells[row_i * mat.col_count + col_i];
                     render_result_into(units, cell, format, false, f, decimal_count);
                 }
             }
-            f.write_char(']');
+            f.write_u8(b']');
         }
     }
 }
 
 fn num_to_string(
-    f: &mut impl Write,
+    f: &mut impl std::io::Write,
     num: &BigDecimal,
     format: &ResultFormat,
     decimal_count: usize,
@@ -102,15 +108,21 @@ fn num_to_string(
             let group_size = if *format == ResultFormat::Bin { 8 } else { 2 };
             for group in s.chunks(group_size).rev() {
                 for ch in group.iter().rev() {
-                    f.write_char(*ch as char);
+                    f.write_u8(*ch);
                 }
-                f.write_char(' ');
+                f.write_u8(b' ');
             }
         } else {
-            f.write_str(&num.to_string());
+            // TODO to_string opt
+            for ch in num.to_string().as_bytes() {
+                f.write_u8(*ch);
+            }
         }
     } else {
-        f.write_str(&num.to_string());
+        // TODO to_string opt
+        for ch in num.to_string().as_bytes() {
+            f.write_u8(*ch);
+        }
     }
 }
 

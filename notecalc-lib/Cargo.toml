@@ -9,3 +9,4 @@ edition = "2018"
 [dependencies]
 bigdecimal = "0.1.0"
 smallvec = "1.2.0"
+byteorder = "1.3.4"
