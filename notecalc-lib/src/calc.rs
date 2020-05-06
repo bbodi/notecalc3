@@ -1232,6 +1232,11 @@ mod tests {
     fn calc_simplify_units() {
         // simplify from base to derived units if possible
         test("3 kg * m * 1 s^-2", "3 N");
+
+        test(
+            "128PiB / 30Mb/s",
+            "38430716586.666666666666666666666666666666666666667 s",
+        );
     }
 
     #[test]

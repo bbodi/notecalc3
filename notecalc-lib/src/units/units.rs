@@ -421,14 +421,11 @@ impl<'a> UnitOutput<'a> {
         self.dimensions.iter().all(|it| *it == 0)
     }
 
-    pub fn simplify(&self, units: &'a Units, num: &BigDecimal) -> Option<UnitOutput<'a>> {
+    pub fn simplify(&self, units: &'a Units) -> Option<UnitOutput<'a>> {
         if let Some(base_unit) = dbg!(units.simplify(self)) {
-            let base_unit_num = base_unit.denormalize(num);
-            let (_, base_scale) =
-                dbg!(strip_trailing_zeroes(&base_unit_num).as_bigint_and_exponent());
             // e.g. don't convert from km to m, but convert from kg*m/s^2 to N
             // base_unit.units.len() is always 1
-            let base_unit_is_simpler = self.units.len() > 1 && base_scale < 3;
+            let base_unit_is_simpler = self.units.len() > 1;
             if base_unit_is_simpler {
                 Some(base_unit)
             } else {

@@ -39,7 +39,7 @@ pub fn render_result_into(
             let final_unit = if there_was_unit_conversion {
                 None
             } else {
-                unit.simplify(units, &num)
+                unit.simplify(units)
             };
             let unit = final_unit.as_ref().unwrap_or(unit);
             if unit.units.is_empty() {
@@ -88,7 +88,7 @@ fn num_to_string(
     format: &ResultFormat,
     decimal_count: usize,
 ) {
-    let num = if num.is_integer() {
+    let num = if *format != ResultFormat::Dec && num.is_integer() {
         num.with_scale(0)
     } else {
         strip_trailing_zeroes(num)
@@ -106,11 +106,13 @@ fn num_to_string(
             let mut s = unsafe { ss.as_bytes_mut() };
             s.reverse();
             let group_size = if *format == ResultFormat::Bin { 8 } else { 2 };
-            for group in s.chunks(group_size).rev() {
+            for (i, group) in s.chunks(group_size).rev().enumerate() {
+                if i > 0 {
+                    f.write_u8(b' ');
+                }
                 for ch in group.iter().rev() {
                     f.write_u8(*ch);
                 }
-                f.write_u8(b' ');
             }
         } else {
             // TODO to_string opt

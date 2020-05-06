@@ -1,4 +1,5 @@
 use crate::editor::editor_content::{EditorCommand, EditorContent, JumpMode};
+use std::ops::{Range, RangeInclusive};
 
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub enum EditorInputEvent {
@@ -202,6 +203,18 @@ impl Selection {
 
     pub fn get_cursor_pos(&self) -> Pos {
         self.end.unwrap_or(self.start)
+    }
+
+    pub fn get_row_iter_incl(&self) -> RangeInclusive<usize> {
+        let start = self.get_first().row;
+        let end = self.get_second().row;
+        start..=end
+    }
+
+    pub fn get_row_iter_excl(&self) -> Range<usize> {
+        let start = self.get_first().row;
+        let end = self.get_second().row;
+        start..end
     }
 }
 

@@ -180,7 +180,6 @@ pub enum ResultFormat {
 pub struct LineData {
     line_id: usize,
     result_format: ResultFormat,
-    decimal_count: usize,
 }
 
 impl Default for LineData {
@@ -188,7 +187,6 @@ impl Default for LineData {
         LineData {
             line_id: 0,
             result_format: ResultFormat::Dec,
-            decimal_count: 4,
         }
     }
 }
@@ -1750,7 +1748,8 @@ impl<'a> NoteCalcApp<'a> {
                         let range = start..start + len;
                         let s =
                             unsafe { std::str::from_utf8_unchecked(&result_buffer[range.clone()]) };
-                        let (int_part_len, frac_part_len, unit_part_len) = get_int_frac_part_len(s);
+                        let (int_part_len, frac_part_len, unit_part_len) =
+                            dbg!(get_int_frac_part_len(s));
                         if int_part_max_len < int_part_len {
                             int_part_max_len = int_part_len;
                         }
@@ -1956,47 +1955,24 @@ impl<'a> NoteCalcApp<'a> {
     }
 
     pub fn handle_input(&mut self, input: EditorInputEvent, modifiers: InputModifiers) -> bool {
-        if self.matrix_editing.is_none() && modifiers.ctrl {
-            if input == EditorInputEvent::Down {
-                let cur_pos = self.editor.get_selection().get_cursor_pos();
-                let line_data = self.editor_content.mut_data(cur_pos.row);
-                if line_data.decimal_count > 0 {
-                    line_data.decimal_count -= 1;
-                }
-            } else if input == EditorInputEvent::Up {
-                let cur_pos = self.editor.get_selection().get_cursor_pos();
-                self.editor_content.mut_data(cur_pos.row).decimal_count += 1;
-            }
-            false
-        } else if self.matrix_editing.is_none() && modifiers.alt {
+        if self.matrix_editing.is_none() && modifiers.alt {
             if input == EditorInputEvent::Left {
-                let cur_pos = self.editor.get_selection().get_cursor_pos();
-                if modifiers.ctrl {
-                    let line_data = self.editor_content.mut_data(cur_pos.row);
-                    if line_data.decimal_count > 0 {
-                        line_data.decimal_count -= 1;
-                    }
-                } else {
-                    let new_format = match &self.editor_content.get_data(cur_pos.row).result_format
-                    {
+                for row_i in self.editor.get_selection().get_row_iter_incl() {
+                    let new_format = match &self.editor_content.get_data(row_i).result_format {
                         ResultFormat::Bin => ResultFormat::Hex,
                         ResultFormat::Dec => ResultFormat::Bin,
                         ResultFormat::Hex => ResultFormat::Dec,
                     };
-                    self.editor_content.mut_data(cur_pos.row).result_format = new_format;
+                    self.editor_content.mut_data(row_i).result_format = new_format;
                 }
             } else if input == EditorInputEvent::Right {
-                let cur_pos = self.editor.get_selection().get_cursor_pos();
-                if modifiers.ctrl {
-                    self.editor_content.mut_data(cur_pos.row).decimal_count += 1;
-                } else {
-                    let new_format = match &self.editor_content.get_data(cur_pos.row).result_format
-                    {
+                for row_i in self.editor.get_selection().get_row_iter_incl() {
+                    let new_format = match &self.editor_content.get_data(row_i).result_format {
                         ResultFormat::Bin => ResultFormat::Dec,
                         ResultFormat::Dec => ResultFormat::Hex,
                         ResultFormat::Hex => ResultFormat::Bin,
                     };
-                    self.editor_content.mut_data(cur_pos.row).result_format = new_format;
+                    self.editor_content.mut_data(row_i).result_format = new_format;
                 }
             } else if input == EditorInputEvent::Up {
                 let cur_pos = self.editor.get_selection().get_cursor_pos();
@@ -2726,14 +2702,19 @@ mod tests {
     fn assert_results(app: NoteCalcApp, expected_results: &[&str]) {
         let mut i = 0;
         let mut ok_chars = Vec::with_capacity(32);
+        let expected_len = expected_results.iter().map(|it| it.len()).sum();
         for r in expected_results.iter() {
             for ch in r.bytes() {
                 assert_eq!(
-                    app.result_buffer[i],
-                    ch,
-                    "at {}: {:?}",
+                    app.result_buffer[i] as char,
+                    ch as char,
+                    "at {}: {:?}, result_buffer: {:?}",
                     i,
-                    String::from_utf8(ok_chars).unwrap()
+                    String::from_utf8(ok_chars).unwrap(),
+                    &app.result_buffer[0..expected_len]
+                        .iter()
+                        .map(|it| *it as char)
+                        .collect::<Vec<char>>()
                 );
                 ok_chars.push(ch);
                 i += 1;
@@ -2751,18 +2732,15 @@ mod tests {
             EditorInputEvent::Text(
                 "3m * 2m
 --
-[1,2,3]
-[4,5,6]
+1
+2
 sum"
                 .to_owned(),
             ),
             InputModifiers::none(),
         );
         app.render();
-        assert_results(
-            app,
-            &["6 m^2", "", "[1, 2, 3]", "[4, 5, 6]", "[5, 7, 9]"][..],
-        );
+        assert_results(app, &["6 m^2", "", "1", "2", "3"][..]);
     }
 
     #[test]
@@ -2771,13 +2749,48 @@ sum"
         app.handle_input(
             EditorInputEvent::Text(
                 "3m * 2m\n\
-                [1,2,3]\n\
+                4\n\
                 sum"
                 .to_owned(),
             ),
             InputModifiers::none(),
         );
         app.render();
-        assert_results(app, &["6 m^2", "[1, 2, 3]", "0"][..]);
+        assert_results(app, &["6 m^2", "4", "0"][..]);
+    }
+
+    #[test]
+    fn test_ctrl_c() {
+        let mut app = NoteCalcApp::new(120);
+        app.handle_input(
+            EditorInputEvent::Text("aaaaaaaaa".to_owned()),
+            InputModifiers::none(),
+        );
+        app.render();
+        app.handle_input(EditorInputEvent::Left, InputModifiers::shift());
+        app.handle_input(EditorInputEvent::Left, InputModifiers::shift());
+        app.handle_input(EditorInputEvent::Left, InputModifiers::shift());
+        app.handle_input(EditorInputEvent::Char('c'), InputModifiers::ctrl());
+        assert_eq!("aaa", &app.editor.clipboard);
+    }
+
+    #[test]
+    fn test_changing_output_style_for_selected_rows() {
+        let mut app = NoteCalcApp::new(120);
+        app.handle_input(
+            EditorInputEvent::Text(
+                "2\n\
+                4\n\
+                5"
+                .to_owned(),
+            ),
+            InputModifiers::none(),
+        );
+        app.render();
+        app.handle_input(EditorInputEvent::Up, InputModifiers::shift());
+        app.handle_input(EditorInputEvent::Up, InputModifiers::shift());
+        app.handle_input(EditorInputEvent::Left, InputModifiers::alt());
+        app.render();
+        assert_results(app, &["10", "100", "101"][..]);
     }
 }
