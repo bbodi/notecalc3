@@ -1595,19 +1595,19 @@ impl<'a> NoteCalcApp<'a> {
         render_buckets.operators.push(RenderUtf8TextMsg {
             text: &['⎡'],
             row: render_y,
-            column: render_x + LEFT_GUTTER_WIDTH,
+            column: render_x,
         });
         for i in 1..mat.row_count - 1 {
             render_buckets.operators.push(RenderUtf8TextMsg {
                 text: &['⎢'],
                 row: render_y + i,
-                column: render_x + LEFT_GUTTER_WIDTH,
+                column: render_x,
             });
         }
         render_buckets.operators.push(RenderUtf8TextMsg {
             text: &['⎣'],
             row: render_y + mat.row_count - 1,
-            column: render_x + LEFT_GUTTER_WIDTH,
+            column: render_x,
         });
         render_x += 1;
 
@@ -1649,7 +1649,7 @@ impl<'a> NoteCalcApp<'a> {
                 let offset_x = int_part_max_len - int_part_len;
                 render_buckets.draw_string(
                     Layer::AboveText,
-                    render_x + offset_x + LEFT_GUTTER_WIDTH,
+                    render_x + offset_x,
                     render_y + row_i,
                     // TOOD nem kell clone, csinálj iter into vhogy
                     cell_str[0..int_part_len].to_owned(),
@@ -1657,7 +1657,7 @@ impl<'a> NoteCalcApp<'a> {
                 if frac_part_len > 0 {
                     render_buckets.draw_string(
                         Layer::AboveText,
-                        render_x + offset_x + LEFT_GUTTER_WIDTH + int_part_len,
+                        render_x + offset_x + int_part_len,
                         render_y + row_i,
                         // TOOD nem kell clone, csinálj iter into vhogy
                         cell_str[int_part_len..int_part_len + frac_part_len].to_owned(),
@@ -1666,12 +1666,7 @@ impl<'a> NoteCalcApp<'a> {
                 if unit_part_len > 0 {
                     render_buckets.draw_string(
                         Layer::AboveText,
-                        render_x
-                            + offset_x
-                            + LEFT_GUTTER_WIDTH
-                            + int_part_len
-                            + frac_part_max_len
-                            + 1,
+                        render_x + offset_x + int_part_len + frac_part_max_len + 1,
                         render_y + row_i,
                         // TOOD nem kell clone, csinálj iter into vhogy
                         // +1, skip space
@@ -1689,19 +1684,19 @@ impl<'a> NoteCalcApp<'a> {
         render_buckets.operators.push(RenderUtf8TextMsg {
             text: &['⎤'],
             row: render_y,
-            column: render_x + LEFT_GUTTER_WIDTH,
+            column: render_x,
         });
         for i in 1..mat.row_count - 1 {
             render_buckets.operators.push(RenderUtf8TextMsg {
                 text: &['⎥'],
                 row: render_y + i,
-                column: render_x + LEFT_GUTTER_WIDTH,
+                column: render_x,
             });
         }
         render_buckets.operators.push(RenderUtf8TextMsg {
             text: &['⎦'],
             row: render_y + mat.row_count - 1,
-            column: render_x + LEFT_GUTTER_WIDTH,
+            column: render_x,
         });
     }
 
@@ -1726,7 +1721,7 @@ impl<'a> NoteCalcApp<'a> {
                     CalcResult::Matrix(mat) => {
                         NoteCalcApp::render_matrix_result(
                             units,
-                            LEFT_GUTTER_WIDTH + MAX_EDITOR_WIDTH + RenderPass::RIGHT_GUTTER_WIDTH,
+                            r.result_gutter_x + RenderPass::RIGHT_GUTTER_WIDTH,
                             r.editor_y_to_render_y[editor_y],
                             mat,
                             render_buckets,
