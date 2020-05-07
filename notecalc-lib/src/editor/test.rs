@@ -5189,6 +5189,34 @@ mod tests {
     }
 
     #[test]
+    fn test_tab() {
+        test(
+            "█abcdef",
+            &[EditorInputEvent::Tab],
+            InputModifiers::none(),
+            "    █abcdef",
+        );
+        test(
+            "a█bcdef",
+            &[EditorInputEvent::Tab],
+            InputModifiers::none(),
+            "a   █bcdef",
+        );
+        test(
+            "ab█cdef",
+            &[EditorInputEvent::Tab],
+            InputModifiers::none(),
+            "ab  █cdef",
+        );
+        test(
+            "abc█def",
+            &[EditorInputEvent::Tab],
+            InputModifiers::none(),
+            "abc █def",
+        );
+    }
+
+    #[test]
     fn test_ctrl_a() {
         test(
             "aaa█aa12s aa\n\

@@ -2271,6 +2271,17 @@ impl<'a> NoteCalcApp<'a> {
                 self.editor
                     .handle_input(input, modifiers, &mut self.editor_content);
             }
+        } else if input == EditorInputEvent::Tab {
+            if mat_edit.current_cell.column + 1 < mat_edit.col_count {
+                mat_edit.change_cell(mat_edit.current_cell.with_next_col());
+                mat_edit.editor.set_cursor_pos_r_c(0, 0);
+            } else if mat_edit.current_cell.row + 1 < mat_edit.row_count {
+                mat_edit.change_cell(mat_edit.current_cell.with_next_row().with_column(0));
+                mat_edit.editor.set_cursor_pos_r_c(0, 0);
+            } else {
+                let end_text_index = mat_edit.end_text_index;
+                self.end_matrix_editing(Some(cur_pos.with_column(end_text_index)));
+            }
         } else {
             mat_edit
                 .editor
@@ -2598,6 +2609,54 @@ mod tests {
                 app.editor_content.get_content()
             );
         }
+    }
+
+    #[test]
+    fn test_moving_inside_a_matrix_with_tab() {
+        let mut app = NoteCalcApp::new(120);
+        app.handle_input(
+            EditorInputEvent::Text("[1,2,3;4,5,6]".to_owned()),
+            InputModifiers::none(),
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 5));
+        app.render();
+        app.handle_input(EditorInputEvent::Right, InputModifiers::none());
+        app.render();
+        app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
+        app.handle_input(EditorInputEvent::Char('7'), InputModifiers::none());
+        app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
+        app.handle_input(EditorInputEvent::Char('8'), InputModifiers::none());
+        app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
+        app.handle_input(EditorInputEvent::Char('9'), InputModifiers::none());
+        app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
+        app.handle_input(EditorInputEvent::Char('0'), InputModifiers::none());
+        app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
+        app.handle_input(EditorInputEvent::Char('9'), InputModifiers::none());
+
+        app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
+        app.render();
+        assert_eq!("[1,72,83;94,05,96]", app.editor_content.get_content());
+    }
+
+    #[test]
+    fn test_leaving_a_matrix_with_tab() {
+        let mut app = NoteCalcApp::new(120);
+        app.handle_input(
+            EditorInputEvent::Text("[1,2,3;4,5,6]".to_owned()),
+            InputModifiers::none(),
+        );
+        app.render();
+        app.handle_input(EditorInputEvent::Left, InputModifiers::none());
+        app.render();
+        app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
+        app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
+        app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
+        // the next tab should leave the matrix
+        app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
+        app.handle_input(EditorInputEvent::Char('7'), InputModifiers::none());
+        app.render();
+        assert_eq!("[1,2,3;4,5,6]7", app.editor_content.get_content());
     }
 
     #[test]

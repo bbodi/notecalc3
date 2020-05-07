@@ -15,6 +15,7 @@ pub enum EditorInputEvent {
     Enter,
     Backspace,
     Del,
+    Tab,
     Char(char),
     Text(String),
 }
@@ -381,6 +382,16 @@ impl Editor {
             EditorInputEvent::PageUp => None,
             EditorInputEvent::PageDown => None,
             EditorInputEvent::Right => None,
+            EditorInputEvent::Tab => {
+                let target_pos = ((cur_pos.column / 4) + 1) * 4;
+                let space_count = target_pos - cur_pos.column;
+                let str = std::iter::repeat(' ').take(space_count).collect::<String>();
+                Some(EditorCommand::InsertText {
+                    pos: cur_pos,
+                    text: str,
+                    is_there_line_overflow: false,
+                })
+            }
             EditorInputEvent::Up => {
                 if modifiers.ctrl && modifiers.shift {
                     return if cur_pos.row == 0 {
@@ -948,6 +959,7 @@ impl Editor {
             | EditorInputEvent::Esc
             | EditorInputEvent::Enter
             | EditorInputEvent::Backspace
+            | EditorInputEvent::Tab
             | EditorInputEvent::Text(_) => {}
         };
     }
