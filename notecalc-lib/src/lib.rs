@@ -484,6 +484,7 @@ struct RenderPass {
     vert_align_offset: usize,
     cursor_render_x_offset: isize,
     result_gutter_x: usize,
+    prev_matrix_format: Option<ResultLengths>,
 }
 
 impl RenderPass {
@@ -503,6 +504,7 @@ impl RenderPass {
             vert_align_offset: 0,
             cursor_render_x_offset: 0,
             result_gutter_x: 0,
+            prev_matrix_format: None,
         };
         r.result_gutter_x = (LEFT_GUTTER_WIDTH + MAX_EDITOR_WIDTH).min(
             client_width - (RenderPass::RIGHT_GUTTER_WIDTH + RenderPass::MIN_RESULT_PANEL_WIDTH),
@@ -711,7 +713,6 @@ impl<'a> NoteCalcApp<'a> {
                     &mut render_buckets,
                     &mut self.editor_objects,
                     &self.editor,
-                    &self.editor_content,
                     &self.matrix_editing,
                     &mut self.editor_click,
                     &vars,
@@ -1001,7 +1002,6 @@ impl<'a> NoteCalcApp<'a> {
         render_buckets: &mut RenderBuckets<'text_ptr>,
         editor_objects: &mut Vec<EditorObject>,
         editor: &Editor,
-        editor_content: &EditorContent<LineData>,
         matrix_editing: &Option<MatrixEditing>,
         editor_click: &mut Option<Click>,
         vars: &[(&[char], CalcResult)],
@@ -1014,6 +1014,7 @@ impl<'a> NoteCalcApp<'a> {
             !(first.row..=second.row).contains(&r.editor_pos.row)
         };
 
+        let mut matrix_count_in_this_row = 0;
         let mut token_index = 0;
         while token_index < tokens.len() {
             let token = &tokens[token_index];
@@ -1025,6 +1026,10 @@ impl<'a> NoteCalcApp<'a> {
                 true,
             ) = (&token.typ, need_matrix_renderer)
             {
+                matrix_count_in_this_row += 1;
+                if matrix_count_in_this_row > 1 {
+                    r.prev_matrix_format = None;
+                }
                 token_index = NoteCalcApp::render_matrix(
                     token_index,
                     &tokens,
@@ -1092,6 +1097,9 @@ impl<'a> NoteCalcApp<'a> {
                 token_index += 1;
                 r.token_render_done(token.ptr.len(), token.ptr.len(), 0);
             }
+        }
+        if matrix_count_in_this_row < 1 {
+            r.prev_matrix_format = None;
         }
     }
 
@@ -1591,6 +1599,7 @@ impl<'a> NoteCalcApp<'a> {
         mut render_y: usize,
         mat: &MatrixData<'units>,
         render_buckets: &mut RenderBuckets<'text_ptr>,
+        prev_mat_result_lengths: &Option<ResultLengths>,
     ) {
         render_buckets.operators.push(RenderUtf8TextMsg {
             text: &['⎡'],
@@ -1611,7 +1620,7 @@ impl<'a> NoteCalcApp<'a> {
         });
         render_x += 1;
 
-        let mut cells_str = {
+        let mut cells_strs = {
             let mut tokens_per_cell: SmallVec<[String; 32]> = SmallVec::with_capacity(32);
 
             let mut cell_index = 0;
@@ -1623,79 +1632,90 @@ impl<'a> NoteCalcApp<'a> {
             tokens_per_cell
         };
 
-        let (int_part_max_len, frac_part_max_len, max_unit_part_len) = {
-            let mut int_part_max_len = 0;
-            let mut frac_part_max_len = 0;
-            let mut unit_part_max_len = 0;
-            for cell_str in &cells_str {
-                let (int_part_len, frac_part_len, unit_part_len) = get_int_frac_part_len(cell_str);
-                if int_part_max_len < int_part_len {
-                    int_part_max_len = int_part_len;
-                }
-                if frac_part_max_len < frac_part_len {
-                    frac_part_max_len = frac_part_len;
-                }
-                if unit_part_max_len < unit_part_len {
-                    unit_part_max_len = unit_part_len;
-                }
+        let max_lengths = {
+            let mut max_lengths = ResultLengths {
+                int_part_len: prev_mat_result_lengths
+                    .as_ref()
+                    .map(|it| it.int_part_len)
+                    .unwrap_or(0),
+                frac_part_len: prev_mat_result_lengths
+                    .as_ref()
+                    .map(|it| it.frac_part_len)
+                    .unwrap_or(0),
+                unit_part_len: prev_mat_result_lengths
+                    .as_ref()
+                    .map(|it| it.unit_part_len)
+                    .unwrap_or(0),
+            };
+            for cell_str in &cells_strs {
+                let lengths = get_int_frac_part_len(cell_str);
+                max_lengths.set_max(&lengths);
             }
-            (int_part_max_len, frac_part_max_len, unit_part_max_len)
+            max_lengths
         };
         for col_i in 0..mat.col_count {
             for row_i in 0..mat.row_count {
-                let cell_str = &cells_str[row_i * mat.col_count + col_i];
-                let (int_part_len, frac_part_len, unit_part_len) = get_int_frac_part_len(cell_str);
+                let cell_str = &cells_strs[row_i * mat.col_count + col_i];
+                let lengths = get_int_frac_part_len(cell_str);
                 // Draw integer part
-                let offset_x = int_part_max_len - int_part_len;
+                let offset_x = max_lengths.int_part_len - lengths.int_part_len;
                 render_buckets.draw_string(
                     Layer::AboveText,
                     render_x + offset_x,
                     render_y + row_i,
                     // TOOD nem kell clone, csinálj iter into vhogy
-                    cell_str[0..int_part_len].to_owned(),
+                    cell_str[0..lengths.int_part_len].to_owned(),
                 );
 
                 let mut frac_offset_x = 0;
-                if frac_part_len > 0 {
+                if lengths.frac_part_len > 0 {
                     render_buckets.draw_string(
                         Layer::AboveText,
-                        render_x + offset_x + int_part_len,
+                        render_x + offset_x + lengths.int_part_len,
                         render_y + row_i,
                         // TOOD nem kell clone, csinálj iter into vhogy
-                        cell_str[int_part_len..int_part_len + frac_part_len].to_owned(),
+                        cell_str
+                            [lengths.int_part_len..lengths.int_part_len + lengths.frac_part_len]
+                            .to_owned(),
                     )
-                } else if frac_part_max_len > 0 {
+                } else if max_lengths.frac_part_len > 0 {
                     render_buckets.draw_char(
                         Layer::AboveText,
-                        render_x + offset_x + int_part_len,
+                        render_x + offset_x + lengths.int_part_len,
                         render_y + row_i,
                         '.',
                     );
                     frac_offset_x = 1;
                 }
-                for i in 0..frac_part_max_len - frac_part_len {
+                for i in 0..max_lengths.frac_part_len - lengths.frac_part_len {
                     render_buckets.draw_char(
                         Layer::AboveText,
-                        render_x + offset_x + int_part_len + frac_part_len + frac_offset_x + i,
+                        render_x
+                            + offset_x
+                            + lengths.int_part_len
+                            + lengths.frac_part_len
+                            + frac_offset_x
+                            + i,
                         render_y + row_i,
                         '0',
                     )
                 }
-                if unit_part_len > 0 {
+                if lengths.unit_part_len > 0 {
                     render_buckets.draw_string(
                         Layer::AboveText,
-                        render_x + offset_x + int_part_len + frac_part_max_len + 1,
+                        render_x + offset_x + lengths.int_part_len + max_lengths.frac_part_len + 1,
                         render_y + row_i,
                         // TOOD nem kell clone, csinálj iter into vhogy
                         // +1, skip space
-                        cell_str[int_part_len + frac_part_len + 1..].to_owned(),
+                        cell_str[lengths.int_part_len + lengths.frac_part_len + 1..].to_owned(),
                     )
                 }
             }
             render_x += if col_i + 1 < mat.col_count {
-                (int_part_max_len + frac_part_max_len + max_unit_part_len) + 2
+                (max_lengths.int_part_len + max_lengths.frac_part_len + max_lengths.unit_part_len)
+                    + 2
             } else {
-                (int_part_max_len + frac_part_max_len + max_unit_part_len)
+                (max_lengths.int_part_len + max_lengths.frac_part_len + max_lengths.unit_part_len)
             };
         }
 
@@ -1718,6 +1738,36 @@ impl<'a> NoteCalcApp<'a> {
         });
     }
 
+    fn calc_matrix_max_lengths<'text_ptr, 'units>(
+        units: &Units<'units>,
+        mat: &MatrixData<'units>,
+    ) -> ResultLengths {
+        let mut cells_strs = {
+            let mut tokens_per_cell: SmallVec<[String; 32]> = SmallVec::with_capacity(32);
+
+            let mut cell_index = 0;
+            for cell in mat.cells.iter() {
+                let result_str = render_result(units, cell, &ResultFormat::Dec, false, 4);
+                tokens_per_cell.push(result_str);
+                cell_index += 1;
+            }
+            tokens_per_cell
+        };
+        let max_lengths = {
+            let mut max_lengths = ResultLengths {
+                int_part_len: 0,
+                frac_part_len: 0,
+                unit_part_len: 0,
+            };
+            for cell_str in &cells_strs {
+                let lengths = get_int_frac_part_len(cell_str);
+                max_lengths.set_max(&lengths);
+            }
+            max_lengths
+        };
+        return max_lengths;
+    }
+
     fn render_results<'text_ptr, 'units>(
         units: &Units<'units>,
         render_buckets: &mut RenderBuckets<'text_ptr>,
@@ -1730,23 +1780,35 @@ impl<'a> NoteCalcApp<'a> {
         let mut result_ranges: SmallVec<[Option<Range<usize>>; MAX_LINE_COUNT]> =
             SmallVec::with_capacity(MAX_LINE_COUNT);
 
-        let mut int_part_max_len = 0;
-        let mut frac_part_max_len = 0;
-        let mut unit_part_max_len = 0;
+        let mut max_lengths = ResultLengths {
+            int_part_len: 0,
+            frac_part_len: 0,
+            unit_part_len: 0,
+        };
+        let mut prev_result_matrix_length = None;
         for (editor_y, result) in results.iter().enumerate() {
             if let Some(result) = result {
                 match &result {
                     CalcResult::Matrix(mat) => {
+                        if prev_result_matrix_length.is_none() {
+                            prev_result_matrix_length =
+                                NoteCalcApp::calc_consecutive_matrices_max_lengths(
+                                    units,
+                                    &results[editor_y..],
+                                );
+                        }
                         NoteCalcApp::render_matrix_result(
                             units,
                             r.result_gutter_x + RenderPass::RIGHT_GUTTER_WIDTH,
                             r.editor_y_to_render_y[editor_y],
                             mat,
                             render_buckets,
+                            &prev_result_matrix_length,
                         );
                         result_ranges.push(None);
                     }
                     _ => {
+                        prev_result_matrix_length = None;
                         let start = *result_buffer_index;
                         let mut c = Cursor::new(&mut result_buffer[start..]);
                         render_result_into(
@@ -1761,17 +1823,8 @@ impl<'a> NoteCalcApp<'a> {
                         let range = start..start + len;
                         let s =
                             unsafe { std::str::from_utf8_unchecked(&result_buffer[range.clone()]) };
-                        let (int_part_len, frac_part_len, unit_part_len) =
-                            dbg!(get_int_frac_part_len(s));
-                        if int_part_max_len < int_part_len {
-                            int_part_max_len = int_part_len;
-                        }
-                        if frac_part_max_len < frac_part_len {
-                            frac_part_max_len = frac_part_len;
-                        }
-                        if unit_part_max_len < unit_part_len {
-                            unit_part_max_len = unit_part_len;
-                        }
+                        let lengths = get_int_frac_part_len(s);
+                        max_lengths.set_max(&lengths);
                         result_ranges.push(Some((range)));
                         *result_buffer_index += len;
                     }
@@ -1784,34 +1837,60 @@ impl<'a> NoteCalcApp<'a> {
             if let Some(result_range) = result_range {
                 let s =
                     unsafe { std::str::from_utf8_unchecked(&result_buffer[result_range.clone()]) };
-                let (int_part_len, frac_part_len, unit_part_len) = get_int_frac_part_len(s);
+                let lengths = get_int_frac_part_len(s);
                 let from = result_range.start;
                 let row = r.editor_y_to_render_y[editor_y] + r.editor_y_to_vert_align[editor_y];
-                let offset_x = int_part_max_len - int_part_len;
+                let offset_x = max_lengths.int_part_len - lengths.int_part_len;
                 let x = r.result_gutter_x + RenderPass::RIGHT_GUTTER_WIDTH + offset_x;
                 render_buckets.ascii_texts.push(RenderAsciiTextMsg {
-                    text: &result_buffer[from..from + int_part_len],
+                    text: &result_buffer[from..from + lengths.int_part_len],
                     row,
                     column: x,
                 });
-                if frac_part_len > 0 {
-                    let from = result_range.start + int_part_len;
+                if lengths.frac_part_len > 0 {
+                    let from = result_range.start + lengths.int_part_len;
                     render_buckets.ascii_texts.push(RenderAsciiTextMsg {
-                        text: &result_buffer[from..from + frac_part_len],
+                        text: &result_buffer[from..from + lengths.frac_part_len],
                         row,
-                        column: x + int_part_len,
+                        column: x + lengths.int_part_len,
                     });
                 }
-                if unit_part_len > 0 {
-                    let from = result_range.start + int_part_len + frac_part_len + 1;
+                if lengths.unit_part_len > 0 {
+                    let from =
+                        result_range.start + lengths.int_part_len + lengths.frac_part_len + 1;
                     render_buckets.ascii_texts.push(RenderAsciiTextMsg {
                         text: &result_buffer[from..result_range.end],
                         row,
-                        column: x + int_part_len + frac_part_len + 1,
+                        column: x + lengths.int_part_len + lengths.frac_part_len + 1,
                     });
                 }
             }
         }
+    }
+
+    fn calc_consecutive_matrices_max_lengths<'text_ptr, 'units>(
+        units: &Units<'units>,
+        results: &[Option<CalcResult<'units>>],
+    ) -> Option<ResultLengths> {
+        let mut max_lengths: Option<ResultLengths> = None;
+        for result in results.iter() {
+            if let Some(result) = result {
+                match &result {
+                    CalcResult::Matrix(mat) => {
+                        let lengths = NoteCalcApp::calc_matrix_max_lengths(units, mat);
+                        if let Some(max_lengths) = &mut max_lengths {
+                            max_lengths.set_max(&lengths);
+                        } else {
+                            max_lengths = Some(lengths);
+                        }
+                    }
+                    _ => {
+                        break;
+                    }
+                }
+            }
+        }
+        return max_lengths;
     }
 
     fn draw_token<'text_ptr, 'units>(
@@ -2210,7 +2289,27 @@ fn digit_count(n: usize) -> usize {
     return count;
 }
 
-fn get_int_frac_part_len(cell_str: &str) -> (usize, usize, usize) {
+struct ResultLengths {
+    int_part_len: usize,
+    frac_part_len: usize,
+    unit_part_len: usize,
+}
+
+impl ResultLengths {
+    fn set_max(&mut self, other: &ResultLengths) {
+        if self.int_part_len < other.int_part_len {
+            self.int_part_len = other.int_part_len;
+        }
+        if self.frac_part_len < other.frac_part_len {
+            self.frac_part_len = other.frac_part_len;
+        }
+        if self.unit_part_len < other.unit_part_len {
+            self.unit_part_len = other.unit_part_len;
+        }
+    }
+}
+
+fn get_int_frac_part_len(cell_str: &str) -> ResultLengths {
     let mut int_part_len = 0;
     let mut frac_part_len = 0;
     let mut unit_part_len = 0;
@@ -2230,7 +2329,11 @@ fn get_int_frac_part_len(cell_str: &str) -> (usize, usize, usize) {
             int_part_len += 1;
         }
     }
-    return (int_part_len, frac_part_len, unit_part_len);
+    return ResultLengths {
+        int_part_len,
+        frac_part_len,
+        unit_part_len,
+    };
 }
 
 #[cfg(test)]
