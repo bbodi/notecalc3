@@ -61,7 +61,7 @@ impl<'units> MatrixData<'units> {
             self.row_count,
         );
         for _ in 0..self.cells.len() {
-            result.cells.push(CalcResult::empty());
+            result.cells.push(CalcResult::hack_empty());
         }
         for (i, cell) in self.cells.iter().enumerate() {
             let row_i = i % result.row_count;

@@ -34,7 +34,7 @@ pub enum CalcResult<'units> {
 
 impl<'a> CalcResult<'a> {
     /// creates a cheap CalcResult without memory allocation. Use it only as a temporary value.
-    pub fn empty() -> CalcResult<'a> {
+    pub fn hack_empty() -> CalcResult<'a> {
         CalcResult::Matrix(MatrixData {
             cells: Vec::new(),
             row_count: 0,

@@ -664,7 +664,7 @@ impl<'a> NoteCalcApp<'a> {
 
         // TODO avoid alloc
         let mut vars: Vec<(&[char], CalcResult)> = Vec::with_capacity(32);
-        vars.push((&['s', 'u', 'm'], CalcResult::empty()));
+        vars.push((&['s', 'u', 'm'], CalcResult::zero()));
         let mut sum_is_null = true;
 
         self.has_result_bitset = 0;
@@ -1135,7 +1135,7 @@ impl<'a> NoteCalcApp<'a> {
     ) {
         let cursor_pos = editor.get_selection().get_cursor_pos();
         if cursor_pos.row == r.editor_pos.row {
-            render_buckets.set_color(Layer::BehindText, 0xFCFAED_C8);
+            render_buckets.set_color(Layer::BehindText, 0xEDEBDC_C8);
             render_buckets.draw_rect(
                 Layer::BehindText,
                 0,
@@ -1416,7 +1416,7 @@ impl<'a> NoteCalcApp<'a> {
             }
         } else {
             let mut sum: Option<&CalcResult> = None;
-            let mut tmp_sum = CalcResult::empty();
+            let mut tmp_sum = CalcResult::hack_empty();
             for row_index in sel.get_first().row..=sel.get_second().row {
                 if let Some(line_result) = &results[row_index] {
                     if let Some(sum_r) = &sum {
@@ -1654,6 +1654,8 @@ impl<'a> NoteCalcApp<'a> {
                     // TOOD nem kell clone, csinálj iter into vhogy
                     cell_str[0..int_part_len].to_owned(),
                 );
+
+                let mut frac_offset_x = 0;
                 if frac_part_len > 0 {
                     render_buckets.draw_string(
                         Layer::AboveText,
@@ -1661,6 +1663,22 @@ impl<'a> NoteCalcApp<'a> {
                         render_y + row_i,
                         // TOOD nem kell clone, csinálj iter into vhogy
                         cell_str[int_part_len..int_part_len + frac_part_len].to_owned(),
+                    )
+                } else if frac_part_max_len > 0 {
+                    render_buckets.draw_char(
+                        Layer::AboveText,
+                        render_x + offset_x + int_part_len,
+                        render_y + row_i,
+                        '.',
+                    );
+                    frac_offset_x = 1;
+                }
+                for i in 0..frac_part_max_len - frac_part_len {
+                    render_buckets.draw_char(
+                        Layer::AboveText,
+                        render_x + offset_x + int_part_len + frac_part_len + frac_offset_x + i,
+                        render_y + row_i,
+                        '0',
                     )
                 }
                 if unit_part_len > 0 {
@@ -2692,6 +2710,21 @@ mod tests {
         assert_eq!("a[1,2,3]", app.editor_content.get_content());
         app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
         assert_eq!("a\n[1,2,3]", app.editor_content.get_content());
+    }
+
+    #[test]
+    fn matrix_insertion_bug2() {
+        let mut app = NoteCalcApp::new(120);
+        app.handle_input(
+            EditorInputEvent::Text("'[X] nth, sum fv".to_owned()),
+            InputModifiers::none(),
+        );
+        app.render();
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 0));
+        app.handle_input(EditorInputEvent::Del, InputModifiers::none());
+        app.render();
+        assert_results(app, &["0"][..]);
     }
 
     fn assert_results(app: NoteCalcApp, expected_results: &[&str]) {
