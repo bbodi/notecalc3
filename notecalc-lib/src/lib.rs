@@ -2983,4 +2983,16 @@ sum"
         app.render();
         assert_results(app, &["10", "100", "101"][..]);
     }
+
+    #[test]
+    fn test_matrix_sum() {
+        let mut app = NoteCalcApp::new(120);
+        app.handle_input(
+            EditorInputEvent::Text("[1,2,3]\nsum".to_owned()),
+            InputModifiers::none(),
+        );
+        app.render();
+        // both the first line and the 'sum' line renders a matrix, which leaves the result bufer empty
+        assert_results(app, &["a"][..]);
+    }
 }
