@@ -31,7 +31,7 @@ pub mod editor;
 pub mod renderer;
 
 const MAX_EDITOR_WIDTH: usize = 120;
-const LEFT_GUTTER_WIDTH: usize = 1 + 3 + 1;
+const LEFT_GUTTER_WIDTH: usize = 1 + 2 + 1;
 const MAX_LINE_COUNT: usize = 64;
 
 pub enum Click {
@@ -469,10 +469,13 @@ pub struct NoteCalcApp<'a> {
     line_reference_chooser: Option<usize>,
     line_id_generator: usize,
     has_result_bitset: u64,
+    result_gutter_x: usize,
+    right_gutter_is_dragged: bool,
 }
 
 struct RenderPass {
     current_editor_width: usize,
+    current_result_width: usize,
     editor_pos: Pos,
     render_pos: Pos,
     // contains the y position for each editor line
@@ -489,11 +492,12 @@ struct RenderPass {
 
 impl RenderPass {
     const RIGHT_GUTTER_WIDTH: usize = 3;
-    const MIN_RESULT_PANEL_WIDTH: usize = 20;
+    const MIN_RESULT_PANEL_WIDTH: usize = 30;
 
-    fn new(client_width: usize) -> RenderPass {
+    fn new(client_width: usize, result_gutter_x: usize) -> RenderPass {
         let mut r = RenderPass {
             current_editor_width: 0,
+            current_result_width: 0,
             editor_pos: Default::default(),
             render_pos: Default::default(),
             editor_y_to_render_y: [0; MAX_LINE_COUNT],
@@ -503,23 +507,23 @@ impl RenderPass {
             rendered_row_height: 0,
             vert_align_offset: 0,
             cursor_render_x_offset: 0,
-            result_gutter_x: 0,
             prev_matrix_format: None,
+            result_gutter_x,
         };
-        r.result_gutter_x = (LEFT_GUTTER_WIDTH + MAX_EDITOR_WIDTH).min(
-            client_width - (RenderPass::RIGHT_GUTTER_WIDTH + RenderPass::MIN_RESULT_PANEL_WIDTH),
-        );
-        r.current_editor_width = r.result_gutter_x - LEFT_GUTTER_WIDTH;
+
+        r.current_editor_width = result_gutter_x - LEFT_GUTTER_WIDTH;
+        r.current_result_width = client_width - result_gutter_x - RenderPass::RIGHT_GUTTER_WIDTH;
         r
     }
-    pub fn new_line_started(&mut self, line: &[char]) {
+    pub fn new_line_started(&mut self) {
+        let rendered_len = self.render_pos.column;
+        if rendered_len > self.longest_row_len {
+            self.longest_row_len = rendered_len;
+        }
         self.editor_pos.column = 0;
 
         self.render_pos.column = 0;
         self.editor_y_to_render_y[self.editor_pos.row] = self.render_pos.row;
-        if line.len() > self.longest_row_len {
-            self.longest_row_len = line.len();
-        }
 
         self.cursor_render_x_offset = 0;
     }
@@ -582,6 +586,8 @@ impl<'a> NoteCalcApp<'a> {
             editor_objects: Vec::with_capacity(8),
             line_id_generator: 1,
             has_result_bitset: 0,
+            result_gutter_x: NoteCalcApp::calc_result_gutter_x(None, client_width),
+            right_gutter_is_dragged: false,
         }
     }
 
@@ -644,7 +650,7 @@ impl<'a> NoteCalcApp<'a> {
     const SUM_VARIABLE_INDEX: usize = 0;
 
     pub fn render<'b>(&'b mut self) -> RenderBuckets<'b> {
-        let mut r = RenderPass::new(self.client_width);
+        let mut r = RenderPass::new(self.client_width, self.result_gutter_x);
 
         // TODO: improve vec alloc
         let mut render_buckets = RenderBuckets::new();
@@ -654,16 +660,6 @@ impl<'a> NoteCalcApp<'a> {
 
         self.editor_objects.clear();
 
-        // result gutter
-        render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
-        render_buckets.draw_rect(
-            Layer::BehindText,
-            r.result_gutter_x,
-            0,
-            RenderPass::RIGHT_GUTTER_WIDTH,
-            255,
-        );
-
         // TODO avoid alloc
         let mut vars: Vec<(&[char], CalcResult)> = Vec::with_capacity(32);
         vars.push((&['s', 'u', 'm'], CalcResult::zero()));
@@ -672,7 +668,7 @@ impl<'a> NoteCalcApp<'a> {
         self.has_result_bitset = 0;
 
         for line in self.editor_content.lines().take(MAX_LINE_COUNT) {
-            r.new_line_started(line);
+            r.new_line_started();
 
             if line.starts_with(&['-', '-']) || line.starts_with(&['\'']) {
                 if line.starts_with(&['-', '-']) {
@@ -741,14 +737,14 @@ impl<'a> NoteCalcApp<'a> {
                     render_buckets.operators.push(RenderUtf8TextMsg {
                         text: &['0', 'x'],
                         row: r.render_pos.row,
-                        column: r.result_gutter_x + 1,
+                        column: self.result_gutter_x + 1,
                     });
                 }
                 ResultFormat::Bin => {
                     render_buckets.operators.push(RenderUtf8TextMsg {
                         text: &['0', 'b'],
                         row: r.render_pos.row,
-                        column: r.result_gutter_x + 1,
+                        column: self.result_gutter_x + 1,
                     });
                 }
                 ResultFormat::Dec => {}
@@ -756,6 +752,25 @@ impl<'a> NoteCalcApp<'a> {
 
             r.line_render_ended();
         }
+
+        // result gutter
+        render_buckets.set_color(Layer::BehindText, 0xD2D2D2_FF);
+        render_buckets.draw_rect(
+            Layer::BehindText,
+            self.result_gutter_x,
+            0,
+            RenderPass::RIGHT_GUTTER_WIDTH,
+            64,
+        );
+        // result background
+        render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
+        render_buckets.draw_rect(
+            Layer::BehindText,
+            self.result_gutter_x + RenderPass::RIGHT_GUTTER_WIDTH,
+            0,
+            r.current_result_width,
+            64,
+        );
 
         if let Some(editor_obj) =
             self.is_pos_inside_an_obj(self.editor.get_selection().get_cursor_pos())
@@ -802,11 +817,11 @@ impl<'a> NoteCalcApp<'a> {
 
         // line numbers
         render_buckets.set_color(Layer::BehindText, 0xADADAD_FF);
-        for i in 0..MAX_LINE_COUNT {
+        for i in 0..self.editor_content.line_count().min(MAX_LINE_COUNT) {
             render_buckets.custom_commands[Layer::BehindText as usize].push(
                 OutputMessage::RenderUtf8Text(RenderUtf8TextMsg {
                     text: &(LINE_NUM_CONSTS[i][..]),
-                    row: r.editor_y_to_render_y[i],
+                    row: r.editor_y_to_render_y[i] + r.editor_y_to_vert_align[i],
                     column: 1,
                 }),
             )
@@ -1143,7 +1158,7 @@ impl<'a> NoteCalcApp<'a> {
     ) {
         let cursor_pos = editor.get_selection().get_cursor_pos();
         if cursor_pos.row == r.editor_pos.row {
-            render_buckets.set_color(Layer::BehindText, 0xEDEBDC_C8);
+            render_buckets.set_color(Layer::BehindText, 0xFFFFCC_C8);
             render_buckets.draw_rect(
                 Layer::BehindText,
                 0,
@@ -1687,7 +1702,7 @@ impl<'a> NoteCalcApp<'a> {
                     );
                     frac_offset_x = 1;
                 }
-                for i in 0..max_lengths.frac_part_len - lengths.frac_part_len {
+                for i in 0..max_lengths.frac_part_len - lengths.frac_part_len - frac_offset_x {
                     render_buckets.draw_char(
                         Layer::AboveText,
                         render_x
@@ -1874,19 +1889,17 @@ impl<'a> NoteCalcApp<'a> {
     ) -> Option<ResultLengths> {
         let mut max_lengths: Option<ResultLengths> = None;
         for result in results.iter() {
-            if let Some(result) = result {
-                match &result {
-                    CalcResult::Matrix(mat) => {
-                        let lengths = NoteCalcApp::calc_matrix_max_lengths(units, mat);
-                        if let Some(max_lengths) = &mut max_lengths {
-                            max_lengths.set_max(&lengths);
-                        } else {
-                            max_lengths = Some(lengths);
-                        }
+            match result {
+                Some(CalcResult::Matrix(mat)) => {
+                    let lengths = NoteCalcApp::calc_matrix_max_lengths(units, mat);
+                    if let Some(max_lengths) = &mut max_lengths {
+                        max_lengths.set_max(&lengths);
+                    } else {
+                        max_lengths = Some(lengths);
                     }
-                    _ => {
-                        break;
-                    }
+                }
+                _ => {
+                    break;
                 }
             }
         }
@@ -1921,10 +1934,14 @@ impl<'a> NoteCalcApp<'a> {
         });
     }
 
+    pub fn handle_mouse_up(&mut self, x: usize, y: usize) {
+        self.right_gutter_is_dragged = false;
+    }
+
     pub fn handle_click(&mut self, x: usize, y: usize) {
         if x < LEFT_GUTTER_WIDTH {
-            // clicked on gutter
-        } else if x - LEFT_GUTTER_WIDTH < MAX_EDITOR_WIDTH {
+            // clicked on left gutter
+        } else if x < self.result_gutter_x {
             self.editor_click = Some(Click::Simple(Pos::from_row_column(
                 y,
                 x - LEFT_GUTTER_WIDTH,
@@ -1932,12 +1949,17 @@ impl<'a> NoteCalcApp<'a> {
             if self.matrix_editing.is_some() {
                 self.end_matrix_editing(None);
             }
+        } else if x - self.result_gutter_x < RenderPass::RIGHT_GUTTER_WIDTH {
+            // clicked on right gutter
+            self.right_gutter_is_dragged = true;
         }
     }
 
     pub fn handle_drag(&mut self, x: usize, y: usize) {
-        if x < LEFT_GUTTER_WIDTH {
-            // clicked on gutter
+        if self.right_gutter_is_dragged {
+            self.result_gutter_x = NoteCalcApp::calc_result_gutter_x(Some(x), self.client_width);
+        } else if x < LEFT_GUTTER_WIDTH {
+            // clicked on left gutter
         } else if x - LEFT_GUTTER_WIDTH < MAX_EDITOR_WIDTH {
             self.editor_click = Some(Click::Drag(Pos::from_row_column(y, x - LEFT_GUTTER_WIDTH)));
         }
@@ -1945,6 +1967,17 @@ impl<'a> NoteCalcApp<'a> {
 
     pub fn handle_resize(&mut self, new_client_width: usize) {
         self.client_width = new_client_width;
+        self.result_gutter_x =
+            NoteCalcApp::calc_result_gutter_x(Some(self.result_gutter_x), new_client_width);
+    }
+
+    fn calc_result_gutter_x(current_x: Option<usize>, client_width: usize) -> usize {
+        return (if let Some(current_x) = current_x {
+            current_x
+        } else {
+            (LEFT_GUTTER_WIDTH + MAX_EDITOR_WIDTH)
+        })
+        .min(client_width - (RenderPass::RIGHT_GUTTER_WIDTH + RenderPass::MIN_RESULT_PANEL_WIDTH));
     }
 
     pub fn handle_time(&mut self, now: u32) -> bool {
@@ -2993,6 +3026,6 @@ sum"
         );
         app.render();
         // both the first line and the 'sum' line renders a matrix, which leaves the result bufer empty
-        assert_results(app, &["a"][..]);
+        assert_results(app, &["\u{0}"][..]);
     }
 }
