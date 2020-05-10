@@ -95,6 +95,10 @@ impl Pos {
         }
     }
 
+    pub fn with_row(&self, row: usize) -> Pos {
+        Pos { row, ..*self }
+    }
+
     pub fn add_column(&self, col: usize) -> Pos {
         Pos {
             column: self.column + col,
