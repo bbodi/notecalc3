@@ -570,6 +570,8 @@ pub struct NoteCalcApp<'a> {
     has_result_bitset: u64,
     result_gutter_x: usize,
     right_gutter_is_dragged: bool,
+    // contains variable names separated by 0
+    autocompletion_src: Vec<char>,
 }
 
 struct GlobalRenderData {
@@ -698,6 +700,7 @@ impl<'a> NoteCalcApp<'a> {
             matrix_editing: None,
             editor_click: None,
             editor_objects: Vec::with_capacity(8),
+            autocompletion_src: Vec::with_capacity(256),
             line_id_generator: 1,
             has_result_bitset: 0,
             result_gutter_x: NoteCalcApp::calc_result_gutter_x(None, client_width),
@@ -799,6 +802,7 @@ impl<'a> NoteCalcApp<'a> {
 
         // TODO avoid alloc
         let mut vars: Vec<(&[char], CalcResult)> = Vec::with_capacity(32);
+        self.autocompletion_src.clear();
         vars.push((&['s', 'u', 'm'], CalcResult::zero()));
         let mut sum_is_null = true;
 
@@ -848,6 +852,7 @@ impl<'a> NoteCalcApp<'a> {
                         &mut shunting_output_stack,
                         line,
                         &mut sum_is_null,
+                        &mut self.autocompletion_src,
                     );
 
                     let editing_mat_height = self.matrix_editing.as_ref().and_then(|it| {
@@ -1249,6 +1254,7 @@ impl<'a> NoteCalcApp<'a> {
         shunting_output_stack: &mut Vec<TokenType<'units>>,
         line: &'text_ptr [char],
         sum_is_null: &mut bool,
+        autocompletion_src: &mut Vec<char>,
     ) -> usize {
         if let Some(result) = evaluate_tokens(shunting_output_stack, &vars) {
             *has_result_bitset |= 1u64 << editor_y as u64;
@@ -1294,6 +1300,10 @@ impl<'a> NoteCalcApp<'a> {
                 } else {
                     vars.push((var_name, result.result));
                 }
+                for ch in var_name {
+                    autocompletion_src.push(*ch);
+                }
+                autocompletion_src.push(0 as char);
             } else if line_data.line_id != 0 {
                 let line_id = line_data.line_id;
                 {
@@ -2128,6 +2138,7 @@ impl<'a> NoteCalcApp<'a> {
                     &mut shunting_output_stack,
                     &line,
                     &mut sum_is_null,
+                    &mut Vec::with_capacity(256),
                 );
 
                 if i >= first_row && i <= second_row {
@@ -2643,40 +2654,100 @@ impl<'a> NoteCalcApp<'a> {
             true
         } else {
             let cursor_pos = self.editor.get_selection();
-            if input == EditorInputEvent::Tab {
-                let cursor_pos = self.editor.get_selection().get_cursor_pos();
-                if cursor_pos.column > 0 {
-                    let line = self.editor_content.get_line_chars(cursor_pos.row);
-                    let is_m = line[cursor_pos.column - 1] == 'm';
-                    if is_m
-                        && (cursor_pos.column == 1
-                            || (!line[cursor_pos.column - 2].is_alphanumeric()
-                                && line[cursor_pos.column - 2] != '_'))
+            if input == EditorInputEvent::Tab && cursor_pos.get_cursor_pos().column > 0 {
+                let cursor_pos = cursor_pos.get_cursor_pos();
+                let line = self.editor_content.get_line_chars(cursor_pos.row);
+                let is_m = line[cursor_pos.column - 1] == 'm';
+                if is_m
+                    && (cursor_pos.column == 1
+                        || (!line[cursor_pos.column - 2].is_alphanumeric()
+                            && line[cursor_pos.column - 2] != '_'))
+                {
+                    let prev_col = cursor_pos.column;
+                    self.editor.handle_input(
+                        EditorInputEvent::Backspace,
+                        InputModifiers::none(),
+                        &mut self.editor_content,
+                    );
+                    self.editor.handle_input(
+                        EditorInputEvent::Char('['),
+                        InputModifiers::none(),
+                        &mut self.editor_content,
+                    );
+                    self.editor.handle_input(
+                        EditorInputEvent::Char('0'),
+                        InputModifiers::none(),
+                        &mut self.editor_content,
+                    );
+                    self.editor.handle_input(
+                        EditorInputEvent::Char(']'),
+                        InputModifiers::none(),
+                        &mut self.editor_content,
+                    );
+                    self.editor.set_selection_save_col(Selection::single(
+                        cursor_pos.with_column(prev_col),
+                    ));
+                    return true;
+                } else {
+                    // check for autocompletion
+                    // find space
+                    let (begin_index, expected_len) = {
+                        let mut begin_index = cursor_pos.column - 1;
+                        let mut len = 1;
+                        while begin_index > 0
+                            && (line[begin_index - 1].is_alphanumeric()
+                                || line[begin_index - 1] == '_')
+                        {
+                            begin_index -= 1;
+                            len += 1;
+                        }
+                        (begin_index, len)
+                    };
+                    // find the best match
+                    let mut autocomp_src_i = 0;
+                    let mut word_i = begin_index;
+                    let mut match_begin_index = None;
+                    let autocompletion_entries = &self.autocompletion_src;
+                    'main: while autocomp_src_i < autocompletion_entries.len()
+                        && autocompletion_entries[autocomp_src_i] != 0 as char
                     {
-                        let prev_col = cursor_pos.column;
-                        self.editor.handle_input(
-                            EditorInputEvent::Backspace,
-                            InputModifiers::none(),
-                            &mut self.editor_content,
-                        );
-                        self.editor.handle_input(
-                            EditorInputEvent::Char('['),
-                            InputModifiers::none(),
-                            &mut self.editor_content,
-                        );
-                        self.editor.handle_input(
-                            EditorInputEvent::Char('0'),
-                            InputModifiers::none(),
-                            &mut self.editor_content,
-                        );
-                        self.editor.handle_input(
-                            EditorInputEvent::Char(']'),
-                            InputModifiers::none(),
-                            &mut self.editor_content,
-                        );
-                        self.editor.set_selection_save_col(Selection::single(
-                            cursor_pos.with_column(prev_col),
-                        ));
+                        let start_autocomp_src_i = autocomp_src_i;
+                        while autocomp_src_i < autocompletion_entries.len()
+                            && autocompletion_entries[autocomp_src_i] != 0 as char
+                            && autocompletion_entries[autocomp_src_i] == line[word_i]
+                        {
+                            autocomp_src_i += 1;
+                            word_i += 1;
+                        }
+                        if (autocomp_src_i - start_autocomp_src_i) == expected_len {
+                            if match_begin_index.is_some() {
+                                // multiple match, don't autocomplete
+                                match_begin_index = None;
+                                break 'main;
+                            } else {
+                                match_begin_index = Some(autocomp_src_i - expected_len);
+                            }
+                        }
+                        // jump to the next autocompletion entry
+                        while autocompletion_entries[autocomp_src_i] != 0 as char {
+                            autocomp_src_i += 1;
+                        }
+                        // skip 0
+                        autocomp_src_i += 1;
+                        word_i = begin_index;
+                    }
+                    if let Some(match_begin_index) = match_begin_index {
+                        let mut i = match_begin_index + expected_len;
+                        while i < autocompletion_entries.len()
+                            && autocompletion_entries[i] != 0 as char
+                        {
+                            self.editor.handle_input(
+                                EditorInputEvent::Char(autocompletion_entries[i]),
+                                InputModifiers::none(),
+                                &mut self.editor_content,
+                            );
+                            i += 1;
+                        }
                         return true;
                     }
                 }
@@ -3940,5 +4011,59 @@ sum"
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!("[1,2,3]", app.editor_content.get_content());
         }
+    }
+
+    #[test]
+    fn test_autocompletion_single() {
+        let mut app = NoteCalcApp::new(120);
+        app.handle_input(
+            EditorInputEvent::Text("apple = 12$".to_owned()),
+            InputModifiers::none(),
+        );
+        app.render();
+        app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
+        app.handle_input(EditorInputEvent::Char('a'), InputModifiers::none());
+        app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
+        assert_eq!("apple = 12$\napple", app.editor_content.get_content());
+    }
+
+    #[test]
+    fn test_autocompletion_two_sars() {
+        let mut app = NoteCalcApp::new(120);
+        app.handle_input(
+            EditorInputEvent::Text("apple = 12$\nbanana = 7$\n".to_owned()),
+            InputModifiers::none(),
+        );
+        app.render();
+        app.handle_input(EditorInputEvent::Char('a'), InputModifiers::none());
+        app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
+        assert_eq!(
+            "apple = 12$\nbanana = 7$\napple",
+            app.editor_content.get_content()
+        );
+
+        app.handle_input(EditorInputEvent::Char(' '), InputModifiers::none());
+        app.handle_input(EditorInputEvent::Char('b'), InputModifiers::none());
+        app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
+        assert_eq!(
+            "apple = 12$\nbanana = 7$\napple banana",
+            app.editor_content.get_content()
+        );
+    }
+
+    #[test]
+    fn test_that_no_autocompletion_for_multiple_results() {
+        let mut app = NoteCalcApp::new(120);
+        app.handle_input(
+            EditorInputEvent::Text("apple = 12$\nananas = 7$\n".to_owned()),
+            InputModifiers::none(),
+        );
+        app.render();
+        app.handle_input(EditorInputEvent::Char('a'), InputModifiers::none());
+        app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
+        assert_eq!(
+            "apple = 12$\nananas = 7$\na   ",
+            app.editor_content.get_content()
+        );
     }
 }
