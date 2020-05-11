@@ -1,4 +1,5 @@
-use crate::token_parser::{Assoc, FnType, OperatorTokenType, Token, TokenType};
+use crate::functions::FnType;
+use crate::token_parser::{Assoc, OperatorTokenType, Token, TokenType};
 use bigdecimal::*;
 use std::ops::Neg;
 
@@ -234,15 +235,7 @@ impl ShuntingYard {
             let input_token = &tokens[input_index as usize];
             match &input_token.typ {
                 TokenType::StringLiteral => {
-                    let is_fn_name = match input_token.ptr {
-                        &['s', 'i', 'n'] => Some(FnType::Sin),
-                        &['c', 'o', 's'] => Some(FnType::Cos),
-                        &['n', 't', 'h'] => Some(FnType::Nth),
-                        &['s', 'u', 'm'] => Some(FnType::Sum),
-                        &['t', 'r', 'a', 'n', 's', 'p', 'o', 's', 'e'] => Some(FnType::Transpose),
-                        _ => None,
-                    };
-                    if let Some(fn_type) = is_fn_name {
+                    if let Some(fn_type) = FnType::value_of(input_token.ptr) {
                         // next token is parenthesis
                         if tokens
                             .get(input_index as usize + 1)
@@ -284,8 +277,13 @@ impl ShuntingYard {
                             None | Some(ParenStackEntry::Matrix(..)) => true,
                             Some(ParenStackEntry::Simple) | Some(ParenStackEntry::Fn(..)) => false,
                         };
+                        let prev_token_is_open_paren = input_index > 0
+                            && matches!(
+                                tokens[(input_index - 1) as usize].typ,
+                                TokenType::Operator(OperatorTokenType::ParenOpen)
+                            );
 
-                        if v.expect_expression || is_error {
+                        if !prev_token_is_open_paren && (v.expect_expression || is_error) {
                             dbg!("error ')'");
                             operator_stack.clear();
                             v.reset(output_stack.len(), input_index + 1);
@@ -301,7 +299,11 @@ impl ShuntingYard {
                         );
                         if let Some(fn_entry) = v.pop_as_fn() {
                             let fn_token_type = TokenType::Operator(OperatorTokenType::Fn {
-                                arg_count: fn_entry.fn_arg_count,
+                                arg_count: if prev_token_is_open_paren {
+                                    0
+                                } else {
+                                    fn_entry.fn_arg_count
+                                },
                                 typ: fn_entry.typ,
                             });
                             output_stack.push(fn_token_type.clone());
@@ -622,7 +624,15 @@ impl ShuntingYard {
         }
 
         for op in operator_stack.iter().rev() {
-            ShuntingYard::send_to_output(op.clone(), output_stack);
+            match op {
+                OperatorTokenType::ParenOpen
+                | OperatorTokenType::ParenClose
+                | OperatorTokenType::BracketOpen
+                | OperatorTokenType::BracketClose => {
+                    // ignore
+                }
+                _ => ShuntingYard::send_to_output(op.clone(), output_stack),
+            }
         }
 
         // set everything to string which is not closed
@@ -765,7 +775,7 @@ impl ShuntingYard {
 pub mod tests {
     use super::*;
     use crate::calc::CalcResult;
-    use crate::token_parser::{FnType, TokenParser};
+    use crate::token_parser::TokenParser;
     use crate::units::consts::{create_prefixes, init_units};
     use crate::units::units::{UnitOutput, Units};
     use bigdecimal::BigDecimal;
@@ -1877,5 +1887,19 @@ pub mod tests {
                 str("]"),
             ],
         );
+    }
+
+    #[test]
+    fn test_ignore_single_brackets() {
+        test_tokens("[", &[str("[")]);
+        test_output("[", &[]);
+        test_tokens("]", &[str("]")]);
+        test_output("]", &[]);
+        test_tokens("(", &[str("(")]);
+        test_output("(", &[]);
+        test_tokens(")", &[str(")")]);
+        test_output(")", &[]);
+        test_tokens("=", &[str("=")]);
+        test_output("=", &[]);
     }
 }

@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 use crate::matrix::MatrixData;
 use crate::token_parser::TokenType::StringLiteral;
-use crate::token_parser::{FnType, OperatorTokenType, Token, TokenType};
+use crate::token_parser::{OperatorTokenType, Token, TokenType};
 use crate::units::consts::EMPTY_UNIT_DIMENSIONS;
 use crate::units::units::{UnitOutput, Units};
 use std::collections::HashMap;
@@ -57,7 +57,7 @@ pub struct EvaluationResult<'units> {
 pub fn evaluate_tokens<'text_ptr, 'units>(
     tokens: &mut Vec<TokenType<'units>>,
     variables: &[(&'text_ptr [char], CalcResult<'units>)],
-) -> Option<EvaluationResult<'units>> {
+) -> Result<Option<EvaluationResult<'units>>, ()> {
     let mut stack = vec![];
     let mut there_was_unit_conversion = false;
     let mut assignment = false;
@@ -70,15 +70,15 @@ pub fn evaluate_tokens<'text_ptr, 'units>(
                     assignment = true;
                     continue;
                 }
-                if !stack.is_empty() {
-                    if apply_operation(&mut stack, &typ) == true {
-                        if matches!(typ, OperatorTokenType::UnitConverter) {
-                            there_was_unit_conversion = true;
-                        }
-                        last_success_operation_result_index = Some(stack.len() - 1);
-                    } else {
-                        // the operation failed, it is not an operator but a string ?
+                if apply_operation(&mut stack, &typ) == true {
+                    if matches!(typ, OperatorTokenType::UnitConverter) {
+                        there_was_unit_conversion = true;
                     }
+                    if !stack.is_empty() {
+                        last_success_operation_result_index = Some(stack.len() - 1);
+                    }
+                } else {
+                    return Err(());
                 }
             }
             TokenType::StringLiteral => panic!(),
@@ -97,19 +97,19 @@ pub fn evaluate_tokens<'text_ptr, 'units>(
             // TODO: after shunting yard validation logic, do we need it?
             // e.g. "1+2 some text 3"
             // in this case prefer the result of 1+2 and ignore the number 3
-            Some(EvaluationResult {
+            Ok(Some(EvaluationResult {
                 there_was_unit_conversion,
                 there_was_operation: last_success_operation_result_index.is_some(),
                 assignment,
                 result: stack[last_success_operation_index].clone(),
-            })
+            }))
         }
-        None => stack.pop().map(|it| EvaluationResult {
+        None => Ok(stack.pop().map(|it| EvaluationResult {
             there_was_operation: last_success_operation_result_index.is_some(),
             there_was_unit_conversion,
             assignment,
             result: it,
-        }),
+        })),
     };
 }
 
@@ -182,74 +182,7 @@ fn apply_operation<'units>(
                 false
             }
         }
-        OperatorTokenType::Fn { arg_count, typ } => match typ {
-            FnType::Nth => {
-                if *arg_count < 2 {
-                    false
-                } else {
-                    let index = &stack[stack.len() - 1];
-                    let mat = &stack[stack.len() - 2];
-                    match (index, mat) {
-                        (CalcResult::Number(n), CalcResult::Matrix(mat)) => {
-                            if let Some(index) = n.to_u32() {
-                                if mat.col_count < (index + 1) as usize {
-                                    false
-                                } else {
-                                    let result = mat.cell(0, index as usize).clone();
-                                    stack.truncate(stack.len() - 2);
-                                    stack.push(result);
-                                    true
-                                }
-                            } else {
-                                false
-                            }
-                        }
-                        _ => false,
-                    }
-                }
-            }
-            FnType::Sum => {
-                if *arg_count < 1 {
-                    false
-                } else {
-                    let param = &stack[stack.len() - 1];
-                    match param {
-                        CalcResult::Matrix(mat) => {
-                            let mut sum = mat.cells[0].clone();
-                            for cell in mat.cells.iter().skip(1) {
-                                if let Some(result) = add_op(&sum, cell) {
-                                    sum = result;
-                                } else {
-                                    return false;
-                                }
-                            }
-                            stack.truncate(stack.len() - 1);
-                            stack.push(sum);
-                            true
-                        }
-                        _ => false,
-                    }
-                }
-            }
-            FnType::Transpose => {
-                if *arg_count < 1 {
-                    false
-                } else {
-                    let param = &stack[stack.len() - 1];
-                    match param {
-                        CalcResult::Matrix(mat) => {
-                            let t = CalcResult::Matrix(mat.transposed());
-                            stack.truncate(stack.len() - 1);
-                            stack.push(t);
-                            true
-                        }
-                        _ => false,
-                    }
-                }
-            }
-            FnType::Sin => true,
-            FnType::Cos => true,
-        },
+        OperatorTokenType::Fn { arg_count, typ } => typ.execute(*arg_count, stack),
         OperatorTokenType::Semicolon | OperatorTokenType::Comma => {
             // ignore
             true
@@ -258,7 +191,7 @@ fn apply_operation<'units>(
         OperatorTokenType::ParenOpen
         | OperatorTokenType::ParenClose
         | OperatorTokenType::BracketOpen
-        | OperatorTokenType::BracketClose => true,
+        | OperatorTokenType::BracketClose => panic!(),
     };
     return succeed;
 }
@@ -906,26 +839,29 @@ mod tests {
 
         let result = evaluate_tokens(&mut shunting_output, vars);
 
-        if let Some(EvaluationResult {
+        if let Err(..) = &result {
+            assert_eq!("Err", expected);
+        } else if let Ok(Some(EvaluationResult {
             there_was_unit_conversion,
             there_was_operation,
             assignment: _assignment,
             result: CalcResult::Quantity(num, unit),
-        }) = &result
+        })) = &result
         {
             assert_eq!(
                 expected,
                 render_result(
                     &units,
-                    &result.as_ref().unwrap().result,
+                    &result.as_ref().unwrap().as_ref().unwrap().result,
                     &ResultFormat::Dec,
                     *there_was_unit_conversion,
                     unsafe { DECIMAL_COUNT }
                 )
             );
-        } else {
+        } else if let Ok(..) = &result {
             assert_eq!(
                 result
+                    .unwrap()
                     .map(|it| render_result(
                         &units,
                         &it.result,
@@ -1298,7 +1234,8 @@ mod tests {
             "[10, 12, 14; 16, 18, 20]",
         );
 
-        test("[2 km] + [3]", "[3]");
+        test("2 km + [3]", "Err");
+        test("[2 km] + [3]", "Err");
     }
 
     #[test]
@@ -1308,7 +1245,7 @@ mod tests {
         test("[2, 3, 4] - [5, 6, 7]", "[-3, -3, -3]");
         test("[4; 5] - [2; 3]", "[2; 2]");
 
-        test("[2 km] - [3]", "[3]");
+        test("[2 km] - [3]", "Err");
     }
 
     #[test]
@@ -1327,17 +1264,16 @@ mod tests {
 
     #[test]
     fn div_by_zero() {
-        // TODO: vezess be egy error-t a resulthoiz
-        test("1 / 0", " ");
-        test("1kg / 0", " ");
-        test("1m / 0s", " ");
-        test("1% / 0", " ");
-        test("10 / 0%", " ");
+        test("1 / 0", "Err");
+        test("1kg / 0", "Err");
+        test("1m / 0s", "Err");
+        test("1% / 0", "Err");
+        test("10 / 0%", "Err");
     }
 
     #[test]
     fn test_matrix_scalar_div() {
-        test("3 / [2]", "[2]");
+        test("3 / [2]", "Err");
         test("[6] / 2", "[3]");
 
         test("[6, 10] / 2", "[3, 5]");
@@ -1364,7 +1300,7 @@ mod tests {
         );
         test("[3m] * [2cm]", "[0.06 m^2]");
 
-        test("[2,3] * [4]", "[4]");
+        test("[2,3] * [4]", "Err");
     }
 
     #[test]
@@ -1488,5 +1424,20 @@ mod tests {
         test("transpose([5, 6, 7])", "[5; 6; 7]");
         test("transpose([1, 2; 3, 4])", "[1, 3; 2, 4]");
         test("transpose([1, 2; 3, 4; 5, 6])", "[1, 3, 5; 2, 4, 6]");
+    }
+
+    #[test]
+    fn test_func_pi() {
+        test("pi()", "3.1415926535897932384626433832795028841971693993751058209749445923078164062862089986280348253421170679821480865132823066470938446095505822317253594081284811174502841027019385211055596446229489549303819644288109756659334461284756482337867831652712019091456485669234603486104543266482133936072602491412737245870066063155881748815209209628292540917153643678925903600113305305488204665213841469519415116094330572703657595919530921861173819326117931051185480744623799627495673518857527248912279381830119491298336733624406566430860213949463952247371907021798609437027705392171762931767523846748184676694051320005681271452635608277857713427577896091736371787214684409012249534301465495853710507922796892589235420199561121290219608640344181598136297747713099605187072113499999983729780499510597317328160963185950244594553469083026425223082533446850352619311881710100031378387528865875332083814206171776691473035982534904287554687311595628638823537875937519577818577805321712268066130019278766111959092164201989");
+        test("pi(1)", "Err");
+    }
+
+    #[test]
+    fn test_single_brackets() {
+        test("[", " ");
+        test("]", " ");
+        test("(", " ");
+        test(")", " ");
+        test("=", " ");
     }
 }

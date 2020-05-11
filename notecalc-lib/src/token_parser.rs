@@ -1,4 +1,5 @@
 use crate::calc::CalcResult;
+use crate::functions::FnType;
 use crate::units::units::{UnitOutput, Units};
 use bigdecimal::{BigDecimal, Num, Zero};
 use std::str::FromStr;
@@ -27,15 +28,6 @@ impl<'text_ptr, 'units> Token<'text_ptr, 'units> {
     pub fn is_string(&self) -> bool {
         matches!(self.typ, TokenType::StringLiteral)
     }
-}
-
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
-pub enum FnType {
-    Sin,
-    Cos,
-    Nth,
-    Sum,
-    Transpose,
 }
 
 #[derive(PartialEq, Eq, Clone, Debug)]

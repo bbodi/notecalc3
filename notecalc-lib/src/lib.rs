@@ -21,6 +21,7 @@ use std::mem::MaybeUninit;
 use std::ops::Range;
 
 mod calc;
+mod functions;
 mod matrix;
 mod shunting_yard;
 mod token_parser;
@@ -795,7 +796,7 @@ impl<'a> NoteCalcApp<'a> {
             64,
         );
 
-        let mut results: SmallVec<[Option<CalcResult>; MAX_LINE_COUNT]> =
+        let mut results: SmallVec<[Result<Option<CalcResult>, ()>; MAX_LINE_COUNT]> =
             SmallVec::with_capacity(MAX_LINE_COUNT);
 
         self.editor_objects.clear();
@@ -832,7 +833,7 @@ impl<'a> NoteCalcApp<'a> {
                         &self.editor,
                         self.result_gutter_x,
                     );
-                    results.push(None);
+                    results.push(Ok(None));
                 } else {
                     // TODO optimize vec allocations
                     let mut tokens = Vec::with_capacity(128);
@@ -1250,63 +1251,76 @@ impl<'a> NoteCalcApp<'a> {
         vars: &mut Vec<(&'text_ptr [char], CalcResult<'units>)>,
         editor_y: usize,
         editor_content: &EditorContent<LineData>,
-        results: &mut SmallVec<[Option<CalcResult<'units>>; MAX_LINE_COUNT]>,
+        results: &mut SmallVec<[Result<Option<CalcResult<'units>>, ()>; MAX_LINE_COUNT]>,
         shunting_output_stack: &mut Vec<TokenType<'units>>,
         line: &'text_ptr [char],
         sum_is_null: &mut bool,
         autocompletion_src: &mut Vec<char>,
     ) -> usize {
-        if let Some(result) = evaluate_tokens(shunting_output_stack, &vars) {
-            *has_result_bitset |= 1u64 << editor_y as u64;
-            let result_row_height = match &result.result {
-                CalcResult::Matrix(mat) => mat.row_count,
-                _ => 1,
-            };
-
-            results.push(Some(result.result.clone()));
-
-            let line_data = editor_content.get_data(editor_y);
-            if result.assignment {
-                let var_name = {
-                    let mut i = 0;
-                    // skip whitespaces
-                    while line[i].is_ascii_whitespace() {
-                        i += 1;
-                    }
-                    let start = i;
-                    // take until '='
-                    while line[i] != '=' {
-                        i += 1;
-                    }
-                    // remove trailing whitespaces
-                    i -= 1;
-                    while line[i].is_ascii_whitespace() {
-                        i -= 1;
-                    }
-                    let end = i;
-                    &line[start..=end]
+        if let Ok(result) = evaluate_tokens(shunting_output_stack, &vars) {
+            if let Some(result) = result {
+                *has_result_bitset |= 1u64 << editor_y as u64;
+                let result_row_height = match &result.result {
+                    CalcResult::Matrix(mat) => mat.row_count,
+                    _ => 1,
                 };
-                if *sum_is_null {
-                    vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 = result.result.clone();
-                    *sum_is_null = false;
+
+                results.push(Ok(Some(result.result.clone())));
+
+                let line_data = editor_content.get_data(editor_y);
+                if result.assignment {
+                    let var_name = {
+                        let mut i = 0;
+                        // skip whitespaces
+                        while line[i].is_ascii_whitespace() {
+                            i += 1;
+                        }
+                        let start = i;
+                        // take until '='
+                        while line[i] != '=' {
+                            i += 1;
+                        }
+                        // remove trailing whitespaces
+                        i -= 1;
+                        while line[i].is_ascii_whitespace() {
+                            i -= 1;
+                        }
+                        let end = i;
+                        &line[start..=end]
+                    };
+                    if *sum_is_null {
+                        vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 = result.result.clone();
+                        *sum_is_null = false;
+                    } else {
+                        vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 =
+                            add_op(&vars[NoteCalcApp::SUM_VARIABLE_INDEX].1, &result.result)
+                                .unwrap_or(CalcResult::zero());
+                    }
+                    // variable redeclaration
+                    if let Some(i) = vars.iter().position(|it| it.0 == var_name) {
+                        vars[i].1 = result.result;
+                    } else {
+                        vars.push((var_name, result.result));
+                    }
+                    for ch in var_name {
+                        autocompletion_src.push(*ch);
+                    }
+                    autocompletion_src.push(0 as char);
+                } else if line_data.line_id != 0 {
+                    let line_id = line_data.line_id;
+                    {
+                        if *sum_is_null {
+                            vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 = result.result.clone();
+                            *sum_is_null = false;
+                        } else {
+                            vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 =
+                                add_op(&vars[NoteCalcApp::SUM_VARIABLE_INDEX].1, &result.result)
+                                    .unwrap_or(CalcResult::zero());
+                        }
+                    }
+                    vars.push((STATIC_LINE_IDS[line_id], result.result));
                 } else {
-                    vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 =
-                        add_op(&vars[NoteCalcApp::SUM_VARIABLE_INDEX].1, &result.result)
-                            .unwrap_or(CalcResult::zero());
-                }
-                // variable redeclaration
-                if let Some(i) = vars.iter().position(|it| it.0 == var_name) {
-                    vars[i].1 = result.result;
-                } else {
-                    vars.push((var_name, result.result));
-                }
-                for ch in var_name {
-                    autocompletion_src.push(*ch);
-                }
-                autocompletion_src.push(0 as char);
-            } else if line_data.line_id != 0 {
-                let line_id = line_data.line_id;
-                {
+                    // TODO extract the sum addition
                     if *sum_is_null {
                         vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 = result.result.clone();
                         *sum_is_null = false;
@@ -1316,22 +1330,14 @@ impl<'a> NoteCalcApp<'a> {
                                 .unwrap_or(CalcResult::zero());
                     }
                 }
-                vars.push((STATIC_LINE_IDS[line_id], result.result));
+                return result_row_height;
             } else {
-                // TODO extract the sum addition
-                if *sum_is_null {
-                    vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 = result.result.clone();
-                    *sum_is_null = false;
-                } else {
-                    vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 =
-                        add_op(&vars[NoteCalcApp::SUM_VARIABLE_INDEX].1, &result.result)
-                            .unwrap_or(CalcResult::zero());
-                }
+                results.push(Ok(None));
+                return 0;
             }
-            return result_row_height;
         } else {
-            results.push(None);
-            return 0;
+            results.push(Err(()));
+            return 1;
         };
     }
 
@@ -1497,7 +1503,7 @@ impl<'a> NoteCalcApp<'a> {
         editor: &Editor,
         editor_content: &EditorContent<LineData>,
         vars: &[(&[char], CalcResult)],
-        results: &[Option<CalcResult<'units>>],
+        results: &[Result<Option<CalcResult<'units>>, ()>],
     ) -> Option<String> {
         let sel = editor.get_selection();
         // TODO optimize vec allocations
@@ -1505,7 +1511,7 @@ impl<'a> NoteCalcApp<'a> {
         if sel.start.row == sel.end.unwrap().row {
             if let Some(selected_text) = Editor::get_selected_text_single_line(sel, &editor_content)
             {
-                if let Some(result) =
+                if let Ok(Some(result)) =
                     NoteCalcApp::evaluate_text(units, selected_text, vars, &mut tokens)
                 {
                     if result.there_was_operation {
@@ -1524,7 +1530,9 @@ impl<'a> NoteCalcApp<'a> {
             let mut sum: Option<&CalcResult> = None;
             let mut tmp_sum = CalcResult::hack_empty();
             for row_index in sel.get_first().row..=sel.get_second().row {
-                if let Some(line_result) = &results[row_index] {
+                if let Err(..) = &results[row_index] {
+                    return None;
+                } else if let Ok(Some(line_result)) = &results[row_index] {
                     if let Some(sum_r) = &sum {
                         if let Some(add_result) = add_op(sum_r, &line_result) {
                             tmp_sum = add_result;
@@ -1556,7 +1564,7 @@ impl<'a> NoteCalcApp<'a> {
         text: &'text_ptr [char],
         vars: &[(&'text_ptr [char], CalcResult<'units>)],
         tokens: &mut Vec<Token<'text_ptr, 'units>>,
-    ) -> Option<EvaluationResult<'units>> {
+    ) -> Result<Option<EvaluationResult<'units>>, ()> {
         TokenParser::parse_line(text, vars, tokens, &units);
         let mut shunting_output_stack = Vec::with_capacity(4);
         ShuntingYard::shunting_yard(tokens, &mut shunting_output_stack);
@@ -1946,7 +1954,7 @@ impl<'a> NoteCalcApp<'a> {
     fn render_results<'text_ptr, 'units>(
         units: &Units<'units>,
         render_buckets: &mut RenderBuckets<'text_ptr>,
-        results: &[Option<CalcResult<'units>>],
+        results: &[Result<Option<CalcResult<'units>>, ()>],
         result_buffer: &'text_ptr mut [u8],
         editor_content: &EditorContent<LineData>,
         gr: &GlobalRenderData,
@@ -1964,7 +1972,14 @@ impl<'a> NoteCalcApp<'a> {
         let mut prev_result_matrix_length = None;
         // calc max length and render results into buffer
         for (editor_y, result) in results.iter().enumerate() {
-            if let Some(result) = result {
+            if let Err(..) = result {
+                result_buffer[result_buffer_index] = b'E';
+                result_buffer[result_buffer_index + 1] = b'r';
+                result_buffer[result_buffer_index + 2] = b'r';
+                result_ranges.push(Some((result_buffer_index..result_buffer_index + 3)));
+                result_buffer_index += 3;
+                prev_result_matrix_length = None;
+            } else if let Ok(Some(result)) = result {
                 match &result {
                     CalcResult::Matrix(mat) => {
                         if prev_result_matrix_length.is_none() {
@@ -2008,9 +2023,20 @@ impl<'a> NoteCalcApp<'a> {
                     }
                 };
             } else {
+                prev_result_matrix_length = None;
                 result_ranges.push(None);
             }
         }
+        rowmodification, rowaddition, rowdeletion
+        eltárolni a resultokat
+        csak a modosult soroktól kezdve ujraszámolni
+        utána eq, ha nem egyenlő, akkor változott a result és kell villogás
+
+        villogás:
+        frondendnek elküldeni a még1 üzenetet
+            gradiens + idő, list of rectangles
+            list of results
+
         // render results from the buffer
         for (editor_y, result_range) in result_ranges.iter().enumerate() {
             if let Some(result_range) = result_range {
@@ -2021,7 +2047,12 @@ impl<'a> NoteCalcApp<'a> {
                 let rendered_row_height = gr.editor_y_to_rendered_height[editor_y];
                 let vert_align_offset = (rendered_row_height - 1) / 2;
                 let row = gr.editor_y_to_render_y[editor_y] + vert_align_offset;
-                let offset_x = max_lengths.int_part_len - lengths.int_part_len;
+                let offset_x = if max_lengths.int_part_len < lengths.int_part_len {
+                    // it is an "Err"
+                    0
+                } else {
+                    max_lengths.int_part_len - lengths.int_part_len
+                };
                 let x = result_gutter_x + gr.right_gutter_width + offset_x;
                 render_buckets.ascii_texts.push(RenderAsciiTextMsg {
                     text: &result_buffer[from..from + lengths.int_part_len],
@@ -2051,12 +2082,12 @@ impl<'a> NoteCalcApp<'a> {
 
     fn calc_consecutive_matrices_max_lengths<'text_ptr, 'units>(
         units: &Units<'units>,
-        results: &[Option<CalcResult<'units>>],
+        results: &[Result<Option<CalcResult<'units>>, ()>],
     ) -> Option<ResultLengths> {
         let mut max_lengths: Option<ResultLengths> = None;
         for result in results.iter() {
             match result {
-                Some(CalcResult::Matrix(mat)) => {
+                Ok(Some(CalcResult::Matrix(mat))) => {
                     let lengths = NoteCalcApp::calc_matrix_max_lengths(units, mat);
                     if let Some(max_lengths) = &mut max_lengths {
                         max_lengths.set_max(&lengths);
@@ -2110,7 +2141,7 @@ impl<'a> NoteCalcApp<'a> {
         let mut vars: Vec<(&[char], CalcResult)> = Vec::with_capacity(32);
         vars.push((&['s', 'u', 'm'], CalcResult::zero()));
         let mut sum_is_null = true;
-        let mut results: SmallVec<[Option<CalcResult>; MAX_LINE_COUNT]> =
+        let mut results: SmallVec<[Result<Option<CalcResult>, ()>; MAX_LINE_COUNT]> =
             SmallVec::with_capacity(MAX_LINE_COUNT);
 
         let mut tokens = Vec::with_capacity(128);
@@ -2295,7 +2326,7 @@ impl<'a> NoteCalcApp<'a> {
     fn render_selection_and_its_sum<'text_ptr, 'units>(
         units: &Units<'units>,
         render_buckets: &mut RenderBuckets<'text_ptr>,
-        results: &[Option<CalcResult<'units>>],
+        results: &[Result<Option<CalcResult<'units>>, ()>],
         editor: &Editor,
         editor_content: &EditorContent<LineData>,
         r: &GlobalRenderData,
@@ -3713,6 +3744,15 @@ sum"
              [1  2  3] * ⎢2⎥  ‖ [14]
             ⎣3⎦  ‖\n",
             0..=0,
+        );
+        // test alignment
+        t(
+            "[1, 2, 3]\n'asd\n[1, 2, 3]\n[10, 20, 30]",
+            "[1  2  3]     ‖ [1  2  3]\n\
+             'asd          ‖\n\
+             [1  2  3]     ‖ [ 1   2   3]\n\
+             [10  20  30]  ‖ [10  20  30]\n",
+            0..=3,
         );
     }
 
