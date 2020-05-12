@@ -4965,6 +4965,16 @@ mod tests {
             \n\
             █abcdefghijklmnopqrstuvwxyz",
         });
+
+        test_normal_undo_redo(TestParams2 {
+            initial_content:
+                "❰pPaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\
+❱aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "█aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        });
     }
 
     #[test]

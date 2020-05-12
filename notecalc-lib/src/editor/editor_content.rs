@@ -349,21 +349,30 @@ impl<T: Default + Clone> EditorContent<T> {
         return true;
     }
 
-    pub fn remove_selection(&mut self, selection: Selection) -> RowModificationType {
+    pub fn remove_selection(&mut self, selection: Selection) -> Option<RowModificationType> {
         let first = selection.get_first();
         let second = selection.get_second();
         return if second.row > first.row {
             for _ in first.row + 1..second.row {
                 self.remove_line_at(first.row + 1);
             }
-            self.merge_with_next_row(first.row, first.column, second.column);
-            RowModificationType::AllLinesFrom(first.row)
+            if first.column == 0 {
+                self.remove_selection(Selection::range(second.with_column(0), second));
+                self.remove_line_at(first.row);
+                Some(RowModificationType::AllLinesFrom(first.row))
+            } else {
+                if self.merge_with_next_row(first.row, first.column, second.column) {
+                    Some(RowModificationType::AllLinesFrom(first.row))
+                } else {
+                    None
+                }
+            }
         } else {
             self.get_mut_line_chars(first.row)
                 .copy_within(second.column.., first.column);
             let selected_char_count = second.column - first.column;
             self.line_lens[first.row] -= selected_char_count;
-            RowModificationType::SingleLine(first.row)
+            Some(RowModificationType::SingleLine(first.row))
         };
     }
 

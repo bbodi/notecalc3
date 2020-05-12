@@ -626,12 +626,15 @@ impl Editor {
             self.next_blink_at = self.time + 500;
             self.show_cursor = true;
             let modif_type = self.do_command(&command, content);
-            if self.modif_time_treshold_expires_at < self.time || content.undo_stack.is_empty() {
-                // new undo group
-                content.undo_stack.push(Vec::with_capacity(4));
+            if modif_type.is_some() {
+                if self.modif_time_treshold_expires_at < self.time || content.undo_stack.is_empty()
+                {
+                    // new undo group
+                    content.undo_stack.push(Vec::with_capacity(4));
+                }
+                content.undo_stack.last_mut().unwrap().push(command);
+                self.modif_time_treshold_expires_at = self.time + 500;
             }
-            content.undo_stack.last_mut().unwrap().push(command);
-            self.modif_time_treshold_expires_at = self.time + 500;
             modif_type
         } else {
             self.next_blink_at = self.time + 500;
@@ -708,9 +711,11 @@ impl Editor {
                 selection,
             } => {
                 let modif_type = content.remove_selection(*selection);
-                let selection = Selection::single(selection.get_first());
-                self.set_selection_save_col(selection);
-                Some(modif_type)
+                if modif_type.is_some() {
+                    let selection = Selection::single(selection.get_first());
+                    self.set_selection_save_col(selection);
+                }
+                modif_type
             }
             EditorCommand::DelCtrl {
                 removed_text: _removed_text,
@@ -769,8 +774,10 @@ impl Editor {
                 selection,
             } => {
                 let modif_type = content.remove_selection(*selection);
-                self.set_selection_save_col(Selection::single(selection.get_first()));
-                Some(modif_type)
+                if modif_type.is_some() {
+                    self.set_selection_save_col(Selection::single(selection.get_first()));
+                }
+                modif_type
             }
             EditorCommand::BackspaceCtrl { removed_text, pos } => {
                 let col = content.jump_word_backward(pos, JumpMode::IgnoreWhitespaces);
@@ -797,12 +804,14 @@ impl Editor {
                     first.with_next_col(),
                     selection.get_second(),
                 ));
-                content.set_char(first.row, first.column, *ch);
+                if modif_type.is_some() {
+                    content.set_char(first.row, first.column, *ch);
 
-                self.set_selection_save_col(Selection::single(
-                    selection.get_first().with_next_col(),
-                ));
-                Some(modif_type)
+                    self.set_selection_save_col(Selection::single(
+                        selection.get_first().with_next_col(),
+                    ));
+                }
+                modif_type
             }
             EditorCommand::CutLine(pos) => {
                 self.send_selection_to_clipboard(
