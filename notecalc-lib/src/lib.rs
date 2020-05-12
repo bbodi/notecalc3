@@ -10,11 +10,9 @@ use crate::matrix::MatrixData;
 use crate::renderer::{render_result, render_result_into};
 use crate::shunting_yard::ShuntingYard;
 use crate::token_parser::{OperatorTokenType, Token, TokenParser, TokenType};
-use crate::units::consts::{create_prefixes, init_units};
 use crate::units::units::Units;
 use crate::units::UnitPrefixes;
 use bigdecimal::BigDecimal;
-use bigdecimal::Zero;
 use smallvec::SmallVec;
 use std::io::Cursor;
 use std::mem::MaybeUninit;
@@ -25,7 +23,7 @@ mod functions;
 mod matrix;
 mod shunting_yard;
 mod token_parser;
-mod units;
+pub mod units;
 
 pub mod consts;
 pub mod editor;
@@ -540,11 +538,12 @@ impl MatrixEditing {
 }
 
 #[derive(Eq, PartialEq)]
-enum EditorObjectType {
+pub enum EditorObjectType {
     Matrix { row_count: usize, col_count: usize },
     LineReference,
 }
-struct EditorObject {
+
+pub struct EditorObject {
     typ: EditorObjectType,
     row: usize,
     start_x: usize,
@@ -555,24 +554,22 @@ struct EditorObject {
     rendered_h: usize,
 }
 
-pub struct NoteCalcApp<'a> {
-    client_width: usize,
-    units: Units<'a>,
+pub struct NoteCalcApp {
+    pub client_width: usize,
     pub editor: Editor,
     pub editor_content: EditorContent<LineData>,
-    prev_cursor_pos: Pos,
-    prefixes: &'static UnitPrefixes,
-    result_buffer: [u8; 1024],
-    matrix_editing: Option<MatrixEditing>,
-    editor_click: Option<Click>,
-    editor_objects: Vec<EditorObject>,
-    line_reference_chooser: Option<usize>,
-    line_id_generator: usize,
-    has_result_bitset: u64,
-    result_gutter_x: usize,
-    right_gutter_is_dragged: bool,
+    pub prev_cursor_pos: Pos,
+    pub matrix_editing: Option<MatrixEditing>,
+    pub editor_click: Option<Click>,
+    pub editor_objects: Vec<EditorObject>,
+    pub line_reference_chooser: Option<usize>,
+    pub line_id_generator: usize,
+    pub has_result_bitset: u64,
+    pub result_gutter_x: usize,
+    pub right_gutter_is_dragged: bool,
     // contains variable names separated by 0
-    autocompletion_src: Vec<char>,
+    pub autocompletion_src: Vec<char>,
+    pub results: Vec<Result<Option<CalcResult>, ()>>,
 }
 
 struct GlobalRenderData {
@@ -684,20 +681,15 @@ impl PerLineRenderData {
     }
 }
 
-impl<'a> NoteCalcApp<'a> {
-    pub fn new(client_width: usize) -> NoteCalcApp<'a> {
-        let prefixes: &'static UnitPrefixes = Box::leak(Box::new(create_prefixes()));
-        let units = Units::new(&prefixes);
+impl NoteCalcApp {
+    pub fn new(client_width: usize) -> NoteCalcApp {
         let mut editor_content = EditorContent::new(MAX_EDITOR_WIDTH);
         NoteCalcApp {
             prev_cursor_pos: Pos::from_row_column(0, 0),
             line_reference_chooser: None,
             client_width,
-            prefixes,
-            units,
             editor: Editor::new(&mut editor_content),
             editor_content,
-            result_buffer: [0; 1024],
             matrix_editing: None,
             editor_click: None,
             editor_objects: Vec::with_capacity(8),
@@ -706,6 +698,8 @@ impl<'a> NoteCalcApp<'a> {
             has_result_bitset: 0,
             result_gutter_x: NoteCalcApp::calc_result_gutter_x(None, client_width),
             right_gutter_is_dragged: false,
+            // TODO: array?
+            results: Vec::with_capacity(MAX_LINE_COUNT),
         }
     }
 
@@ -767,21 +761,37 @@ impl<'a> NoteCalcApp<'a> {
 
     const SUM_VARIABLE_INDEX: usize = 0;
 
-    pub fn render<'b>(&'b mut self) -> RenderBuckets<'b> {
+    pub fn renderr<'a>(
+        client_width: usize,
+        result_gutter_x: usize,
+        editor_objects: &mut Vec<EditorObject>,
+        autocompletion_src: &mut Vec<char>,
+        results: &mut Vec<Result<Option<CalcResult>, ()>>,
+        editor: &mut Editor,
+        editor_content: &'a EditorContent<LineData>,
+        has_result_bitset: &mut u64,
+        editor_click: &mut Option<Click>,
+        units: &Units,
+        matrix_editing: &mut Option<MatrixEditing>,
+        line_reference_chooser: &mut Option<usize>,
+        prev_cursor_pos: Pos,
+        render_buckets: &mut RenderBuckets<'a>,
+        result_buffer: &'a mut [u8],
+    ) {
+        results.clear();
+
         let mut gr = GlobalRenderData::new(
-            self.client_width,
-            self.result_gutter_x,
+            client_width,
+            result_gutter_x,
             LEFT_GUTTER_WIDTH,
             RIGHT_GUTTER_WIDTH,
         );
-        // TODO: improve vec alloc
-        let mut render_buckets = RenderBuckets::new();
 
         // result gutter
         render_buckets.set_color(Layer::BehindText, 0xD2D2D2_FF);
         render_buckets.draw_rect(
             Layer::BehindText,
-            self.result_gutter_x,
+            result_gutter_x,
             0,
             gr.right_gutter_width,
             64,
@@ -790,28 +800,24 @@ impl<'a> NoteCalcApp<'a> {
         render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
         render_buckets.draw_rect(
             Layer::BehindText,
-            self.result_gutter_x + gr.right_gutter_width,
+            result_gutter_x + gr.right_gutter_width,
             0,
             gr.current_result_width,
             64,
         );
 
-        let mut results: SmallVec<[Result<Option<CalcResult>, ()>; MAX_LINE_COUNT]> =
-            SmallVec::with_capacity(MAX_LINE_COUNT);
-
-        self.editor_objects.clear();
+        editor_objects.clear();
 
         // TODO avoid alloc
         let mut vars: Vec<(&[char], CalcResult)> = Vec::with_capacity(32);
-        self.autocompletion_src.clear();
+        autocompletion_src.clear();
         vars.push((&['s', 'u', 'm'], CalcResult::zero()));
         let mut sum_is_null = true;
 
-        self.has_result_bitset = 0;
-
+        *has_result_bitset = 0;
         {
             let mut r = PerLineRenderData::new();
-            for line in self.editor_content.lines().take(MAX_LINE_COUNT) {
+            for line in editor_content.lines().take(MAX_LINE_COUNT) {
                 r.new_line_started();
                 gr.editor_y_to_render_y[r.editor_pos.row] = r.render_pos.row;
 
@@ -823,47 +829,61 @@ impl<'a> NoteCalcApp<'a> {
                         line,
                         &mut r,
                         &mut gr,
-                        &mut render_buckets,
-                        &mut self.editor_click,
+                        render_buckets,
+                        editor_click,
                     );
                     NoteCalcApp::highlight_current_line(
-                        &mut render_buckets,
+                        render_buckets,
                         &r,
                         &gr,
-                        &self.editor,
-                        self.result_gutter_x,
+                        &editor,
+                        result_gutter_x,
                     );
                     results.push(Ok(None));
                 } else {
                     // TODO optimize vec allocations
                     let mut tokens = Vec::with_capacity(128);
-                    TokenParser::parse_line(line, &vars, &mut tokens, &self.units);
+                    TokenParser::parse_line(line, &vars, &mut tokens, &units);
 
                     // TODO: measure is 128 necessary?
                     // and remove allocation
                     let mut shunting_output_stack = Vec::with_capacity(128);
                     ShuntingYard::shunting_yard(&mut tokens, &mut shunting_output_stack);
 
-                    let result_row_height = NoteCalcApp::evaluate_tokens(
-                        &mut self.has_result_bitset,
+                    let result = NoteCalcApp::evaluate_tokens(
+                        has_result_bitset,
                         &mut vars,
                         r.editor_pos.row,
-                        &self.editor_content,
-                        &mut results,
+                        &editor_content,
                         &mut shunting_output_stack,
                         line,
                         &mut sum_is_null,
-                        &mut self.autocompletion_src,
+                        autocompletion_src,
                     );
-
-                    let editing_mat_height = self.matrix_editing.as_ref().and_then(|it| {
+                    let result_row_height = if let Ok(result) = result {
+                        if let Some(result) = result {
+                            let result_row_height = match &result.result {
+                                CalcResult::Matrix(mat) => mat.row_count,
+                                _ => 1,
+                            };
+                            results.push(Ok(Some(result.result)));
+                            result_row_height
+                        } else {
+                            results.push(Ok(None));
+                            1
+                        }
+                    } else {
+                        results.push(Err(()));
+                        1
+                    };
+                    // todo ,merge it with the previous block
+                    let editing_mat_height = matrix_editing.as_ref().and_then(|it| {
                         if it.row_index == r.editor_pos.row {
                             Some(it.row_count)
                         } else {
                             None
                         }
                     });
-                    //if r.editor_pos.row
                     r.calc_rendered_row_height(
                         &tokens,
                         result_row_height,
@@ -872,16 +892,16 @@ impl<'a> NoteCalcApp<'a> {
                     );
                     gr.editor_y_to_rendered_height[r.editor_pos.row] = r.rendered_row_height;
                     NoteCalcApp::highlight_current_line(
-                        &mut render_buckets,
+                        render_buckets,
                         &r,
                         &gr,
-                        &self.editor,
-                        self.result_gutter_x,
+                        editor,
+                        result_gutter_x,
                     );
 
-                    let need_matrix_renderer = !self.editor.get_selection().is_range() || {
-                        let first = self.editor.get_selection().get_first();
-                        let second = self.editor.get_selection().get_second();
+                    let need_matrix_renderer = !editor.get_selection().is_range() || {
+                        let first = editor.get_selection().get_first();
+                        let second = editor.get_selection().get_second();
                         !(first.row..=second.row).contains(&r.editor_pos.row)
                     };
                     // Todo: refactor the parameters into a struct
@@ -889,42 +909,36 @@ impl<'a> NoteCalcApp<'a> {
                         &tokens,
                         &mut r,
                         &mut gr,
-                        &mut render_buckets,
+                        render_buckets,
                         // TODO &mut code smell
-                        &mut self.editor_objects,
-                        &self.editor,
-                        &self.matrix_editing,
+                        editor_objects,
+                        editor,
+                        matrix_editing,
                         // TODO &mut code smell
-                        &mut self.editor_click,
+                        editor_click,
                         &vars,
-                        &self.units,
+                        &units,
                         need_matrix_renderer,
                     );
-                    NoteCalcApp::handle_click_after_last_token(&mut self.editor_click, &r, &mut gr);
+                    NoteCalcApp::handle_click_after_last_token(editor_click, &r, &mut gr);
                 }
 
-                NoteCalcApp::render_wrap_dots(&mut render_buckets, &r, &gr);
+                NoteCalcApp::render_wrap_dots(render_buckets, &r, &gr);
 
                 NoteCalcApp::draw_line_ref_chooser(
-                    &mut render_buckets,
+                    render_buckets,
                     &r,
                     &gr,
-                    &self.line_reference_chooser,
-                    self.result_gutter_x,
+                    &line_reference_chooser,
+                    result_gutter_x,
                 );
 
-                NoteCalcApp::draw_cursor(
-                    &mut render_buckets,
-                    &r,
-                    &gr,
-                    &self.editor,
-                    &self.matrix_editing,
-                );
+                NoteCalcApp::draw_cursor(render_buckets, &r, &gr, &editor, &matrix_editing);
 
                 NoteCalcApp::draw_right_gutter_num_prefixes(
-                    &mut render_buckets,
-                    self.result_gutter_x,
-                    &self.editor_content,
+                    render_buckets,
+                    result_gutter_x,
+                    &editor_content,
                     &r,
                 );
 
@@ -932,7 +946,7 @@ impl<'a> NoteCalcApp<'a> {
             }
         }
 
-        for editor_obj in &self.editor_objects {
+        for editor_obj in editor_objects.iter() {
             if matches!(editor_obj.typ, EditorObjectType::LineReference) {
                 let row_height = gr.editor_y_to_rendered_height[editor_obj.row];
                 let vert_align_offset = (row_height - editor_obj.rendered_h) / 2;
@@ -947,24 +961,25 @@ impl<'a> NoteCalcApp<'a> {
             }
         }
 
-        if let Some(editor_obj) =
-            self.is_pos_inside_an_obj(self.editor.get_selection().get_cursor_pos())
-        {
+        if let Some(editor_obj) = NoteCalcApp::is_pos_inside_an_obj(
+            editor_objects,
+            editor.get_selection().get_cursor_pos(),
+        ) {
             match editor_obj.typ {
                 EditorObjectType::Matrix {
                     row_count,
                     col_count,
                 } => {
-                    if self.matrix_editing.is_none() && !self.editor.get_selection().is_range() {
-                        self.matrix_editing = Some(MatrixEditing::new(
+                    if matrix_editing.is_none() && !editor.get_selection().is_range() {
+                        *matrix_editing = Some(MatrixEditing::new(
                             row_count,
                             col_count,
-                            &self.editor_content.get_line_chars(editor_obj.row)
+                            &editor_content.get_line_chars(editor_obj.row)
                                 [editor_obj.start_x..editor_obj.end_x],
                             editor_obj.row,
                             editor_obj.start_x,
                             editor_obj.end_x,
-                            self.prev_cursor_pos,
+                            prev_cursor_pos,
                         ));
                     }
                 }
@@ -974,14 +989,12 @@ impl<'a> NoteCalcApp<'a> {
 
         match gr.clicked_editor_pos {
             Some(Click::Simple(pos)) => {
-                self.editor
-                    .handle_click(pos.column, pos.row, &self.editor_content);
-                self.editor.blink_cursor();
+                editor.handle_click(pos.column, pos.row, &editor_content);
+                editor.blink_cursor();
             }
             Some(Click::Drag(pos)) => {
-                self.editor
-                    .handle_drag(pos.column, pos.row, &self.editor_content);
-                self.editor.blink_cursor();
+                editor.handle_drag(pos.column, pos.row, &editor_content);
+                editor.blink_cursor();
             }
             None => {}
         }
@@ -992,7 +1005,7 @@ impl<'a> NoteCalcApp<'a> {
 
         // line numbers
         render_buckets.set_color(Layer::BehindText, 0xADADAD_FF);
-        for i in 0..self.editor_content.line_count().min(MAX_LINE_COUNT) {
+        for i in 0..editor_content.line_count().min(MAX_LINE_COUNT) {
             let rendered_row_height = gr.editor_y_to_rendered_height[i];
             let vert_align_offset = (rendered_row_height - 1) / 2;
             render_buckets.custom_commands[Layer::BehindText as usize].push(
@@ -1006,26 +1019,24 @@ impl<'a> NoteCalcApp<'a> {
 
         // selected text
         NoteCalcApp::render_selection_and_its_sum(
-            &self.units,
-            &mut render_buckets,
+            &units,
+            render_buckets,
             &results,
-            &self.editor,
-            &self.editor_content,
+            &editor,
+            &editor_content,
             &gr,
             &vars,
         );
 
         NoteCalcApp::render_results(
-            &self.units,
-            &mut render_buckets,
+            &units,
+            render_buckets,
             &results,
-            &mut self.result_buffer,
-            &self.editor_content,
+            result_buffer,
+            &editor_content,
             &gr,
-            self.result_gutter_x,
+            result_gutter_x,
         );
-
-        return render_buckets;
     }
 
     fn render_simple_text_line<'text_ptr>(
@@ -1051,8 +1062,8 @@ impl<'a> NoteCalcApp<'a> {
         r.token_render_done(text_len, text_len, 0);
     }
 
-    fn render_tokens<'text_ptr, 'units>(
-        tokens: &[Token<'text_ptr, 'units>],
+    fn render_tokens<'text_ptr>(
+        tokens: &[Token<'text_ptr>],
         r: &mut PerLineRenderData,
         gr: &mut GlobalRenderData,
         render_buckets: &mut RenderBuckets<'text_ptr>,
@@ -1061,7 +1072,7 @@ impl<'a> NoteCalcApp<'a> {
         matrix_editing: &Option<MatrixEditing>,
         editor_click: &mut Option<Click>,
         vars: &[(&[char], CalcResult)],
-        units: &'units Units<'units>,
+        units: &Units,
         need_matrix_renderer: bool,
     ) {
         let cursor_pos = editor.get_selection().get_cursor_pos();
@@ -1246,81 +1257,62 @@ impl<'a> NoteCalcApp<'a> {
         }
     }
 
-    fn evaluate_tokens<'text_ptr, 'units>(
+    fn evaluate_tokens<'text_ptr>(
         has_result_bitset: &mut u64,
-        vars: &mut Vec<(&'text_ptr [char], CalcResult<'units>)>,
+        vars: &mut Vec<(&'text_ptr [char], CalcResult)>,
         editor_y: usize,
         editor_content: &EditorContent<LineData>,
-        results: &mut SmallVec<[Result<Option<CalcResult<'units>>, ()>; MAX_LINE_COUNT]>,
-        shunting_output_stack: &mut Vec<TokenType<'units>>,
+        shunting_output_stack: &mut Vec<TokenType>,
         line: &'text_ptr [char],
         sum_is_null: &mut bool,
         autocompletion_src: &mut Vec<char>,
-    ) -> usize {
-        if let Ok(result) = evaluate_tokens(shunting_output_stack, &vars) {
-            if let Some(result) = result {
-                *has_result_bitset |= 1u64 << editor_y as u64;
-                let result_row_height = match &result.result {
-                    CalcResult::Matrix(mat) => mat.row_count,
-                    _ => 1,
-                };
+    ) -> Result<Option<EvaluationResult>, ()> {
+        let result = evaluate_tokens(shunting_output_stack, &vars);
+        if let Ok(Some(result)) = &result {
+            *has_result_bitset |= 1u64 << editor_y as u64;
 
-                results.push(Ok(Some(result.result.clone())));
-
-                let line_data = editor_content.get_data(editor_y);
-                if result.assignment {
-                    let var_name = {
-                        let mut i = 0;
-                        // skip whitespaces
-                        while line[i].is_ascii_whitespace() {
-                            i += 1;
-                        }
-                        let start = i;
-                        // take until '='
-                        while line[i] != '=' {
-                            i += 1;
-                        }
-                        // remove trailing whitespaces
+            let line_data = editor_content.get_data(editor_y);
+            if result.assignment {
+                let var_name = {
+                    let mut i = 0;
+                    // skip whitespaces
+                    while line[i].is_ascii_whitespace() {
+                        i += 1;
+                    }
+                    let start = i;
+                    // take until '='
+                    while line[i] != '=' {
+                        i += 1;
+                    }
+                    // remove trailing whitespaces
+                    i -= 1;
+                    while line[i].is_ascii_whitespace() {
                         i -= 1;
-                        while line[i].is_ascii_whitespace() {
-                            i -= 1;
-                        }
-                        let end = i;
-                        &line[start..=end]
-                    };
-                    if *sum_is_null {
-                        vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 = result.result.clone();
-                        *sum_is_null = false;
-                    } else {
-                        vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 =
-                            add_op(&vars[NoteCalcApp::SUM_VARIABLE_INDEX].1, &result.result)
-                                .unwrap_or(CalcResult::zero());
                     }
-                    // variable redeclaration
-                    if let Some(i) = vars.iter().position(|it| it.0 == var_name) {
-                        vars[i].1 = result.result;
-                    } else {
-                        vars.push((var_name, result.result));
-                    }
-                    for ch in var_name {
-                        autocompletion_src.push(*ch);
-                    }
-                    autocompletion_src.push(0 as char);
-                } else if line_data.line_id != 0 {
-                    let line_id = line_data.line_id;
-                    {
-                        if *sum_is_null {
-                            vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 = result.result.clone();
-                            *sum_is_null = false;
-                        } else {
-                            vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 =
-                                add_op(&vars[NoteCalcApp::SUM_VARIABLE_INDEX].1, &result.result)
-                                    .unwrap_or(CalcResult::zero());
-                        }
-                    }
-                    vars.push((STATIC_LINE_IDS[line_id], result.result));
+                    let end = i;
+                    &line[start..=end]
+                };
+                if *sum_is_null {
+                    vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 = result.result.clone();
+                    *sum_is_null = false;
                 } else {
-                    // TODO extract the sum addition
+                    vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 =
+                        add_op(&vars[NoteCalcApp::SUM_VARIABLE_INDEX].1, &result.result)
+                            .unwrap_or(CalcResult::zero());
+                }
+                // variable redeclaration
+                if let Some(i) = vars.iter().position(|it| it.0 == var_name) {
+                    vars[i].1 = result.result.clone();
+                } else {
+                    vars.push((var_name, result.result.clone()));
+                }
+                for ch in var_name {
+                    autocompletion_src.push(*ch);
+                }
+                autocompletion_src.push(0 as char);
+            } else if line_data.line_id != 0 {
+                let line_id = line_data.line_id;
+                {
                     if *sum_is_null {
                         vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 = result.result.clone();
                         *sum_is_null = false;
@@ -1330,20 +1322,25 @@ impl<'a> NoteCalcApp<'a> {
                                 .unwrap_or(CalcResult::zero());
                     }
                 }
-                return result_row_height;
+                vars.push((STATIC_LINE_IDS[line_id], result.result.clone()));
             } else {
-                results.push(Ok(None));
-                return 0;
+                // TODO extract the sum addition
+                if *sum_is_null {
+                    vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 = result.result.clone();
+                    *sum_is_null = false;
+                } else {
+                    vars[NoteCalcApp::SUM_VARIABLE_INDEX].1 =
+                        add_op(&vars[NoteCalcApp::SUM_VARIABLE_INDEX].1, &result.result)
+                            .unwrap_or(CalcResult::zero());
+                }
             }
-        } else {
-            results.push(Err(()));
-            return 1;
         };
+        result
     }
 
-    fn render_matrix<'text_ptr, 'units>(
+    fn render_matrix<'text_ptr>(
         token_index: usize,
-        tokens: &[Token<'text_ptr, 'units>],
+        tokens: &[Token<'text_ptr>],
         row_count: usize,
         col_count: usize,
         r: &mut PerLineRenderData,
@@ -1400,7 +1397,7 @@ impl<'a> NoteCalcApp<'a> {
             )
         };
 
-        let rendered_width = (new_render_x - r.render_pos.column);
+        let rendered_width = new_render_x - r.render_pos.column;
         editor_objects.push(EditorObject {
             typ: EditorObjectType::Matrix {
                 row_count,
@@ -1498,12 +1495,12 @@ impl<'a> NoteCalcApp<'a> {
         }
     }
 
-    fn evaluate_selection<'text_ptr, 'units>(
-        units: &Units<'units>,
+    fn evaluate_selection<'text_ptr>(
+        units: &Units,
         editor: &Editor,
         editor_content: &EditorContent<LineData>,
         vars: &[(&[char], CalcResult)],
-        results: &[Result<Option<CalcResult<'units>>, ()>],
+        results: &[Result<Option<CalcResult>, ()>],
     ) -> Option<String> {
         let sel = editor.get_selection();
         // TODO optimize vec allocations
@@ -1559,26 +1556,26 @@ impl<'a> NoteCalcApp<'a> {
         return None;
     }
 
-    fn evaluate_text<'text_ptr, 'units>(
-        units: &'units Units<'units>,
+    fn evaluate_text<'text_ptr>(
+        units: &Units,
         text: &'text_ptr [char],
-        vars: &[(&'text_ptr [char], CalcResult<'units>)],
-        tokens: &mut Vec<Token<'text_ptr, 'units>>,
-    ) -> Result<Option<EvaluationResult<'units>>, ()> {
+        vars: &[(&'text_ptr [char], CalcResult)],
+        tokens: &mut Vec<Token<'text_ptr>>,
+    ) -> Result<Option<EvaluationResult>, ()> {
         TokenParser::parse_line(text, vars, tokens, &units);
         let mut shunting_output_stack = Vec::with_capacity(4);
         ShuntingYard::shunting_yard(tokens, &mut shunting_output_stack);
         return evaluate_tokens(&mut shunting_output_stack, &vars);
     }
 
-    fn render_matrix_obj<'text_ptr, 'units>(
+    fn render_matrix_obj<'text_ptr>(
         mut render_x: usize,
         mut render_y: usize,
         current_editor_width: usize,
         left_gutter_width: usize,
         row_count: usize,
         col_count: usize,
-        tokens: &[Token<'text_ptr, 'units>],
+        tokens: &[Token<'text_ptr>],
         render_buckets: &mut RenderBuckets<'text_ptr>,
         rendered_row_height: usize,
     ) -> usize {
@@ -1718,11 +1715,11 @@ impl<'a> NoteCalcApp<'a> {
         render_x
     }
 
-    fn render_matrix_result<'text_ptr, 'units>(
-        units: &Units<'units>,
+    fn render_matrix_result<'text_ptr>(
+        units: &Units,
         mut render_x: usize,
         mut render_y: usize,
-        mat: &MatrixData<'units>,
+        mat: &MatrixData,
         render_buckets: &mut RenderBuckets<'text_ptr>,
         prev_mat_result_lengths: Option<&ResultLengths>,
         rendered_row_height: usize,
@@ -1851,7 +1848,7 @@ impl<'a> NoteCalcApp<'a> {
                 (max_lengths.int_part_len + max_lengths.frac_part_len + max_lengths.unit_part_len)
                     + 2
             } else {
-                (max_lengths.int_part_len + max_lengths.frac_part_len + max_lengths.unit_part_len)
+                max_lengths.int_part_len + max_lengths.frac_part_len + max_lengths.unit_part_len
             };
         }
 
@@ -1884,10 +1881,7 @@ impl<'a> NoteCalcApp<'a> {
         return render_x - start_x;
     }
 
-    fn calc_matrix_max_lengths<'text_ptr, 'units>(
-        units: &Units<'units>,
-        mat: &MatrixData<'units>,
-    ) -> ResultLengths {
+    fn calc_matrix_max_lengths<'text_ptr>(units: &Units, mat: &MatrixData) -> ResultLengths {
         let mut cells_strs = {
             let mut tokens_per_cell: SmallVec<[String; 32]> = SmallVec::with_capacity(32);
 
@@ -1914,10 +1908,10 @@ impl<'a> NoteCalcApp<'a> {
         return max_lengths;
     }
 
-    fn render_single_result<'text_ptr, 'units>(
-        units: &Units<'units>,
+    fn render_single_result<'text_ptr>(
+        units: &Units,
         render_buckets: &mut RenderBuckets<'text_ptr>,
-        result: &CalcResult<'units>,
+        result: &CalcResult,
         r: &PerLineRenderData,
         gr: &GlobalRenderData,
     ) -> (usize, usize) {
@@ -1951,10 +1945,10 @@ impl<'a> NoteCalcApp<'a> {
         };
     }
 
-    fn render_results<'text_ptr, 'units>(
-        units: &Units<'units>,
+    fn render_results<'text_ptr>(
+        units: &Units,
         render_buckets: &mut RenderBuckets<'text_ptr>,
-        results: &[Result<Option<CalcResult<'units>>, ()>],
+        results: &[Result<Option<CalcResult>, ()>],
         result_buffer: &'text_ptr mut [u8],
         editor_content: &EditorContent<LineData>,
         gr: &GlobalRenderData,
@@ -1972,11 +1966,16 @@ impl<'a> NoteCalcApp<'a> {
         let mut prev_result_matrix_length = None;
         // calc max length and render results into buffer
         for (editor_y, result) in results.iter().enumerate() {
+            if editor_y >= editor_content.line_count() {
+                // asdd
+                // TODO, ez minek kell? miért van több result?
+                break;
+            }
             if let Err(..) = result {
                 result_buffer[result_buffer_index] = b'E';
                 result_buffer[result_buffer_index + 1] = b'r';
                 result_buffer[result_buffer_index + 2] = b'r';
-                result_ranges.push(Some((result_buffer_index..result_buffer_index + 3)));
+                result_ranges.push(Some(result_buffer_index..result_buffer_index + 3));
                 result_buffer_index += 3;
                 prev_result_matrix_length = None;
             } else if let Ok(Some(result)) = result {
@@ -2018,7 +2017,7 @@ impl<'a> NoteCalcApp<'a> {
                             unsafe { std::str::from_utf8_unchecked(&result_buffer[range.clone()]) };
                         let lengths = get_int_frac_part_len(s);
                         max_lengths.set_max(&lengths);
-                        result_ranges.push(Some((range)));
+                        result_ranges.push(Some(range));
                         result_buffer_index += len;
                     }
                 };
@@ -2027,15 +2026,6 @@ impl<'a> NoteCalcApp<'a> {
                 result_ranges.push(None);
             }
         }
-        rowmodification, rowaddition, rowdeletion
-        eltárolni a resultokat
-        csak a modosult soroktól kezdve ujraszámolni
-        utána eq, ha nem egyenlő, akkor változott a result és kell villogás
-
-        villogás:
-        frondendnek elküldeni a még1 üzenetet
-            gradiens + idő, list of rectangles
-            list of results
 
         // render results from the buffer
         for (editor_y, result_range) in result_ranges.iter().enumerate() {
@@ -2080,9 +2070,9 @@ impl<'a> NoteCalcApp<'a> {
         }
     }
 
-    fn calc_consecutive_matrices_max_lengths<'text_ptr, 'units>(
-        units: &Units<'units>,
-        results: &[Result<Option<CalcResult<'units>>, ()>],
+    fn calc_consecutive_matrices_max_lengths<'text_ptr>(
+        units: &Units,
+        results: &[Result<Option<CalcResult>, ()>],
     ) -> Option<ResultLengths> {
         let mut max_lengths: Option<ResultLengths> = None;
         for result in results.iter() {
@@ -2103,8 +2093,8 @@ impl<'a> NoteCalcApp<'a> {
         return max_lengths;
     }
 
-    fn draw_token<'text_ptr, 'units>(
-        token: &Token<'text_ptr, 'units>,
+    fn draw_token<'text_ptr>(
+        token: &Token<'text_ptr>,
         render_x: usize,
         render_y: usize,
         current_editor_width: usize,
@@ -2132,7 +2122,12 @@ impl<'a> NoteCalcApp<'a> {
         });
     }
 
-    pub fn copy_selected_rows_with_result_to_clipboard<'text_ptr, 'units>(&mut self) -> String {
+    pub fn copy_selected_rows_with_result_to_clipboard<'b>(
+        &'b self,
+        units: &'b Units,
+        render_buckets: &'b mut RenderBuckets<'b>,
+        result_buffer: &'b mut [u8],
+    ) -> String {
         let sel = self.editor.get_selection();
         let first_row = sel.get_first().row;
         let second_row = sel.get_second().row;
@@ -2140,14 +2135,9 @@ impl<'a> NoteCalcApp<'a> {
 
         let mut vars: Vec<(&[char], CalcResult)> = Vec::with_capacity(32);
         vars.push((&['s', 'u', 'm'], CalcResult::zero()));
-        let mut sum_is_null = true;
-        let mut results: SmallVec<[Result<Option<CalcResult>, ()>; MAX_LINE_COUNT]> =
-            SmallVec::with_capacity(MAX_LINE_COUNT);
-
         let mut tokens = Vec::with_capacity(128);
 
         let mut gr = GlobalRenderData::new(self.client_width, self.result_gutter_x, 0, 2);
-        let mut render_buckets = RenderBuckets::new();
         // evaluate all the lines so variables are defined even if they are not selected
         let mut render_height = 0;
         {
@@ -2155,22 +2145,13 @@ impl<'a> NoteCalcApp<'a> {
             for (i, line) in self.editor_content.lines().enumerate() {
                 // TODO "--"
                 tokens.clear();
-                TokenParser::parse_line(line, &vars, &mut tokens, &self.units);
+                TokenParser::parse_line(line, &vars, &mut tokens, &units);
 
                 let mut shunting_output_stack = Vec::with_capacity(32);
                 ShuntingYard::shunting_yard(&mut tokens, &mut shunting_output_stack);
 
-                let result_row_height = NoteCalcApp::evaluate_tokens(
-                    &mut 0,
-                    &mut vars,
-                    i,
-                    &self.editor_content,
-                    &mut results,
-                    &mut shunting_output_stack,
-                    &line,
-                    &mut sum_is_null,
-                    &mut Vec::with_capacity(256),
-                );
+                // asdd
+                let result_row_height = 1;
 
                 if i >= first_row && i <= second_row {
                     r.new_line_started();
@@ -2183,7 +2164,7 @@ impl<'a> NoteCalcApp<'a> {
                         &tokens,
                         &mut r,
                         &mut gr,
-                        &mut render_buckets,
+                        render_buckets,
                         // TODO &mut code smell
                         &mut Vec::new(),
                         &self.editor,
@@ -2191,7 +2172,7 @@ impl<'a> NoteCalcApp<'a> {
                         // TODO &mut code smell
                         &mut None,
                         &vars,
-                        &self.units,
+                        &units,
                         true, // force matrix rendering
                     );
                     r.line_render_ended();
@@ -2222,10 +2203,10 @@ impl<'a> NoteCalcApp<'a> {
         render_buckets.clear();
         let result_gutter_x = max_len + 2;
         NoteCalcApp::render_results(
-            &self.units,
-            &mut render_buckets,
-            &results[first_row..=second_row],
-            &mut self.result_buffer,
+            &units,
+            render_buckets,
+            &self.results[first_row..=second_row],
+            result_buffer,
             &self.editor_content,
             &gr,
             result_gutter_x,
@@ -2323,10 +2304,10 @@ impl<'a> NoteCalcApp<'a> {
         }
     }
 
-    fn render_selection_and_its_sum<'text_ptr, 'units>(
-        units: &Units<'units>,
+    fn render_selection_and_its_sum<'text_ptr>(
+        units: &Units,
         render_buckets: &mut RenderBuckets<'text_ptr>,
-        results: &[Result<Option<CalcResult<'units>>, ()>],
+        results: &[Result<Option<CalcResult>, ()>],
         editor: &Editor,
         editor_content: &EditorContent<LineData>,
         r: &GlobalRenderData,
@@ -2526,7 +2507,7 @@ impl<'a> NoteCalcApp<'a> {
         return (if let Some(current_x) = current_x {
             current_x
         } else {
-            (LEFT_GUTTER_WIDTH + MAX_EDITOR_WIDTH)
+            LEFT_GUTTER_WIDTH + MAX_EDITOR_WIDTH
         })
         .min(client_width - (RIGHT_GUTTER_WIDTH + MIN_RESULT_PANEL_WIDTH));
     }
@@ -2668,13 +2649,11 @@ impl<'a> NoteCalcApp<'a> {
                 let cur_pos = self.editor.get_selection().get_cursor_pos();
                 self.line_reference_chooser =
                     if let Some(selector_row) = self.line_reference_chooser {
-                        if selector_row < self.editor_content.line_count() {
+                        if selector_row < cur_pos.row - 1 {
                             Some(selector_row + 1)
                         } else {
                             Some(selector_row)
                         }
-                    } else if cur_pos.row < self.editor_content.line_count() {
-                        Some(cur_pos.row + 1)
                     } else {
                         None
                     }
@@ -2849,11 +2828,11 @@ impl<'a> NoteCalcApp<'a> {
                 }
             }
 
-            let modified = self
+            let modif_type = self
                 .editor
                 .handle_input(input, modifiers, &mut self.editor_content);
 
-            return modified;
+            return modif_type.is_some();
         }
     }
 
@@ -2866,8 +2845,8 @@ impl<'a> NoteCalcApp<'a> {
         return None;
     }
 
-    fn is_pos_inside_an_obj(&self, pos: Pos) -> Option<&EditorObject> {
-        for obj in &self.editor_objects {
+    fn is_pos_inside_an_obj(editor_objects: &[EditorObject], pos: Pos) -> Option<&EditorObject> {
+        for obj in editor_objects {
             if obj.row == pos.row && (obj.start_x + 1..obj.end_x).contains(&pos.column) {
                 return Some(obj);
             }
@@ -2967,6 +2946,31 @@ impl<'a> NoteCalcApp<'a> {
                 .handle_input(input, modifiers, &mut mat_edit.editor_content);
         }
     }
+
+    pub fn render<'a, 'b>(
+        &'a mut self,
+        units: &Units,
+        render_buckets: &'b mut RenderBuckets<'a>,
+        result_buffer: &'a mut [u8],
+    ) {
+        NoteCalcApp::renderr(
+            self.client_width,
+            self.result_gutter_x,
+            &mut self.editor_objects,
+            &mut self.autocompletion_src,
+            &mut self.results,
+            &mut self.editor,
+            &self.editor_content,
+            &mut self.has_result_bitset,
+            &mut self.editor_click,
+            units,
+            &mut self.matrix_editing,
+            &mut self.line_reference_chooser,
+            self.prev_cursor_pos,
+            render_buckets,
+            result_buffer,
+        );
+    }
 }
 
 fn digit_count(n: usize) -> usize {
@@ -3032,9 +3036,15 @@ mod tests {
     use crate::editor::editor::Selection;
     use std::ops::RangeInclusive;
 
+    fn create_app() -> (NoteCalcApp, Units) {
+        let app = NoteCalcApp::new(120);
+        let units = Units::new();
+        return (app, units);
+    }
+
     #[test]
     fn bug1() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
 
         app.handle_input(
             EditorInputEvent::Text("[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]".to_owned()),
@@ -3043,12 +3053,12 @@ mod tests {
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 33));
         app.handle_input(EditorInputEvent::Right, InputModifiers::alt());
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
     }
 
     #[test]
     fn bug2() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text("[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]".to_owned()),
             InputModifiers::none(),
@@ -3056,18 +3066,18 @@ mod tests {
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 1));
         app.handle_input(EditorInputEvent::Right, InputModifiers::alt());
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Down, InputModifiers::none());
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
     }
 
     #[test]
     fn bug3() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text(
                 "1\n\
-            2+"
+                2+"
                 .to_owned(),
             ),
             InputModifiers::none(),
@@ -3076,17 +3086,66 @@ mod tests {
             .set_selection_save_col(Selection::single_r_c(1, 2));
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt());
         app.alt_key_released();
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
+    }
+
+    #[test]
+    fn it_is_not_allowed_to_ref_lines_below() {
+        let (mut app, units) = create_app();
+        app.handle_input(
+            EditorInputEvent::Text(
+                "1\n\
+                2+\n3\n4"
+                    .to_owned(),
+            ),
+            InputModifiers::none(),
+        );
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(1, 2));
+        app.handle_input(EditorInputEvent::Down, InputModifiers::alt());
+        app.alt_key_released();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
+        assert_eq!(
+            "1\n\
+                2+\n3\n4",
+            app.editor_content.get_content()
+        );
+    }
+
+    #[test]
+    fn it_is_not_allowed_to_ref_lines_below2() {
+        let (mut app, units) = create_app();
+        app.handle_input(
+            EditorInputEvent::Text(
+                "1\n\
+                2+\n3\n4"
+                    .to_owned(),
+            ),
+            InputModifiers::none(),
+        );
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(1, 2));
+        app.handle_input(EditorInputEvent::Up, InputModifiers::alt());
+        app.handle_input(EditorInputEvent::Down, InputModifiers::alt());
+        app.alt_key_released();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
+        assert_eq!(
+            "1\n\
+                2+&[1]\n3\n4",
+            app.editor_content.get_content()
+        );
     }
 
     #[test]
     fn remove_matrix_backspace() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text("abcd [1,2,3;4,5,6]".to_owned()),
             InputModifiers::none(),
         );
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Backspace, InputModifiers::none());
         assert_eq!("abcd ", app.editor_content.get_content());
     }
@@ -3095,46 +3154,46 @@ mod tests {
     fn matrix_step_in_dir() {
         // from right
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("abcd [1,2,3;4,5,6]".to_owned()),
                 InputModifiers::none(),
             );
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Char('1'), InputModifiers::none());
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!("abcd [1,2,1;4,5,6]", app.editor_content.get_content());
         }
         // from left
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("abcd [1,2,3;4,5,6]".to_owned()),
                 InputModifiers::none(),
             );
             app.editor
                 .set_selection_save_col(Selection::single_r_c(0, 5));
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Right, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Char('9'), InputModifiers::none());
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!("abcd [9,2,3;4,5,6]", app.editor_content.get_content());
         }
         // from below
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("abcd [1,2,3;4,5,6]\naaaaaaaaaaaaaaaaaa".to_owned()),
                 InputModifiers::none(),
             );
             app.editor
                 .set_selection_save_col(Selection::single_r_c(1, 7));
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Up, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Char('9'), InputModifiers::none());
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!(
@@ -3144,16 +3203,16 @@ mod tests {
         }
         // from above
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("aaaaaaaaaaaaaaaaaa\nabcd [1,2,3;4,5,6]".to_owned()),
                 InputModifiers::none(),
             );
             app.editor
                 .set_selection_save_col(Selection::single_r_c(0, 7));
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Down, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Char('9'), InputModifiers::none());
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!(
@@ -3165,32 +3224,32 @@ mod tests {
 
     #[test]
     fn cursor_is_put_after_the_matrix_after_finished_editing() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text("abcd [1,2,3;4,5,6]".to_owned()),
             InputModifiers::none(),
         );
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Left, InputModifiers::none());
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Char('6'), InputModifiers::none());
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Char('9'), InputModifiers::none());
         assert_eq!(app.editor_content.get_content(), "abcd [1,2,6;4,5,6]9");
     }
 
     #[test]
     fn remove_matrix_del() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text("abcd [1,2,3;4,5,6]".to_owned()),
             InputModifiers::none(),
         );
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 5));
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Del, InputModifiers::none());
         assert_eq!("abcd ", app.editor_content.get_content());
     }
@@ -3199,59 +3258,59 @@ mod tests {
     fn test_moving_inside_a_matrix() {
         // right to left, cursor at end
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("abcd [1,2,3;4,5,6]".to_owned()),
                 InputModifiers::none(),
             );
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.handle_input(EditorInputEvent::Char('9'), InputModifiers::none());
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             assert_eq!("abcd [1,9,3;4,5,6]", app.editor_content.get_content());
         }
         // left to right, cursor at start
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("abcd [1,2,3;4,5,6]".to_owned()),
                 InputModifiers::none(),
             );
             app.editor
                 .set_selection_save_col(Selection::single_r_c(0, 5));
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Right, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Right, InputModifiers::none());
             app.handle_input(EditorInputEvent::Right, InputModifiers::none());
             app.handle_input(EditorInputEvent::Char('9'), InputModifiers::none());
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             assert_eq!("abcd [1,2,9;4,5,6]", app.editor_content.get_content());
         }
         // vertical movement down, cursor tries to keep its position
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("abcd [1111,22,3;44,55555,666]".to_owned()),
                 InputModifiers::none(),
             );
             app.editor
                 .set_selection_save_col(Selection::single_r_c(0, 5));
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Right, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             // inside the matrix
             app.handle_input(EditorInputEvent::Down, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Char('9'), InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             assert_eq!(
                 "abcd [1111,22,3;9,55555,666]",
                 app.editor_content.get_content()
@@ -3260,24 +3319,24 @@ mod tests {
 
         // vertical movement up, cursor tries to keep its position
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("abcd [1111,22,3;44,55555,666]".to_owned()),
                 InputModifiers::none(),
             );
             app.editor
                 .set_selection_save_col(Selection::single_r_c(0, 5));
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Right, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             // inside the matrix
             app.handle_input(EditorInputEvent::Down, InputModifiers::none());
             app.handle_input(EditorInputEvent::Up, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Char('9'), InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             assert_eq!(
                 "abcd [9,22,3;44,55555,666]",
                 app.editor_content.get_content()
@@ -3287,16 +3346,16 @@ mod tests {
 
     #[test]
     fn test_moving_inside_a_matrix_with_tab() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text("[1,2,3;4,5,6]".to_owned()),
             InputModifiers::none(),
         );
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 5));
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Right, InputModifiers::none());
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
         app.handle_input(EditorInputEvent::Char('7'), InputModifiers::none());
         app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
@@ -3307,50 +3366,50 @@ mod tests {
         app.handle_input(EditorInputEvent::Char('0'), InputModifiers::none());
         app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
         app.handle_input(EditorInputEvent::Char('9'), InputModifiers::none());
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         assert_eq!("[1,2,7;8,9,0]9", app.editor_content.get_content());
     }
 
     #[test]
     fn test_leaving_a_matrix_with_tab() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text("[1,2,3;4,5,6]".to_owned()),
             InputModifiers::none(),
         );
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Left, InputModifiers::none());
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
         app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
         app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
         // the next tab should leave the matrix
         app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
         app.handle_input(EditorInputEvent::Char('7'), InputModifiers::none());
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         assert_eq!("[1,2,3;4,5,6]7", app.editor_content.get_content());
     }
 
     #[test]
     fn end_btn_matrix() {
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("abcd [1111,22,3;44,55555,666] qq".to_owned()),
                 InputModifiers::none(),
             );
             app.editor
                 .set_selection_save_col(Selection::single_r_c(0, 5));
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Right, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             // inside the matrix
             app.handle_input(EditorInputEvent::End, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Char('9'), InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             assert_eq!(
                 "abcd [1111,22,9;44,55555,666] qq",
                 app.editor_content.get_content()
@@ -3358,22 +3417,22 @@ mod tests {
         }
         // pressing twice, exits the matrix
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("abcd [1111,22,3;44,55555,666] qq".to_owned()),
                 InputModifiers::none(),
             );
             app.editor
                 .set_selection_save_col(Selection::single_r_c(0, 5));
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Right, InputModifiers::none());
             // inside the matrix
             app.handle_input(EditorInputEvent::End, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::End, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Char('9'), InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             assert_eq!(
                 "abcd [1111,22,3;44,55555,666] qq9",
                 app.editor_content.get_content()
@@ -3384,41 +3443,41 @@ mod tests {
     #[test]
     fn home_btn_matrix() {
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("abcd [1111,22,3;44,55555,666]".to_owned()),
                 InputModifiers::none(),
             );
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             // inside the matrix
             app.handle_input(EditorInputEvent::Home, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Char('9'), InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             assert_eq!(
                 "abcd [9,22,3;44,55555,666]",
                 app.editor_content.get_content()
             );
         }
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("abcd [1111,22,3;44,55555,666]".to_owned()),
                 InputModifiers::none(),
             );
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             // inside the matrix
             app.handle_input(EditorInputEvent::Home, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Home, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Char('6'), InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             assert_eq!(
                 "6abcd [1111,22,3;44,55555,666]",
                 app.editor_content.get_content()
@@ -3428,18 +3487,18 @@ mod tests {
 
     #[test]
     fn bug8() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text("16892313\n14 * ".to_owned()),
             InputModifiers::none(),
         );
         app.editor
             .set_selection_save_col(Selection::single_r_c(1, 5));
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt());
         app.alt_key_released();
         assert_eq!("16892313\n14 * &[1]", app.editor_content.get_content());
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_time(1000);
         app.handle_input(EditorInputEvent::Backspace, InputModifiers::none());
         assert_eq!("16892313\n14 * ", app.editor_content.get_content());
@@ -3448,13 +3507,13 @@ mod tests {
         assert_eq!("16892313\n14 * &[1]", app.editor_content.get_content());
 
         app.handle_input(EditorInputEvent::Right, InputModifiers::none()); // end selection
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Left, InputModifiers::none());
         app.handle_input(EditorInputEvent::Char('a'), InputModifiers::none());
         assert_eq!("16892313\n14 * a&[1]", app.editor_content.get_content());
 
         app.handle_input(EditorInputEvent::Char(' '), InputModifiers::none());
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Right, InputModifiers::none());
         app.handle_input(EditorInputEvent::Char('b'), InputModifiers::none());
         assert_eq!("16892313\n14 * a &[1]b", app.editor_content.get_content());
@@ -3469,14 +3528,14 @@ mod tests {
 
     #[test]
     fn test_line_ref_normalization() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n".to_owned()),
             InputModifiers::none(),
         );
         app.editor
             .set_selection_save_col(Selection::single_r_c(12, 2));
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt());
         app.alt_key_released();
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt());
@@ -3495,7 +3554,7 @@ mod tests {
 
     #[test]
     fn test_line_ref_denormalization() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.set_normalized_content("1111\n2222\n14 * &[2]&[2]&[2]\n");
         assert_eq!(1, app.editor_content.get_data(0).line_id);
         assert_eq!(2, app.editor_content.get_data(1).line_id);
@@ -3504,42 +3563,42 @@ mod tests {
 
     #[test]
     fn no_memory_deallocation_bug_in_line_selection() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n".to_owned()),
             InputModifiers::none(),
         );
         app.editor
             .set_selection_save_col(Selection::single_r_c(12, 2));
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Up, InputModifiers::shift());
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
     }
 
     #[test]
     fn matrix_deletion() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text(" [1,2,3]".to_owned()),
             InputModifiers::none(),
         );
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 0));
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Del, InputModifiers::none());
         assert_eq!("[1,2,3]", app.editor_content.get_content());
     }
 
     #[test]
     fn matrix_insertion_bug() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text("[1,2,3]".to_owned()),
             InputModifiers::none(),
         );
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 0));
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Char('a'), InputModifiers::none());
         assert_eq!("a[1,2,3]", app.editor_content.get_content());
         app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
@@ -3548,32 +3607,33 @@ mod tests {
 
     #[test]
     fn matrix_insertion_bug2() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text("'[X] nth, sum fv".to_owned()),
             InputModifiers::none(),
         );
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 0));
         app.handle_input(EditorInputEvent::Del, InputModifiers::none());
-        app.render();
-        assert_results(app, &["0"][..]);
+        let mut result_buffer = [0; 128];
+        app.render(&units, &mut RenderBuckets::new(), &mut result_buffer);
+        assert_results(app, &["0"][..], &result_buffer);
     }
 
-    fn assert_results(app: NoteCalcApp, expected_results: &[&str]) {
+    fn assert_results(app: NoteCalcApp, expected_results: &[&str], result_buffer: &[u8]) {
         let mut i = 0;
         let mut ok_chars = Vec::with_capacity(32);
         let expected_len = expected_results.iter().map(|it| it.len()).sum();
         for r in expected_results.iter() {
             for ch in r.bytes() {
                 assert_eq!(
-                    app.result_buffer[i] as char,
+                    result_buffer[i] as char,
                     ch as char,
                     "at {}: {:?}, result_buffer: {:?}",
                     i,
                     String::from_utf8(ok_chars).unwrap(),
-                    &app.result_buffer[0..expected_len]
+                    &result_buffer[0..expected_len]
                         .iter()
                         .map(|it| *it as char)
                         .collect::<Vec<char>>()
@@ -3584,12 +3644,12 @@ mod tests {
             ok_chars.push(',' as u8);
             ok_chars.push(' ' as u8);
         }
-        assert_eq!(app.result_buffer[i], 0, "more results than expected",);
+        assert_eq!(result_buffer[i], 0, "more results than expected",);
     }
 
     #[test]
     fn sum_can_be_nullified() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text(
                 "3m * 2m
@@ -3601,13 +3661,14 @@ sum"
             ),
             InputModifiers::none(),
         );
-        app.render();
-        assert_results(app, &["6 m^2", "", "1", "2", "3"][..]);
+        let mut result_buffer = [0; 128];
+        app.render(&units, &mut RenderBuckets::new(), &mut result_buffer);
+        assert_results(app, &["6 m^2", "", "1", "2", "3"][..], &result_buffer);
     }
 
     #[test]
     fn no_sum_value_in_case_of_error() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text(
                 "3m * 2m\n\
@@ -3617,18 +3678,19 @@ sum"
             ),
             InputModifiers::none(),
         );
-        app.render();
-        assert_results(app, &["6 m^2", "4", "0"][..]);
+        let mut result_buffer = [0; 128];
+        app.render(&units, &mut RenderBuckets::new(), &mut result_buffer);
+        assert_results(app, &["6 m^2", "4", "0"][..], &result_buffer);
     }
 
     #[test]
     fn test_ctrl_c() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text("aaaaaaaaa".to_owned()),
             InputModifiers::none(),
         );
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Left, InputModifiers::shift());
         app.handle_input(EditorInputEvent::Left, InputModifiers::shift());
         app.handle_input(EditorInputEvent::Left, InputModifiers::shift());
@@ -3638,40 +3700,42 @@ sum"
 
     #[test]
     fn test_changing_output_style_for_selected_rows() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text(
                 "2\n\
-                4\n\
-                5"
+                    4\n\
+                    5"
                 .to_owned(),
             ),
             InputModifiers::none(),
         );
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Up, InputModifiers::shift());
         app.handle_input(EditorInputEvent::Up, InputModifiers::shift());
         app.handle_input(EditorInputEvent::Left, InputModifiers::alt());
-        app.render();
-        assert_results(app, &["10", "100", "101"][..]);
+        let mut result_buffer = [0; 128];
+        app.render(&units, &mut RenderBuckets::new(), &mut result_buffer);
+        assert_results(app, &["10", "100", "101"][..], &result_buffer);
     }
 
     #[test]
     fn test_matrix_sum() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text("[1,2,3]\nsum".to_owned()),
             InputModifiers::none(),
         );
-        app.render();
-        // both the first line and the 'sum' line renders a matrix, which leaves the result bufer empty
-        assert_results(app, &["\u{0}"][..]);
+        let mut result_buffer = [0; 128];
+        app.render(&units, &mut RenderBuckets::new(), &mut result_buffer);
+        // both the first line and the 'sum' line renders a matrix, which leaves the result buffer empty
+        assert_results(app, &["\u{0}"][..], &result_buffer);
     }
 
     #[test]
     fn test_rich_copy() {
         fn t(content: &str, expected: &str, selected_range: RangeInclusive<usize>) {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text(content.to_owned()),
                 InputModifiers::none(),
@@ -3680,8 +3744,15 @@ sum"
                 Pos::from_row_column(*selected_range.start(), 0),
                 Pos::from_row_column(*selected_range.end(), 0),
             ));
-            app.render();
-            assert_eq!(expected, &app.copy_selected_rows_with_result_to_clipboard());
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
+            assert_eq!(
+                expected,
+                &app.copy_selected_rows_with_result_to_clipboard(
+                    &units,
+                    &mut RenderBuckets::new(),
+                    &mut [0; 128]
+                )
+            );
         }
         t("1", "1  ‖ 1\n", 0..=0);
         t("1 + 2", "1 + 2  ‖ 3\n", 0..=0);
@@ -3760,34 +3831,34 @@ sum"
     fn test_line_ref_selection() {
         // left
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("16892313\n14 * ".to_owned()),
                 InputModifiers::none(),
             );
             app.editor
                 .set_selection_save_col(Selection::single_r_c(1, 5));
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Up, InputModifiers::alt());
             app.alt_key_released();
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::shift());
             app.handle_input(EditorInputEvent::Backspace, InputModifiers::none());
             assert_eq!("16892313\n14 * &[1", app.editor_content.get_content());
         }
         // right
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("16892313\n14 * ".to_owned()),
                 InputModifiers::none(),
             );
             app.editor
                 .set_selection_save_col(Selection::single_r_c(1, 5));
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Up, InputModifiers::alt());
             app.alt_key_released();
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.handle_input(EditorInputEvent::Right, InputModifiers::shift());
             app.handle_input(EditorInputEvent::Del, InputModifiers::none());
@@ -3798,50 +3869,50 @@ sum"
     #[test]
     fn test_pressing_tab_on_m_char() {
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("m".to_owned()),
                 InputModifiers::none(),
             );
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             assert_eq!("[0]", app.editor_content.get_content());
         }
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("am".to_owned()),
                 InputModifiers::none(),
             );
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             assert_eq!("am  ", app.editor_content.get_content());
         }
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("a m".to_owned()),
                 InputModifiers::none(),
             );
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             assert_eq!("a [0]", app.editor_content.get_content());
         }
     }
 
     #[test]
     fn test_that_cursor_is_inside_matrix_on_creation() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text("m".to_owned()),
             InputModifiers::none(),
         );
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Char('1'), InputModifiers::none());
         app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
         assert_eq!("[1]", app.editor_content.get_content());
@@ -3850,27 +3921,27 @@ sum"
     #[test]
     fn test_matrix_alt_plus_right() {
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("[1]".to_owned()),
                 InputModifiers::none(),
             );
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Right, InputModifiers::alt());
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!("[1,0]", app.editor_content.get_content());
         }
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("[1]".to_owned()),
                 InputModifiers::none(),
             );
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Right, InputModifiers::alt());
             app.handle_input(EditorInputEvent::Right, InputModifiers::alt());
             app.handle_input(EditorInputEvent::Right, InputModifiers::alt());
@@ -3878,14 +3949,14 @@ sum"
             assert_eq!("[1,0,0,0]", app.editor_content.get_content());
         }
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("[1;2]".to_owned()),
                 InputModifiers::none(),
             );
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Right, InputModifiers::alt());
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!("[1,0;2,0]", app.editor_content.get_content());
@@ -3895,54 +3966,54 @@ sum"
     #[test]
     fn test_matrix_alt_plus_left() {
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("[1]".to_owned()),
                 InputModifiers::none(),
             );
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::alt());
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!("[1]", app.editor_content.get_content());
         }
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("[1, 2, 3]".to_owned()),
                 InputModifiers::none(),
             );
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::alt());
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!("[1,2]", app.editor_content.get_content());
         }
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("[1, 2, 3]".to_owned()),
                 InputModifiers::none(),
             );
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::alt());
             app.handle_input(EditorInputEvent::Left, InputModifiers::alt());
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!("[1]", app.editor_content.get_content());
         }
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("[1, 2, 3; 4,5,6]".to_owned()),
                 InputModifiers::none(),
             );
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::alt());
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!("[1,2;4,5]", app.editor_content.get_content());
@@ -3952,27 +4023,27 @@ sum"
     #[test]
     fn test_matrix_alt_plus_down() {
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("[1]".to_owned()),
                 InputModifiers::none(),
             );
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Down, InputModifiers::alt());
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!("[1;0]", app.editor_content.get_content());
         }
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("[1]".to_owned()),
                 InputModifiers::none(),
             );
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Down, InputModifiers::alt());
             app.handle_input(EditorInputEvent::Down, InputModifiers::alt());
             app.handle_input(EditorInputEvent::Down, InputModifiers::alt());
@@ -3980,17 +4051,17 @@ sum"
             assert_eq!("[1;0;0;0]", app.editor_content.get_content());
         }
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("[1,2]".to_owned()),
                 InputModifiers::none(),
             );
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Down, InputModifiers::alt());
             // this render is important, it tests a bug!
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!("[1,2;0,0]", app.editor_content.get_content());
         }
@@ -3999,54 +4070,54 @@ sum"
     #[test]
     fn test_matrix_alt_plus_up() {
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("[1]".to_owned()),
                 InputModifiers::none(),
             );
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Up, InputModifiers::alt());
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!("[1]", app.editor_content.get_content());
         }
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("[1; 2; 3]".to_owned()),
                 InputModifiers::none(),
             );
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Up, InputModifiers::alt());
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!("[1;2]", app.editor_content.get_content());
         }
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("[1; 2; 3]".to_owned()),
                 InputModifiers::none(),
             );
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Up, InputModifiers::alt());
             app.handle_input(EditorInputEvent::Up, InputModifiers::alt());
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!("[1]", app.editor_content.get_content());
         }
         {
-            let mut app = NoteCalcApp::new(120);
+            let (mut app, units) = create_app();
             app.handle_input(
                 EditorInputEvent::Text("[1, 2, 3; 4,5,6]".to_owned()),
                 InputModifiers::none(),
             );
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
-            app.render();
+            app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Up, InputModifiers::alt());
             app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!("[1,2,3]", app.editor_content.get_content());
@@ -4055,12 +4126,12 @@ sum"
 
     #[test]
     fn test_autocompletion_single() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text("apple = 12$".to_owned()),
             InputModifiers::none(),
         );
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
         app.handle_input(EditorInputEvent::Char('a'), InputModifiers::none());
         app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
@@ -4069,12 +4140,12 @@ sum"
 
     #[test]
     fn test_autocompletion_two_sars() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text("apple = 12$\nbanana = 7$\n".to_owned()),
             InputModifiers::none(),
         );
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Char('a'), InputModifiers::none());
         app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
         assert_eq!(
@@ -4093,12 +4164,12 @@ sum"
 
     #[test]
     fn test_that_no_autocompletion_for_multiple_results() {
-        let mut app = NoteCalcApp::new(120);
+        let (mut app, units) = create_app();
         app.handle_input(
             EditorInputEvent::Text("apple = 12$\nananas = 7$\n".to_owned()),
             InputModifiers::none(),
         );
-        app.render();
+        app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Char('a'), InputModifiers::none());
         app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
         assert_eq!(

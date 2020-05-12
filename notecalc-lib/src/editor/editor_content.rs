@@ -1,4 +1,4 @@
-use crate::editor::editor::{Pos, Selection};
+use crate::editor::editor::{Pos, RowModificationType, Selection};
 
 pub type Canvas = Vec<char>;
 type EditorCommandGroup<T: Default + Clone> = Vec<EditorCommand<T>>;
@@ -88,9 +88,9 @@ impl<T: Default + Clone> EditorContent<T> {
         EditorContent {
             undo_stack: Vec::with_capacity(32),
             redo_stack: Vec::with_capacity(32),
-            canvas: Vec::with_capacity(max_len * 32),
-            line_lens: Vec::with_capacity(32),
-            line_data: Vec::with_capacity(32),
+            canvas: Vec::with_capacity(max_len * 64),
+            line_lens: Vec::with_capacity(64),
+            line_data: Vec::with_capacity(642),
             max_line_len: max_len,
         }
     }
@@ -245,24 +245,22 @@ impl<T: Default + Clone> EditorContent<T> {
         return true;
     }
 
-    pub fn remove_char(&mut self, row_index: usize, column_index: usize) -> bool {
+    pub fn remove_char(&mut self, row_index: usize, column_index: usize) {
         let from = self.get_char_pos(row_index, column_index);
         let len = self.line_lens[row_index];
         let to = self.get_char_pos(row_index, len);
         self.canvas.copy_within(from + 1..to, from);
         self.line_lens[row_index] -= 1;
-        return true;
     }
 
     pub fn clear(&mut self) {
-        for len in self.line_lens.iter_mut() {
-            *len = 0;
-        }
+        self.line_lens.clear();
     }
 
     // self.set_cursor_pos_r_c(0, 0);
     pub fn set_content(&mut self, text: &str) {
         self.clear();
+        self.push_line();
         self.set_str_at(text, 0, 0);
     }
 
@@ -351,26 +349,27 @@ impl<T: Default + Clone> EditorContent<T> {
         return true;
     }
 
-    pub fn remove_selection(&mut self, selection: Selection) -> bool {
+    pub fn remove_selection(&mut self, selection: Selection) -> RowModificationType {
         let first = selection.get_first();
         let second = selection.get_second();
-        if second.row > first.row {
+        return if second.row > first.row {
             for _ in first.row + 1..second.row {
                 self.remove_line_at(first.row + 1);
             }
             self.merge_with_next_row(first.row, first.column, second.column);
+            RowModificationType::AllLinesFrom(first.row)
         } else {
             self.get_mut_line_chars(first.row)
                 .copy_within(second.column.., first.column);
             let selected_char_count = second.column - first.column;
             self.line_lens[first.row] -= selected_char_count;
-        }
-        return true;
+            RowModificationType::SingleLine(first.row)
+        };
     }
 
     pub fn insert_str_at(&mut self, pos: Pos, str: &str) -> Pos {
         // save the content of first row which will be moved
-        let mut text_to_move_buf: [u8; /*MAX_EDITOR_WIDTH * 4*/ 1024] = [0; 1024];
+        let mut text_to_move_buf: [u8; 4 * 128] = [0; 4 * 128];
         let mut text_to_move_buf_index = 0;
 
         for ch in &self.get_line_chars(pos.row)[pos.column..self.line_lens[pos.row]] {

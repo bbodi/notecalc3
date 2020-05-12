@@ -1,21 +1,15 @@
 use crate::calc::{divide_op, multiply_op, CalcResult};
-use crate::units::units::Units;
-use bigdecimal::BigDecimal;
 
 #[derive(Debug, Clone)]
-pub struct MatrixData<'units> {
+pub struct MatrixData {
     // column major storing
-    pub cells: Vec<CalcResult<'units>>,
+    pub cells: Vec<CalcResult>,
     pub row_count: usize,
     pub col_count: usize,
 }
 
-impl<'units> MatrixData<'units> {
-    pub fn new(
-        cells: Vec<CalcResult<'units>>,
-        row_count: usize,
-        col_count: usize,
-    ) -> MatrixData<'units> {
+impl MatrixData {
+    pub fn new(cells: Vec<CalcResult>, row_count: usize, col_count: usize) -> MatrixData {
         MatrixData {
             cells,
             row_count,
@@ -23,7 +17,7 @@ impl<'units> MatrixData<'units> {
         }
     }
 
-    pub fn cell(&self, row: usize, col: usize) -> &CalcResult<'units> {
+    pub fn cell(&self, row: usize, col: usize) -> &CalcResult {
         &self.cells[row * self.col_count + col]
     }
 
@@ -35,7 +29,7 @@ impl<'units> MatrixData<'units> {
         todo!()
     }
 
-    pub fn mult_scalar(&self, scalar: &CalcResult<'units>) -> Option<CalcResult<'units>> {
+    pub fn mult_scalar(&self, scalar: &CalcResult) -> Option<CalcResult> {
         let cells: Option<Vec<CalcResult>> = self
             .cells
             .iter()
@@ -44,7 +38,7 @@ impl<'units> MatrixData<'units> {
         cells.map(|it| CalcResult::Matrix(MatrixData::new(it, self.row_count, self.col_count)))
     }
 
-    pub fn div_scalar(&self, scalar: &CalcResult<'units>) -> Option<CalcResult<'units>> {
+    pub fn div_scalar(&self, scalar: &CalcResult) -> Option<CalcResult> {
         let cells: Option<Vec<CalcResult>> = self
             .cells
             .iter()
@@ -54,7 +48,7 @@ impl<'units> MatrixData<'units> {
     }
 
     // TODO inplace
-    pub fn transposed(&self) -> MatrixData<'units> {
+    pub fn transposed(&self) -> MatrixData {
         let mut result = MatrixData::new(
             Vec::with_capacity(self.cells.len()),
             self.col_count,

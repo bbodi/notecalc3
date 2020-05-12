@@ -25,16 +25,16 @@ use std::io::BufWriter;
 pub const MAX_PRECISION: u64 = 50;
 
 #[derive(Debug, Clone)]
-pub enum CalcResult<'units> {
+pub enum CalcResult {
     Number(BigDecimal),
     Percentage(BigDecimal),
-    Quantity(BigDecimal, UnitOutput<'units>),
-    Matrix(MatrixData<'units>),
+    Quantity(BigDecimal, UnitOutput),
+    Matrix(MatrixData),
 }
 
-impl<'a> CalcResult<'a> {
+impl CalcResult {
     /// creates a cheap CalcResult without memory allocation. Use it only as a temporary value.
-    pub fn hack_empty() -> CalcResult<'a> {
+    pub fn hack_empty() -> CalcResult {
         CalcResult::Matrix(MatrixData {
             cells: Vec::new(),
             row_count: 0,
@@ -42,22 +42,22 @@ impl<'a> CalcResult<'a> {
         })
     }
 
-    pub fn zero() -> CalcResult<'a> {
+    pub fn zero() -> CalcResult {
         CalcResult::Number(BigDecimal::zero())
     }
 }
 
-pub struct EvaluationResult<'units> {
+pub struct EvaluationResult {
     pub there_was_unit_conversion: bool,
     pub there_was_operation: bool,
     pub assignment: bool,
-    pub result: CalcResult<'units>,
+    pub result: CalcResult,
 }
 
-pub fn evaluate_tokens<'text_ptr, 'units>(
-    tokens: &mut Vec<TokenType<'units>>,
-    variables: &[(&'text_ptr [char], CalcResult<'units>)],
-) -> Result<Option<EvaluationResult<'units>>, ()> {
+pub fn evaluate_tokens<'text_ptr>(
+    tokens: &mut Vec<TokenType>,
+    variables: &[(&'text_ptr [char], CalcResult)],
+) -> Result<Option<EvaluationResult>, ()> {
     let mut stack = vec![];
     let mut there_was_unit_conversion = false;
     let mut assignment = false;
@@ -113,10 +113,7 @@ pub fn evaluate_tokens<'text_ptr, 'units>(
     };
 }
 
-fn apply_operation<'units>(
-    stack: &mut Vec<CalcResult<'units>>,
-    op: &OperatorTokenType<'units>,
-) -> bool {
+fn apply_operation(stack: &mut Vec<CalcResult>, op: &OperatorTokenType) -> bool {
     let succeed = match &op {
         OperatorTokenType::Mult
         | OperatorTokenType::Div
@@ -196,10 +193,7 @@ fn apply_operation<'units>(
     return succeed;
 }
 
-fn unary_operation<'units>(
-    op: &OperatorTokenType<'units>,
-    top: &CalcResult<'units>,
-) -> Option<CalcResult<'units>> {
+fn unary_operation(op: &OperatorTokenType, top: &CalcResult) -> Option<CalcResult> {
     return match &op {
         OperatorTokenType::UnaryPlus => Some(top.clone()),
         OperatorTokenType::UnaryMinus => unary_minus_op(top),
@@ -221,11 +215,11 @@ fn unary_operation<'units>(
     };
 }
 
-fn binary_operation<'units>(
-    op: &OperatorTokenType<'units>,
-    lhs: &CalcResult<'units>,
-    rhs: &CalcResult<'units>,
-) -> Option<CalcResult<'units>> {
+fn binary_operation(
+    op: &OperatorTokenType,
+    lhs: &CalcResult,
+    rhs: &CalcResult,
+) -> Option<CalcResult> {
     let result = match &op {
         OperatorTokenType::Mult => multiply_op(lhs, rhs),
         OperatorTokenType::Div => divide_op(lhs, rhs),
@@ -272,7 +266,7 @@ fn binary_operation<'units>(
     result
 }
 
-fn percentage_operator<'a>(lhs: &CalcResult<'a>) -> Option<CalcResult<'a>> {
+fn percentage_operator(lhs: &CalcResult) -> Option<CalcResult> {
     match lhs {
         CalcResult::Number(lhs) => {
             // 5%
@@ -282,7 +276,7 @@ fn percentage_operator<'a>(lhs: &CalcResult<'a>) -> Option<CalcResult<'a>> {
     }
 }
 
-fn binary_complement<'a>(lhs: &CalcResult<'a>) -> Option<CalcResult<'a>> {
+fn binary_complement(lhs: &CalcResult) -> Option<CalcResult> {
     match lhs {
         CalcResult::Number(lhs) => {
             // 0b01 and 0b10
@@ -293,7 +287,7 @@ fn binary_complement<'a>(lhs: &CalcResult<'a>) -> Option<CalcResult<'a>> {
     }
 }
 
-fn binary_xor_op<'a>(lhs: &CalcResult<'a>, rhs: &CalcResult<'a>) -> Option<CalcResult<'a>> {
+fn binary_xor_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     match (lhs, rhs) {
         //////////////
         // 12 and x
@@ -308,7 +302,7 @@ fn binary_xor_op<'a>(lhs: &CalcResult<'a>, rhs: &CalcResult<'a>) -> Option<CalcR
     }
 }
 
-fn binary_or_op<'a>(lhs: &CalcResult<'a>, rhs: &CalcResult<'a>) -> Option<CalcResult<'a>> {
+fn binary_or_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     match (lhs, rhs) {
         //////////////
         // 12 and x
@@ -323,7 +317,7 @@ fn binary_or_op<'a>(lhs: &CalcResult<'a>, rhs: &CalcResult<'a>) -> Option<CalcRe
     }
 }
 
-fn binary_shift_right<'a>(lhs: &CalcResult, rhs: &CalcResult<'a>) -> Option<CalcResult<'a>> {
+fn binary_shift_right(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     match (lhs, rhs) {
         (CalcResult::Number(lhs), CalcResult::Number(rhs)) => {
             let lhs = lhs.to_i64()?;
@@ -334,7 +328,7 @@ fn binary_shift_right<'a>(lhs: &CalcResult, rhs: &CalcResult<'a>) -> Option<Calc
     }
 }
 
-fn binary_shift_left<'a>(lhs: &CalcResult, rhs: &CalcResult<'a>) -> Option<CalcResult<'a>> {
+fn binary_shift_left(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     match (lhs, rhs) {
         (CalcResult::Number(lhs), CalcResult::Number(rhs)) => {
             let lhs = lhs.to_i64()?;
@@ -345,7 +339,7 @@ fn binary_shift_left<'a>(lhs: &CalcResult, rhs: &CalcResult<'a>) -> Option<CalcR
     }
 }
 
-fn binary_and_op<'a>(lhs: &CalcResult, rhs: &CalcResult<'a>) -> Option<CalcResult<'a>> {
+fn binary_and_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     match (lhs, rhs) {
         //////////////
         // 12 and x
@@ -360,7 +354,7 @@ fn binary_and_op<'a>(lhs: &CalcResult, rhs: &CalcResult<'a>) -> Option<CalcResul
     }
 }
 
-fn unary_minus_op<'a>(lhs: &CalcResult<'a>) -> Option<CalcResult<'a>> {
+fn unary_minus_op(lhs: &CalcResult) -> Option<CalcResult> {
     match lhs {
         CalcResult::Number(lhs) => {
             // -12
@@ -378,7 +372,7 @@ fn unary_minus_op<'a>(lhs: &CalcResult<'a>) -> Option<CalcResult<'a>> {
     }
 }
 
-fn pow_op<'a>(lhs: &CalcResult<'a>, rhs: &CalcResult<'a>) -> Option<CalcResult<'a>> {
+fn pow_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     match (lhs, rhs) {
         //////////////
         // 1^x
@@ -398,10 +392,7 @@ fn pow_op<'a>(lhs: &CalcResult<'a>, rhs: &CalcResult<'a>) -> Option<CalcResult<'
     }
 }
 
-pub fn multiply_op<'units>(
-    lhs: &CalcResult<'units>,
-    rhs: &CalcResult<'units>,
-) -> Option<CalcResult<'units>> {
+pub fn multiply_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     let result = match (lhs, rhs) {
         //////////////
         // 12 * x
@@ -505,10 +496,7 @@ pub fn multiply_op<'units>(
     };
 }
 
-pub fn add_op<'units>(
-    lhs: &CalcResult<'units>,
-    rhs: &CalcResult<'units>,
-) -> Option<CalcResult<'units>> {
+pub fn add_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     match (lhs, rhs) {
         //////////////
         // 12 + x
@@ -588,7 +576,7 @@ pub fn add_op<'units>(
     }
 }
 
-fn sub_op<'a>(lhs: &CalcResult<'a>, rhs: &CalcResult<'a>) -> Option<CalcResult<'a>> {
+fn sub_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     match (lhs, rhs) {
         //////////////
         // 12 - x
@@ -668,7 +656,7 @@ fn sub_op<'a>(lhs: &CalcResult<'a>, rhs: &CalcResult<'a>) -> Option<CalcResult<'
     }
 }
 
-pub fn divide_op<'a>(lhs: &CalcResult<'a>, rhs: &CalcResult<'a>) -> Option<CalcResult<'a>> {
+pub fn divide_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     let result = match (lhs, rhs) {
         //////////////
         // 12 / x
@@ -799,9 +787,8 @@ fn top_as_number(stack: &Vec<CalcResult>) -> Option<BigDecimal> {
 mod tests {
     use crate::shunting_yard::tests::*;
     use crate::shunting_yard::ShuntingYard;
-    use crate::token_parser::TokenParser;
-    use crate::units::consts::{create_prefixes, init_units};
-    use crate::{units, ResultFormat};
+    use crate::units::consts::init_units;
+    use crate::ResultFormat;
 
     use super::*;
     use crate::renderer::render_result;
@@ -811,9 +798,7 @@ mod tests {
     fn test_tokens(text: &str, expected_tokens: &[Token]) {
         println!("===================================================");
         println!("{}", text);
-        let prefixes = create_prefixes();
-        let mut units = Units::new(&prefixes);
-        units.units = init_units(&units.prefixes);
+        let mut units = Units::new();
         let temp = text.chars().collect::<Vec<char>>();
         let mut tokens = vec![];
         let vars = Vec::new();
@@ -829,9 +814,7 @@ mod tests {
         dbg!(text);
         let temp = text.chars().collect::<Vec<char>>();
 
-        let prefixes = create_prefixes();
-        let mut units = Units::new(&prefixes);
-        units.units = init_units(&units.prefixes);
+        let mut units = Units::new();
 
         let mut tokens = vec![];
         let mut shunting_output =
@@ -1080,7 +1063,7 @@ mod tests {
                 str("]"),
             ],
         );
-        test("[2, asda]", "2");
+        test("[2, asda]", " ");
 
         test(
             "2+3 - this minus sign is part of the text, should not affect the result",

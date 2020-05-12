@@ -1,5 +1,4 @@
 use crate::calc::{pow, MAX_PRECISION};
-use crate::renderer::strip_trailing_zeroes;
 use crate::units::consts::{
     get_base_unit_for, init_aliases, init_units, BASE_UNIT_DIMENSIONS, BASE_UNIT_DIMENSION_COUNT,
 };
@@ -7,6 +6,7 @@ use crate::units::{Prefix, Unit, UnitPrefixes};
 use bigdecimal::BigDecimal;
 use smallvec::alloc::fmt::{Debug, Display, Formatter};
 use smallvec::SmallVec;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::str::FromStr;
@@ -37,19 +37,20 @@ fn skip_whitespaces(str: &[char]) -> &[char] {
     &str[i..]
 }
 
-pub struct Units<'a> {
-    pub prefixes: &'a UnitPrefixes,
-    pub units: HashMap<&'static str, Unit<'a>>,
+pub struct Units {
+    pub prefixes: UnitPrefixes,
+    pub units: HashMap<&'static str, RefCell<Unit>>,
     pub aliases: HashMap<&'static str, &'static str>,
-    pub no_prefix: Prefix,
+    pub no_prefix: RefCell<Prefix>,
 }
 
-impl<'a> Units<'a> {
-    pub fn new(prefixes: &'a UnitPrefixes) -> Units<'a> {
+impl Units {
+    pub fn new() -> Units {
+        let (units, prefixes) = init_units();
         Units {
-            no_prefix: Prefix::new(&[], "1", false),
+            no_prefix: RefCell::new(Prefix::new(&[], "1", false)),
+            units,
             prefixes,
-            units: init_units(&prefixes),
             aliases: init_aliases(),
         }
     }
@@ -192,7 +193,7 @@ impl<'a> Units<'a> {
         return parsed_len;
     }
 
-    fn find_unit<'units>(&'units self, str: &[char]) -> Option<(&'units Unit, &'units Prefix)> {
+    fn find_unit(&self, str: &[char]) -> Option<(RefCell<Unit>, RefCell<Prefix>)> {
         if str.is_empty() {
             return None;
         }
@@ -201,14 +202,17 @@ impl<'a> Units<'a> {
             .units
             .get(str.iter().map(|it| *it).collect::<String>().as_str())
         {
-            return Some((exact_match_unit, &self.no_prefix));
+            return Some((
+                RefCell::clone(exact_match_unit),
+                RefCell::clone(&self.no_prefix),
+            ));
         }
-        fn check<'units>(
-            this: &'units Units,
+        fn check(
+            this: &Units,
             str: &[char],
-            unit: &'units Unit<'units>,
+            unit: &RefCell<Unit>,
             unit_name: &'static str,
-        ) -> Option<(&'units Unit<'units>, &'units Prefix)> {
+        ) -> Option<(RefCell<Unit>, RefCell<Prefix>)> {
             if unit_name.chars().count() > str.len() {
                 return None;
             }
@@ -221,12 +225,12 @@ impl<'a> Units<'a> {
             if str_endswith_unitname {
                 let prefix_len = str.len() - unit_name.len();
                 if prefix_len == 0 {
-                    return Some((unit, &this.no_prefix));
+                    return Some((RefCell::clone(unit), RefCell::clone(&this.no_prefix)));
                 }
                 let prefix_name = &str[0..prefix_len];
-                let prefix = Units::find_prefix_for(unit, prefix_name);
+                let prefix = Units::find_prefix_for(&(*unit).borrow(), prefix_name);
                 if let Some(prefix) = prefix {
-                    return Some((unit, prefix));
+                    return Some((RefCell::clone(unit), prefix));
                 }
             }
             return None;
@@ -238,7 +242,7 @@ impl<'a> Units<'a> {
             }
         }
         for (alias, unit_name) in &self.aliases {
-            let unit = &self.units.get(unit_name).expect(unit_name);
+            let unit = self.units.get(unit_name).expect(unit_name);
             let result = check(self, str, unit, alias);
             if result.is_some() {
                 return result;
@@ -249,23 +253,33 @@ impl<'a> Units<'a> {
 
     pub fn simplify(&self, unit: &UnitOutput) -> Option<UnitOutput> {
         if let Some(base_unit) = get_base_unit_for(self, &unit.dimensions) {
+            let dimensions = base_unit.unit.borrow().base;
             Some(UnitOutput {
                 units: vec![UnitInstance {
                     unit: base_unit.unit,
                     prefix: base_unit.prefix,
                     power: 1,
                 }],
-                dimensions: base_unit.unit.base,
+                dimensions,
             })
         } else {
             None
         }
     }
 
-    fn find_prefix_for<'b>(unit: &'b Unit, prefix_name: &[char]) -> Option<&'b Prefix> {
-        match unit.prefix_groups {
-            (Some(p1), Some(p2)) => p1.iter().chain(p2).find(|it| it.name == prefix_name),
-            (Some(p1), None) => p1.iter().find(|it| it.name == prefix_name),
+    fn find_prefix_for(unit: &Unit, prefix_name: &[char]) -> Option<RefCell<Prefix>> {
+        match &unit.prefix_groups {
+            (Some(p1), Some(p2)) => p1
+                .borrow()
+                .iter()
+                .chain(p2.borrow().iter())
+                .find(|it| it.borrow().name == prefix_name)
+                .map(|it| RefCell::clone(it)),
+            (Some(p1), None) => p1
+                .borrow()
+                .iter()
+                .find(|it| it.borrow().name == prefix_name)
+                .map(|it| RefCell::clone(it)),
             (None, None) => None,
             (None, Some(_)) => panic!("Cannot happen"),
         }
@@ -310,19 +324,19 @@ fn skip(c: &[char], len: usize) -> &[char] {
 }
 
 #[derive(Clone, Eq)]
-pub struct UnitOutput<'a> {
+pub struct UnitOutput {
     // TOOD: replace it with a fixed array Some None?
-    pub units: Vec<UnitInstance<'a>>,
+    pub units: Vec<UnitInstance>,
     pub dimensions: [isize; BASE_UNIT_DIMENSION_COUNT],
 }
 
-impl<'a> Debug for UnitOutput<'a> {
+impl Debug for UnitOutput {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "[{:?}]", self.units)
     }
 }
 
-impl<'a> Display for UnitOutput<'a> {
+impl Display for UnitOutput {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut nnum = 0;
         let mut nden = 0;
@@ -337,8 +351,8 @@ impl<'a> Display for UnitOutput<'a> {
             if unit.power > 0 {
                 nnum += 1;
                 str_num.push(' ');
-                str_num.extend_from_slice(unit.prefix.name);
-                str_num.extend_from_slice(unit.unit.name);
+                str_num.extend_from_slice(unit.prefix.borrow().name);
+                str_num.extend_from_slice(unit.unit.borrow().name);
                 if (unit.power as f64 - 1.0).abs() > 1e-15 {
                     str_num.push('^');
                     str_num.extend(unit.power.to_string().chars());
@@ -353,16 +367,16 @@ impl<'a> Display for UnitOutput<'a> {
                 if unit.power < 0 {
                     if nnum > 0 {
                         str_den.push(' ');
-                        str_den.extend_from_slice(unit.prefix.name);
-                        str_den.extend_from_slice(unit.unit.name);
+                        str_den.extend_from_slice(unit.prefix.borrow().name);
+                        str_den.extend_from_slice(unit.unit.borrow().name);
                         if (unit.power as f64 + 1.0).abs() > 1e-15 {
                             str_den.push('^');
                             str_den.extend((-unit.power).to_string().chars());
                         }
                     } else {
                         str_den.push(' ');
-                        str_den.extend_from_slice(unit.prefix.name);
-                        str_den.extend_from_slice(unit.unit.name);
+                        str_den.extend_from_slice(unit.prefix.borrow().name);
+                        str_den.extend_from_slice(unit.unit.borrow().name);
                         str_den.push('^');
                         str_den.extend(unit.power.to_string().chars());
                     }
@@ -402,17 +416,17 @@ impl<'a> Display for UnitOutput<'a> {
     }
 }
 
-impl<'a> UnitOutput<'a> {
-    pub fn new() -> UnitOutput<'a> {
+impl UnitOutput {
+    pub fn new() -> UnitOutput {
         UnitOutput {
             units: vec![],
             dimensions: [0; BASE_UNIT_DIMENSION_COUNT],
         }
     }
 
-    pub fn add_unit(&mut self, unit: UnitInstance<'a>) {
+    pub fn add_unit(&mut self, unit: UnitInstance) {
         for i in 0..BASE_UNIT_DIMENSION_COUNT {
-            self.dimensions[i] += unit.unit.base[i] * unit.power;
+            self.dimensions[i] += unit.unit.borrow().base[i] * unit.power;
         }
         self.units.push(unit);
     }
@@ -421,7 +435,7 @@ impl<'a> UnitOutput<'a> {
         self.dimensions.iter().all(|it| *it == 0)
     }
 
-    pub fn simplify(&self, units: &'a Units) -> Option<UnitOutput<'a>> {
+    pub fn simplify(&self, units: &Units) -> Option<UnitOutput> {
         if let Some(base_unit) = dbg!(units.simplify(self)) {
             // e.g. don't convert from km to m, but convert from kg*m/s^2 to N
             // base_unit.units.len() is always 1
@@ -459,8 +473,8 @@ impl<'a> UnitOutput<'a> {
     }
 }
 
-impl<'a> std::ops::Mul for &UnitOutput<'a> {
-    type Output = UnitOutput<'a>;
+impl std::ops::Mul for &UnitOutput {
+    type Output = UnitOutput;
 
     fn mul(self, other: Self) -> Self::Output {
         let mut result = self.clone();
@@ -482,8 +496,8 @@ impl<'a> std::ops::Mul for &UnitOutput<'a> {
     }
 }
 
-impl<'a> std::ops::Div for &UnitOutput<'a> {
-    type Output = UnitOutput<'a>;
+impl std::ops::Div for &UnitOutput {
+    type Output = UnitOutput;
 
     fn div(self, other: Self) -> Self::Output {
         let mut result = self.clone();
@@ -507,7 +521,7 @@ impl<'a> std::ops::Div for &UnitOutput<'a> {
     }
 }
 
-impl<'a> PartialEq for UnitOutput<'a> {
+impl PartialEq for UnitOutput {
     fn eq(&self, other: &Self) -> bool {
         // All dimensions must be the same
         for (a, b) in self.dimensions.iter().zip(other.dimensions.iter()) {
@@ -519,22 +533,22 @@ impl<'a> PartialEq for UnitOutput<'a> {
     }
 }
 
-impl<'a> UnitOutput<'a> {
+impl UnitOutput {
     pub fn normalize(&self, value: &BigDecimal) -> BigDecimal {
         if self.is_derived() {
             let mut result = value.clone();
             for unit in &self.units {
                 dbg!(&unit);
-                let base_value = &unit.unit.value;
-                let prefix_val = &unit.prefix.value;
+                let base_value = &unit.unit.borrow().value;
+                let prefix_val = &unit.prefix.borrow().value;
                 let power = unit.power;
                 result = dbg!(result) * dbg!(pow(base_value * prefix_val, power as i64));
             }
             return result;
         } else {
-            let base_value = &self.units[0].unit.value;
-            let offset = &self.units[0].unit.offset;
-            let prefix_val = &self.units[0].prefix.value;
+            let base_value = &self.units[0].unit.borrow().value;
+            let offset = &self.units[0].unit.borrow().offset;
+            let prefix_val = &self.units[0].prefix.borrow().value;
 
             return (value + offset) * (base_value * prefix_val);
         }
@@ -544,8 +558,8 @@ impl<'a> UnitOutput<'a> {
         return if self.is_derived() {
             let mut result = value.clone();
             for unit in &self.units {
-                let base_value = &unit.unit.value;
-                let prefix_val = &unit.prefix.value;
+                let base_value = &unit.unit.borrow().value;
+                let prefix_val = &unit.prefix.borrow().value;
                 let power = unit.power;
                 let pow = pow(base_value * prefix_val, power as i64);
                 result = dbg!(result / dbg!(pow));
@@ -557,15 +571,17 @@ impl<'a> UnitOutput<'a> {
             // pontatlanság és visszakap 120at
             //     ez az ág akkor hivodik, amikor a 120 000.0006.. m-t akarja megkapni mben,
             // mivel a méter már alapban pontatlanul van téárolva, vissza is pontatlant kap
-            let base_value = dbg!(&self.units[0].unit.value);
-            let offset = dbg!(&self.units[0].unit.offset);
-            let prefix_val = dbg!(&self.units[0].prefix.value);
+            let borrow = self.units[0].unit.borrow();
+            let base_value = dbg!(&borrow.value);
+            let offset = dbg!(&borrow.offset);
+            let borrow_prefix = self.units[0].prefix.borrow();
+            let prefix_val = dbg!(&borrow_prefix.value);
 
             dbg!(((value / base_value) / prefix_val) - offset).with_prec(MAX_PRECISION)
         };
     }
 
-    pub fn pow(&self, p: i64) -> UnitOutput<'a> {
+    pub fn pow(&self, p: i64) -> UnitOutput {
         let mut result = self.clone();
         for dim in &mut result.dimensions {
             *dim *= p as isize;
@@ -583,14 +599,14 @@ impl<'a> UnitOutput<'a> {
 }
 
 #[derive(Eq, PartialEq, Clone)]
-pub struct UnitInstance<'a> {
-    pub unit: &'a Unit<'a>,
-    pub prefix: &'a Prefix,
+pub struct UnitInstance {
+    pub unit: RefCell<Unit>,
+    pub prefix: RefCell<Prefix>,
     pub power: isize,
 }
 
-impl<'a> UnitInstance<'a> {
-    pub fn new(unit: &'a Unit, prefix: &'a Prefix, power: isize) -> UnitInstance<'a> {
+impl UnitInstance {
+    pub fn new(unit: RefCell<Unit>, prefix: RefCell<Prefix>, power: isize) -> UnitInstance {
         UnitInstance {
             unit,
             prefix,
@@ -599,13 +615,13 @@ impl<'a> UnitInstance<'a> {
     }
 }
 
-impl<'a> Debug for UnitInstance<'a> {
+impl Debug for UnitInstance {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
             "'{}{}^{}'",
-            self.prefix.name.iter().collect::<String>(),
-            self.unit.name.iter().collect::<String>(),
+            self.prefix.borrow().name.iter().collect::<String>(),
+            self.unit.borrow().name.iter().collect::<String>(),
             self.power
         )
     }
@@ -614,82 +630,81 @@ impl<'a> Debug for UnitInstance<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::units::consts::{create_prefixes, EMPTY_UNIT_DIMENSIONS};
+    use crate::units::consts::EMPTY_UNIT_DIMENSIONS;
     use bigdecimal::*;
 
-    fn parse<'a>(str: &'a str, units: &'a Units) -> UnitOutput<'a> {
+    fn parse(str: &str, units: &Units) -> UnitOutput {
         units.parse(&str.chars().collect::<Vec<char>>()).0
     }
 
     #[test]
     fn should_create_unit_correctly() {
-        let prefixes = create_prefixes();
-        let units = Units::new(&prefixes);
+        let units = Units::new();
 
         let unit1 = parse("cm", &units);
-        assert_eq!(&['m'], unit1.units[0].unit.name);
+        assert_eq!(&['m'], unit1.units[0].unit.borrow().name);
 
         let unit1 = parse("kg", &units);
-        assert_eq!(&['g'], unit1.units[0].unit.name);
+        assert_eq!(&['g'], unit1.units[0].unit.borrow().name);
 
         let unit1 = parse("(kg m)/J^2", &units);
-        assert_eq!(&['g'], unit1.units[0].unit.name);
-        assert_eq!(&['k'], unit1.units[0].prefix.name);
-        assert_eq!(&['m'], unit1.units[1].unit.name);
-        assert_eq!(&['J'], unit1.units[2].unit.name);
+        assert_eq!(&['g'], unit1.units[0].unit.borrow().name);
+        assert_eq!(&['k'], unit1.units[0].prefix.borrow().name);
+        assert_eq!(&['m'], unit1.units[1].unit.borrow().name);
+        assert_eq!(&['J'], unit1.units[2].unit.borrow().name);
         assert_eq!(-2, unit1.units[2].power);
 
         let unit1 = parse("(kg m)/s^2", &units);
-        assert_eq!(&['g'], unit1.units[0].unit.name);
+        assert_eq!(&['g'], unit1.units[0].unit.borrow().name);
         assert_eq!(1, unit1.units[0].power);
-        assert_eq!(unit1.units[0].prefix.name, &['k']);
-        assert_eq!(&['m'], unit1.units[1].unit.name);
+        assert_eq!(unit1.units[0].prefix.borrow().name, &['k']);
+        assert_eq!(&['m'], unit1.units[1].unit.borrow().name);
         assert_eq!(1, unit1.units[1].power);
-        assert_eq!(unit1.units[1].prefix.name, &[]);
-        assert_eq!(&['s'], unit1.units[2].unit.name);
-        assert_eq!(unit1.units[2].prefix.name, &[]);
+        assert_eq!(unit1.units[1].prefix.borrow().name, &[]);
+        assert_eq!(&['s'], unit1.units[2].unit.borrow().name);
+        assert_eq!(unit1.units[2].prefix.borrow().name, &[]);
         assert_eq!(-2, unit1.units[2].power);
 
         let unit1 = parse("cm/s", &units);
-        assert_eq!(&['c'], unit1.units[0].prefix.name);
-        assert_eq!(&['m'], unit1.units[0].unit.name);
+        assert_eq!(&['c'], unit1.units[0].prefix.borrow().name);
+        assert_eq!(&['m'], unit1.units[0].unit.borrow().name);
         assert_eq!(1, unit1.units[0].power);
-        assert_eq!(&['s'], unit1.units[1].unit.name);
+        assert_eq!(&['s'], unit1.units[1].unit.borrow().name);
         assert_eq!(-1, unit1.units[1].power);
 
         let unit1 = parse("ml", &units);
-        assert_eq!(&['m'], unit1.units[0].prefix.name);
-        assert_eq!(&['l'], unit1.units[0].unit.name);
+        assert_eq!(&['m'], unit1.units[0].prefix.borrow().name);
+        assert_eq!(&['l'], unit1.units[0].unit.borrow().name);
         assert_eq!(3, unit1.dimensions[1]);
         assert_eq!(1, unit1.units[0].power);
 
         let unit1 = parse("ml^-1", &units);
-        assert_eq!(&['m'], unit1.units[0].prefix.name);
-        assert_eq!(&['l'], unit1.units[0].unit.name);
+        assert_eq!(&['m'], unit1.units[0].prefix.borrow().name);
+        assert_eq!(&['l'], unit1.units[0].unit.borrow().name);
         assert_eq!(-3, unit1.dimensions[1]);
         assert_eq!(-1, unit1.units[0].power);
 
         let unit1 = parse("Hz", &units);
-        assert_eq!(&['H', 'z'], unit1.units[0].unit.name);
+        assert_eq!(&['H', 'z'], unit1.units[0].unit.borrow().name);
 
         let unit1 = parse("km2", &units);
-        assert_eq!(&['m', '2'], unit1.units[0].unit.name);
+        assert_eq!(&['m', '2'], unit1.units[0].unit.borrow().name);
 
         let unit1 = parse("km^3", &units);
-        assert_eq!(&['m'], unit1.units[0].unit.name);
+        assert_eq!(&['m'], unit1.units[0].unit.borrow().name);
         assert_eq!(3, unit1.units[0].power);
         assert_eq!(3, unit1.dimensions[1]);
-        assert_eq!(&['k'], unit1.units[0].prefix.name);
+        assert_eq!(&['k'], unit1.units[0].prefix.borrow().name);
 
         let unit1 = parse("km3", &units);
-        assert_eq!(&['m', '3'], unit1.units[0].unit.name);
+        assert_eq!(&['m', '3'], unit1.units[0].unit.borrow().name);
         assert_eq!(1, unit1.units[0].power);
         assert_eq!(3, unit1.dimensions[1]);
         assert_eq!(
             BigDecimal::from_i64(1000000000).unwrap(),
-            unit1.units[0].prefix.value
+            unit1.units[0].prefix.borrow().value
         );
-        assert_eq!(&['k'], unit1.units[0].prefix.name);
+        assert_eq!(&['k'], unit1.units[0].prefix.borrow().name);
 
         // should test whether two units have the same base unit
         assert_eq!(&parse("cm", &units), &parse("m", &units));
@@ -701,48 +716,51 @@ mod tests {
         );
 
         let unit1 = parse("bytes", &units);
-        assert_eq!(&['b', 'y', 't', 'e', 's'], unit1.units[0].unit.name);
+        assert_eq!(
+            &['b', 'y', 't', 'e', 's'],
+            unit1.units[0].unit.borrow().name
+        );
         assert_eq!(1, unit1.units[0].power);
-        assert_eq!(unit1.units[0].prefix.name, &[]);
+        assert_eq!(unit1.units[0].prefix.borrow().name, &[]);
 
         // Kibi BIT!
         let unit1 = parse("Kib", &units);
-        assert_eq!(&['b'], unit1.units[0].unit.name);
+        assert_eq!(&['b'], unit1.units[0].unit.borrow().name);
         assert_eq!(1, unit1.units[0].power);
-        assert_eq!(&['K', 'i'], unit1.units[0].prefix.name);
+        assert_eq!(&['K', 'i'], unit1.units[0].prefix.borrow().name);
 
         let unit1 = parse("Kib/s", &units);
-        assert_eq!(&['K', 'i'], unit1.units[0].prefix.name);
-        assert_eq!(&['b'], unit1.units[0].unit.name);
-        assert_eq!(&['s'], unit1.units[1].unit.name);
+        assert_eq!(&['K', 'i'], unit1.units[0].prefix.borrow().name);
+        assert_eq!(&['b'], unit1.units[0].unit.borrow().name);
+        assert_eq!(&['s'], unit1.units[1].unit.borrow().name);
         assert_eq!(1, unit1.units[0].power);
         assert_eq!(-1, unit1.units[1].power);
 
         let unit1 = parse("b/s", &units);
-        assert_eq!(unit1.units[0].prefix.name, &[]);
-        assert_eq!(&['b'], unit1.units[0].unit.name);
-        assert_eq!(&['s'], unit1.units[1].unit.name);
+        assert_eq!(unit1.units[0].prefix.borrow().name, &[]);
+        assert_eq!(&['b'], unit1.units[0].unit.borrow().name);
+        assert_eq!(&['s'], unit1.units[1].unit.borrow().name);
         assert_eq!(1, unit1.units[0].power);
         assert_eq!(-1, unit1.units[1].power);
 
         let unit1 = parse("kb", &units);
-        assert_eq!(unit1.units[0].prefix.name, &['k']);
-        assert_eq!(&['b'], unit1.units[0].unit.name);
+        assert_eq!(unit1.units[0].prefix.borrow().name, &['k']);
+        assert_eq!(&['b'], unit1.units[0].unit.borrow().name);
         assert_eq!(1, unit1.units[0].power);
 
         let unit1 = parse("cm*s^-2", &units);
-        assert_eq!(unit1.units[0].unit.name, &['m']);
-        assert_eq!(unit1.units[1].unit.name, &['s']);
-        assert_eq!(&['c'], unit1.units[0].prefix.name);
+        assert_eq!(unit1.units[0].unit.borrow().name, &['m']);
+        assert_eq!(unit1.units[1].unit.borrow().name, &['s']);
+        assert_eq!(&['c'], unit1.units[0].prefix.borrow().name);
         assert_eq!(-2, unit1.units[1].power);
 
         let unit1 = parse("kg*m^2 / s^2 / K / mol", &units);
-        assert_eq!(unit1.units[0].unit.name, &['g']);
-        assert_eq!(unit1.units[1].unit.name, &['m']);
-        assert_eq!(unit1.units[2].unit.name, &['s']);
-        assert_eq!(unit1.units[3].unit.name, &['K']);
-        assert_eq!(unit1.units[4].unit.name, &['m', 'o', 'l']);
-        assert_eq!(&['k'], unit1.units[0].prefix.name);
+        assert_eq!(unit1.units[0].unit.borrow().name, &['g']);
+        assert_eq!(unit1.units[1].unit.borrow().name, &['m']);
+        assert_eq!(unit1.units[2].unit.borrow().name, &['s']);
+        assert_eq!(unit1.units[3].unit.borrow().name, &['K']);
+        assert_eq!(unit1.units[4].unit.borrow().name, &['m', 'o', 'l']);
+        assert_eq!(&['k'], unit1.units[0].prefix.borrow().name);
         assert_eq!(1, unit1.units[0].power);
         assert_eq!(2, unit1.units[1].power);
         assert_eq!(-2, unit1.units[2].power);
@@ -750,12 +768,12 @@ mod tests {
         assert_eq!(-1, unit1.units[4].power);
 
         let unit1 = parse("kg*(m^2 / (s^2 / (K^-1 / mol)))", &units);
-        assert_eq!(unit1.units[0].unit.name, &['g']);
-        assert_eq!(unit1.units[1].unit.name, &['m']);
-        assert_eq!(unit1.units[2].unit.name, &['s']);
-        assert_eq!(unit1.units[3].unit.name, &['K']);
-        assert_eq!(unit1.units[4].unit.name, &['m', 'o', 'l']);
-        assert_eq!(&['k'], unit1.units[0].prefix.name);
+        assert_eq!(unit1.units[0].unit.borrow().name, &['g']);
+        assert_eq!(unit1.units[1].unit.borrow().name, &['m']);
+        assert_eq!(unit1.units[2].unit.borrow().name, &['s']);
+        assert_eq!(unit1.units[3].unit.borrow().name, &['K']);
+        assert_eq!(unit1.units[4].unit.borrow().name, &['m', 'o', 'l']);
+        assert_eq!(&['k'], unit1.units[0].prefix.borrow().name);
         assert_eq!(1, unit1.units[0].power);
         assert_eq!(2, unit1.units[1].power);
         assert_eq!(-2, unit1.units[2].power);
@@ -763,13 +781,13 @@ mod tests {
         assert_eq!(-1, unit1.units[4].power);
 
         let unit1 = parse("(m / ( s / ( kg mol ) / ( lbm / h ) K ) )", &units);
-        assert_eq!(unit1.units[0].unit.name, &['m']);
-        assert_eq!(unit1.units[1].unit.name, &['s']);
-        assert_eq!(unit1.units[2].unit.name, &['g']);
-        assert_eq!(unit1.units[3].unit.name, &['m', 'o', 'l']);
-        assert_eq!(unit1.units[4].unit.name, &['l', 'b', 'm']);
-        assert_eq!(unit1.units[5].unit.name, &['h']);
-        assert_eq!(unit1.units[6].unit.name, &['K']);
+        assert_eq!(unit1.units[0].unit.borrow().name, &['m']);
+        assert_eq!(unit1.units[1].unit.borrow().name, &['s']);
+        assert_eq!(unit1.units[2].unit.borrow().name, &['g']);
+        assert_eq!(unit1.units[3].unit.borrow().name, &['m', 'o', 'l']);
+        assert_eq!(unit1.units[4].unit.borrow().name, &['l', 'b', 'm']);
+        assert_eq!(unit1.units[5].unit.borrow().name, &['h']);
+        assert_eq!(unit1.units[6].unit.borrow().name, &['K']);
         assert_eq!(1, unit1.units[0].power);
         assert_eq!(-1, unit1.units[1].power);
         assert_eq!(1, unit1.units[2].power);
@@ -779,13 +797,13 @@ mod tests {
         assert_eq!(-1, unit1.units[6].power);
 
         let unit1 = parse("(m/(s/(kg mol)/(lbm/h)K))", &units);
-        assert_eq!(unit1.units[0].unit.name, &['m']);
-        assert_eq!(unit1.units[1].unit.name, &['s']);
-        assert_eq!(unit1.units[2].unit.name, &['g']);
-        assert_eq!(unit1.units[3].unit.name, &['m', 'o', 'l']);
-        assert_eq!(unit1.units[4].unit.name, &['l', 'b', 'm']);
-        assert_eq!(unit1.units[5].unit.name, &['h']);
-        assert_eq!(unit1.units[6].unit.name, &['K']);
+        assert_eq!(unit1.units[0].unit.borrow().name, &['m']);
+        assert_eq!(unit1.units[1].unit.borrow().name, &['s']);
+        assert_eq!(unit1.units[2].unit.borrow().name, &['g']);
+        assert_eq!(unit1.units[3].unit.borrow().name, &['m', 'o', 'l']);
+        assert_eq!(unit1.units[4].unit.borrow().name, &['l', 'b', 'm']);
+        assert_eq!(unit1.units[5].unit.borrow().name, &['h']);
+        assert_eq!(unit1.units[6].unit.borrow().name, &['K']);
         assert_eq!(1, unit1.units[0].power);
         assert_eq!(-1, unit1.units[1].power);
         assert_eq!(1, unit1.units[2].power);
@@ -796,17 +814,17 @@ mod tests {
 
         // should parse units with correct precedence
         let unit1 = parse("m^3 / kg*s^2", &units);
-        assert_eq!(unit1.units[0].unit.name, &['m']);
-        assert_eq!(unit1.units[1].unit.name, &['g']);
-        assert_eq!(unit1.units[2].unit.name, &['s']);
+        assert_eq!(unit1.units[0].unit.borrow().name, &['m']);
+        assert_eq!(unit1.units[1].unit.borrow().name, &['g']);
+        assert_eq!(unit1.units[2].unit.borrow().name, &['s']);
         assert_eq!(3, unit1.units[0].power);
         assert_eq!(-1, unit1.units[1].power);
         assert_eq!(2, unit1.units[2].power);
 
         let unit1 = parse("m^3 / (kg s^2)", &units);
-        assert_eq!(unit1.units[0].unit.name, &['m']);
-        assert_eq!(unit1.units[1].unit.name, &['g']);
-        assert_eq!(unit1.units[2].unit.name, &['s']);
+        assert_eq!(unit1.units[0].unit.borrow().name, &['m']);
+        assert_eq!(unit1.units[1].unit.borrow().name, &['g']);
+        assert_eq!(unit1.units[2].unit.borrow().name, &['s']);
         assert_eq!(3, unit1.units[0].power);
         assert_eq!(-1, unit1.units[1].power);
         assert_eq!(-2, unit1.units[2].power);
@@ -814,91 +832,105 @@ mod tests {
 
     #[test]
     fn exp_notation() {
-        let prefixes = create_prefixes();
-        let units = Units::new(&prefixes);
+        let units = Units::new();
 
         // exponential notation, binary or hex is not supported in exponents
         let unit1 = parse("kg^1e0 * m^1.0e3 * s^-2.0e0", &units);
         assert_eq!(1, unit1.units.len());
-        assert_eq!(unit1.units[0].prefix.name, &['k']);
-        assert_eq!(unit1.units[0].unit.name, &['g']);
+        assert_eq!(unit1.units[0].prefix.borrow().name, &['k']);
+        assert_eq!(unit1.units[0].unit.borrow().name, &['g']);
         assert_eq!(1, unit1.units[0].power);
 
         let unit1 = parse("kg^0b01", &units);
         assert_eq!(1, unit1.units.len());
-        assert_eq!(unit1.units[0].prefix.name, &['k']);
-        assert_eq!(unit1.units[0].unit.name, &['g']);
+        assert_eq!(unit1.units[0].prefix.borrow().name, &['k']);
+        assert_eq!(unit1.units[0].unit.borrow().name, &['g']);
         assert_eq!(0, unit1.units[0].power);
 
         let unit1 = parse("kg^0xFF", &units);
         assert_eq!(1, unit1.units.len());
-        assert_eq!(unit1.units[0].prefix.name, &['k']);
-        assert_eq!(unit1.units[0].unit.name, &['g']);
+        assert_eq!(unit1.units[0].prefix.borrow().name, &['k']);
+        assert_eq!(unit1.units[0].unit.borrow().name, &['g']);
         assert_eq!(0, unit1.units[0].power);
     }
 
     #[test]
     fn test_prefixes() {
-        let prefixes = create_prefixes();
-        let units = Units::new(&prefixes);
+        let units = Units::new();
         //should accept both long and short prefixes
-        assert_eq!(parse("ohm", &units).units[0].unit.name, &['o', 'h', 'm']);
         assert_eq!(
-            parse("milliohm", &units).units[0].unit.name,
+            parse("ohm", &units).units[0].unit.borrow().name,
             &['o', 'h', 'm']
         );
-        assert_eq!(parse("mohm", &units).units[0].unit.name, &['o', 'h', 'm']);
-
-        assert_eq!(parse("bar", &units).units[0].unit.name, &['b', 'a', 'r']);
         assert_eq!(
-            parse("millibar", &units).units[0].unit.name,
+            parse("milliohm", &units).units[0].unit.borrow().name,
+            &['o', 'h', 'm']
+        );
+        assert_eq!(
+            parse("mohm", &units).units[0].unit.borrow().name,
+            &['o', 'h', 'm']
+        );
+
+        assert_eq!(
+            parse("bar", &units).units[0].unit.borrow().name,
             &['b', 'a', 'r']
         );
-        assert_eq!(parse("mbar", &units).units[0].unit.name, &['b', 'a', 'r']);
+        assert_eq!(
+            parse("millibar", &units).units[0].unit.borrow().name,
+            &['b', 'a', 'r']
+        );
+        assert_eq!(
+            parse("mbar", &units).units[0].unit.borrow().name,
+            &['b', 'a', 'r']
+        );
     }
 
     #[test]
     fn test_plurals() {
-        let prefixes = create_prefixes();
-        let units = Units::new(&prefixes);
+        let units = Units::new();
 
         let unit1 = parse("meters", &units);
-        assert_eq!(&['m', 'e', 't', 'e', 'r'], unit1.units[0].unit.name);
-        assert_eq!(unit1.units[0].prefix.name, &[]);
+        assert_eq!(
+            &['m', 'e', 't', 'e', 'r'],
+            unit1.units[0].unit.borrow().name
+        );
+        assert_eq!(unit1.units[0].prefix.borrow().name, &[]);
 
         let unit1 = parse("kilometers", &units);
-        assert_eq!(&['m', 'e', 't', 'e', 'r'], unit1.units[0].unit.name);
-        assert_eq!(unit1.units[0].prefix.name, &['k', 'i', 'l', 'o']);
+        assert_eq!(
+            &['m', 'e', 't', 'e', 'r'],
+            unit1.units[0].unit.borrow().name
+        );
+        assert_eq!(unit1.units[0].prefix.borrow().name, &['k', 'i', 'l', 'o']);
 
         let unit1 = parse("inches", &units);
-        assert_eq!(&['i', 'n', 'c', 'h'], unit1.units[0].unit.name);
-        assert_eq!(unit1.units[0].prefix.name, &[]);
+        assert_eq!(&['i', 'n', 'c', 'h'], unit1.units[0].unit.borrow().name);
+        assert_eq!(unit1.units[0].prefix.borrow().name, &[]);
     }
 
     #[test]
     fn test_units_j_mol_k_parsing() {
-        let prefixes = create_prefixes();
-        let units = Units::new(&prefixes);
+        let units = Units::new();
 
         let unit1 = parse("(J / mol / K)", &units);
-        assert_eq!(unit1.units[0].prefix.name, &[]);
-        assert_eq!(unit1.units[1].prefix.name, &[]);
-        assert_eq!(unit1.units[2].prefix.name, &[]);
-        assert_eq!(unit1.units[0].unit.name, &['J']);
-        assert_eq!(unit1.units[1].unit.name, &['m', 'o', 'l']);
-        assert_eq!(unit1.units[2].unit.name, &['K']);
+        assert_eq!(unit1.units[0].prefix.borrow().name, &[]);
+        assert_eq!(unit1.units[1].prefix.borrow().name, &[]);
+        assert_eq!(unit1.units[2].prefix.borrow().name, &[]);
+        assert_eq!(unit1.units[0].unit.borrow().name, &['J']);
+        assert_eq!(unit1.units[1].unit.borrow().name, &['m', 'o', 'l']);
+        assert_eq!(unit1.units[2].unit.borrow().name, &['K']);
         let parsed_len = units
             .parse(&"(J / mol / K)".chars().collect::<Vec<char>>())
             .1;
         assert_eq!(parsed_len, "(J / mol / K)".len());
 
         let unit1 = parse("(J / mol / K) ^ 0", &units);
-        assert_eq!(unit1.units[0].prefix.name, &[]);
-        assert_eq!(unit1.units[1].prefix.name, &[]);
-        assert_eq!(unit1.units[2].prefix.name, &[]);
-        assert_eq!(unit1.units[0].unit.name, &['J']);
-        assert_eq!(unit1.units[1].unit.name, &['m', 'o', 'l']);
-        assert_eq!(unit1.units[2].unit.name, &['K']);
+        assert_eq!(unit1.units[0].prefix.borrow().name, &[]);
+        assert_eq!(unit1.units[1].prefix.borrow().name, &[]);
+        assert_eq!(unit1.units[2].prefix.borrow().name, &[]);
+        assert_eq!(unit1.units[0].unit.borrow().name, &['J']);
+        assert_eq!(unit1.units[1].unit.borrow().name, &['m', 'o', 'l']);
+        assert_eq!(unit1.units[2].unit.borrow().name, &['K']);
 
         let parsed_len = units
             .parse(&"(J / mol / K) ^ 0".chars().collect::<Vec<char>>())
@@ -915,42 +947,41 @@ mod tests {
 
     #[test]
     fn test_cancelling_out() {
-        let prefixes = create_prefixes();
-        let units = Units::new(&prefixes);
+        let units = Units::new();
 
         let unit1 = parse("(km/h) * h", &units);
         assert_eq!(3, unit1.units.len());
-        assert_eq!(unit1.units[0].prefix.name, &['k']);
-        assert_eq!(unit1.units[0].unit.name, &['m']);
+        assert_eq!(unit1.units[0].prefix.borrow().name, &['k']);
+        assert_eq!(unit1.units[0].unit.borrow().name, &['m']);
         assert_eq!(1, unit1.units[0].power);
-        assert_eq!(unit1.units[1].prefix.name, &[]);
-        assert_eq!(unit1.units[1].unit.name, &['h']);
+        assert_eq!(unit1.units[1].prefix.borrow().name, &[]);
+        assert_eq!(unit1.units[1].unit.borrow().name, &['h']);
         assert_eq!(-1, unit1.units[1].power);
-        assert_eq!(unit1.units[2].prefix.name, &[]);
-        assert_eq!(unit1.units[2].unit.name, &['h']);
+        assert_eq!(unit1.units[2].prefix.borrow().name, &[]);
+        assert_eq!(unit1.units[2].unit.borrow().name, &['h']);
         assert_eq!(1, unit1.units[2].power);
 
         let unit1 = parse("km/h*h/h/h", &units);
         assert_eq!(5, unit1.units.len());
 
-        assert_eq!(unit1.units[0].prefix.name, &['k']);
-        assert_eq!(unit1.units[0].unit.name, &['m']);
+        assert_eq!(unit1.units[0].prefix.borrow().name, &['k']);
+        assert_eq!(unit1.units[0].unit.borrow().name, &['m']);
         assert_eq!(1, unit1.units[0].power);
 
-        assert_eq!(unit1.units[1].prefix.name, &[]);
-        assert_eq!(unit1.units[1].unit.name, &['h']);
+        assert_eq!(unit1.units[1].prefix.borrow().name, &[]);
+        assert_eq!(unit1.units[1].unit.borrow().name, &['h']);
         assert_eq!(-1, unit1.units[1].power);
 
-        assert_eq!(unit1.units[1].prefix.name, &[]);
-        assert_eq!(unit1.units[1].unit.name, &['h']);
+        assert_eq!(unit1.units[1].prefix.borrow().name, &[]);
+        assert_eq!(unit1.units[1].unit.borrow().name, &['h']);
         assert_eq!(-1, unit1.units[1].power);
 
-        assert_eq!(unit1.units[1].prefix.name, &[]);
-        assert_eq!(unit1.units[1].unit.name, &['h']);
+        assert_eq!(unit1.units[1].prefix.borrow().name, &[]);
+        assert_eq!(unit1.units[1].unit.borrow().name, &['h']);
         assert_eq!(-1, unit1.units[1].power);
 
-        assert_eq!(unit1.units[1].prefix.name, &[]);
-        assert_eq!(unit1.units[1].unit.name, &['h']);
+        assert_eq!(unit1.units[1].prefix.borrow().name, &[]);
+        assert_eq!(unit1.units[1].unit.borrow().name, &['h']);
         assert_eq!(-1, unit1.units[1].power);
 
         let unit1 = units.parse(&"km/m".chars().collect::<Vec<char>>());
@@ -960,8 +991,7 @@ mod tests {
 
     #[test]
     fn test_is_derive() {
-        let prefixes = create_prefixes();
-        let units = Units::new(&prefixes);
+        let units = Units::new();
         assert_eq!(false, parse("kg", &units).is_derived());
         assert_eq!(true, parse("kg/s", &units).is_derived());
         assert_eq!(true, parse("kg^2", &units).is_derived());
@@ -971,8 +1001,7 @@ mod tests {
 
     #[test]
     fn test_value_and_dim() {
-        let prefixes = create_prefixes();
-        let units = Units::new(&prefixes);
+        let units = Units::new();
         assert_eq!(parse("s*A", &units), parse("C", &units));
         assert_eq!(parse("W/A", &units), parse("V", &units));
         assert_eq!(parse("V/A", &units), parse("ohm", &units));
@@ -986,8 +1015,7 @@ mod tests {
 
     #[test]
     fn test_angles() {
-        let prefixes = create_prefixes();
-        let units = Units::new(&prefixes);
+        let units = Units::new();
 
         assert_eq!(parse("radian", &units), parse("rad", &units));
         assert_eq!(parse("radians", &units), parse("rad", &units));
@@ -999,16 +1027,15 @@ mod tests {
 
     #[test]
     fn test_invalid_power() {
-        let prefixes = create_prefixes();
-        let units = Units::new(&prefixes);
+        let units = Units::new();
 
         let unit1 = parse("s ^^", &units);
         assert_eq!(1, unit1.units.len());
         assert_eq!(1, unit1.units[0].power);
         assert_eq!(1, unit1.dimensions[2]);
 
-        assert_eq!(unit1.units[0].prefix.name, &[]);
-        assert_eq!(unit1.units[0].unit.name, &['s']);
+        assert_eq!(unit1.units[0].prefix.borrow().name, &[]);
+        assert_eq!(unit1.units[0].unit.borrow().name, &['s']);
         assert_eq!(1, unit1.units[0].power);
 
         let unit1 = parse("(in*lbg)", &units);

@@ -26,7 +26,7 @@ impl FnType {
     }
 
     #[inline]
-    pub fn name<'units>(&self) -> &'static [char] {
+    pub fn name(&self) -> &'static [char] {
         match self {
             FnType::Sin => &['s', 'i', 'n'],
             FnType::Cos => &['c', 'o', 's'],
@@ -38,7 +38,7 @@ impl FnType {
     }
 
     #[inline]
-    pub fn execute<'units>(&self, arg_count: usize, stack: &mut Vec<CalcResult<'units>>) -> bool {
+    pub fn execute(&self, arg_count: usize, stack: &mut Vec<CalcResult>) -> bool {
         match self {
             FnType::Nth => fn_nth(arg_count, stack),
             FnType::Sum => fn_sum(arg_count, stack),
@@ -50,7 +50,7 @@ impl FnType {
     }
 }
 
-fn fn_pi<'units>(arg_count: usize, stack: &mut Vec<CalcResult<'units>>) -> bool {
+fn fn_pi(arg_count: usize, stack: &mut Vec<CalcResult>) -> bool {
     if arg_count != 0 {
         return false;
     }
@@ -61,7 +61,7 @@ fn fn_pi<'units>(arg_count: usize, stack: &mut Vec<CalcResult<'units>>) -> bool 
     true
 }
 
-fn fn_nth<'units>(arg_count: usize, stack: &mut Vec<CalcResult<'units>>) -> bool {
+fn fn_nth(arg_count: usize, stack: &mut Vec<CalcResult>) -> bool {
     if arg_count < 2 {
         false
     } else {
@@ -87,7 +87,7 @@ fn fn_nth<'units>(arg_count: usize, stack: &mut Vec<CalcResult<'units>>) -> bool
     }
 }
 
-fn fn_sum<'units>(arg_count: usize, stack: &mut Vec<CalcResult<'units>>) -> bool {
+fn fn_sum(arg_count: usize, stack: &mut Vec<CalcResult>) -> bool {
     if arg_count < 1 {
         false
     } else {
@@ -111,7 +111,7 @@ fn fn_sum<'units>(arg_count: usize, stack: &mut Vec<CalcResult<'units>>) -> bool
     }
 }
 
-fn fn_transpose<'units>(arg_count: usize, stack: &mut Vec<CalcResult<'units>>) -> bool {
+fn fn_transpose(arg_count: usize, stack: &mut Vec<CalcResult>) -> bool {
     if arg_count < 1 {
         false
     } else {

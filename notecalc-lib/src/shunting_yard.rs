@@ -219,9 +219,9 @@ impl ValidationState {
 pub struct ShuntingYard {}
 
 impl ShuntingYard {
-    pub fn shunting_yard<'text_ptr, 'units>(
-        tokens: &mut Vec<Token<'text_ptr, 'units>>,
-        output_stack: &mut Vec<TokenType<'units>>,
+    pub fn shunting_yard<'text_ptr>(
+        tokens: &mut Vec<Token<'text_ptr>>,
+        output_stack: &mut Vec<TokenType>,
     ) {
         // TODO: into iter!!!
         // TODO extract out so no alloc SmallVec?
@@ -654,14 +654,12 @@ impl ShuntingYard {
         if let Some((last_valid_start_index, last_valid_end_index)) = v.last_valid_output_range {
             output_stack.drain(last_valid_end_index + 1..);
             output_stack.drain(0..last_valid_start_index);
+        } else {
+            output_stack.clear();
         }
     }
 
-    fn set_tokens_to_string<'text_ptr, 'units>(
-        tokens: &mut Vec<Token<'text_ptr, 'units>>,
-        from: usize,
-        to: usize,
-    ) {
+    fn set_tokens_to_string<'text_ptr>(tokens: &mut Vec<Token<'text_ptr>>, from: usize, to: usize) {
         for token in tokens[from..=to].iter_mut() {
             match token.typ {
                 TokenType::LineReference { .. } => continue,
@@ -670,10 +668,10 @@ impl ShuntingYard {
         }
     }
 
-    fn get_next_nonstring_token<'a, 'text_ptr, 'units>(
-        tokens: &'a Vec<Token<'text_ptr, 'units>>,
+    fn get_next_nonstring_token<'a, 'text_ptr>(
+        tokens: &'a Vec<Token<'text_ptr>>,
         i: usize,
-    ) -> Option<(&'a Token<'text_ptr, 'units>, usize)> {
+    ) -> Option<(&'a Token<'text_ptr>, usize)> {
         let mut offset = 0;
         while i + offset < tokens.len() {
             if !tokens[i + offset].is_string() {
@@ -684,10 +682,10 @@ impl ShuntingYard {
         return None;
     }
 
-    fn operator_rule<'text_ptr, 'units>(
-        incoming_op: &OperatorTokenType<'units>,
-        operator_stack: &mut Vec<OperatorTokenType<'units>>,
-        output: &mut Vec<TokenType<'units>>,
+    fn operator_rule<'text_ptr>(
+        incoming_op: &OperatorTokenType,
+        operator_stack: &mut Vec<OperatorTokenType>,
+        output: &mut Vec<TokenType>,
     ) {
         if operator_stack.is_empty() {
             return;
@@ -721,18 +719,18 @@ impl ShuntingYard {
         }
     }
 
-    fn send_everything_to_output<'units>(
-        operator_stack: &mut Vec<OperatorTokenType<'units>>,
-        output_stack: &mut Vec<TokenType<'units>>,
+    fn send_everything_to_output(
+        operator_stack: &mut Vec<OperatorTokenType>,
+        output_stack: &mut Vec<TokenType>,
     ) {
         for op in operator_stack.drain(..).rev() {
             ShuntingYard::send_to_output(op, output_stack);
         }
     }
 
-    fn send_anything_until_opening_bracket<'units>(
-        operator_stack: &mut Vec<OperatorTokenType<'units>>,
-        output: &mut Vec<TokenType<'units>>,
+    fn send_anything_until_opening_bracket(
+        operator_stack: &mut Vec<OperatorTokenType>,
+        output: &mut Vec<TokenType>,
         open_paren_type: &OperatorTokenType,
     ) {
         if operator_stack.is_empty() {
@@ -751,10 +749,7 @@ impl ShuntingYard {
         );
     }
 
-    fn send_to_output<'text_ptr, 'units>(
-        operator: OperatorTokenType<'units>,
-        output: &mut Vec<TokenType<'units>>,
-    ) {
+    fn send_to_output<'text_ptr>(operator: OperatorTokenType, output: &mut Vec<TokenType>) {
         // TODO these should be enums
         match operator {
             OperatorTokenType::Perc
@@ -776,55 +771,53 @@ pub mod tests {
     use super::*;
     use crate::calc::CalcResult;
     use crate::token_parser::TokenParser;
-    use crate::units::consts::{create_prefixes, init_units};
+    use crate::units::consts::init_units;
     use crate::units::units::{UnitOutput, Units};
     use bigdecimal::BigDecimal;
-    use std::collections::HashMap;
-    use std::str::FromStr;
 
-    pub fn num<'text_ptr, 'units>(n: i64) -> Token<'text_ptr, 'units> {
+    pub fn num<'text_ptr>(n: i64) -> Token<'text_ptr> {
         Token {
             ptr: &[],
             typ: TokenType::NumberLiteral(n.into()),
         }
     }
 
-    pub fn op<'text_ptr, 'units>(op_repr: OperatorTokenType<'units>) -> Token<'text_ptr, 'units> {
+    pub fn op<'text_ptr>(op_repr: OperatorTokenType) -> Token<'text_ptr> {
         Token {
             ptr: &[],
             typ: TokenType::Operator(op_repr),
         }
     }
 
-    pub fn str<'text_ptr, 'units>(op_repr: &'static str) -> Token<'text_ptr, 'units> {
+    pub fn str<'text_ptr>(op_repr: &'static str) -> Token<'text_ptr> {
         Token {
             ptr: unsafe { std::mem::transmute(op_repr) },
             typ: TokenType::StringLiteral,
         }
     }
 
-    pub fn unit<'text_ptr, 'units>(op_repr: &'static str) -> Token<'text_ptr, 'units> {
+    pub fn unit<'text_ptr>(op_repr: &'static str) -> Token<'text_ptr> {
         Token {
             ptr: unsafe { std::mem::transmute(op_repr) },
             typ: TokenType::Operator(OperatorTokenType::Unit(UnitOutput::new())),
         }
     }
 
-    pub fn var<'text_ptr, 'units>(op_repr: &'static str) -> Token<'text_ptr, 'units> {
+    pub fn var<'text_ptr>(op_repr: &'static str) -> Token<'text_ptr> {
         Token {
             ptr: unsafe { std::mem::transmute(op_repr) },
             typ: TokenType::Variable { var_index: 0 },
         }
     }
 
-    pub fn line_ref<'text_ptr, 'units>(op_repr: &'static str) -> Token<'text_ptr, 'units> {
+    pub fn line_ref<'text_ptr>(op_repr: &'static str) -> Token<'text_ptr> {
         Token {
             ptr: unsafe { std::mem::transmute(op_repr) },
             typ: TokenType::LineReference { var_index: 0 },
         }
     }
 
-    pub fn numf<'text_ptr, 'units>(n: f64) -> Token<'text_ptr, 'units> {
+    pub fn numf<'text_ptr>(n: f64) -> Token<'text_ptr> {
         Token {
             ptr: &[],
             typ: TokenType::NumberLiteral(BigDecimal::from_f64(n).unwrap()),
@@ -905,12 +898,12 @@ pub mod tests {
         }
     }
 
-    pub fn do_shunting_yard<'text_ptr, 'units>(
+    pub fn do_shunting_yard<'text_ptr, 'units, 'b>(
         text: &'text_ptr [char],
         units: &'units Units,
-        tokens: &mut Vec<Token<'text_ptr, 'units>>,
-        vars: &Vec<(&'text_ptr [char], CalcResult)>,
-    ) -> Vec<TokenType<'units>> {
+        tokens: &mut Vec<Token<'text_ptr>>,
+        vars: &'b Vec<(&'text_ptr [char], CalcResult)>,
+    ) -> Vec<TokenType> {
         let mut output = vec![];
         TokenParser::parse_line(&text, &vars, tokens, &units);
         ShuntingYard::shunting_yard(tokens, &mut output);
@@ -926,9 +919,7 @@ pub mod tests {
         println!("===================================================");
         println!("{}", text);
         let temp = text.chars().collect::<Vec<char>>();
-        let prefixes = create_prefixes();
-        let mut units = Units::new(&prefixes);
-        units.units = init_units(&units.prefixes);
+        let mut units = Units::new();
         let mut tokens = vec![];
         let output = do_shunting_yard(&temp, &units, &mut tokens, &var_names);
         compare_tokens(
@@ -952,8 +943,7 @@ pub mod tests {
         println!("===================================================");
         println!("{}", text);
         let temp = text.chars().collect::<Vec<char>>();
-        let prefixes = create_prefixes();
-        let units = Units::new(&prefixes);
+        let units = Units::new();
         let mut tokens = vec![];
         let output = do_shunting_yard(
             &temp,
@@ -1901,5 +1891,10 @@ pub mod tests {
         test_output(")", &[]);
         test_tokens("=", &[str("=")]);
         test_output("=", &[]);
+    }
+
+    #[test]
+    fn test_unary_minus() {
+        test_output("-x -y", &[]);
     }
 }

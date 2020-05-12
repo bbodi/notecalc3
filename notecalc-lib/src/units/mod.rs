@@ -3,22 +3,26 @@
 use crate::units::consts::BASE_UNIT_DIMENSION_COUNT;
 use bigdecimal::*;
 use smallvec::alloc::fmt::Formatter;
+use std::cell::RefCell;
 use std::str::FromStr;
 
 pub mod consts;
 pub mod units;
 
 #[derive(Eq, PartialEq, Clone)]
-pub struct Unit<'a> {
+pub struct Unit {
     name: &'static [char],
     base: [isize; BASE_UNIT_DIMENSION_COUNT],
     // e.g. prefix_groups: (Some(&prefixes.short), Some(&prefixes.long)),
-    prefix_groups: (Option<&'a [Prefix]>, Option<&'a [Prefix]>),
+    prefix_groups: (
+        Option<RefCell<Box<Vec<RefCell<Prefix>>>>>,
+        Option<RefCell<Box<Vec<RefCell<Prefix>>>>>,
+    ),
     value: BigDecimal,
     offset: BigDecimal,
 }
 
-impl<'a> std::fmt::Debug for Unit<'a> {
+impl std::fmt::Debug for Unit {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -29,15 +33,15 @@ impl<'a> std::fmt::Debug for Unit<'a> {
 }
 
 pub struct UnitPrefixes {
-    short: [Prefix; 20],
-    long: [Prefix; 20],
-    squared: [Prefix; 20],
-    cubic: [Prefix; 20],
-    binary_short_si: [Prefix; 8],
-    binary_short_iec: [Prefix; 8],
-    binary_long_si: [Prefix; 8],
-    binary_long_iec: [Prefix; 8],
-    btu: [Prefix; 1],
+    short: RefCell<Box<Vec<RefCell<Prefix>>>>,
+    long: RefCell<Box<Vec<RefCell<Prefix>>>>,
+    squared: RefCell<Box<Vec<RefCell<Prefix>>>>,
+    cubic: RefCell<Box<Vec<RefCell<Prefix>>>>,
+    binary_short_si: RefCell<Box<Vec<RefCell<Prefix>>>>,
+    binary_short_iec: RefCell<Box<Vec<RefCell<Prefix>>>>,
+    binary_long_si: RefCell<Box<Vec<RefCell<Prefix>>>>,
+    binary_long_iec: RefCell<Box<Vec<RefCell<Prefix>>>>,
+    btu: RefCell<Box<Vec<RefCell<Prefix>>>>,
 }
 
 #[derive(Eq, PartialEq, Clone, Debug)]

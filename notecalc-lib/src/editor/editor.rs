@@ -223,6 +223,34 @@ impl Selection {
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum RowModificationType {
+    SingleLine(usize),
+    AllLinesFrom(usize),
+}
+
+impl RowModificationType {
+    fn merge(&mut self, other: Option<&RowModificationType>) {
+        let self_row = match self {
+            RowModificationType::SingleLine(row) => *row,
+            RowModificationType::AllLinesFrom(row) => *row,
+        };
+        if let Some(other) = other {
+            let other_row = match other {
+                RowModificationType::SingleLine(row) => row,
+                RowModificationType::AllLinesFrom(row) => row,
+            };
+            *self = match (&self, other) {
+                (
+                    RowModificationType::SingleLine(self_row),
+                    RowModificationType::SingleLine(other_row),
+                ) if self_row == other_row => RowModificationType::SingleLine(*self_row),
+                _ => RowModificationType::AllLinesFrom(self_row.min(*other_row)),
+            };
+        }
+    }
+}
+
 pub struct Editor {
     selection: Selection,
     last_column_index: usize,
@@ -583,7 +611,7 @@ impl Editor {
         input: EditorInputEvent,
         modifiers: InputModifiers,
         content: &mut EditorContent<T>,
-    ) -> bool {
+    ) -> Option<RowModificationType> {
         if (input == EditorInputEvent::Char('x') || input == EditorInputEvent::Char('c'))
             && modifiers.ctrl
         {
@@ -591,27 +619,25 @@ impl Editor {
         }
 
         if input == EditorInputEvent::Char('z') && modifiers.is_ctrl_shift() {
-            self.redo(content);
-            true
+            self.redo(content)
         } else if input == EditorInputEvent::Char('z') && modifiers.ctrl {
-            self.undo(content);
-            true
+            self.undo(content)
         } else if let Some(command) = self.create_command(&input, modifiers, content) {
             self.next_blink_at = self.time + 500;
             self.show_cursor = true;
-            self.do_command(&command, content);
+            let modif_type = self.do_command(&command, content);
             if self.modif_time_treshold_expires_at < self.time || content.undo_stack.is_empty() {
                 // new undo group
                 content.undo_stack.push(Vec::with_capacity(4));
             }
             content.undo_stack.last_mut().unwrap().push(command);
             self.modif_time_treshold_expires_at = self.time + 500;
-            true
+            modif_type
         } else {
             self.next_blink_at = self.time + 500;
             self.show_cursor = true;
             self.handle_navigation_input(&input, modifiers, content);
-            false
+            None
         }
     }
 
@@ -619,48 +645,72 @@ impl Editor {
         &mut self,
         command: &EditorCommand<T>,
         content: &mut EditorContent<T>,
-    ) {
+    ) -> Option<RowModificationType> {
         self.show_cursor = true;
         match command {
             EditorCommand::InsertText { pos, text, .. } => {
                 let new_pos = content.insert_str_at(*pos, &text);
                 self.set_selection_save_col(Selection::single(new_pos));
+                if new_pos.row == pos.row {
+                    Some(RowModificationType::SingleLine(pos.row))
+                } else {
+                    Some(RowModificationType::AllLinesFrom(pos.row))
+                }
             }
             EditorCommand::InsertTextSelection {
                 selection, text, ..
             } => {
                 content.remove_selection(*selection);
-                let new_pos = content.insert_str_at(selection.get_first(), &text);
+                let first = selection.get_first();
+                let new_pos = content.insert_str_at(first, &text);
+                let second = selection.get_second();
                 self.set_selection_save_col(Selection::single(new_pos));
+                if new_pos.row == first.row && first.row == second.row {
+                    Some(RowModificationType::SingleLine(first.row))
+                } else {
+                    Some(RowModificationType::AllLinesFrom(first.row))
+                }
             }
             EditorCommand::SwapLineUpwards(pos) => {
                 content.swap_lines_upward(pos.row);
                 self.selection = Selection::single(Pos::from_row_column(pos.row - 1, pos.column));
+                Some(RowModificationType::AllLinesFrom(pos.row - 1))
             }
             EditorCommand::SwapLineDownards(pos) => {
                 content.swap_lines_upward(pos.row + 1);
                 self.selection = Selection::single(Pos::from_row_column(pos.row + 1, pos.column));
+                Some(RowModificationType::AllLinesFrom(pos.row))
             }
             EditorCommand::Del { removed_char, pos } => {
-                if content.line_len(pos.row) == 0 && content.line_count() > 1 {
+                let modif_type = if content.line_len(pos.row) == 0 && content.line_count() > 1 {
                     // if the current row is empty, the next line brings its data with itself
                     content.remove_line_at(pos.row);
+                    Some(RowModificationType::AllLinesFrom(pos.row))
                 } else if pos.column == content.line_len(pos.row) {
                     if pos.row < content.line_count() - 1 {
-                        content.merge_with_next_row(pos.row, content.line_len(pos.row), 0);
+                        if content.merge_with_next_row(pos.row, content.line_len(pos.row), 0) {
+                            Some(RowModificationType::AllLinesFrom(pos.row))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
                     }
                 } else {
                     content.remove_char(pos.row, pos.column);
-                }
+                    Some(RowModificationType::SingleLine(pos.row))
+                };
                 self.selection = Selection::single(*pos);
+                modif_type
             }
             EditorCommand::DelSelection {
                 removed_text,
                 selection,
             } => {
-                content.remove_selection(*selection);
+                let modif_type = content.remove_selection(*selection);
                 let selection = Selection::single(selection.get_first());
                 self.set_selection_save_col(selection);
+                Some(modif_type)
             }
             EditorCommand::DelCtrl {
                 removed_text: _removed_text,
@@ -671,16 +721,23 @@ impl Editor {
                 // TODO csinálj egy optimaliált metódust ami biztos h az adott sorból töröl csak
                 content.remove_selection(Selection::range(*pos, new_pos));
                 self.selection = Selection::single(*pos);
+                Some(RowModificationType::SingleLine(new_pos.row))
             }
-            EditorCommand::InsertEmptyRow(_) => {}
+            EditorCommand::InsertEmptyRow(_) => {
+                // TODO
+                // Meg a Ctrl-D-t is
+                None
+            }
             EditorCommand::EnterSelection {
                 selection,
                 selected_text,
             } => {
                 self.handle_enter(*selection, content);
+                Some(RowModificationType::AllLinesFrom(selection.get_first().row))
             }
             EditorCommand::Enter(pos) => {
                 self.handle_enter(Selection::single(*pos), content);
+                Some(RowModificationType::AllLinesFrom(pos.row))
             }
             EditorCommand::MergeLineWithNextRow {
                 upper_row_index,
@@ -700,28 +757,34 @@ impl Editor {
                         self.set_selection_save_col(Selection::single(*pos_after_merge));
                     }
                 }
+                Some(RowModificationType::AllLinesFrom(upper_row_index))
             }
             EditorCommand::Backspace { removed_char, pos } => {
-                if content.remove_char(pos.row, pos.column - 1) {
-                    self.set_selection_save_col(Selection::single(pos.with_column(pos.column - 1)));
-                }
+                content.remove_char(pos.row, pos.column - 1);
+                self.set_selection_save_col(Selection::single(pos.with_column(pos.column - 1)));
+                Some(RowModificationType::SingleLine(pos.row))
             }
             EditorCommand::BackspaceSelection {
                 removed_text,
                 selection,
             } => {
-                content.remove_selection(*selection);
+                let modif_type = content.remove_selection(*selection);
                 self.set_selection_save_col(Selection::single(selection.get_first()));
+                Some(modif_type)
             }
             EditorCommand::BackspaceCtrl { removed_text, pos } => {
                 let col = content.jump_word_backward(pos, JumpMode::IgnoreWhitespaces);
                 let new_pos = pos.with_column(col);
                 content.remove_selection(Selection::range(new_pos, *pos));
                 self.set_selection_save_col(Selection::single(new_pos));
+                Some(RowModificationType::SingleLine(pos.row))
             }
             EditorCommand::InsertChar { pos, ch } => {
                 if content.insert_char(pos.row, pos.column, *ch) {
                     self.set_selection_save_col(Selection::single(pos.with_next_col()));
+                    Some(RowModificationType::SingleLine(pos.row))
+                } else {
+                    None
                 }
             }
             EditorCommand::InsertCharSelection {
@@ -730,15 +793,16 @@ impl Editor {
                 selected_text,
             } => {
                 let mut first = selection.get_first();
-                if content.remove_selection(Selection::range(
+                let modif_type = content.remove_selection(Selection::range(
                     first.with_next_col(),
                     selection.get_second(),
-                )) {
-                    content.set_char(first.row, first.column, *ch);
-                }
+                ));
+                content.set_char(first.row, first.column, *ch);
+
                 self.set_selection_save_col(Selection::single(
                     selection.get_first().with_next_col(),
                 ));
+                Some(modif_type)
             }
             EditorCommand::CutLine(pos) => {
                 self.send_selection_to_clipboard(
@@ -758,10 +822,12 @@ impl Editor {
                     ));
                 }
                 self.set_selection_save_col(Selection::single(pos.with_column(0)));
+                Some(RowModificationType::AllLinesFrom(pos.row))
             }
             EditorCommand::DuplicateLine(pos) => {
                 content.duplicate_line(pos.row);
                 self.set_selection_save_col(Selection::single(pos.with_next_row()));
+                Some(RowModificationType::AllLinesFrom(pos.row))
             }
         }
     }
@@ -968,41 +1034,64 @@ impl Editor {
         };
     }
 
-    pub(super) fn undo<T: Default + Clone>(&mut self, content: &mut EditorContent<T>) {
+    pub(super) fn undo<T: Default + Clone>(
+        &mut self,
+        content: &mut EditorContent<T>,
+    ) -> Option<RowModificationType> {
+        let mut sum_modif_type: Option<RowModificationType> = None;
         if let Some(command_group) = content.undo_stack.pop() {
             for command in command_group.iter().rev() {
-                self.undo_command(command, content);
+                let modif_type = self.undo_command(command, content);
+                if let Some(sum_modif_type) = &mut sum_modif_type {
+                    sum_modif_type.merge(modif_type.as_ref());
+                } else {
+                    sum_modif_type = modif_type;
+                }
             }
             content.redo_stack.push(command_group);
         };
+        sum_modif_type
     }
 
-    pub(super) fn redo<T: Default + Clone>(&mut self, content: &mut EditorContent<T>) {
+    pub(super) fn redo<T: Default + Clone>(
+        &mut self,
+        content: &mut EditorContent<T>,
+    ) -> Option<RowModificationType> {
+        let mut sum_modif_type: Option<RowModificationType> = None;
         if let Some(command_group) = content.redo_stack.pop() {
             for command in command_group.iter() {
-                self.do_command(command, content);
+                let modif_type = self.do_command(command, content);
+                if let Some(sum_modif_type) = &mut sum_modif_type {
+                    sum_modif_type.merge(modif_type.as_ref());
+                } else {
+                    sum_modif_type = modif_type;
+                }
             }
             content.undo_stack.push(command_group);
         };
+        sum_modif_type
     }
 
     fn undo_command<T: Default + Clone>(
         &mut self,
         command: &EditorCommand<T>,
         content: &mut EditorContent<T>,
-    ) {
+    ) -> Option<RowModificationType> {
         match command {
             EditorCommand::SwapLineUpwards(pos) => {
                 content.swap_lines_upward(pos.row);
                 self.selection = Selection::single(*pos);
+                Some(RowModificationType::AllLinesFrom(pos.row - 1))
             }
             EditorCommand::SwapLineDownards(pos) => {
                 content.swap_lines_upward(pos.row + 1);
                 self.selection = Selection::single(*pos);
+                Some(RowModificationType::AllLinesFrom(pos.row))
             }
             EditorCommand::Del { removed_char, pos } => {
                 content.insert_char(pos.row, pos.column, *removed_char);
                 self.set_selection_save_col(Selection::single(*pos));
+                Some(RowModificationType::AllLinesFrom(pos.row))
             }
             EditorCommand::DelSelection {
                 removed_text,
@@ -1010,12 +1099,27 @@ impl Editor {
             } => {
                 content.insert_str_at(selection.get_first(), &removed_text);
                 self.set_selection_save_col(*selection);
+                let first = selection.get_first();
+                let second = selection.get_first();
+                if first.row == second.row {
+                    Some(RowModificationType::SingleLine(first.row))
+                } else {
+                    Some(RowModificationType::AllLinesFrom(first.row))
+                }
             }
             EditorCommand::DelCtrl { removed_text, pos } => {
-                if let Some(removed_text) = removed_text {
-                    content.insert_str_at(*pos, removed_text);
-                }
+                let modif_type = if let Some(removed_text) = removed_text {
+                    let new_pos = content.insert_str_at(*pos, removed_text);
+                    if new_pos.row == pos.row {
+                        Some(RowModificationType::SingleLine(pos.row))
+                    } else {
+                        Some(RowModificationType::AllLinesFrom(pos.row))
+                    }
+                } else {
+                    None
+                };
                 self.set_selection_save_col(Selection::single(*pos));
+                modif_type
             }
             EditorCommand::MergeLineWithNextRow {
                 upper_row_index,
@@ -1028,8 +1132,12 @@ impl Editor {
                 *content.mut_data(*upper_row_index) = upper_line_data.as_ref().clone();
                 *content.mut_data(*upper_row_index + 1) = lower_line_data.as_ref().clone();
                 self.set_selection_save_col(Selection::single(*pos_before_merge));
+                Some(RowModificationType::AllLinesFrom(*upper_row_index))
             }
-            EditorCommand::InsertEmptyRow(_) => {}
+            EditorCommand::InsertEmptyRow(_) => {
+                // TODO
+                None
+            }
             EditorCommand::EnterSelection {
                 selection,
                 selected_text,
@@ -1038,32 +1146,50 @@ impl Editor {
                 content.merge_with_next_row(first.row, first.column, 0);
                 content.insert_str_at(first, selected_text);
                 self.set_selection_save_col(*selection);
+                Some(RowModificationType::AllLinesFrom(first.row))
             }
             EditorCommand::Enter(pos) => {
                 content.merge_with_next_row(pos.row, pos.column, 0);
                 self.set_selection_save_col(Selection::single(*pos));
+                Some(RowModificationType::AllLinesFrom(pos.row))
             }
             EditorCommand::Backspace { removed_char, pos } => {
                 content.insert_char(pos.row, pos.column - 1, *removed_char);
                 self.set_selection_save_col(Selection::single(*pos));
+                Some(RowModificationType::AllLinesFrom(pos.row))
             }
             EditorCommand::BackspaceSelection {
                 removed_text,
                 selection,
             } => {
-                content.insert_str_at(selection.get_first(), removed_text);
+                let first = selection.get_first();
+                content.insert_str_at(first, removed_text);
                 self.set_selection_save_col(*selection);
+                if first.row == selection.get_second().row {
+                    Some(RowModificationType::SingleLine(first.row))
+                } else {
+                    Some(RowModificationType::AllLinesFrom(first.row))
+                }
             }
             EditorCommand::BackspaceCtrl { removed_text, pos } => {
-                if let Some(removed_text) = removed_text {
+                let modif_type = if let Some(removed_text) = removed_text {
                     let col = pos.column - removed_text.chars().count();
-                    content.insert_str_at(pos.with_column(col), removed_text);
-                }
+                    let new_pos = content.insert_str_at(pos.with_column(col), removed_text);
+                    if new_pos.row == pos.row {
+                        Some(RowModificationType::SingleLine(pos.row))
+                    } else {
+                        Some(RowModificationType::AllLinesFrom(pos.row))
+                    }
+                } else {
+                    None
+                };
                 self.set_selection_save_col(Selection::single(*pos));
+                modif_type
             }
             EditorCommand::InsertChar { pos, ch } => {
                 content.remove_char(pos.row, pos.column);
                 self.set_selection_save_col(Selection::single(*pos));
+                Some(RowModificationType::SingleLine(pos.row))
             }
             EditorCommand::InsertCharSelection {
                 ch,
@@ -1074,9 +1200,20 @@ impl Editor {
                 content.remove_char(first.row, first.column);
                 content.insert_str_at(first, selected_text);
                 self.set_selection_save_col(*selection);
+                if selection.get_first().row == selection.get_second().row {
+                    Some(RowModificationType::SingleLine(first.row))
+                } else {
+                    Some(RowModificationType::AllLinesFrom(first.row))
+                }
             }
-            EditorCommand::CutLine(_) => {}
-            EditorCommand::DuplicateLine(_) => {}
+            EditorCommand::CutLine(_) => {
+                // TODO
+                None
+            }
+            EditorCommand::DuplicateLine(_) => {
+                // TODO
+                None
+            }
             EditorCommand::InsertText {
                 pos,
                 text,
@@ -1095,6 +1232,13 @@ impl Editor {
                 }
 
                 self.set_selection_save_col(Selection::single(*pos));
+                if !*is_there_line_overflow
+                    && inserted_text_range.get_first().row == inserted_text_range.get_second().row
+                {
+                    Some(RowModificationType::SingleLine(pos.row))
+                } else {
+                    Some(RowModificationType::AllLinesFrom(pos.row))
+                }
             }
             EditorCommand::InsertTextSelection {
                 selection,
@@ -1115,6 +1259,13 @@ impl Editor {
                     content.merge_with_next_row(end_pos.row, content.line_len(end_pos.row), 0);
                 }
                 self.set_selection_save_col(*selection);
+                if !*is_there_line_overflow
+                    && inserted_text_range.get_first().row == inserted_text_range.get_second().row
+                {
+                    Some(RowModificationType::SingleLine(first.row))
+                } else {
+                    Some(RowModificationType::AllLinesFrom(first.row))
+                }
             }
         }
     }
@@ -1125,13 +1276,10 @@ impl Editor {
         content: &mut EditorContent<T>,
     ) {
         if let Some(end) = selection.end {
-            let first_cursor = selection.get_first();
+            let first = selection.get_first();
             content.remove_selection(selection);
-            content.split_line(first_cursor.row, first_cursor.column);
-            self.set_selection_save_col(Selection::single(Pos::from_row_column(
-                first_cursor.row + 1,
-                0,
-            )));
+            content.split_line(first.row, first.column);
+            self.set_selection_save_col(Selection::single(Pos::from_row_column(first.row + 1, 0)));
         } else {
             let cur_pos = selection.get_cursor_pos();
             if cur_pos.column == 0 {

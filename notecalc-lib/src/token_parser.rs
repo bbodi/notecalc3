@@ -5,22 +5,22 @@ use bigdecimal::{BigDecimal, Num, Zero};
 use std::str::FromStr;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum TokenType<'units> {
+pub enum TokenType {
     StringLiteral,
     // index to the variable vec
     Variable { var_index: usize },
     LineReference { var_index: usize },
     NumberLiteral(BigDecimal),
-    Operator(OperatorTokenType<'units>),
+    Operator(OperatorTokenType),
 }
 
 #[derive(Debug, Clone)]
-pub struct Token<'text_ptr, 'units> {
+pub struct Token<'text_ptr> {
     pub ptr: &'text_ptr [char],
-    pub typ: TokenType<'units>,
+    pub typ: TokenType,
 }
 
-impl<'text_ptr, 'units> Token<'text_ptr, 'units> {
+impl<'text_ptr> Token<'text_ptr> {
     pub fn is_number(&self) -> bool {
         matches!(self.typ, TokenType::NumberLiteral(..))
     }
@@ -31,7 +31,7 @@ impl<'text_ptr, 'units> Token<'text_ptr, 'units> {
 }
 
 #[derive(PartialEq, Eq, Clone, Debug)]
-pub enum OperatorTokenType<'units> {
+pub enum OperatorTokenType {
     Comma,
     Add,
     UnaryPlus,
@@ -56,7 +56,7 @@ pub enum OperatorTokenType<'units> {
     UnitConverter,
     Matrix { row_count: usize, col_count: usize },
     Fn { arg_count: usize, typ: FnType },
-    Unit(UnitOutput<'units>),
+    Unit(UnitOutput),
 }
 
 #[derive(Eq, PartialEq, Copy, Clone)]
@@ -65,7 +65,7 @@ pub enum Assoc {
     Right,
 }
 
-impl<'a> OperatorTokenType<'a> {
+impl OperatorTokenType {
     pub fn precedence(&self) -> usize {
         match self {
             OperatorTokenType::Add => 2,
@@ -129,11 +129,11 @@ impl<'a> OperatorTokenType<'a> {
 pub struct TokenParser {}
 
 impl TokenParser {
-    pub fn parse_line<'text_ptr, 'units>(
+    pub fn parse_line<'text_ptr>(
         line: &'text_ptr [char],
         variable_names: &[(&'text_ptr [char], CalcResult)],
-        dst: &mut Vec<Token<'text_ptr, 'units>>,
-        units: &'units Units,
+        dst: &mut Vec<Token<'text_ptr>>,
+        units: &Units,
     ) {
         let mut index = 0;
         let mut can_be_unit = false;
@@ -182,9 +182,9 @@ impl TokenParser {
         }
     }
 
-    pub fn try_extract_number_literal<'text_ptr, 'unit>(
+    pub fn try_extract_number_literal<'text_ptr>(
         str: &'text_ptr [char],
-    ) -> Option<Token<'text_ptr, 'unit>> {
+    ) -> Option<Token<'text_ptr>> {
         let mut number_str = [b'0'; 256];
         let mut number_str_index = 0;
         let mut i = 0;
@@ -360,11 +360,11 @@ impl TokenParser {
         }
     }
 
-    fn try_extract_unit<'text_ptr, 'unit>(
+    fn try_extract_unit<'text_ptr>(
         str: &'text_ptr [char],
-        unit: &'unit Units,
+        unit: &Units,
         can_be_unit: bool,
-    ) -> Option<Token<'text_ptr, 'unit>> {
+    ) -> Option<Token<'text_ptr>> {
         if !can_be_unit || str[0].is_ascii_whitespace() {
             return None;
         }
@@ -384,10 +384,10 @@ impl TokenParser {
         };
     }
 
-    fn try_extract_variable_name<'text_ptr, 'units>(
+    fn try_extract_variable_name<'text_ptr>(
         str: &'text_ptr [char],
         vars: &[(&'text_ptr [char], CalcResult)],
-    ) -> Option<Token<'text_ptr, 'units>> {
+    ) -> Option<Token<'text_ptr>> {
         let mut longest_match_index = 0;
         let mut longest_match = 0;
         'asd: for (var_index, (var_name, _)) in vars.iter().enumerate() {
@@ -437,9 +437,7 @@ impl TokenParser {
         return None;
     }
 
-    fn try_extract_string_literal<'text_ptr, 'unit>(
-        str: &'text_ptr [char],
-    ) -> Option<Token<'text_ptr, 'unit>> {
+    fn try_extract_string_literal<'text_ptr>(str: &'text_ptr [char]) -> Option<Token<'text_ptr>> {
         let mut i = 0;
         for ch in str {
             if "=%/+-*^()[]".chars().any(|it| it == *ch) || ch.is_ascii_whitespace() {
@@ -472,14 +470,12 @@ impl TokenParser {
         }
     }
 
-    fn try_extract_operator<'text_ptr, 'unit>(
-        str: &'text_ptr [char],
-    ) -> Option<Token<'text_ptr, 'unit>> {
-        fn op<'text_ptr, 'unit>(
-            typ: OperatorTokenType<'unit>,
+    fn try_extract_operator<'text_ptr>(str: &'text_ptr [char]) -> Option<Token<'text_ptr>> {
+        fn op<'text_ptr>(
+            typ: OperatorTokenType,
             str: &'text_ptr [char],
             len: usize,
-        ) -> Option<Token<'text_ptr, 'unit>> {
+        ) -> Option<Token<'text_ptr>> {
             return Some(Token {
                 typ: TokenType::Operator(typ),
                 ptr: &str[0..len],
@@ -543,7 +539,6 @@ fn handle_unary_shit() {}
 mod tests {
     use super::*;
     use crate::shunting_yard::tests::*;
-    use crate::units::consts::{create_prefixes, init_units};
     use crate::units::units::Units;
 
     #[test]
@@ -551,8 +546,7 @@ mod tests {
         fn test_parse(str: &str, expected_value: u64) {
             let mut vec = vec![];
             let temp = str.chars().collect::<Vec<_>>();
-            let prefixes = create_prefixes();
-            let units = Units::new(&prefixes);
+            let units = Units::new();
             TokenParser::parse_line(&temp, &Vec::new(), &mut vec, &units);
             match vec.get(0) {
                 Some(Token {
@@ -569,8 +563,7 @@ mod tests {
         fn test_parse_f(str: &str, expected_value: f64) {
             let mut vec = vec![];
             let temp = str.chars().collect::<Vec<_>>();
-            let prefixes = create_prefixes();
-            let units = Units::new(&prefixes);
+            let units = Units::new();
             TokenParser::parse_line(&temp, &Vec::new(), &mut vec, &units);
             match vec.get(0) {
                 Some(Token {
@@ -613,8 +606,7 @@ mod tests {
         println!("{}", text);
         let mut vec = vec![];
         let temp = text.chars().collect::<Vec<_>>();
-        let prefixes = create_prefixes();
-        let units = Units::new(&prefixes);
+        let units = Units::new();
         TokenParser::parse_line(&temp, &var_names, &mut vec, &units);
         assert_eq!(
             expected_tokens.len(),

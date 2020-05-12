@@ -32,8 +32,6 @@ pub fn render_result_into(
     f: &mut impl std::io::Write,
     decimal_count: usize,
 ) {
-    use byteorder::{LittleEndian, WriteBytesExt};
-
     match &result {
         CalcResult::Quantity(num, unit) => {
             let final_unit = if there_was_unit_conversion {

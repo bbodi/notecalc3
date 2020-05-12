@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::editor::editor::{Editor, EditorInputEvent, InputModifiers, Pos, Selection};
     use crate::editor::editor_content::EditorContent;
 
