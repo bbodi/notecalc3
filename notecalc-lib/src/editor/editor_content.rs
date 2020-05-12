@@ -357,7 +357,10 @@ impl<T: Default + Clone> EditorContent<T> {
                 self.remove_line_at(first.row + 1);
             }
             if first.column == 0 {
-                self.remove_selection(Selection::range(second.with_column(0), second));
+                self.remove_selection(Selection::range(
+                    Pos::from_row_column(first.row + 1, 0),
+                    Pos::from_row_column(first.row + 1, second.column),
+                ));
                 self.remove_line_at(first.row);
                 Some(RowModificationType::AllLinesFrom(first.row))
             } else {

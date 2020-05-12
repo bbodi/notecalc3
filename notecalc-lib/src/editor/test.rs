@@ -4969,11 +4969,36 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content:
                 "❰pPaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\
-❱aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ❱aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "█aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        });
+
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "❰asd\n\
+            bsd\n\
+            csd❱",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "█",
+        });
+
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "❰asd\n\
+            bsd\n\
+            bsd\n\
+            bsd\n\
+            bsd\n\
+            bsd\n\
+            bsd\n\
+            csd❱",
+            inputs: &[EditorInputEvent::Del],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "█",
         });
     }
 
