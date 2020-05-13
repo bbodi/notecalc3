@@ -1,6 +1,18 @@
 #![feature(ptr_offset_from, const_if_match, const_fn, const_panic, drain_filter)]
-#![feature(const_generics)]
 #![feature(type_alias_impl_trait)]
+#![deny(
+//missing_docs,
+warnings,
+anonymous_parameters,
+unused_extern_crates,
+unused_import_braces,
+trivial_casts,
+variant_size_differences,
+//missing_debug_implementations,
+trivial_numeric_casts,
+unused_qualifications,
+clippy::all
+)]
 
 use crate::calc::{add_op, evaluate_tokens, CalcResult, EvaluationResult};
 use crate::consts::{LINE_NUM_CONSTS, STATIC_LINE_IDS};
@@ -11,12 +23,12 @@ use crate::renderer::{render_result, render_result_into};
 use crate::shunting_yard::ShuntingYard;
 use crate::token_parser::{OperatorTokenType, Token, TokenParser, TokenType};
 use crate::units::units::Units;
-use crate::units::UnitPrefixes;
-use bigdecimal::BigDecimal;
 use smallvec::SmallVec;
 use std::io::Cursor;
 use std::mem::MaybeUninit;
 use std::ops::Range;
+use std::time::Duration;
+use strum_macros::EnumDiscriminants;
 
 mod calc;
 mod functions;
@@ -81,7 +93,8 @@ pub struct RenderStringMsg {
 }
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, EnumDiscriminants)]
+#[strum_discriminants(name(OutputMessageCommandId))]
 pub enum OutputMessage<'a> {
     SetStyle(TextStyle),
     SetColor(u32),
@@ -94,6 +107,15 @@ pub enum OutputMessage<'a> {
         y: usize,
         w: usize,
         h: usize,
+    },
+    PulsingRectangle {
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+        start_color: u32,
+        end_color: u32,
+        animation_time: Duration,
     },
 }
 
@@ -217,7 +239,6 @@ pub struct MatrixEditing {
 }
 
 impl MatrixEditing {
-    const TMP_BUF_LEN_PER_CELL: usize = 32;
     pub fn new<'a>(
         row_count: usize,
         col_count: usize,
@@ -256,8 +277,6 @@ impl MatrixEditing {
             cell_strings: Vec::with_capacity((row_count * col_count).max(4)),
         };
         let mut str: String = String::with_capacity(8);
-        let mut row_i = 0;
-        let mut col_i = 0;
         let mut can_ignore_ws = true;
         for ch in src_canvas {
             match ch {
@@ -268,15 +287,11 @@ impl MatrixEditing {
                     break;
                 }
                 ',' => {
-                    col_i += 1;
                     mat_edit.cell_strings.push(str);
-                    str = String::with_capacity(8);
                     str = String::with_capacity(8);
                     can_ignore_ws = true;
                 }
                 ';' => {
-                    row_i += 1;
-                    col_i = 0;
                     mat_edit.cell_strings.push(str);
                     str = String::with_capacity(8);
                     can_ignore_ws = true;
@@ -379,7 +394,7 @@ impl MatrixEditing {
     fn render<'b>(
         &self,
         mut render_x: usize,
-        mut render_y: usize,
+        render_y: usize,
         current_editor_width: usize,
         left_gutter_width: usize,
         render_buckets: &mut RenderBuckets<'b>,
@@ -537,7 +552,7 @@ impl MatrixEditing {
     }
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Clone, Copy)]
 pub enum EditorObjectType {
     Matrix { row_count: usize, col_count: usize },
     LineReference,
@@ -617,7 +632,7 @@ struct PerLineRenderData {
 
 impl PerLineRenderData {
     fn new() -> PerLineRenderData {
-        let mut r = PerLineRenderData {
+        let r = PerLineRenderData {
             editor_pos: Default::default(),
             render_pos: Default::default(),
             rendered_row_height: 0,
@@ -654,7 +669,7 @@ impl PerLineRenderData {
             let token_height = match token.typ {
                 TokenType::Operator(OperatorTokenType::Matrix {
                     row_count,
-                    col_count,
+                    col_count: _,
                 }) => row_count,
                 TokenType::LineReference { var_index } => {
                     let (_var_name, result) = &vars[var_index];
@@ -714,7 +729,7 @@ impl NoteCalcApp {
 
     pub fn end_matrix_editing(&mut self, new_cursor_pos: Option<Pos>) {
         let mat_editor = {
-            let mut mat_editor = self.matrix_editing.as_mut().unwrap();
+            let mat_editor = self.matrix_editing.as_mut().unwrap();
             mat_editor.save_editor_content();
             mat_editor
         };
@@ -745,11 +760,7 @@ impl NoteCalcApp {
             InputModifiers::none(),
             &mut self.editor_content,
         );
-        self.editor.handle_input(
-            EditorInputEvent::Text(concat),
-            InputModifiers::none(),
-            &mut self.editor_content,
-        );
+        self.editor.insert_text(&concat, &mut self.editor_content);
         self.matrix_editing = None;
 
         if let Some(new_cursor_pos) = new_cursor_pos {
@@ -1525,6 +1536,8 @@ impl NoteCalcApp {
             }
         } else {
             let mut sum: Option<&CalcResult> = None;
+            // so sum can contain references to temp values
+            #[allow(unused_assignments)]
             let mut tmp_sum = CalcResult::hack_empty();
             for row_index in sel.get_first().row..=sel.get_second().row {
                 if let Err(..) = &results[row_index] {
@@ -1570,7 +1583,7 @@ impl NoteCalcApp {
 
     fn render_matrix_obj<'text_ptr>(
         mut render_x: usize,
-        mut render_y: usize,
+        render_y: usize,
         current_editor_width: usize,
         left_gutter_width: usize,
         row_count: usize,
@@ -1608,7 +1621,7 @@ impl NoteCalcApp {
         }
         render_x += 1;
 
-        let mut tokens_per_cell = {
+        let tokens_per_cell = {
             // TODO smallvec
             // so it can hold a 6*6 matrix maximum
             let mut matrix_cells_for_tokens: [MaybeUninit<&[Token]>; 36] =
@@ -1718,7 +1731,7 @@ impl NoteCalcApp {
     fn render_matrix_result<'text_ptr>(
         units: &Units,
         mut render_x: usize,
-        mut render_y: usize,
+        render_y: usize,
         mat: &MatrixData,
         render_buckets: &mut RenderBuckets<'text_ptr>,
         prev_mat_result_lengths: Option<&ResultLengths>,
@@ -1753,14 +1766,12 @@ impl NoteCalcApp {
         }
         render_x += 1;
 
-        let mut cells_strs = {
+        let cells_strs = {
             let mut tokens_per_cell: SmallVec<[String; 32]> = SmallVec::with_capacity(32);
 
-            let mut cell_index = 0;
             for cell in mat.cells.iter() {
                 let result_str = render_result(units, cell, &ResultFormat::Dec, false, 4);
                 tokens_per_cell.push(result_str);
-                cell_index += 1;
             }
             tokens_per_cell
         };
@@ -1882,14 +1893,12 @@ impl NoteCalcApp {
     }
 
     fn calc_matrix_max_lengths<'text_ptr>(units: &Units, mat: &MatrixData) -> ResultLengths {
-        let mut cells_strs = {
+        let cells_strs = {
             let mut tokens_per_cell: SmallVec<[String; 32]> = SmallVec::with_capacity(32);
 
-            let mut cell_index = 0;
             for cell in mat.cells.iter() {
                 let result_str = render_result(units, cell, &ResultFormat::Dec, false, 4);
                 tokens_per_cell.push(result_str);
-                cell_index += 1;
             }
             tokens_per_cell
         };
@@ -2106,8 +2115,8 @@ impl NoteCalcApp {
             TokenType::Variable { .. } => &mut render_buckets.variable,
             TokenType::LineReference { .. } => &mut render_buckets.variable,
             TokenType::NumberLiteral(_) => &mut render_buckets.numbers,
+            TokenType::Unit(_) => &mut render_buckets.units,
             TokenType::Operator(op_type) => match op_type {
-                OperatorTokenType::Unit(_) => &mut render_buckets.units,
                 _ => &mut render_buckets.operators,
             },
         };
@@ -2254,9 +2263,9 @@ impl NoteCalcApp {
                 OutputMessage::RenderUtf8Text(text) => {
                     write_char_slice(canvas, text.row, text.column, text.text);
                 }
-                OutputMessage::SetStyle(style) => {}
-                OutputMessage::SetColor(color) => {}
-                OutputMessage::RenderRectangle { x, y, w, h } => {}
+                OutputMessage::SetStyle(..) => {}
+                OutputMessage::SetColor(..) => {}
+                OutputMessage::RenderRectangle { .. } => {}
                 OutputMessage::RenderChar(x, y, ch) => {
                     let str = &mut canvas[*y];
                     str[*x] = *ch;
@@ -2267,6 +2276,7 @@ impl NoteCalcApp {
                 OutputMessage::RenderAsciiText(text) => {
                     write_ascii(canvas, text.row, text.column, &text.text);
                 }
+                OutputMessage::PulsingRectangle { .. } => {}
             }
         }
 
@@ -2466,7 +2476,7 @@ impl NoteCalcApp {
         }
     }
 
-    pub fn handle_mouse_up(&mut self, x: usize, y: usize) {
+    pub fn handle_mouse_up(&mut self, _x: usize, _y: usize) {
         self.right_gutter_is_dragged = false;
     }
 
@@ -2604,11 +2614,14 @@ impl NoteCalcApp {
             line_data.line_id
         };
         let inserting_text = format!("&[{}]", line_id);
-        self.editor.handle_input(
-            EditorInputEvent::Text(inserting_text),
-            InputModifiers::none(),
-            &mut self.editor_content,
-        );
+        self.editor
+            .insert_text(&inserting_text, &mut self.editor_content);
+    }
+
+    pub fn handle_paste(&mut self, text: String) -> bool {
+        self.editor
+            .insert_text(&text, &mut self.editor_content)
+            .is_some()
     }
 
     pub fn handle_input(&mut self, input: EditorInputEvent, modifiers: InputModifiers) -> bool {
@@ -2806,12 +2819,13 @@ impl NoteCalcApp {
                 && cursor_pos.start.column > 0
                 && modifiers.shift == false
             {
-                if let Some(obj) =
-                    self.find_editor_object_at(cursor_pos.get_cursor_pos().with_prev_col())
-                {
-                    if obj.typ == EditorObjectType::LineReference {
+                let obj = self
+                    .find_editor_object_at(cursor_pos.get_cursor_pos().with_prev_col())
+                    .map(|it| (it.typ, it.row, it.start_x));
+                if let Some((obj_typ, row, start_x)) = obj {
+                    if obj_typ == EditorObjectType::LineReference {
                         //  jump over it
-                        self.editor.set_cursor_pos_r_c(obj.row, obj.start_x);
+                        self.editor.set_cursor_pos_r_c(row, start_x);
                         return false;
                     }
                 }
@@ -2819,10 +2833,14 @@ impl NoteCalcApp {
                 && !cursor_pos.is_range()
                 && modifiers.shift == false
             {
-                if let Some(obj) = self.find_editor_object_at(cursor_pos.get_cursor_pos()) {
-                    if obj.typ == EditorObjectType::LineReference {
+                let obj = self
+                    .find_editor_object_at(cursor_pos.get_cursor_pos())
+                    .map(|it| (it.typ, it.row, it.end_x));
+
+                if let Some((obj_typ, row, end_x)) = obj {
+                    if obj_typ == EditorObjectType::LineReference {
                         //  jump over it
-                        self.editor.set_cursor_pos_r_c(obj.row, obj.end_x);
+                        self.editor.set_cursor_pos_r_c(row, end_x);
                         return false;
                     }
                 }
@@ -2973,16 +2991,6 @@ impl NoteCalcApp {
     }
 }
 
-fn digit_count(n: usize) -> usize {
-    let mut n = n;
-    let mut count = 1;
-    while n > 9 {
-        count += 1;
-        n = n / 10;
-    }
-    return count;
-}
-
 struct ResultLengths {
     int_part_len: usize,
     frac_part_len: usize,
@@ -3046,9 +3054,13 @@ mod tests {
     fn bug1() {
         let (mut app, units) = create_app();
 
-        app.handle_input(
-            EditorInputEvent::Text("[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]".to_owned()),
-            InputModifiers::none(),
+        app.editor.insert_text(
+            "[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]",
+            &mut app.editor_content,
+        );
+        app.editor.insert_text(
+            "[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]",
+            &mut app.editor_content,
         );
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 33));
@@ -3059,9 +3071,9 @@ mod tests {
     #[test]
     fn bug2() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text("[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]".to_owned()),
-            InputModifiers::none(),
+        app.editor.insert_text(
+            "[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]",
+            &mut app.editor_content,
         );
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 1));
@@ -3074,13 +3086,10 @@ mod tests {
     #[test]
     fn bug3() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text(
-                "1\n\
-                2+"
-                .to_owned(),
-            ),
-            InputModifiers::none(),
+        app.editor.insert_text(
+            "1\n\
+                2+",
+            &mut app.editor_content,
         );
         app.editor
             .set_selection_save_col(Selection::single_r_c(1, 2));
@@ -3092,13 +3101,10 @@ mod tests {
     #[test]
     fn it_is_not_allowed_to_ref_lines_below() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text(
-                "1\n\
-                2+\n3\n4"
-                    .to_owned(),
-            ),
-            InputModifiers::none(),
+        app.editor.insert_text(
+            "1\n\
+                2+\n3\n4",
+            &mut app.editor_content,
         );
         app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.editor
@@ -3116,13 +3122,10 @@ mod tests {
     #[test]
     fn it_is_not_allowed_to_ref_lines_below2() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text(
-                "1\n\
-                2+\n3\n4"
-                    .to_owned(),
-            ),
-            InputModifiers::none(),
+        app.editor.insert_text(
+            &"1\n\
+                2+\n3\n4",
+            &mut app.editor_content,
         );
         app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.editor
@@ -3141,10 +3144,8 @@ mod tests {
     #[test]
     fn remove_matrix_backspace() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text("abcd [1,2,3;4,5,6]".to_owned()),
-            InputModifiers::none(),
-        );
+        app.editor
+            .insert_text("abcd [1,2,3;4,5,6]", &mut app.editor_content);
         app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Backspace, InputModifiers::none());
         assert_eq!("abcd ", app.editor_content.get_content());
@@ -3155,10 +3156,8 @@ mod tests {
         // from right
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("abcd [1,2,3;4,5,6]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor
+                .insert_text("abcd [1,2,3;4,5,6]", &mut app.editor_content);
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3169,10 +3168,8 @@ mod tests {
         // from left
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("abcd [1,2,3;4,5,6]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor
+                .insert_text("abcd [1,2,3;4,5,6]", &mut app.editor_content);
             app.editor
                 .set_selection_save_col(Selection::single_r_c(0, 5));
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3185,9 +3182,9 @@ mod tests {
         // from below
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("abcd [1,2,3;4,5,6]\naaaaaaaaaaaaaaaaaa".to_owned()),
-                InputModifiers::none(),
+            app.editor.insert_text(
+                "abcd [1,2,3;4,5,6]\naaaaaaaaaaaaaaaaaa",
+                &mut app.editor_content,
             );
             app.editor
                 .set_selection_save_col(Selection::single_r_c(1, 7));
@@ -3204,9 +3201,9 @@ mod tests {
         // from above
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("aaaaaaaaaaaaaaaaaa\nabcd [1,2,3;4,5,6]".to_owned()),
-                InputModifiers::none(),
+            app.editor.insert_text(
+                "aaaaaaaaaaaaaaaaaa\nabcd [1,2,3;4,5,6]",
+                &mut app.editor_content,
             );
             app.editor
                 .set_selection_save_col(Selection::single_r_c(0, 7));
@@ -3225,10 +3222,8 @@ mod tests {
     #[test]
     fn cursor_is_put_after_the_matrix_after_finished_editing() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text("abcd [1,2,3;4,5,6]".to_owned()),
-            InputModifiers::none(),
-        );
+        app.editor
+            .insert_text("abcd [1,2,3;4,5,6]", &mut app.editor_content);
         app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Left, InputModifiers::none());
         app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3243,10 +3238,8 @@ mod tests {
     #[test]
     fn remove_matrix_del() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text("abcd [1,2,3;4,5,6]".to_owned()),
-            InputModifiers::none(),
-        );
+        app.editor
+            .insert_text("abcd [1,2,3;4,5,6]", &mut app.editor_content);
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 5));
         app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3259,10 +3252,8 @@ mod tests {
         // right to left, cursor at end
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("abcd [1,2,3;4,5,6]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor
+                .insert_text("abcd [1,2,3;4,5,6]", &mut app.editor_content);
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3276,10 +3267,8 @@ mod tests {
         // left to right, cursor at start
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("abcd [1,2,3;4,5,6]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor
+                .insert_text("abcd [1,2,3;4,5,6]", &mut app.editor_content);
             app.editor
                 .set_selection_save_col(Selection::single_r_c(0, 5));
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3295,10 +3284,8 @@ mod tests {
         // vertical movement down, cursor tries to keep its position
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("abcd [1111,22,3;44,55555,666]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor
+                .insert_text("abcd [1111,22,3;44,55555,666]", &mut app.editor_content);
             app.editor
                 .set_selection_save_col(Selection::single_r_c(0, 5));
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3320,10 +3307,8 @@ mod tests {
         // vertical movement up, cursor tries to keep its position
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("abcd [1111,22,3;44,55555,666]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor
+                .insert_text("abcd [1111,22,3;44,55555,666]", &mut app.editor_content);
             app.editor
                 .set_selection_save_col(Selection::single_r_c(0, 5));
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3347,10 +3332,8 @@ mod tests {
     #[test]
     fn test_moving_inside_a_matrix_with_tab() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text("[1,2,3;4,5,6]".to_owned()),
-            InputModifiers::none(),
-        );
+        app.editor
+            .insert_text("[1,2,3;4,5,6]", &mut app.editor_content);
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 5));
         app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3373,10 +3356,8 @@ mod tests {
     #[test]
     fn test_leaving_a_matrix_with_tab() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text("[1,2,3;4,5,6]".to_owned()),
-            InputModifiers::none(),
-        );
+        app.editor
+            .insert_text("[1,2,3;4,5,6]", &mut app.editor_content);
         app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Left, InputModifiers::none());
         app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3394,10 +3375,8 @@ mod tests {
     fn end_btn_matrix() {
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("abcd [1111,22,3;44,55555,666] qq".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor
+                .insert_text("abcd [1111,22,3;44,55555,666] qq", &mut app.editor_content);
             app.editor
                 .set_selection_save_col(Selection::single_r_c(0, 5));
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3418,10 +3397,8 @@ mod tests {
         // pressing twice, exits the matrix
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("abcd [1111,22,3;44,55555,666] qq".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor
+                .insert_text("abcd [1111,22,3;44,55555,666] qq", &mut app.editor_content);
             app.editor
                 .set_selection_save_col(Selection::single_r_c(0, 5));
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3444,10 +3421,8 @@ mod tests {
     fn home_btn_matrix() {
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("abcd [1111,22,3;44,55555,666]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor
+                .insert_text("abcd [1111,22,3;44,55555,666]", &mut app.editor_content);
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3465,10 +3440,8 @@ mod tests {
         }
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("abcd [1111,22,3;44,55555,666]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor
+                .insert_text("abcd [1111,22,3;44,55555,666]", &mut app.editor_content);
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             // inside the matrix
@@ -3488,10 +3461,8 @@ mod tests {
     #[test]
     fn bug8() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text("16892313\n14 * ".to_owned()),
-            InputModifiers::none(),
-        );
+        app.editor
+            .insert_text("16892313\n14 * ", &mut app.editor_content);
         app.editor
             .set_selection_save_col(Selection::single_r_c(1, 5));
         app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3529,9 +3500,9 @@ mod tests {
     #[test]
     fn test_line_ref_normalization() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n".to_owned()),
-            InputModifiers::none(),
+        app.editor.insert_text(
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n",
+            &mut app.editor_content,
         );
         app.editor
             .set_selection_save_col(Selection::single_r_c(12, 2));
@@ -3554,7 +3525,7 @@ mod tests {
 
     #[test]
     fn test_line_ref_denormalization() {
-        let (mut app, units) = create_app();
+        let (mut app, _units) = create_app();
         app.set_normalized_content("1111\n2222\n14 * &[2]&[2]&[2]\n");
         assert_eq!(1, app.editor_content.get_data(0).line_id);
         assert_eq!(2, app.editor_content.get_data(1).line_id);
@@ -3564,9 +3535,9 @@ mod tests {
     #[test]
     fn no_memory_deallocation_bug_in_line_selection() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n".to_owned()),
-            InputModifiers::none(),
+        app.editor.insert_text(
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n",
+            &mut app.editor_content,
         );
         app.editor
             .set_selection_save_col(Selection::single_r_c(12, 2));
@@ -3578,10 +3549,7 @@ mod tests {
     #[test]
     fn matrix_deletion() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text(" [1,2,3]".to_owned()),
-            InputModifiers::none(),
-        );
+        app.editor.insert_text(" [1,2,3]", &mut app.editor_content);
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 0));
         app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3592,10 +3560,7 @@ mod tests {
     #[test]
     fn matrix_insertion_bug() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text("[1,2,3]".to_owned()),
-            InputModifiers::none(),
-        );
+        app.editor.insert_text("[1,2,3]", &mut app.editor_content);
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 0));
         app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3608,20 +3573,18 @@ mod tests {
     #[test]
     fn matrix_insertion_bug2() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text("'[X] nth, sum fv".to_owned()),
-            InputModifiers::none(),
-        );
+        app.editor
+            .insert_text("'[X] nth, sum fv", &mut app.editor_content);
         app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 0));
         app.handle_input(EditorInputEvent::Del, InputModifiers::none());
         let mut result_buffer = [0; 128];
         app.render(&units, &mut RenderBuckets::new(), &mut result_buffer);
-        assert_results(app, &["0"][..], &result_buffer);
+        assert_results(&["0"][..], &result_buffer);
     }
 
-    fn assert_results(app: NoteCalcApp, expected_results: &[&str], result_buffer: &[u8]) {
+    fn assert_results(expected_results: &[&str], result_buffer: &[u8]) {
         let mut i = 0;
         let mut ok_chars = Vec::with_capacity(32);
         let expected_len = expected_results.iter().map(|it| it.len()).sum();
@@ -3650,46 +3613,37 @@ mod tests {
     #[test]
     fn sum_can_be_nullified() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text(
-                "3m * 2m
+        app.editor.insert_text(
+            "3m * 2m
 --
 1
 2
-sum"
-                .to_owned(),
-            ),
-            InputModifiers::none(),
+sum",
+            &mut app.editor_content,
         );
         let mut result_buffer = [0; 128];
         app.render(&units, &mut RenderBuckets::new(), &mut result_buffer);
-        assert_results(app, &["6 m^2", "", "1", "2", "3"][..], &result_buffer);
+        assert_results(&["6 m^2", "", "1", "2", "3"][..], &result_buffer);
     }
 
     #[test]
     fn no_sum_value_in_case_of_error() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text(
-                "3m * 2m\n\
+        app.editor.insert_text(
+            &"3m * 2m\n\
                 4\n\
-                sum"
-                .to_owned(),
-            ),
-            InputModifiers::none(),
+                sum",
+            &mut app.editor_content,
         );
         let mut result_buffer = [0; 128];
         app.render(&units, &mut RenderBuckets::new(), &mut result_buffer);
-        assert_results(app, &["6 m^2", "4", "0"][..], &result_buffer);
+        assert_results(&["6 m^2", "4", "0"][..], &result_buffer);
     }
 
     #[test]
     fn test_ctrl_c() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text("aaaaaaaaa".to_owned()),
-            InputModifiers::none(),
-        );
+        app.editor.insert_text("aaaaaaaaa", &mut app.editor_content);
         app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Left, InputModifiers::shift());
         app.handle_input(EditorInputEvent::Left, InputModifiers::shift());
@@ -3701,14 +3655,11 @@ sum"
     #[test]
     fn test_changing_output_style_for_selected_rows() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text(
-                "2\n\
+        app.editor.insert_text(
+            &"2\n\
                     4\n\
-                    5"
-                .to_owned(),
-            ),
-            InputModifiers::none(),
+                    5",
+            &mut app.editor_content,
         );
         app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Up, InputModifiers::shift());
@@ -3716,30 +3667,25 @@ sum"
         app.handle_input(EditorInputEvent::Left, InputModifiers::alt());
         let mut result_buffer = [0; 128];
         app.render(&units, &mut RenderBuckets::new(), &mut result_buffer);
-        assert_results(app, &["10", "100", "101"][..], &result_buffer);
+        assert_results(&["10", "100", "101"][..], &result_buffer);
     }
 
     #[test]
     fn test_matrix_sum() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text("[1,2,3]\nsum".to_owned()),
-            InputModifiers::none(),
-        );
+        app.editor
+            .insert_text("[1,2,3]\nsum", &mut app.editor_content);
         let mut result_buffer = [0; 128];
         app.render(&units, &mut RenderBuckets::new(), &mut result_buffer);
         // both the first line and the 'sum' line renders a matrix, which leaves the result buffer empty
-        assert_results(app, &["\u{0}"][..], &result_buffer);
+        assert_results(&["\u{0}"][..], &result_buffer);
     }
 
     #[test]
     fn test_rich_copy() {
         fn t(content: &str, expected: &str, selected_range: RangeInclusive<usize>) {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text(content.to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor.insert_text(&content, &mut app.editor_content);
             app.editor.set_selection_save_col(Selection::range(
                 Pos::from_row_column(*selected_range.start(), 0),
                 Pos::from_row_column(*selected_range.end(), 0),
@@ -3832,10 +3778,8 @@ sum"
         // left
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("16892313\n14 * ".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor
+                .insert_text("16892313\n14 * ", &mut app.editor_content);
             app.editor
                 .set_selection_save_col(Selection::single_r_c(1, 5));
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3849,10 +3793,8 @@ sum"
         // right
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("16892313\n14 * ".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor
+                .insert_text("16892313\n14 * ", &mut app.editor_content);
             app.editor
                 .set_selection_save_col(Selection::single_r_c(1, 5));
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3870,10 +3812,7 @@ sum"
     fn test_pressing_tab_on_m_char() {
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("m".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor.insert_text("m", &mut app.editor_content);
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3881,10 +3820,7 @@ sum"
         }
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("am".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor.insert_text("am", &mut app.editor_content);
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3892,10 +3828,7 @@ sum"
         }
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("a m".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor.insert_text("a m", &mut app.editor_content);
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3906,10 +3839,7 @@ sum"
     #[test]
     fn test_that_cursor_is_inside_matrix_on_creation() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text("m".to_owned()),
-            InputModifiers::none(),
-        );
+        app.editor.insert_text("m", &mut app.editor_content);
         app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
         app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3922,10 +3852,7 @@ sum"
     fn test_matrix_alt_plus_right() {
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("[1]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor.insert_text("[1]", &mut app.editor_content);
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3935,10 +3862,7 @@ sum"
         }
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("[1]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor.insert_text("[1]", &mut app.editor_content);
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3950,10 +3874,7 @@ sum"
         }
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("[1;2]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor.insert_text("[1;2]", &mut app.editor_content);
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3967,10 +3888,7 @@ sum"
     fn test_matrix_alt_plus_left() {
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("[1]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor.insert_text("[1]", &mut app.editor_content);
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3980,10 +3898,7 @@ sum"
         }
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("[1, 2, 3]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor.insert_text("[1, 2, 3]", &mut app.editor_content);
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -3993,10 +3908,7 @@ sum"
         }
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("[1, 2, 3]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor.insert_text("[1, 2, 3]", &mut app.editor_content);
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -4007,10 +3919,8 @@ sum"
         }
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("[1, 2, 3; 4,5,6]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor
+                .insert_text("[1, 2, 3; 4,5,6]", &mut app.editor_content);
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -4024,10 +3934,7 @@ sum"
     fn test_matrix_alt_plus_down() {
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("[1]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor.insert_text("[1]", &mut app.editor_content);
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -4037,10 +3944,7 @@ sum"
         }
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("[1]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor.insert_text("[1]", &mut app.editor_content);
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -4052,10 +3956,7 @@ sum"
         }
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("[1,2]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor.insert_text("[1,2]", &mut app.editor_content);
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -4071,10 +3972,7 @@ sum"
     fn test_matrix_alt_plus_up() {
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("[1]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor.insert_text("[1]", &mut app.editor_content);
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -4084,10 +3982,7 @@ sum"
         }
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("[1; 2; 3]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor.insert_text("[1; 2; 3]", &mut app.editor_content);
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -4097,10 +3992,7 @@ sum"
         }
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("[1; 2; 3]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor.insert_text("[1; 2; 3]", &mut app.editor_content);
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -4111,10 +4003,8 @@ sum"
         }
         {
             let (mut app, units) = create_app();
-            app.handle_input(
-                EditorInputEvent::Text("[1, 2, 3; 4,5,6]".to_owned()),
-                InputModifiers::none(),
-            );
+            app.editor
+                .insert_text("[1, 2, 3; 4,5,6]", &mut app.editor_content);
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
             app.handle_input(EditorInputEvent::Left, InputModifiers::none());
             app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
@@ -4127,10 +4017,8 @@ sum"
     #[test]
     fn test_autocompletion_single() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text("apple = 12$".to_owned()),
-            InputModifiers::none(),
-        );
+        app.editor
+            .insert_text("apple = 12$", &mut app.editor_content);
         app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Enter, InputModifiers::none());
         app.handle_input(EditorInputEvent::Char('a'), InputModifiers::none());
@@ -4141,10 +4029,8 @@ sum"
     #[test]
     fn test_autocompletion_two_sars() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text("apple = 12$\nbanana = 7$\n".to_owned()),
-            InputModifiers::none(),
-        );
+        app.editor
+            .insert_text("apple = 12$\nbanana = 7$\n", &mut app.editor_content);
         app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Char('a'), InputModifiers::none());
         app.handle_input(EditorInputEvent::Tab, InputModifiers::none());
@@ -4165,10 +4051,8 @@ sum"
     #[test]
     fn test_that_no_autocompletion_for_multiple_results() {
         let (mut app, units) = create_app();
-        app.handle_input(
-            EditorInputEvent::Text("apple = 12$\nananas = 7$\n".to_owned()),
-            InputModifiers::none(),
-        );
+        app.editor
+            .insert_text("apple = 12$\nananas = 7$\n", &mut app.editor_content);
         app.render(&units, &mut RenderBuckets::new(), &mut [0; 128]);
         app.handle_input(EditorInputEvent::Char('a'), InputModifiers::none());
         app.handle_input(EditorInputEvent::Tab, InputModifiers::none());

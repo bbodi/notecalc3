@@ -11,6 +11,7 @@ mod tests {
     #[derive(Clone)]
     struct TestParams2<'a> {
         initial_content: &'a str,
+        text_input: Option<&'static str>,
         inputs: &'a [EditorInputEvent],
         delay_after_inputs: &'a [u32],
         modifiers: InputModifiers,
@@ -22,6 +23,7 @@ mod tests {
         initial_content: &'a str,
         inputs: &'a [EditorInputEvent],
         delay_after_inputs: &'a [u32],
+        text_input: Option<&'static str>,
         modifiers: InputModifiers,
         undo_count: usize,
         redo_count: usize,
@@ -36,6 +38,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: params.text_input,
                 initial_content: params.initial_content,
                 inputs: params.inputs,
                 delay_after_inputs: params.delay_after_inputs,
@@ -52,6 +55,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: params.text_input,
                 initial_content: params.initial_content,
                 inputs: params.inputs,
                 delay_after_inputs: params.delay_after_inputs,
@@ -68,6 +72,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: params.text_input,
                 initial_content: params.initial_content,
                 inputs: params.inputs,
                 delay_after_inputs: params.delay_after_inputs,
@@ -97,6 +102,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content,
                 inputs,
                 delay_after_inputs: &[],
@@ -144,6 +150,9 @@ mod tests {
             editor.set_cursor_range(selection_start, selection_end);
         }
 
+        if let Some(text) = params.text_input {
+            editor.insert_text(text, content);
+        }
         let mut now = 0;
         for (i, input) in params.inputs.iter().enumerate() {
             editor.handle_input(input.clone(), params.modifiers, content);
@@ -153,11 +162,11 @@ mod tests {
             }
         }
 
-        for i in 0..params.undo_count {
+        for _ in 0..params.undo_count {
             editor.undo(content);
         }
 
-        for i in 0..params.redo_count {
+        for _ in 0..params.redo_count {
             editor.redo(content);
         }
 
@@ -249,6 +258,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "█abcdefghijklmnopqrstuvwxyz",
                 inputs: &[],
                 delay_after_inputs: &[],
@@ -273,6 +283,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "█abcdeéfghijklmnopqrstuvwxyz",
                 inputs: &[],
                 delay_after_inputs: &[],
@@ -292,10 +303,11 @@ mod tests {
         assert_eq!(content.canvas[3], 'd');
         assert_eq!(content.canvas[25], 'x');
 
-        let lines = test0(
+        test0(
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             ABCD█EFGHIJKLMNOPQRSTUVWXY",
                 inputs: &[],
@@ -376,6 +388,7 @@ mod tests {
             &mut editor,
             &mut EditorContent::<usize>::new(80),
             TestParams {
+                text_input: None,
                 initial_content: "a❱bcdefghij❰klmnopqrstuvwxyz",
                 inputs: &[],
                 delay_after_inputs: &[],
@@ -401,6 +414,7 @@ mod tests {
             &mut editor,
             &mut EditorContent::<usize>::new(80),
             TestParams {
+                text_input: None,
                 initial_content: "a❱bcdefghijklmnopqrstuvwxyz\n\
             abcdefghij❰klmnopqrstuvwxyz",
                 inputs: &[],
@@ -428,6 +442,7 @@ mod tests {
             &mut editor,
             &mut EditorContent::<usize>::new(80),
             TestParams {
+                text_input: None,
                 initial_content: "a❰bcdefghijklmnopqrstuvwxyz\n\
             abcdefghij❱klmnopqrstuvwxyz",
                 inputs: &[],
@@ -463,6 +478,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "█111111111\n\
             2222222222\n\
             3333333333",
@@ -487,6 +503,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "11█1111111\n\
             2222222222\n\
             3333333333",
@@ -511,6 +528,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "\n\
             █2222222222\n\
             3333333333",
@@ -532,6 +550,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "111\n\
             █2222222222\n\
             3333333333",
@@ -554,6 +573,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "█\n\
             2222222222\n\
             3333333333",
@@ -575,6 +595,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "111█\n\
             2222222222\n\
             3333333333",
@@ -600,6 +621,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "█111111111\n\
             2222222222\n\
             3333333333",
@@ -622,6 +644,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "11█1111111\n\
             2222222222\n\
             3333333333",
@@ -644,6 +667,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "\n\
             █2222222222\n\
             3333333333",
@@ -666,6 +690,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "111\n\
             █2222222222\n\
             3333333333",
@@ -688,6 +713,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "█\n\
             2222222222\n\
             3333333333",
@@ -710,6 +736,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "111█\n\
             2222222222\n\
             3333333333",
@@ -732,6 +759,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "111\n\
             █2222222222\n\
             3333333333",
@@ -754,6 +782,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "111\n\
             █2222222222\n\
             3333333333",
@@ -780,6 +809,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "█111111111\n\
             2222222222\n\
             3333333333",
@@ -803,6 +833,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "11█1111111\n\
             2222222222\n\
             3333333333",
@@ -826,6 +857,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "\n\
             █2222222222\n\
             3333333333",
@@ -847,6 +879,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "111\n\
             █2222222222\n\
             3333333333",
@@ -868,6 +901,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "█\n\
             2222222222\n\
             3333333333",
@@ -889,6 +923,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "111█\n\
             2222222222\n\
             3333333333",
@@ -910,6 +945,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "111\n\
             █2222222222\n\
             3333333333",
@@ -932,6 +968,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "111\n\
             █2222222222\n\
             3333333333",
@@ -956,6 +993,7 @@ mod tests {
             &mut editor,
             &mut EditorContent::<usize>::new(80),
             TestParams {
+                text_input: None,
                 initial_content: "a❱bcdefghij❰klmnopqrstuvwxyz",
                 inputs: &[],
                 delay_after_inputs: &[],
@@ -975,6 +1013,7 @@ mod tests {
             &mut editor,
             &mut EditorContent::<usize>::new(80),
             TestParams {
+                text_input: None,
                 initial_content: "a❱bcdefghij❰klmnopqrstuvwxyz",
                 inputs: &[],
                 delay_after_inputs: &[],
@@ -1040,7 +1079,6 @@ mod tests {
 
     #[test]
     fn test_simple_left_cursor() {
-        let mut editor = Editor::new(&mut EditorContent::<usize>::new(80));
         test(
             "abcdefghij█klmnopqrstuvwxyz",
             &[EditorInputEvent::Left],
@@ -1687,7 +1725,6 @@ mod tests {
 
     #[test]
     fn test_simple_left_cursor_selection() {
-        let mut editor = Editor::new(&mut EditorContent::<usize>::new(80));
         test(
             "abcdefghij█klmnopqrstuvwxyz",
             &[EditorInputEvent::Left],
@@ -1740,7 +1777,6 @@ mod tests {
 
     #[test]
     fn test_left_right_cursor_selection() {
-        let mut editor = Editor::new(&mut EditorContent::<usize>::new(80));
         test(
             "abcdefghij█klmnopqrstuvwxyz",
             &[
@@ -2409,6 +2445,7 @@ mod tests {
     #[test]
     fn test_ctrl_shift_up_undo() {
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefgh█ijklmnopqrstuvwxyz\n\
             ABCDEFGHIJKLMNOPQRSTUVWXYZ",
             inputs: &[EditorInputEvent::Up],
@@ -2421,6 +2458,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             ABCDEFGHI█JKLMNOPQRSTUVWXYZ",
             inputs: &[EditorInputEvent::Up],
@@ -2433,6 +2471,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             ABCDEFGHIJKLMNOPQRSTUVWXYZ\n\
             123456789█12345678123456",
@@ -2450,6 +2489,7 @@ mod tests {
     #[test]
     fn test_ctrl_shift_up_redo() {
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefgh█ijklmnopqrstuvwxyz\n\
             ABCDEFGHIJKLMNOPQRSTUVWXYZ",
             inputs: &[EditorInputEvent::Up],
@@ -2461,6 +2501,7 @@ mod tests {
             ABCDEFGHIJKLMNOPQRSTUVWXYZ",
         });
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             ABCDEFGHI█JKLMNOPQRSTUVWXYZ",
             inputs: &[EditorInputEvent::Up],
@@ -2473,6 +2514,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             ABCDEFGHIJKLMNOPQRSTUVWXYZ\n\
             123456789█12345678123456",
@@ -2522,6 +2564,7 @@ mod tests {
     #[test]
     fn test_ctrl_shift_down_undo() {
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             ABCDEFGHI█JKLMNOPQRSTUVWXYZ",
             inputs: &[EditorInputEvent::Down],
@@ -2534,6 +2577,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghi█jklmnopqrstuvwxyz\n\
             ABCDEFGHIJKLMNOPQRSTUVWXYZ",
             inputs: &[EditorInputEvent::Down],
@@ -2546,6 +2590,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghi█jklmnopqrstuvwxyz\n\
             ABCDEFGHIJKLMNOPQRSTUVWXYZ\n\
             12345678912345678123456",
@@ -2563,6 +2608,7 @@ mod tests {
     #[test]
     fn test_ctrl_shift_down_redo() {
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             ABCDEFGHI█JKLMNOPQRSTUVWXYZ",
             inputs: &[EditorInputEvent::Down],
@@ -2575,6 +2621,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghi█jklmnopqrstuvwxyz\n\
             ABCDEFGHIJKLMNOPQRSTUVWXYZ",
             inputs: &[EditorInputEvent::Down],
@@ -2587,6 +2634,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghi█jklmnopqrstuvwxyz\n\
             ABCDEFGHIJKLMNOPQRSTUVWXYZ\n\
             12345678912345678123456",
@@ -2750,6 +2798,7 @@ mod tests {
     #[test]
     fn test_insert_char_undo() {
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
                                abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Char('1')],
@@ -2762,6 +2811,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Char('1')],
@@ -2774,6 +2824,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Char('1')],
@@ -2786,6 +2837,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
             inputs: &[EditorInputEvent::Char('1')],
@@ -2798,6 +2850,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
@@ -2818,6 +2871,7 @@ mod tests {
             "█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzab\n\
             abcdefghijklmnopqrstuvwxyz";
         test_undo(TestParams {
+            text_input: None,
             initial_content: text_80_len,
             inputs: &[
                 EditorInputEvent::Char('1'),
@@ -2832,6 +2886,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
@@ -2854,6 +2909,7 @@ mod tests {
     #[test]
     fn test_insert_char_redo() {
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
                                abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Char('1')],
@@ -2866,6 +2922,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Char('1')],
@@ -2878,6 +2935,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Char('1')],
@@ -2890,6 +2948,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
             inputs: &[EditorInputEvent::Char('1')],
@@ -2902,6 +2961,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
@@ -2922,6 +2982,7 @@ mod tests {
             "█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzab\n\
             abcdefghijklmnopqrstuvwxyz";
         test_undo(TestParams {
+            text_input: None,
             initial_content: text_80_len,
             inputs: &[
                 EditorInputEvent::Char('1'),
@@ -2936,6 +2997,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
@@ -2958,6 +3020,7 @@ mod tests {
     #[test]
     fn test_undo_command_grouping() {
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
@@ -2974,6 +3037,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
@@ -2990,6 +3054,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
@@ -3006,6 +3071,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
@@ -3022,6 +3088,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
@@ -3038,6 +3105,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
@@ -3054,6 +3122,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
@@ -3122,6 +3191,7 @@ mod tests {
     #[test]
     fn insert_char_with_selection_undo() {
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcd❰efghijk❱lmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Char('X')],
@@ -3134,6 +3204,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Char('X')],
@@ -3146,6 +3217,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "❰abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz❱",
             inputs: &[EditorInputEvent::Char('X')],
@@ -3158,6 +3230,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "ab❰c❱defghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Char('X')],
@@ -3170,6 +3243,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
@@ -3188,6 +3262,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
@@ -3214,6 +3289,7 @@ mod tests {
     #[test]
     fn insert_char_with_selection_redo() {
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcd❰efghijk❱lmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Char('X')],
@@ -3226,6 +3302,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Char('X')],
@@ -3237,6 +3314,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "❰abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz❱",
             inputs: &[EditorInputEvent::Char('X')],
@@ -3248,6 +3326,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "ab❰c❱defghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Char('X')],
@@ -3260,6 +3339,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
@@ -3275,6 +3355,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
@@ -3409,6 +3490,7 @@ mod tests {
     #[test]
     fn test_backspace_undo() {
         test_undo(TestParams {
+            text_input: None,
             initial_content: "a█",
             inputs: &[EditorInputEvent::Backspace],
             delay_after_inputs: &[],
@@ -3419,6 +3501,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
@@ -3431,6 +3514,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
@@ -3443,6 +3527,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
@@ -3455,6 +3540,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
             inputs: &[EditorInputEvent::Backspace],
@@ -3467,6 +3553,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcde█fghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
@@ -3483,6 +3570,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█",
             inputs: &[
                 EditorInputEvent::Backspace,
@@ -3497,6 +3585,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             █abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
@@ -3509,6 +3598,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrst█uvwxyz",
@@ -3528,6 +3618,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl\n\
             abcdefghijkl\n\
             abcdefghijkl\n\
@@ -3563,6 +3654,7 @@ mod tests {
                 EditorInputEvent::Home,
                 EditorInputEvent::Backspace,
             ],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcdefghijklmnopqrstuvwxyz\n\
@@ -3573,6 +3665,7 @@ mod tests {
     #[test]
     fn test_backspace_redo() {
         test_undo(TestParams {
+            text_input: None,
             initial_content: "a█",
             inputs: &[EditorInputEvent::Backspace],
             delay_after_inputs: &[],
@@ -3583,6 +3676,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
@@ -3595,6 +3689,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
@@ -3607,6 +3702,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
@@ -3619,6 +3715,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
             inputs: &[EditorInputEvent::Backspace],
@@ -3631,6 +3728,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcde█fghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
@@ -3647,6 +3745,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█",
             inputs: &[
                 EditorInputEvent::Backspace,
@@ -3661,6 +3760,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             █abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
@@ -3672,6 +3772,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrst█uvwxyz",
@@ -3690,6 +3791,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl\n\
             abcdefghijkl\n\
             abcdefghijkl\n\
@@ -3868,6 +3970,7 @@ mod tests {
     #[test]
     fn test_ctrl_del_undo() {
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
             inputs: &[EditorInputEvent::Del],
@@ -3880,6 +3983,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcde█fghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
@@ -3896,6 +4000,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█",
             inputs: &[
                 EditorInputEvent::Del,
@@ -3910,6 +4015,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
@@ -3922,6 +4028,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnop█qrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -3941,6 +4048,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -3951,6 +4059,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█abcdefghijkl mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -3961,6 +4070,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█ mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -3971,6 +4081,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl █mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -3981,6 +4092,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█    mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -3990,6 +4102,7 @@ mod tests {
             expected_content: "abcdefghijkl█    mnopqrstuvwxyz",
         });
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█  )  mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4000,6 +4113,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█  |()-+%'^%/=?{}#<>&@[]*  mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4010,6 +4124,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█  \"  mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4020,6 +4135,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█  12  mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4030,6 +4146,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█  12a  mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4040,6 +4157,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█  a12  mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4050,6 +4168,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█  _  mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4060,6 +4179,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█  _1a  mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4070,6 +4190,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█  \"❤(  mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4083,6 +4204,7 @@ mod tests {
     #[test]
     fn test_ctrl_del_redo() {
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
             inputs: &[EditorInputEvent::Del],
@@ -4095,6 +4217,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcde█fghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[
@@ -4110,6 +4233,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█",
             inputs: &[
                 EditorInputEvent::Del,
@@ -4124,6 +4248,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
@@ -4135,6 +4260,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijklmnop█qrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
@@ -4153,6 +4279,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4163,6 +4290,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "█abcdefghijkl mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4173,6 +4301,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█ mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4183,6 +4312,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl █mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4193,6 +4323,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█    mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4202,6 +4333,7 @@ mod tests {
             expected_content: "abcdefghijkl█mnopqrstuvwxyz",
         });
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█  )  mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4212,6 +4344,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█  |()-+%'^%/=?{}#<>&@[]*  mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4222,6 +4355,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█  \"  mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4232,6 +4366,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█  12  mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4242,6 +4377,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█  12a  mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4252,6 +4388,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█  a12  mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4262,6 +4399,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█  _  mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4272,6 +4410,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█  _1a  mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4282,6 +4421,7 @@ mod tests {
         });
 
         test_undo(TestParams {
+            text_input: None,
             initial_content: "abcdefghijkl█  \"❤(  mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
             delay_after_inputs: &[],
@@ -4424,6 +4564,7 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "a█",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "█",
@@ -4433,6 +4574,7 @@ mod tests {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "█abcdefghijklmnopqrstuvwxyz\n\
@@ -4443,6 +4585,7 @@ mod tests {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "abcdefghijklmnopqrstuvwxyz\n\
@@ -4453,6 +4596,7 @@ mod tests {
             initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "█\n\
@@ -4463,6 +4607,7 @@ mod tests {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "abcdefghijklmnopqrstuvwxyz\n\
@@ -4477,6 +4622,7 @@ mod tests {
                 EditorInputEvent::Backspace,
                 EditorInputEvent::Backspace,
             ],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "█fghijklmnopqrstuvwxyz\n\
@@ -4490,6 +4636,7 @@ mod tests {
                 EditorInputEvent::Backspace,
                 EditorInputEvent::Backspace,
             ],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "█",
@@ -4499,6 +4646,7 @@ mod tests {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             █abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "abcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyz",
@@ -4514,6 +4662,7 @@ mod tests {
                 EditorInputEvent::Home,
                 EditorInputEvent::Backspace,
             ],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content:
@@ -4523,6 +4672,7 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijklmnopqrstuvwxyz█",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "█",
@@ -4531,6 +4681,7 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijkl mnopqrstuvwxyz█",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "abcdefghijkl █",
@@ -4539,6 +4690,7 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijkl █mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "█mnopqrstuvwxyz",
@@ -4547,6 +4699,7 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijkl█ mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "█ mnopqrstuvwxyz",
@@ -4555,6 +4708,7 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijkl    █mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "█mnopqrstuvwxyz",
@@ -4563,6 +4717,7 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijkl  )  █mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "abcdefghijkl  █mnopqrstuvwxyz",
@@ -4571,6 +4726,7 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijkl  |()-+%'^%/=?{}#<>&@[]*  █mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "abcdefghijkl  █mnopqrstuvwxyz",
@@ -4579,6 +4735,7 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijkl  \"  █mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "abcdefghijkl  █mnopqrstuvwxyz",
@@ -4587,6 +4744,7 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijkl  12  █mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "abcdefghijkl  █mnopqrstuvwxyz",
@@ -4595,6 +4753,7 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijkl  12a  █mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "abcdefghijkl  █mnopqrstuvwxyz",
@@ -4603,6 +4762,7 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijkl  a12  █mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "abcdefghijkl  █mnopqrstuvwxyz",
@@ -4611,6 +4771,7 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijkl  _  █mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "abcdefghijkl  █mnopqrstuvwxyz",
@@ -4619,6 +4780,7 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijkl  _1a  █mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "abcdefghijkl  █mnopqrstuvwxyz",
@@ -4627,6 +4789,7 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijkl  \"❤(  █mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::ctrl(),
             expected_content: "abcdefghijkl  \"█mnopqrstuvwxyz",
@@ -4639,6 +4802,7 @@ mod tests {
             initial_content: "abcd❰efghijk❱lmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcd█lmnopqrstuvwxyz\n\
@@ -4649,6 +4813,7 @@ mod tests {
             initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcd█mnopqrstuvwxyz",
@@ -4658,6 +4823,7 @@ mod tests {
             initial_content: "❰abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz❱",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "█",
@@ -4667,6 +4833,7 @@ mod tests {
             initial_content: "ab❰c❱defghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "ab█defghijklmnopqrstuvwxyz\n\
@@ -4680,6 +4847,7 @@ mod tests {
             abcdefghijkl❱mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Backspace],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcd█mnopqrstuvwxyz\n\
@@ -4693,6 +4861,7 @@ mod tests {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "█bcdefghijklmnopqrstuvwxyz\n\
@@ -4703,6 +4872,7 @@ mod tests {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcdefghijklmnopqrstuvwxyz\n\
@@ -4713,6 +4883,7 @@ mod tests {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
             inputs: &[EditorInputEvent::Del],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcdefghijklmnopqrstuvwxyz\n\
@@ -4727,6 +4898,7 @@ mod tests {
                 EditorInputEvent::Del,
                 EditorInputEvent::Del,
             ],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcde█ijklmnopqrstuvwxyz\n\
@@ -4740,6 +4912,7 @@ mod tests {
                 EditorInputEvent::Del,
                 EditorInputEvent::Del,
             ],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "█",
@@ -4749,6 +4922,7 @@ mod tests {
             initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcdefghijklmnopqrstuvwxyz█abcdefghijklmnopqrstuvwxyz",
@@ -4764,6 +4938,7 @@ mod tests {
                 EditorInputEvent::End,
                 EditorInputEvent::Del,
             ],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content:
@@ -4783,6 +4958,7 @@ mod tests {
                 EditorInputEvent::End,
                 EditorInputEvent::Del,
             ],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content:
@@ -4797,6 +4973,7 @@ mod tests {
             initial_content: "abcd❰efghijk❱lmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcd█lmnopqrstuvwxyz\n\
@@ -4807,6 +4984,7 @@ mod tests {
             initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcd█mnopqrstuvwxyz",
@@ -4816,6 +4994,7 @@ mod tests {
             initial_content: "❰abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz❱",
             inputs: &[EditorInputEvent::Del],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "█",
@@ -4825,6 +5004,7 @@ mod tests {
             initial_content: "ab❰c❱defghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "ab█defghijklmnopqrstuvwxyz\n\
@@ -4838,6 +5018,7 @@ mod tests {
             abcdefghijkl❱mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcd█mnopqrstuvwxyz\n\
@@ -4851,6 +5032,7 @@ mod tests {
             ❱abcdefghijkl❰mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Del],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcdefghijklmnopqrstuvwxyz\n\
@@ -4883,6 +5065,7 @@ mod tests {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Enter],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "\n\
@@ -4894,6 +5077,7 @@ mod tests {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Enter],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcdefghijklmnopqrstuvwxyz\n\
@@ -4905,6 +5089,7 @@ mod tests {
             initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Enter],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcdefghijklmnopqrstuvwxyz\n\
@@ -4916,6 +5101,7 @@ mod tests {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
             inputs: &[EditorInputEvent::Enter],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcdefghijklmnopqrstuvwxyz\n\
@@ -4931,6 +5117,7 @@ mod tests {
                 EditorInputEvent::Enter,
                 EditorInputEvent::Enter,
             ],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcde\n\
@@ -4947,6 +5134,7 @@ mod tests {
                 EditorInputEvent::Enter,
                 EditorInputEvent::Enter,
             ],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "\n\
@@ -4959,6 +5147,7 @@ mod tests {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             █abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Enter],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcdefghijklmnopqrstuvwxyz\n\
@@ -4971,6 +5160,7 @@ mod tests {
                 "❰pPaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\
         ❱aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             inputs: &[EditorInputEvent::Del],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "█aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -4981,6 +5171,7 @@ mod tests {
             bsd\n\
             csd❱",
             inputs: &[EditorInputEvent::Del],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "█",
@@ -4996,6 +5187,7 @@ mod tests {
             bsd\n\
             csd❱",
             inputs: &[EditorInputEvent::Del],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "█",
@@ -5008,6 +5200,7 @@ mod tests {
             initial_content: "abcd❰efghijk❱lmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Enter],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcd\n\
@@ -5019,6 +5212,7 @@ mod tests {
             initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
             abcdefghijkl❱mnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Enter],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcd\n\
@@ -5029,6 +5223,7 @@ mod tests {
             initial_content: "❰abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz❱",
             inputs: &[EditorInputEvent::Enter],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "\n\
@@ -5039,6 +5234,7 @@ mod tests {
             initial_content: "ab❰c❱defghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Enter],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "ab\n\
@@ -5053,6 +5249,7 @@ mod tests {
             abcdefghijkl❱mnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[EditorInputEvent::Enter],
+            text_input: None,
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcd\n\
@@ -5066,7 +5263,8 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Text("long text".to_owned())],
+            inputs: &[],
+            text_input: Some("long text"),
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "long text█abcdefghijklmnopqrstuvwxyz\n\
@@ -5076,7 +5274,8 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdef█ghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Text("long text".to_owned())],
+            inputs: &[],
+            text_input: Some("long text"),
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcdefghijklmnopqrstuvwxyz\n\
@@ -5086,7 +5285,8 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijklmnopqrstuvwxyz█\n\
             abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Text("long text".to_owned())],
+            inputs: &[],
+            text_input: Some("long text"),
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcdefghijklmnopqrstuvwxyzlong text█\n\
@@ -5096,7 +5296,8 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz█",
-            inputs: &[EditorInputEvent::Text("long text".to_owned())],
+            inputs: &[],
+            text_input: Some("long text"),
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcdefghijklmnopqrstuvwxyz\n\
@@ -5106,7 +5307,8 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "█abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Text("long text ❤".to_owned())],
+            inputs: &[],
+            text_input: Some("long text ❤"),
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "long text ❤█abcdefghijklmnopqrstuvwxyz\n\
@@ -5117,8 +5319,8 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzab\n\
             abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Text("long text ❤".to_owned())],
-            delay_after_inputs: &[],
+            inputs: &[],
+            text_input: Some("long text ❤"), delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "long text ❤█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopq\n\
             rstuvwxyzab\n\
@@ -5128,9 +5330,8 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijk█lmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Text(
-                "long text ❤\nwith 3\nlines".to_owned(),
-            )],
+            inputs: &[],
+            text_input: Some("long text ❤\nwith 3\nlines"),
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "abcdefghijklmnopqrstuvwxyz\n\
@@ -5142,10 +5343,8 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "aaaaaaaaaXaaaaaaaaaXaaaaaaaaaXaaaaa█aaaaXaaaaaaaaaXaaaaaaaaaX\n\
             abcdefghijkXlmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Text(
-                "xxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxX".to_owned(),
-            )],
-            delay_after_inputs: &[],
+            inputs: &[],
+            text_input: Some("xxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxX"), delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "aaaaaaaaaXaaaaaaaaaXaaaaaaaaaXaaaaaxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxx\n\
             xxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxX█aaaaX\n\
@@ -5159,7 +5358,8 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "❰abcdefg❱ijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Text("long text".to_owned())],
+            inputs: &[],
+            text_input: Some("long text"),
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "long text█ijklmnopqrstuvwxyz\n\
@@ -5169,7 +5369,8 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "❰abcdefgijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz❱",
-            inputs: &[EditorInputEvent::Text("long text".to_owned())],
+            inputs: &[],
+            text_input: Some("long text"),
             delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "long text█",
@@ -5178,8 +5379,8 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "❰ab❱cdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzab\n\
             abcdefghijklmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Text("long text ❤".to_owned())],
-            delay_after_inputs: &[],
+            inputs: &[],
+            text_input: Some("long text ❤"), delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "long text ❤█cdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrs\n\
             tuvwxyzab\n\
@@ -5189,10 +5390,8 @@ mod tests {
         test_normal_undo_redo(TestParams2 {
             initial_content: "aaaaaaaaaXaaaaaaaaaXaaaaaaaaaXaaaaa❰ab❱aaXaaaaaaaaaXaaaaaaaaaX\n\
             abcdefghijkXlmnopqrstuvwxyz",
-            inputs: &[EditorInputEvent::Text(
-                "xxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxX".to_owned(),
-            )],
-            delay_after_inputs: &[],
+            inputs: &[],
+            text_input: Some("xxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxX"), delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "aaaaaaaaaXaaaaaaaaaXaaaaaaaaaXaaaaaxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxx\n\
             xxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxX█aaXaa\n\
@@ -5310,6 +5509,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "aaa█aa12s aa\n\
             a\n\
             a\n\
@@ -5331,6 +5531,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "aaaaa12s aa\n\
             a\n\
             a\n\
@@ -5354,6 +5555,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "aaa❱aa12s a❰a\n\
             a\n\
             a\n\
@@ -5376,6 +5578,7 @@ mod tests {
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "a❱aaaa12s aa\n\
             a\n\
             a\n\
@@ -5396,10 +5599,11 @@ mod tests {
     fn test_copy() {
         let mut content = EditorContent::<usize>::new(80);
         let mut editor = Editor::new(&mut content);
-        let lines = test0(
+        test0(
             &mut editor,
             &mut content,
             TestParams {
+                text_input: None,
                 initial_content: "aaaaa❱12s aa\n\
             a\n\
             a\n\

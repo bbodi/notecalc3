@@ -44,10 +44,10 @@ pub fn render_result_into(
                 num_to_string(f, &num, &ResultFormat::Dec, decimal_count);
             } else {
                 num_to_string(f, &unit.denormalize(num), &ResultFormat::Dec, decimal_count);
-                f.write_u8(b' ');
+                f.write_u8(b' ').expect("");
                 // TODO to_string -> into(buf)
                 for ch in unit.to_string().as_bytes() {
-                    f.write_u8(*ch);
+                    f.write_u8(*ch).expect("");
                 }
             }
         }
@@ -57,25 +57,25 @@ pub fn render_result_into(
         }
         CalcResult::Percentage(num) => {
             num_to_string(f, num, &ResultFormat::Dec, decimal_count);
-            f.write_u8(b'%');
+            f.write_u8(b'%').expect("");
         }
         CalcResult::Matrix(mat) => {
-            f.write_u8(b'[');
+            f.write_u8(b'[').expect("");
             for row_i in 0..mat.row_count {
                 if row_i > 0 {
-                    f.write_u8(b';');
-                    f.write_u8(b' ');
+                    f.write_u8(b';').expect("");
+                    f.write_u8(b' ').expect("");
                 }
                 for col_i in 0..mat.col_count {
                     if col_i > 0 {
-                        f.write_u8(b',');
-                        f.write_u8(b' ');
+                        f.write_u8(b',').expect("");
+                        f.write_u8(b' ').expect("");
                     }
                     let cell = &mat.cells[row_i * mat.col_count + col_i];
                     render_result_into(units, cell, format, false, f, decimal_count);
                 }
             }
-            f.write_u8(b']');
+            f.write_u8(b']').expect("");
         }
     }
 }
@@ -84,7 +84,7 @@ fn num_to_string(
     f: &mut impl std::io::Write,
     num: &BigDecimal,
     format: &ResultFormat,
-    decimal_count: usize,
+    _decimal_count: usize,
 ) {
     let num = if *format != ResultFormat::Dec && num.is_integer() {
         num.with_scale(0)
@@ -101,27 +101,27 @@ fn num_to_string(
             } else {
                 format!("{:X}", n)
             };
-            let mut s = unsafe { ss.as_bytes_mut() };
+            let s = unsafe { ss.as_bytes_mut() };
             s.reverse();
             let group_size = if *format == ResultFormat::Bin { 8 } else { 2 };
             for (i, group) in s.chunks(group_size).rev().enumerate() {
                 if i > 0 {
-                    f.write_u8(b' ');
+                    f.write_u8(b' ').expect("");
                 }
                 for ch in group.iter().rev() {
-                    f.write_u8(*ch);
+                    f.write_u8(*ch).expect("");
                 }
             }
         } else {
             // TODO to_string opt
             for ch in num.to_string().as_bytes() {
-                f.write_u8(*ch);
+                f.write_u8(*ch).expect("");
             }
         }
     } else {
         // TODO to_string opt
         for ch in num.to_string().as_bytes() {
-            f.write_u8(*ch);
+            f.write_u8(*ch).expect("");
         }
     }
 }

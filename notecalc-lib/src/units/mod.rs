@@ -12,7 +12,7 @@ pub mod units;
 #[derive(Eq, PartialEq, Clone)]
 pub struct Unit {
     name: &'static [char],
-    base: [isize; BASE_UNIT_DIMENSION_COUNT],
+    base: [i8; BASE_UNIT_DIMENSION_COUNT],
     // e.g. prefix_groups: (Some(&prefixes.short), Some(&prefixes.long)),
     prefix_groups: (
         Option<RefCell<Box<Vec<RefCell<Prefix>>>>>,

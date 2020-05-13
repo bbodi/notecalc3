@@ -36,13 +36,16 @@ enum UnitType {
     Frequency,
 }
 
+pub type UnitDimensionExponent = i8;
+
 pub const BASE_UNIT_DIMENSION_COUNT: usize = 10;
 pub const ALL_UNIT_COUNT: usize = 25;
 
-pub const EMPTY_UNIT_DIMENSIONS: [isize; BASE_UNIT_DIMENSION_COUNT] =
+pub const EMPTY_UNIT_DIMENSIONS: [UnitDimensionExponent; BASE_UNIT_DIMENSION_COUNT] =
     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-pub(crate) const BASE_UNIT_DIMENSIONS: [[isize; BASE_UNIT_DIMENSION_COUNT]; ALL_UNIT_COUNT] = [
+pub(crate) const BASE_UNIT_DIMENSIONS: [[UnitDimensionExponent; BASE_UNIT_DIMENSION_COUNT];
+    ALL_UNIT_COUNT] = [
     [1, 0, 0, 0, 0, 0, 0, 0, 0, 0], // Mass
     [0, 1, 0, 0, 0, 0, 0, 0, 0, 0], // Length
     [0, 0, 1, 0, 0, 0, 0, 0, 0, 0], // Time
@@ -2042,7 +2045,7 @@ pub fn init_aliases() -> HashMap<&'static str, &'static str> {
 
 pub fn get_base_unit_for(
     units: &Units,
-    dimensions: &[isize; BASE_UNIT_DIMENSION_COUNT],
+    dimensions: &[UnitDimensionExponent; BASE_UNIT_DIMENSION_COUNT],
 ) -> Option<UnitInstance> {
     if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::Length as usize] {
         Some(UnitInstance {

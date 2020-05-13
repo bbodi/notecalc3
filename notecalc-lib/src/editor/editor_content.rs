@@ -1,7 +1,9 @@
 use crate::editor::editor::{Pos, RowModificationType, Selection};
 
 pub type Canvas = Vec<char>;
-type EditorCommandGroup<T: Default + Clone> = Vec<EditorCommand<T>>;
+type EditorCommandGroup<T> = Vec<EditorCommand<T>>;
+// asda
+// type EditorCommandGroup<T: Default + Clone> = Vec<EditorCommand<T>>;
 
 pub enum EditorCommand<T: Default + Clone> {
     SwapLineUpwards(Pos),

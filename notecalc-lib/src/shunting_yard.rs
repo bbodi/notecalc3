@@ -1,9 +1,6 @@
 use crate::functions::FnType;
 use crate::token_parser::{Assoc, OperatorTokenType, Token, TokenType};
-use bigdecimal::*;
 use std::ops::Neg;
-
-pub const FUNCTION_NAMES: &'static [&'static str] = &["sin"];
 
 #[derive(Eq, PartialEq, Debug)]
 enum ValidationTokenType {
@@ -115,13 +112,6 @@ impl ValidationState {
         }
     }
 
-    fn is_fn_at_top(&self) -> bool {
-        match self.parenthesis_stack.last() {
-            Some(ParenStackEntry::Fn(FnStackEntry { .. })) => true,
-            _ => false,
-        }
-    }
-
     fn pop_as_mat(&mut self) -> MatrixStackEntry {
         match self.parenthesis_stack.pop() {
             Some(ParenStackEntry::Matrix(entry)) => entry,
@@ -139,8 +129,8 @@ impl ValidationState {
     fn is_matrix_row_len_err(&self) -> bool {
         match self.parenthesis_stack.last() {
             Some(ParenStackEntry::Matrix(MatrixStackEntry {
-                matrix_start_input_pos,
-                matrix_row_count,
+                matrix_start_input_pos: _,
+                matrix_row_count: _,
                 matrix_prev_row_len,
                 matrix_current_row_len,
             })) => matrix_prev_row_len.map(|it| it != *matrix_current_row_len),
@@ -152,7 +142,7 @@ impl ValidationState {
     fn matrix_new_row(&mut self) {
         match self.parenthesis_stack.last_mut() {
             Some(ParenStackEntry::Matrix(MatrixStackEntry {
-                matrix_start_input_pos,
+                matrix_start_input_pos: _,
                 matrix_row_count,
                 matrix_prev_row_len,
                 matrix_current_row_len,
@@ -168,8 +158,8 @@ impl ValidationState {
     fn is_comma_not_allowed(&self) -> bool {
         match self.parenthesis_stack.last() {
             Some(ParenStackEntry::Matrix(MatrixStackEntry {
-                matrix_start_input_pos,
-                matrix_row_count,
+                matrix_start_input_pos: _,
+                matrix_row_count: _,
                 matrix_prev_row_len,
                 matrix_current_row_len,
             })) => {
@@ -190,14 +180,17 @@ impl ValidationState {
     fn do_comma(&mut self) {
         match self.parenthesis_stack.last_mut() {
             Some(ParenStackEntry::Matrix(MatrixStackEntry {
-                matrix_start_input_pos,
-                matrix_row_count,
-                matrix_prev_row_len,
+                matrix_start_input_pos: _,
+                matrix_row_count: _,
+                matrix_prev_row_len: _,
                 matrix_current_row_len,
             })) => {
                 *matrix_current_row_len += 1;
             }
-            Some(ParenStackEntry::Fn(FnStackEntry { typ, fn_arg_count })) => {
+            Some(ParenStackEntry::Fn(FnStackEntry {
+                typ: _,
+                fn_arg_count,
+            })) => {
                 *fn_arg_count += 1;
             }
             Some(ParenStackEntry::Simple) | None => panic!(),
@@ -264,6 +257,20 @@ impl ShuntingYard {
                     }
                     if v.valid_range_start_token_index == input_index as usize {
                         v.valid_range_start_token_index += 1;
+                    }
+                }
+                TokenType::Unit(_) => {
+                    // TODO: a token ownershipjét nem vehetem el mert kell a rendereléshez (checkold le azért)
+                    // de a toketyp-bol nből kivehetem a unit-ot, az már nem fog kelleni.
+                    // CODESMELL!!!
+                    // a shunting yard kapja meg a tokens owvershipjét, és adjon vissza egy csak r
+                    // rendereléshez elegendő ptr + type-ot
+                    output_stack.push(input_token.typ.clone());
+                    v.prev_token_type = ValidationTokenType::Expr;
+                    if v.can_be_valid_closing_token() {
+                        dbg!("close");
+                        ShuntingYard::send_everything_to_output(&mut operator_stack, output_stack);
+                        v.close_valid_range(output_stack.len(), input_index);
                     }
                 }
                 TokenType::Operator(op) => match op {
@@ -467,7 +474,7 @@ impl ShuntingYard {
                         v.matrix_new_row();
                         ShuntingYard::operator_rule(op, &mut operator_stack, output_stack);
                     }
-                    OperatorTokenType::Perc | OperatorTokenType::Unit(_) => {
+                    OperatorTokenType::Perc => {
                         ShuntingYard::send_to_output(op.clone(), output_stack);
                         v.prev_token_type = ValidationTokenType::Expr;
                         if v.can_be_valid_closing_token() {
@@ -480,12 +487,13 @@ impl ShuntingYard {
                         }
                     }
                     OperatorTokenType::UnitConverter => {
-                        // "in" must be the last operator, only a unit can follow it
+                        // the converter must be the last operator, only a unit can follow it
                         // so clear the operator stack, push the next unit onto the output
+
                         // push the unit onto the output, and close it
                         if let Some((
                             Token {
-                                typ: TokenType::Operator(OperatorTokenType::Unit(unit)),
+                                typ: TokenType::Unit(unit),
                                 ..
                             },
                             offset,
@@ -511,9 +519,7 @@ impl ShuntingYard {
                                     &mut operator_stack,
                                     output_stack,
                                 );
-                                output_stack.push(TokenType::Operator(OperatorTokenType::Unit(
-                                    unit.clone(),
-                                )));
+                                output_stack.push(TokenType::Unit(unit.clone()));
                                 ShuntingYard::send_to_output(op.clone(), output_stack);
                                 v.close_valid_range(output_stack.len(), input_index);
                             }
@@ -560,14 +566,10 @@ impl ShuntingYard {
                         if let Some((next_token, offset)) =
                             ShuntingYard::get_next_nonstring_token(tokens, input_index as usize + 1)
                         {
-                            if let TokenType::Operator(OperatorTokenType::Unit(unit)) =
-                                &next_token.typ
-                            {
+                            if let TokenType::Unit(unit) = &next_token.typ {
                                 // if the next token is unit, push it to the stack immediately, and
                                 // skip the next iteration
-                                output_stack.push(TokenType::Operator(OperatorTokenType::Unit(
-                                    unit.clone(),
-                                )));
+                                output_stack.push(TokenType::Unit(unit.clone()));
                                 input_index += 1 + offset as isize;
                             } else if let TokenType::Operator(OperatorTokenType::Perc) =
                                 next_token.typ
@@ -643,7 +645,7 @@ impl ShuntingYard {
             ShuntingYard::set_tokens_to_string(tokens, end + 1, input_index as usize);
         } else if !tokens.is_empty() {
             // there is no valid range, everything is string
-            ShuntingYard::set_tokens_to_string(tokens, 0, tokens.len() - 1 as usize);
+            ShuntingYard::set_tokens_to_string(tokens, 0, tokens.len() - 1);
         }
 
         // remove String tokens with empty content
@@ -771,7 +773,6 @@ pub mod tests {
     use super::*;
     use crate::calc::CalcResult;
     use crate::token_parser::TokenParser;
-    use crate::units::consts::init_units;
     use crate::units::units::{UnitOutput, Units};
     use bigdecimal::BigDecimal;
 
@@ -799,7 +800,7 @@ pub mod tests {
     pub fn unit<'text_ptr>(op_repr: &'static str) -> Token<'text_ptr> {
         Token {
             ptr: unsafe { std::mem::transmute(op_repr) },
-            typ: TokenType::Operator(OperatorTokenType::Unit(UnitOutput::new())),
+            typ: TokenType::Unit(UnitOutput::new()),
         }
     }
 
@@ -818,6 +819,7 @@ pub mod tests {
     }
 
     pub fn numf<'text_ptr>(n: f64) -> Token<'text_ptr> {
+        use bigdecimal::FromPrimitive;
         Token {
             ptr: &[],
             typ: TokenType::NumberLiteral(BigDecimal::from_f64(n).unwrap()),
@@ -840,14 +842,13 @@ pub mod tests {
                         &actual_tokens
                     )
                 }
+                (TokenType::Unit(..), TokenType::Unit(actual_unit)) => {
+                    //     expected_op is an &str
+                    let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
+                    assert_eq!(&actual_unit.to_string(), str_slice)
+                }
                 (TokenType::Operator(expected_op), TokenType::Operator(actual_op)) => {
                     match (expected_op, actual_op) {
-                        (OperatorTokenType::Unit(_), OperatorTokenType::Unit(actual_unit)) => {
-                            //     expected_op is an &str
-                            let str_slice =
-                                unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
-                            assert_eq!(&actual_unit.to_string(), str_slice)
-                        }
                         _ => assert_eq!(
                             expected_op, actual_op,
                             "actual tokens: {:?}",
@@ -911,6 +912,7 @@ pub mod tests {
     }
 
     fn test_output_vars(var_names: &[&'static [char]], text: &str, expected_tokens: &[Token]) {
+        use bigdecimal::Zero;
         let var_names: Vec<(&[char], CalcResult)> = var_names
             .into_iter()
             .map(|it| (*it, CalcResult::Number(BigDecimal::zero())))
@@ -919,7 +921,7 @@ pub mod tests {
         println!("===================================================");
         println!("{}", text);
         let temp = text.chars().collect::<Vec<char>>();
-        let mut units = Units::new();
+        let units = Units::new();
         let mut tokens = vec![];
         let output = do_shunting_yard(&temp, &units, &mut tokens, &var_names);
         compare_tokens(
@@ -945,7 +947,8 @@ pub mod tests {
         let temp = text.chars().collect::<Vec<char>>();
         let units = Units::new();
         let mut tokens = vec![];
-        let output = do_shunting_yard(
+        use bigdecimal::Zero;
+        let _ = do_shunting_yard(
             &temp,
             &units,
             &mut tokens,

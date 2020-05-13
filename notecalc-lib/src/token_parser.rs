@@ -1,7 +1,7 @@
 use crate::calc::CalcResult;
 use crate::functions::FnType;
 use crate::units::units::{UnitOutput, Units};
-use bigdecimal::{BigDecimal, Num, Zero};
+use bigdecimal::{BigDecimal, Num};
 use std::str::FromStr;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -12,6 +12,7 @@ pub enum TokenType {
     LineReference { var_index: usize },
     NumberLiteral(BigDecimal),
     Operator(OperatorTokenType),
+    Unit(UnitOutput),
 }
 
 #[derive(Debug, Clone)]
@@ -56,7 +57,6 @@ pub enum OperatorTokenType {
     UnitConverter,
     Matrix { row_count: usize, col_count: usize },
     Fn { arg_count: usize, typ: FnType },
-    Unit(UnitOutput),
 }
 
 #[derive(Eq, PartialEq, Copy, Clone)]
@@ -86,7 +86,6 @@ impl OperatorTokenType {
             OperatorTokenType::ShiftRight => 0,
             OperatorTokenType::Assign => 0,
             OperatorTokenType::UnitConverter => 0,
-            OperatorTokenType::Unit(_) => 3,
             OperatorTokenType::Semicolon | OperatorTokenType::Comma => 0,
             OperatorTokenType::BracketOpen => 0,
             OperatorTokenType::BracketClose => 0,
@@ -115,7 +114,6 @@ impl OperatorTokenType {
             OperatorTokenType::ShiftRight => Assoc::Left,
             OperatorTokenType::Assign => Assoc::Left,
             OperatorTokenType::UnitConverter => Assoc::Left,
-            OperatorTokenType::Unit(_) => Assoc::Left,
             // Right, so 1 comma won't replace an other on the operator stack
             OperatorTokenType::Semicolon | OperatorTokenType::Comma => Assoc::Right,
             OperatorTokenType::BracketOpen => Assoc::Left,
@@ -158,23 +156,23 @@ impl TokenParser {
                         } else {
                             can_be_unit = false;
                         }
-                        index += token.ptr.len()
                     }
                     TokenType::NumberLiteral(..) => {
                         can_be_unit = true;
-                        index += token.ptr.len()
+                    }
+                    TokenType::Unit(..) => {
+                        can_be_unit = false;
                     }
                     TokenType::Operator(typ) => {
                         // TODO: what is this can be unit??
                         can_be_unit = matches!(typ, OperatorTokenType::ParenClose)
                             || matches!(typ, OperatorTokenType::UnitConverter);
-                        index += token.ptr.len()
                     }
                     TokenType::Variable { .. } | TokenType::LineReference { .. } => {
                         can_be_unit = true;
-                        index += token.ptr.len()
                     }
                 }
+                index += token.ptr.len();
                 dst.push(token);
             } else {
                 break;
@@ -378,7 +376,7 @@ impl TokenParser {
                 i -= 1;
             }
             Some(Token {
-                typ: TokenType::Operator(OperatorTokenType::Unit(unit)),
+                typ: TokenType::Unit(unit),
                 ptr: &str[0..i],
             })
         };
@@ -526,15 +524,6 @@ impl TokenParser {
     }
 }
 
-#[derive(Eq, PartialEq)]
-enum ValidationTokenType {
-    Nothing,
-    Expr,
-    Op,
-}
-
-fn handle_unary_shit() {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -550,7 +539,7 @@ mod tests {
             TokenParser::parse_line(&temp, &Vec::new(), &mut vec, &units);
             match vec.get(0) {
                 Some(Token {
-                    ptr,
+                    ptr: _,
                     typ: TokenType::NumberLiteral(num),
                 }) => {
                     assert_eq!(*num, expected_value.into());
@@ -567,7 +556,7 @@ mod tests {
             TokenParser::parse_line(&temp, &Vec::new(), &mut vec, &units);
             match vec.get(0) {
                 Some(Token {
-                    ptr,
+                    ptr: _,
                     typ: TokenType::NumberLiteral(num),
                 }) => {
                     assert_eq!(BigDecimal::from(expected_value), *num);
@@ -599,6 +588,7 @@ mod tests {
     }
 
     fn test_vars(var_names: &[&'static [char]], text: &str, expected_tokens: &[Token]) {
+        use bigdecimal::Zero;
         let var_names: Vec<(&[char], CalcResult)> = var_names
             .into_iter()
             .map(|it| (*it, CalcResult::Number(BigDecimal::zero())))
@@ -622,10 +612,7 @@ mod tests {
                 (TokenType::NumberLiteral(expected_num), TokenType::NumberLiteral(actual_num)) => {
                     assert_eq!(expected_num, actual_num)
                 }
-                (
-                    TokenType::Operator(OperatorTokenType::Unit(_)),
-                    TokenType::Operator(OperatorTokenType::Unit(_)),
-                ) => {
+                (TokenType::Unit(_), TokenType::Unit(_)) => {
                     //     expected_op is an &str
                     let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
                     let expected_chars = str_slice.chars().collect::<Vec<char>>();

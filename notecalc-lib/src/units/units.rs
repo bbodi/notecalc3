@@ -1,6 +1,7 @@
 use crate::calc::{pow, MAX_PRECISION};
 use crate::units::consts::{
-    get_base_unit_for, init_aliases, init_units, BASE_UNIT_DIMENSIONS, BASE_UNIT_DIMENSION_COUNT,
+    get_base_unit_for, init_aliases, init_units, UnitDimensionExponent, BASE_UNIT_DIMENSIONS,
+    BASE_UNIT_DIMENSION_COUNT,
 };
 use crate::units::{Prefix, Unit, UnitPrefixes};
 use bigdecimal::BigDecimal;
@@ -57,8 +58,7 @@ impl Units {
 
     pub fn parse(&self, text: &[char]) -> (UnitOutput, usize) {
         let mut output = UnitOutput::new();
-        let mut power_multiplier_current: isize = 1;
-        let mut expecting_unit = false;
+        let mut power_multiplier_current: UnitDimensionExponent = 1;
 
         // Optional number at the start of the string
         let mut last_valid_cursor_pos = 0;
@@ -95,7 +95,6 @@ impl Units {
                 } else {
                     return (output, last_valid_cursor_pos);
                 }
-                expecting_unit = true;
             }
 
             // Is there something here?
@@ -125,7 +124,7 @@ impl Units {
                 c = skip_whitespaces(c);
                 let p = parse_number(&mut c);
                 if let Some(p) = p {
-                    power *= p as isize;
+                    power *= p as UnitDimensionExponent;
                 } else {
                     // No valid number found for the power!
                     output.add_unit(UnitInstance::new(res.0, res.1, power));
@@ -156,7 +155,7 @@ impl Units {
             }
             // "*" and "/" should mean we are expecting something to come next.
             // Is there a forward slash? If so, negate powerMultiplierCurrent. The next unit or paren group is in the denominator.
-            expecting_unit = false;
+            let mut expecting_unit = false;
             if parse_char(&mut c, '*') {
                 // explicit multiplication
                 power_multiplier_current = 1;
@@ -327,7 +326,7 @@ fn skip(c: &[char], len: usize) -> &[char] {
 pub struct UnitOutput {
     // TOOD: replace it with a fixed array Some None?
     pub units: Vec<UnitInstance>,
-    pub dimensions: [isize; BASE_UNIT_DIMENSION_COUNT],
+    pub dimensions: [i8; BASE_UNIT_DIMENSION_COUNT],
 }
 
 impl Debug for UnitOutput {
@@ -584,10 +583,10 @@ impl UnitOutput {
     pub fn pow(&self, p: i64) -> UnitOutput {
         let mut result = self.clone();
         for dim in &mut result.dimensions {
-            *dim *= p as isize;
+            *dim *= p as UnitDimensionExponent;
         }
         for unit in &mut result.units {
-            unit.power *= p as isize;
+            unit.power *= p as UnitDimensionExponent;
         }
 
         return result;
@@ -602,11 +601,15 @@ impl UnitOutput {
 pub struct UnitInstance {
     pub unit: RefCell<Unit>,
     pub prefix: RefCell<Prefix>,
-    pub power: isize,
+    pub power: UnitDimensionExponent,
 }
 
 impl UnitInstance {
-    pub fn new(unit: RefCell<Unit>, prefix: RefCell<Prefix>, power: isize) -> UnitInstance {
+    pub fn new(
+        unit: RefCell<Unit>,
+        prefix: RefCell<Prefix>,
+        power: UnitDimensionExponent,
+    ) -> UnitInstance {
         UnitInstance {
             unit,
             prefix,

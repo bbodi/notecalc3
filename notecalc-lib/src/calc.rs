@@ -1,18 +1,12 @@
 use bigdecimal::*;
-use smallvec::SmallVec;
-use std::fmt::Write;
 use std::ops::BitXor;
 use std::ops::Neg;
 use std::ops::Not;
-use std::str::FromStr;
 
 use crate::matrix::MatrixData;
-use crate::token_parser::TokenType::StringLiteral;
-use crate::token_parser::{OperatorTokenType, Token, TokenType};
+use crate::token_parser::{OperatorTokenType, TokenType};
 use crate::units::consts::EMPTY_UNIT_DIMENSIONS;
-use crate::units::units::{UnitOutput, Units};
-use std::collections::HashMap;
-use std::io::BufWriter;
+use crate::units::units::UnitOutput;
 
 // it is limited by bigdecimal crate :(
 // TODO: download and mofiy the crate
@@ -65,6 +59,21 @@ pub fn evaluate_tokens<'text_ptr>(
     for token in tokens.iter_mut() {
         match &token {
             TokenType::NumberLiteral(num) => stack.push(CalcResult::Number(num.clone())),
+            TokenType::Unit(target_unit) => {
+                let maybe_top = stack.last();
+                if let Some(result) = maybe_top.and_then(|top| unit_conversion(top, &target_unit)) {
+                    stack.pop();
+                    stack.push(result);
+                } else {
+                    // it is the unit operand for "in" conversion
+                    // e.g. "3m in cm",
+                    // put the unit name into the stack, the next operator is probably an 'in'
+                    stack.push(CalcResult::Quantity(
+                        BigDecimal::zero(),
+                        target_unit.clone(),
+                    ));
+                }
+            }
             TokenType::Operator(typ) => {
                 if *typ == OperatorTokenType::Assign {
                     assignment = true;
@@ -142,21 +151,11 @@ fn apply_operation(stack: &mut Vec<CalcResult>, op: &OperatorTokenType) -> bool 
         OperatorTokenType::UnaryMinus
         | OperatorTokenType::UnaryPlus
         | OperatorTokenType::Perc
-        | OperatorTokenType::Not
-        | OperatorTokenType::Unit(_) => {
+        | OperatorTokenType::Not => {
             let maybe_top = stack.last();
             if let Some(result) = maybe_top.and_then(|top| unary_operation(&op, top)) {
                 stack.pop();
                 stack.push(result);
-                true
-            } else if let OperatorTokenType::Unit(target_unit) = &op {
-                // it is the unit operand for "in" conversion
-                // e.g. "3m in cm",
-                // put the unit name into the stack, the next operator is probably an 'in'
-                stack.push(CalcResult::Quantity(
-                    BigDecimal::zero(),
-                    target_unit.clone(),
-                ));
                 true
             } else {
                 false
@@ -193,24 +192,27 @@ fn apply_operation(stack: &mut Vec<CalcResult>, op: &OperatorTokenType) -> bool 
     return succeed;
 }
 
+fn unit_conversion(top: &CalcResult, target_unit: &UnitOutput) -> Option<CalcResult> {
+    match top {
+        CalcResult::Number(num) => {
+            let norm = target_unit.normalize(num);
+            if target_unit.dimensions == EMPTY_UNIT_DIMENSIONS {
+                // the units cancelled each other, e.g. km/m
+                Some(CalcResult::Number(norm))
+            } else {
+                Some(CalcResult::Quantity(norm, target_unit.clone()))
+            }
+        }
+        _ => None,
+    }
+}
+
 fn unary_operation(op: &OperatorTokenType, top: &CalcResult) -> Option<CalcResult> {
     return match &op {
         OperatorTokenType::UnaryPlus => Some(top.clone()),
         OperatorTokenType::UnaryMinus => unary_minus_op(top),
         OperatorTokenType::Perc => percentage_operator(top),
         OperatorTokenType::Not => binary_complement(top),
-        OperatorTokenType::Unit(target_unit) => match top {
-            CalcResult::Number(num) => {
-                let norm = target_unit.normalize(num);
-                if target_unit.dimensions == EMPTY_UNIT_DIMENSIONS {
-                    // the units cancelled each other, e.g. km/m
-                    Some(CalcResult::Number(norm))
-                } else {
-                    Some(CalcResult::Quantity(norm, target_unit.clone()))
-                }
-            }
-            _ => None,
-        },
         _ => None,
     };
 }
@@ -246,7 +248,7 @@ fn binary_operation(
                         Some(CalcResult::Number(BigDecimal::zero()))
                     }
                 }
-                (CalcResult::Matrix(mat), CalcResult::Quantity(_, target_unit)) => {
+                (CalcResult::Matrix(mat), CalcResult::Quantity(..)) => {
                     let cells: Option<Vec<CalcResult>> = mat
                         .cells
                         .iter()
@@ -409,7 +411,7 @@ pub fn multiply_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
             // 100 * 50%
             Some(CalcResult::Number(percentage_of(rhs, lhs)))
         }
-        (CalcResult::Number(scalar), CalcResult::Matrix(mat)) => mat.mult_scalar(lhs),
+        (CalcResult::Number(..), CalcResult::Matrix(mat)) => mat.mult_scalar(lhs),
         //////////////
         // 12km * x
         //////////////
@@ -514,11 +516,11 @@ pub fn add_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
             let x_percent_of_left_hand_side = lhs / &dec(100) * rhs;
             Some(CalcResult::Number(lhs + x_percent_of_left_hand_side))
         }
-        (CalcResult::Number(lhs), CalcResult::Matrix(..)) => None,
+        (CalcResult::Number(_lhs), CalcResult::Matrix(..)) => None,
         //////////////
         // 12km + x
         //////////////
-        (CalcResult::Quantity(lhs, lhs_unit), CalcResult::Number(rhs)) => {
+        (CalcResult::Quantity(_lhs, _lhs_unit), CalcResult::Number(_rhs)) => {
             // 2m + 5
             None
         }
@@ -542,11 +544,11 @@ pub fn add_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         //////////////
         // 12% + x
         //////////////
-        (CalcResult::Percentage(lhs), CalcResult::Number(rhs)) => {
+        (CalcResult::Percentage(_lhs), CalcResult::Number(_rhs)) => {
             // 5% + 10
             None
         }
-        (CalcResult::Percentage(lhs), CalcResult::Quantity(rhs, rhs_unit)) => {
+        (CalcResult::Percentage(_lhs), CalcResult::Quantity(_rhs, _rhs_unit)) => {
             // 5% + 10km
             None
         }
@@ -585,7 +587,7 @@ fn sub_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
             // 12 - 3
             Some(CalcResult::Number(lhs - rhs))
         }
-        (CalcResult::Number(lhs), CalcResult::Quantity(rhs, unit)) => {
+        (CalcResult::Number(_lhs), CalcResult::Quantity(_rhs, _unit)) => {
             // 12 - 3 km
             None
         }
@@ -598,7 +600,7 @@ fn sub_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         //////////////
         // 12km - x
         //////////////
-        (CalcResult::Quantity(lhs, lhs_unit), CalcResult::Number(rhs)) => {
+        (CalcResult::Quantity(_lhs, _lhs_unit), CalcResult::Number(_rhs)) => {
             // 2m - 5
             None
         }
@@ -622,11 +624,11 @@ fn sub_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         //////////////
         // 12% - x
         //////////////
-        (CalcResult::Percentage(lhs), CalcResult::Number(rhs)) => {
+        (CalcResult::Percentage(_lhs), CalcResult::Number(_rhs)) => {
             // 5% - 10
             None
         }
-        (CalcResult::Percentage(lhs), CalcResult::Quantity(rhs, rhs_unit)) => {
+        (CalcResult::Percentage(_lhs), CalcResult::Quantity(_rhs, _rhs_unit)) => {
             // 5% - 10km
             None
         }
@@ -671,7 +673,7 @@ pub fn divide_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         }
         (CalcResult::Number(lhs), CalcResult::Quantity(rhs, unit)) => {
             // 100 / 2km => 100 / (2 km)
-            let mut new_unit = unit.pow(-1);
+            let new_unit = unit.pow(-1);
 
             let denormalized_num = unit.denormalize(rhs);
             if denormalized_num.is_zero() {
@@ -705,7 +707,7 @@ pub fn divide_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
             }
             Some(CalcResult::Quantity(lhs / rhs, lhs_unit / rhs_unit))
         }
-        (CalcResult::Quantity(lhs, lhs_unit), CalcResult::Percentage(rhs)) => {
+        (CalcResult::Quantity(_lhs, _lhs_unit), CalcResult::Percentage(_rhs)) => {
             // 2m / 50%
             None
         }
@@ -713,15 +715,15 @@ pub fn divide_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         //////////////
         // 12% / x
         //////////////
-        (CalcResult::Percentage(lhs), CalcResult::Number(rhs)) => {
+        (CalcResult::Percentage(_lhs), CalcResult::Number(_rhs)) => {
             // 5% / 10
             None
         }
-        (CalcResult::Percentage(lhs), CalcResult::Quantity(rhs, rhs_unit)) => {
+        (CalcResult::Percentage(_lhs), CalcResult::Quantity(_rhs, _rhs_unit)) => {
             // 5% / 10km
             None
         }
-        (CalcResult::Percentage(lhs), CalcResult::Percentage(rhs)) => {
+        (CalcResult::Percentage(_lhs), CalcResult::Percentage(_rhs)) => {
             // 50% / 50%
             None
         }
@@ -729,8 +731,7 @@ pub fn divide_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         (CalcResult::Matrix(mat), CalcResult::Number(..))
         | (CalcResult::Matrix(mat), CalcResult::Quantity(..))
         | (CalcResult::Matrix(mat), CalcResult::Percentage(..)) => mat.div_scalar(rhs),
-        (CalcResult::Matrix(mat), CalcResult::Matrix(..)) => None,
-        _ => None,
+        (CalcResult::Matrix(..), CalcResult::Matrix(..)) => None,
     };
     return match result {
         Some(CalcResult::Quantity(num, unit)) if unit.is_unitless() => {
@@ -775,36 +776,30 @@ fn percentage_of(this: &BigDecimal, base: &BigDecimal) -> BigDecimal {
     base / &dec(100) * this
 }
 
-fn top_as_number(stack: &Vec<CalcResult>) -> Option<BigDecimal> {
-    let top_of_stack_num = match stack.last() {
-        Some(CalcResult::Number(num)) => Some(num.clone()),
-        _ => None,
-    };
-    return top_of_stack_num;
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::shunting_yard::tests::*;
-    use crate::shunting_yard::ShuntingYard;
-    use crate::units::consts::init_units;
+    use crate::shunting_yard::tests::{num, op, str, unit};
+    use crate::units::units::Units;
     use crate::ResultFormat;
+    use std::str::FromStr;
 
-    use super::*;
+    use crate::calc::{CalcResult, EvaluationResult};
     use crate::renderer::render_result;
+    use crate::token_parser::{OperatorTokenType, Token};
+    use bigdecimal::BigDecimal;
 
     static mut DECIMAL_COUNT: usize = 4;
 
     fn test_tokens(text: &str, expected_tokens: &[Token]) {
         println!("===================================================");
         println!("{}", text);
-        let mut units = Units::new();
+        let units = Units::new();
         let temp = text.chars().collect::<Vec<char>>();
         let mut tokens = vec![];
         let vars = Vec::new();
         let mut shunting_output =
             crate::shunting_yard::tests::do_shunting_yard(&temp, &units, &mut tokens, &vars);
-        let mut result_stack = evaluate_tokens(&mut shunting_output, &vars);
+        let _result_stack = crate::calc::evaluate_tokens(&mut shunting_output, &vars);
 
         crate::shunting_yard::tests::compare_tokens(expected_tokens, &tokens);
     }
@@ -814,21 +809,21 @@ mod tests {
         dbg!(text);
         let temp = text.chars().collect::<Vec<char>>();
 
-        let mut units = Units::new();
+        let units = Units::new();
 
         let mut tokens = vec![];
         let mut shunting_output =
             crate::shunting_yard::tests::do_shunting_yard(&temp, &units, &mut tokens, vars);
 
-        let result = evaluate_tokens(&mut shunting_output, vars);
+        let result = crate::calc::evaluate_tokens(&mut shunting_output, vars);
 
         if let Err(..) = &result {
             assert_eq!("Err", expected);
         } else if let Ok(Some(EvaluationResult {
             there_was_unit_conversion,
-            there_was_operation,
+            there_was_operation: _,
             assignment: _assignment,
-            result: CalcResult::Quantity(num, unit),
+            result: CalcResult::Quantity(_num, _unit),
         })) = &result
         {
             assert_eq!(
