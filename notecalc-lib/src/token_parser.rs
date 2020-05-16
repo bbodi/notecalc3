@@ -1,6 +1,6 @@
-use crate::calc::CalcResult;
 use crate::functions::FnType;
 use crate::units::units::{UnitOutput, Units};
+use crate::Variable;
 use bigdecimal::{BigDecimal, Num};
 use std::str::FromStr;
 
@@ -129,25 +129,27 @@ pub struct TokenParser {}
 impl TokenParser {
     pub fn parse_line<'text_ptr>(
         line: &'text_ptr [char],
-        variable_names: &[(&'text_ptr [char], CalcResult)],
+        variable_names: &[Variable],
         dst: &mut Vec<Token<'text_ptr>>,
         units: &Units,
+        line_index: usize,
     ) {
         let mut index = 0;
         let mut can_be_unit = false;
         while index < line.len() {
-            let parse_result = TokenParser::try_extract_variable_name(
-                &line[index..],
-                variable_names,
-            )
-            .or_else(|| {
-                TokenParser::try_extract_unit(&line[index..], units, can_be_unit).or_else(|| {
-                    TokenParser::try_extract_operator(&line[index..]).or_else(|| {
-                        TokenParser::try_extract_number_literal(&line[index..])
-                            .or_else(|| TokenParser::try_extract_string_literal(&line[index..]))
-                    })
-                })
-            });
+            let parse_result =
+                TokenParser::try_extract_variable_name(&line[index..], variable_names, line_index)
+                    .or_else(|| {
+                        TokenParser::try_extract_unit(&line[index..], units, can_be_unit).or_else(
+                            || {
+                                TokenParser::try_extract_operator(&line[index..]).or_else(|| {
+                                    TokenParser::try_extract_number_literal(&line[index..]).or_else(
+                                        || TokenParser::try_extract_string_literal(&line[index..]),
+                                    )
+                                })
+                            },
+                        )
+                    });
             if let Some(token) = parse_result {
                 match &token.typ {
                     TokenType::StringLiteral => {
@@ -384,19 +386,23 @@ impl TokenParser {
 
     fn try_extract_variable_name<'text_ptr>(
         str: &'text_ptr [char],
-        vars: &[(&'text_ptr [char], CalcResult)],
+        vars: &[Variable],
+        row_index: usize,
     ) -> Option<Token<'text_ptr>> {
         let mut longest_match_index = 0;
         let mut longest_match = 0;
-        'asd: for (var_index, (var_name, _)) in vars.iter().enumerate() {
-            for (i, ch) in var_name.iter().enumerate() {
+        'asd: for (var_index, var) in vars.iter().enumerate().rev() {
+            if var.defined_at_row > row_index {
+                continue;
+            }
+            for (i, ch) in var.name.iter().enumerate() {
                 if i >= str.len() || str[i] != *ch {
                     continue 'asd;
                 }
             }
             // if the next char is '(', it can't be a var name
             if str
-                .get(var_name.len())
+                .get(var.name.len())
                 .map(|it| *it == '(')
                 .unwrap_or(false)
             {
@@ -404,14 +410,14 @@ impl TokenParser {
             }
             // only full match allowed e.g. if there is variable 'b', it should not match "b0" as 'b' and '0'
             let not_full_match = str
-                .get(var_name.len())
+                .get(var.name.len())
                 .map(|it| it.is_alphanumeric())
                 .unwrap_or(false);
             if not_full_match {
                 continue 'asd;
             }
-            if var_name.len() > longest_match {
-                longest_match = var_name.len();
+            if var.name.len() > longest_match {
+                longest_match = var.name.len();
                 longest_match_index = var_index;
             }
         }
@@ -527,6 +533,7 @@ impl TokenParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::calc::CalcResult;
     use crate::shunting_yard::tests::*;
     use crate::units::units::Units;
 
@@ -536,7 +543,7 @@ mod tests {
             let mut vec = vec![];
             let temp = str.chars().collect::<Vec<_>>();
             let units = Units::new();
-            TokenParser::parse_line(&temp, &Vec::new(), &mut vec, &units);
+            TokenParser::parse_line(&temp, &Vec::new(), &mut vec, &units, 0);
             match vec.get(0) {
                 Some(Token {
                     ptr: _,
@@ -553,7 +560,7 @@ mod tests {
             let mut vec = vec![];
             let temp = str.chars().collect::<Vec<_>>();
             let units = Units::new();
-            TokenParser::parse_line(&temp, &Vec::new(), &mut vec, &units);
+            TokenParser::parse_line(&temp, &Vec::new(), &mut vec, &units, 0);
             match vec.get(0) {
                 Some(Token {
                     ptr: _,
@@ -589,15 +596,19 @@ mod tests {
 
     fn test_vars(var_names: &[&'static [char]], text: &str, expected_tokens: &[Token]) {
         use bigdecimal::Zero;
-        let var_names: Vec<(&[char], CalcResult)> = var_names
+        let var_names: Vec<Variable> = var_names
             .into_iter()
-            .map(|it| (*it, CalcResult::Number(BigDecimal::zero())))
+            .map(|it| Variable {
+                name: Box::from(*it),
+                value: CalcResult::Number(BigDecimal::zero()),
+                defined_at_row: 0,
+            })
             .collect();
         println!("{}", text);
         let mut vec = vec![];
         let temp = text.chars().collect::<Vec<_>>();
         let units = Units::new();
-        TokenParser::parse_line(&temp, &var_names, &mut vec, &units);
+        TokenParser::parse_line(&temp, &var_names, &mut vec, &units, 0);
         assert_eq!(
             expected_tokens.len(),
             vec.len(),

@@ -7,6 +7,7 @@ use crate::matrix::MatrixData;
 use crate::token_parser::{OperatorTokenType, TokenType};
 use crate::units::consts::EMPTY_UNIT_DIMENSIONS;
 use crate::units::units::UnitOutput;
+use crate::Variable;
 
 // it is limited by bigdecimal crate :(
 // TODO: download and mofiy the crate
@@ -50,7 +51,7 @@ pub struct EvaluationResult {
 
 pub fn evaluate_tokens<'text_ptr>(
     tokens: &mut Vec<TokenType>,
-    variables: &[(&'text_ptr [char], CalcResult)],
+    variables: &[Variable],
 ) -> Result<Option<EvaluationResult>, ()> {
     let mut stack = vec![];
     let mut there_was_unit_conversion = false;
@@ -93,11 +94,11 @@ pub fn evaluate_tokens<'text_ptr>(
             TokenType::StringLiteral => panic!(),
             TokenType::Variable { var_index } => {
                 // TODO clone :(
-                stack.push(variables[*var_index].1.clone());
+                stack.push(variables[*var_index].value.clone());
             }
             TokenType::LineReference { var_index } => {
                 // TODO clone :(
-                stack.push(variables[*var_index].1.clone());
+                stack.push(variables[*var_index].value.clone());
             }
         }
     }
@@ -780,7 +781,7 @@ fn percentage_of(this: &BigDecimal, base: &BigDecimal) -> BigDecimal {
 mod tests {
     use crate::shunting_yard::tests::{num, op, str, unit};
     use crate::units::units::Units;
-    use crate::ResultFormat;
+    use crate::{ResultFormat, Variable};
     use std::str::FromStr;
 
     use crate::calc::{CalcResult, EvaluationResult};
@@ -804,7 +805,7 @@ mod tests {
         crate::shunting_yard::tests::compare_tokens(expected_tokens, &tokens);
     }
 
-    fn test_vars(vars: &Vec<(&'static [char], CalcResult)>, text: &str, expected: &'static str) {
+    fn test_vars(vars: &[Variable], text: &str, expected: &'static str) {
         dbg!("===========================================================");
         dbg!(text);
         let temp = text.chars().collect::<Vec<char>>();
@@ -1358,10 +1359,11 @@ mod tests {
     #[test]
     fn test_variables() {
         let mut vars = Vec::new();
-        vars.push((
-            &['v', 'a', 'r'][..],
-            CalcResult::Number(BigDecimal::from_str("12").unwrap()),
-        ));
+        vars.push(Variable {
+            name: Box::from(&['v', 'a', 'r'][..]),
+            value: CalcResult::Number(BigDecimal::from_str("12").unwrap()),
+            defined_at_row: 0,
+        });
         test_vars(&vars, "var * 2", "24");
         test_vars(&vars, "var - var", "0");
     }

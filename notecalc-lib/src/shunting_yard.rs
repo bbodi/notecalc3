@@ -774,6 +774,7 @@ pub mod tests {
     use crate::calc::CalcResult;
     use crate::token_parser::TokenParser;
     use crate::units::units::{UnitOutput, Units};
+    use crate::Variable;
     use bigdecimal::BigDecimal;
 
     pub fn num<'text_ptr>(n: i64) -> Token<'text_ptr> {
@@ -903,19 +904,23 @@ pub mod tests {
         text: &'text_ptr [char],
         units: &'units Units,
         tokens: &mut Vec<Token<'text_ptr>>,
-        vars: &'b Vec<(&'text_ptr [char], CalcResult)>,
+        vars: &'b [Variable],
     ) -> Vec<TokenType> {
         let mut output = vec![];
-        TokenParser::parse_line(&text, &vars, tokens, &units);
+        TokenParser::parse_line(&text, &vars, tokens, &units, 0);
         ShuntingYard::shunting_yard(tokens, &mut output);
         return output;
     }
 
     fn test_output_vars(var_names: &[&'static [char]], text: &str, expected_tokens: &[Token]) {
         use bigdecimal::Zero;
-        let var_names: Vec<(&[char], CalcResult)> = var_names
+        let var_names: Vec<Variable> = var_names
             .into_iter()
-            .map(|it| (*it, CalcResult::Number(BigDecimal::zero())))
+            .map(|it| Variable {
+                name: Box::from(*it),
+                value: CalcResult::Number(BigDecimal::zero()),
+                defined_at_row: 0,
+            })
             .collect();
 
         println!("===================================================");
@@ -953,11 +958,16 @@ pub mod tests {
             &units,
             &mut tokens,
             &vec![
-                (&['b', '0'], CalcResult::Number(BigDecimal::zero())),
-                (
-                    &['&', '[', '1', ']'],
-                    CalcResult::Number(BigDecimal::zero()),
-                ),
+                Variable {
+                    name: Box::from(&['b', '0'][..]),
+                    value: CalcResult::Number(BigDecimal::zero()),
+                    defined_at_row: 0,
+                },
+                Variable {
+                    name: Box::from(&['&', '[', '1', ']'][..]),
+                    value: CalcResult::Number(BigDecimal::zero()),
+                    defined_at_row: 0,
+                },
             ],
         );
         compare_tokens(expected_tokens, &tokens);
