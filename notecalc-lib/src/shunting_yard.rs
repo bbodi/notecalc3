@@ -268,7 +268,6 @@ impl ShuntingYard {
                     output_stack.push(input_token.typ.clone());
                     v.prev_token_type = ValidationTokenType::Expr;
                     if v.can_be_valid_closing_token() {
-                        dbg!("close");
                         ShuntingYard::send_everything_to_output(&mut operator_stack, output_stack);
                         v.close_valid_range(output_stack.len(), input_index);
                     }
@@ -291,7 +290,6 @@ impl ShuntingYard {
                             );
 
                         if !prev_token_is_open_paren && (v.expect_expression || is_error) {
-                            dbg!("error ')'");
                             operator_stack.clear();
                             v.reset(output_stack.len(), input_index + 1);
                             continue;
@@ -316,7 +314,6 @@ impl ShuntingYard {
                             output_stack.push(fn_token_type.clone());
                         }
                         if v.can_be_valid_closing_token() {
-                            dbg!("close");
                             ShuntingYard::send_everything_to_output(
                                 &mut operator_stack,
                                 output_stack,
@@ -326,7 +323,6 @@ impl ShuntingYard {
                     }
                     OperatorTokenType::BracketOpen => {
                         if v.open_brackets > 0 || !v.expect_expression {
-                            dbg!("error [");
                             operator_stack.clear();
                             v.reset(output_stack.len(), input_index);
                         }
@@ -339,7 +335,6 @@ impl ShuntingYard {
                     OperatorTokenType::BracketClose => {
                         if v.expect_expression || v.open_brackets == 0 || v.is_matrix_row_len_err()
                         {
-                            dbg!("error ']'");
                             operator_stack.clear();
                             v.reset(output_stack.len(), input_index + 1);
                             continue;
@@ -370,7 +365,6 @@ impl ShuntingYard {
                         // we inserted one element so increase it
                         input_index += 1;
                         if v.can_be_valid_closing_token() {
-                            dbg!("close ']'");
                             ShuntingYard::send_everything_to_output(
                                 &mut operator_stack,
                                 output_stack,
@@ -388,7 +382,6 @@ impl ShuntingYard {
                     {
                         // it is a unary op
                         if !v.expect_expression {
-                            dbg!("error3");
                             operator_stack.clear();
                             v.reset(output_stack.len(), input_index + 1);
                             continue;
@@ -415,7 +408,6 @@ impl ShuntingYard {
                     {
                         // it is a unary op
                         if !v.expect_expression {
-                            dbg!("error4");
                             operator_stack.clear();
                             v.reset(output_stack.len(), input_index + 1);
                             continue;
@@ -431,7 +423,6 @@ impl ShuntingYard {
                     }
                     OperatorTokenType::Assign => {
                         if v.had_assign_op || !v.had_non_ws_string_literal {
-                            dbg!("error assignment");
                             if let Some(assign_op_input_token_pos) = v.assign_op_input_token_pos {
                                 tokens[assign_op_input_token_pos].typ = TokenType::StringLiteral;
                             }
@@ -442,7 +433,6 @@ impl ShuntingYard {
                         } else {
                             v.had_assign_op = true;
                             v.assign_op_input_token_pos = Some(input_index as usize);
-                            dbg!("assignment");
                             // assignment op should be part of valid tokens
                             v.reset(output_stack.len(), input_index);
                             ShuntingYard::send_to_output(op.clone(), output_stack);
@@ -452,7 +442,6 @@ impl ShuntingYard {
                     }
                     OperatorTokenType::Comma => {
                         if v.is_comma_not_allowed() {
-                            dbg!("error ','");
                             operator_stack.clear();
                             v.reset(output_stack.len(), input_index + 1);
                             continue;
@@ -464,7 +453,6 @@ impl ShuntingYard {
                     }
                     OperatorTokenType::Semicolon => {
                         if v.open_brackets == 0 || v.is_matrix_row_len_err() {
-                            dbg!("error ';'");
                             operator_stack.clear();
                             v.reset(output_stack.len(), input_index + 1);
                             continue;
@@ -478,7 +466,6 @@ impl ShuntingYard {
                         ShuntingYard::send_to_output(op.clone(), output_stack);
                         v.prev_token_type = ValidationTokenType::Expr;
                         if v.can_be_valid_closing_token() {
-                            dbg!("close");
                             ShuntingYard::send_everything_to_output(
                                 &mut operator_stack,
                                 output_stack,
@@ -514,7 +501,6 @@ impl ShuntingYard {
 
                             input_index += 1 + offset as isize;
                             if v.can_be_valid_closing_token() {
-                                dbg!("close1");
                                 ShuntingYard::send_everything_to_output(
                                     &mut operator_stack,
                                     output_stack,
@@ -532,8 +518,6 @@ impl ShuntingYard {
                     }
                     _ => {
                         if v.expect_expression {
-                            dbg!("error6");
-                            dbg!(&v);
                             operator_stack.clear();
                             v.reset(output_stack.len(), input_index + 1);
                             continue;
@@ -548,9 +532,6 @@ impl ShuntingYard {
                 TokenType::NumberLiteral(num) => {
                     let num = num.clone();
                     if !v.expect_expression {
-                        dbg!("error");
-                        dbg!(&operator_stack);
-                        dbg!(&output_stack);
                         operator_stack.clear();
                         v.reset(output_stack.len(), input_index);
                     }
@@ -582,7 +563,6 @@ impl ShuntingYard {
                         }
 
                         if v.last_valid_output_range.is_none() || v.had_operator {
-                            dbg!("close num");
                             ShuntingYard::send_everything_to_output(
                                 &mut operator_stack,
                                 output_stack,
@@ -596,7 +576,6 @@ impl ShuntingYard {
                 }
                 TokenType::Variable { .. } | TokenType::LineReference { .. } => {
                     if !v.expect_expression {
-                        dbg!("error8");
                         operator_stack.clear();
                         v.reset(output_stack.len(), input_index + 1);
                         continue;
@@ -607,7 +586,6 @@ impl ShuntingYard {
                     if (v.last_valid_output_range.is_none() || v.had_operator)
                         && v.parenthesis_stack.is_empty()
                     {
-                        dbg!("close variable");
                         ShuntingYard::send_everything_to_output(&mut operator_stack, output_stack);
                         // set everything to string which is in front of this expr
                         v.close_valid_range(output_stack.len(), input_index);
@@ -776,6 +754,7 @@ pub mod tests {
     use crate::units::units::{UnitOutput, Units};
     use crate::Variable;
     use bigdecimal::BigDecimal;
+    use typed_arena::Arena;
 
     pub fn num<'text_ptr>(n: i64) -> Token<'text_ptr> {
         Token {
@@ -901,24 +880,24 @@ pub mod tests {
     }
 
     pub fn do_shunting_yard<'text_ptr, 'units, 'b>(
-        text: &'text_ptr [char],
+        text: &[char],
         units: &'units Units,
         tokens: &mut Vec<Token<'text_ptr>>,
         vars: &'b [Variable],
+        allocator: &'text_ptr Arena<char>,
     ) -> Vec<TokenType> {
         let mut output = vec![];
-        TokenParser::parse_line(&text, &vars, tokens, &units, 0);
+        TokenParser::parse_line(&text, &vars, tokens, &units, 0, allocator);
         ShuntingYard::shunting_yard(tokens, &mut output);
         return output;
     }
 
     fn test_output_vars(var_names: &[&'static [char]], text: &str, expected_tokens: &[Token]) {
-        use bigdecimal::Zero;
         let var_names: Vec<Variable> = var_names
             .into_iter()
             .map(|it| Variable {
                 name: Box::from(*it),
-                value: CalcResult::Number(BigDecimal::zero()),
+                value: Err(()),
                 defined_at_row: 0,
             })
             .collect();
@@ -928,7 +907,7 @@ pub mod tests {
         let temp = text.chars().collect::<Vec<char>>();
         let units = Units::new();
         let mut tokens = vec![];
-        let output = do_shunting_yard(&temp, &units, &mut tokens, &var_names);
+        let output = do_shunting_yard(&temp, &units, &mut tokens, &var_names, &Arena::new());
         compare_tokens(
             expected_tokens,
             output
@@ -953,6 +932,7 @@ pub mod tests {
         let units = Units::new();
         let mut tokens = vec![];
         use bigdecimal::Zero;
+        let arena = Arena::new();
         let _ = do_shunting_yard(
             &temp,
             &units,
@@ -960,15 +940,16 @@ pub mod tests {
             &vec![
                 Variable {
                     name: Box::from(&['b', '0'][..]),
-                    value: CalcResult::Number(BigDecimal::zero()),
+                    value: Ok(CalcResult::Number(BigDecimal::zero())),
                     defined_at_row: 0,
                 },
                 Variable {
                     name: Box::from(&['&', '[', '1', ']'][..]),
-                    value: CalcResult::Number(BigDecimal::zero()),
+                    value: Ok(CalcResult::Number(BigDecimal::zero())),
                     defined_at_row: 0,
                 },
             ],
+            &arena,
         );
         compare_tokens(expected_tokens, &tokens);
     }

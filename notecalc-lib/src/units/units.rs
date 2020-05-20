@@ -435,7 +435,7 @@ impl UnitOutput {
     }
 
     pub fn simplify(&self, units: &Units) -> Option<UnitOutput> {
-        if let Some(base_unit) = dbg!(units.simplify(self)) {
+        if let Some(base_unit) = units.simplify(self) {
             // e.g. don't convert from km to m, but convert from kg*m/s^2 to N
             // base_unit.units.len() is always 1
             let base_unit_is_simpler = self.units.len() > 1;
@@ -537,11 +537,10 @@ impl UnitOutput {
         if self.is_derived() {
             let mut result = value.clone();
             for unit in &self.units {
-                dbg!(&unit);
                 let base_value = &unit.unit.borrow().value;
                 let prefix_val = &unit.prefix.borrow().value;
                 let power = unit.power;
-                result = dbg!(result) * dbg!(pow(base_value * prefix_val, power as i64));
+                result = result * pow(base_value * prefix_val, power as i64);
             }
             return result;
         } else {
@@ -561,7 +560,7 @@ impl UnitOutput {
                 let prefix_val = &unit.prefix.borrow().value;
                 let power = unit.power;
                 let pow = pow(base_value * prefix_val, power as i64);
-                result = dbg!(result / dbg!(pow));
+                result = result / pow;
             }
             result
         } else {
@@ -571,12 +570,12 @@ impl UnitOutput {
             //     ez az ág akkor hivodik, amikor a 120 000.0006.. m-t akarja megkapni mben,
             // mivel a méter már alapban pontatlanul van téárolva, vissza is pontatlant kap
             let borrow = self.units[0].unit.borrow();
-            let base_value = dbg!(&borrow.value);
-            let offset = dbg!(&borrow.offset);
+            let base_value = &borrow.value;
+            let offset = &borrow.offset;
             let borrow_prefix = self.units[0].prefix.borrow();
-            let prefix_val = dbg!(&borrow_prefix.value);
+            let prefix_val = &borrow_prefix.value;
 
-            dbg!(((value / base_value) / prefix_val) - offset).with_prec(MAX_PRECISION)
+            (((value / base_value) / prefix_val) - offset).with_prec(MAX_PRECISION)
         };
     }
 

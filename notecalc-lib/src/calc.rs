@@ -49,7 +49,7 @@ pub struct EvaluationResult {
     pub result: CalcResult,
 }
 
-pub fn evaluate_tokens<'text_ptr>(
+pub fn evaluate_tokens(
     tokens: &mut Vec<TokenType>,
     variables: &[Variable],
 ) -> Result<Option<EvaluationResult>, ()> {
@@ -94,11 +94,25 @@ pub fn evaluate_tokens<'text_ptr>(
             TokenType::StringLiteral => panic!(),
             TokenType::Variable { var_index } => {
                 // TODO clone :(
-                stack.push(variables[*var_index].value.clone());
+                match &variables[*var_index].value {
+                    Ok(value) => {
+                        stack.push(value.clone());
+                    }
+                    Err(_) => {
+                        return Err(());
+                    }
+                }
             }
             TokenType::LineReference { var_index } => {
                 // TODO clone :(
-                stack.push(variables[*var_index].value.clone());
+                match &variables[*var_index].value {
+                    Ok(value) => {
+                        stack.push(value.clone());
+                    }
+                    Err(_) => {
+                        return Err(());
+                    }
+                }
             }
         }
     }
@@ -788,6 +802,7 @@ mod tests {
     use crate::renderer::render_result;
     use crate::token_parser::{OperatorTokenType, Token};
     use bigdecimal::BigDecimal;
+    use typed_arena::Arena;
 
     static mut DECIMAL_COUNT: usize = 4;
 
@@ -798,8 +813,14 @@ mod tests {
         let temp = text.chars().collect::<Vec<char>>();
         let mut tokens = vec![];
         let vars = Vec::new();
-        let mut shunting_output =
-            crate::shunting_yard::tests::do_shunting_yard(&temp, &units, &mut tokens, &vars);
+        let arena = Arena::new();
+        let mut shunting_output = crate::shunting_yard::tests::do_shunting_yard(
+            &temp,
+            &units,
+            &mut tokens,
+            &vars,
+            &arena,
+        );
         let _result_stack = crate::calc::evaluate_tokens(&mut shunting_output, &vars);
 
         crate::shunting_yard::tests::compare_tokens(expected_tokens, &tokens);
@@ -813,8 +834,13 @@ mod tests {
         let units = Units::new();
 
         let mut tokens = vec![];
-        let mut shunting_output =
-            crate::shunting_yard::tests::do_shunting_yard(&temp, &units, &mut tokens, vars);
+        let mut shunting_output = crate::shunting_yard::tests::do_shunting_yard(
+            &temp,
+            &units,
+            &mut tokens,
+            vars,
+            &Arena::new(),
+        );
 
         let result = crate::calc::evaluate_tokens(&mut shunting_output, vars);
 
@@ -1361,7 +1387,7 @@ mod tests {
         let mut vars = Vec::new();
         vars.push(Variable {
             name: Box::from(&['v', 'a', 'r'][..]),
-            value: CalcResult::Number(BigDecimal::from_str("12").unwrap()),
+            value: Ok(CalcResult::Number(BigDecimal::from_str("12").unwrap())),
             defined_at_row: 0,
         });
         test_vars(&vars, "var * 2", "24");

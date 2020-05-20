@@ -169,6 +169,20 @@ impl Selection {
         return self.end.is_some();
     }
 
+    pub fn get_range(&self) -> (Pos, Pos) {
+        if let Some(end) = self.end {
+            let end_index = end.row * 1024 + end.column;
+            let start_index = self.start.row * 1024 + self.start.column;
+            if end_index < start_index {
+                (end, self.start)
+            } else {
+                (self.start, end)
+            }
+        } else {
+            (self.start, self.start)
+        }
+    }
+
     pub fn get_first(&self) -> Pos {
         if let Some(end) = self.end {
             let end_index = end.row * 1024 + end.column;
