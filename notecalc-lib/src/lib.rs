@@ -1,18 +1,17 @@
 #![feature(ptr_offset_from, const_if_match, const_fn, const_panic, drain_filter)]
 #![feature(type_alias_impl_trait)]
 #![feature(const_in_array_repeat_expressions)]
-// #![deny(
-//     warnings,
-//     anonymous_parameters,
-//     unused_extern_crates,
-//     unused_import_braces,
-//     trivial_casts,
-//     variant_size_differences,
-//     //missing_debug_implementations,
-//     trivial_numeric_casts,
-//     unused_qualifications,
-//     clippy::all
-// )]
+#![deny(
+    warnings,
+    anonymous_parameters,
+    unused_extern_crates,
+    unused_import_braces,
+    trivial_casts,
+    variant_size_differences,
+    trivial_numeric_casts,
+    unused_qualifications,
+    clippy::all
+)]
 
 use crate::calc::{add_op, evaluate_tokens, CalcResult, EvaluationResult};
 use crate::consts::{LINE_NUM_CONSTS, STATIC_LINE_IDS};
@@ -6929,7 +6928,7 @@ sum",
             assert_results(&["1", "3", "3"][..], &result_buffer);
         }
         {
-            let (mut app, units, mut holder) = create_app();
+            let (mut app, units, _) = create_app();
             let arena = Arena::new();
 
             app.editor
