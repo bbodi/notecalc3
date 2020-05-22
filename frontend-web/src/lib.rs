@@ -1,12 +1,29 @@
+#![deny(
+warnings,
+anonymous_parameters,
+unused_extern_crates,
+unused_import_braces,
+trivial_casts,
+variant_size_differences,
+//missing_debug_implementations,
+trivial_numeric_casts,
+unused_qualifications,
+clippy::all
+)]
+#![feature(const_in_array_repeat_expressions)]
+
 use wasm_bindgen::prelude::*;
 
-use notecalc_lib::editor::{Editor, InputKey, InputModifiers};
-use notecalc_lib::{NoteCalcApp, OutputMessage, RenderBuckets, RenderTextMsg};
-use wasm_bindgen::__rt::std::io::BufWriter;
-use wasm_bindgen::__rt::WasmRefCell;
+use crate::utils::set_panic_hook;
+use notecalc_lib::editor::editor::{EditorInputEvent, InputModifiers};
+use notecalc_lib::units::units::Units;
+use notecalc_lib::{
+    Holder, Layer, NoteCalcApp, OutputMessage, OutputMessageCommandId, RenderAsciiTextMsg,
+    RenderBuckets, RenderStringMsg, RenderUtf8TextMsg, Variable, MAX_LINE_COUNT,
+};
+use typed_arena::Arena;
 
 mod utils;
-extern crate web_sys;
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
 // allocator.
@@ -14,163 +31,276 @@ extern crate web_sys;
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
-const WASM_MEMORY_BUFFER_SIZE: usize = 1024 * 100;
-static mut WASM_MEMORY_BUFFER: [u8; WASM_MEMORY_BUFFER_SIZE] = [0; WASM_MEMORY_BUFFER_SIZE];
+static mut RESULT_BUFFER: [u8; 2048] = [0; 2048];
+const RENDER_COMMAND_BUFFER_SIZE: usize = 1024 * 100;
+static mut RENDER_COMMAND_BUFFER: [u8; RENDER_COMMAND_BUFFER_SIZE] =
+    [0; RENDER_COMMAND_BUFFER_SIZE];
 
 #[wasm_bindgen]
 extern "C" {
-    fn log(s: &str);
+    pub fn js_log(s: &str);
+}
+
+struct AppPointers {
+    app_ptr: u32,
+    units_ptr: u32,
+    render_bucket_ptr: u32,
+    holder_ptr: u32,
+    allocator: u32,
+}
+
+impl AppPointers {
+    fn mut_app<'a>(ptr: u32) -> &'a mut NoteCalcApp {
+        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
+        unsafe { &mut *(ptr_holder.app_ptr as *mut NoteCalcApp) }
+    }
+
+    fn app<'a>(ptr: u32) -> &'a NoteCalcApp {
+        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
+        unsafe { &*(ptr_holder.app_ptr as *const NoteCalcApp) }
+    }
+
+    fn units<'a>(ptr: u32) -> &'a mut Units {
+        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
+        unsafe { &mut *(ptr_holder.units_ptr as *mut Units) }
+    }
+
+    fn mut_render_bucket<'a>(ptr: u32) -> &'a mut RenderBuckets<'a> {
+        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
+        unsafe { &mut *(ptr_holder.render_bucket_ptr as *mut RenderBuckets) }
+    }
+
+    fn mut_holder<'a>(ptr: u32) -> &'a mut Holder<'a> {
+        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
+        unsafe { &mut *(ptr_holder.holder_ptr as *mut Holder) }
+    }
+
+    fn allocator<'a>(ptr: u32) -> &'a Arena<char> {
+        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
+        unsafe { &*(ptr_holder.allocator as *const Arena<char>) }
+    }
 }
 
 #[wasm_bindgen]
 pub fn create_app(client_width: usize) -> u32 {
-    log(&format!("client_width: {}", client_width));
-    let mut app = NoteCalcApp::new(client_width);
-    app.handle_input(
-        InputKey::Text(
-            "
+    set_panic_hook();
+    js_log(&format!("client_width: {}", client_width));
+    let mut holder = Holder {
+        editor_objects: std::iter::repeat(Vec::with_capacity(8))
+            .take(MAX_LINE_COUNT)
+            .collect::<Vec<_>>(),
+        autocompletion_src: Vec::with_capacity(256),
+        // TODO: array?
+        results: [Ok(None); MAX_LINE_COUNT],
+        vars: Vec::with_capacity(MAX_LINE_COUNT),
+        tokens: [None; MAX_LINE_COUNT],
+    };
+    holder.vars.push(Variable {
+        name: Box::from(&['s', 'u', 'm'][..]),
+        value: Err(()),
+        defined_at_row: 0,
+    });
 
-Ez egy szöveg itt:
-   12km/h * 45s ^^",
-        ),
-        InputModifiers::none(),
-    );
-    to_wasm_ptr(app)
+    let app = NoteCalcApp::new(client_width);
+    to_box_ptr(AppPointers {
+        app_ptr: to_box_ptr(app),
+        units_ptr: to_box_ptr(Units::new()),
+        render_bucket_ptr: to_box_ptr(RenderBuckets::new()),
+        holder_ptr: to_box_ptr(holder),
+        allocator: to_box_ptr(Arena::<char>::with_capacity(MAX_LINE_COUNT * 120)),
+    })
 }
 
 #[wasm_bindgen]
-pub fn create_command_buffer() -> *const u8 {
+pub fn get_command_buffer_ptr() -> *const u8 {
     unsafe {
-        return WASM_MEMORY_BUFFER.as_ptr();
+        return RENDER_COMMAND_BUFFER.as_ptr();
     }
 }
 
-fn to_wasm_ptr<T>(t: T) -> u32 {
-    return unsafe {
-        let ptr = Box::into_raw(Box::new(WasmRefCell::new(t))) as u32;
-        ptr
-    };
+fn to_box_ptr<T>(t: T) -> u32 {
+    let ptr = Box::into_raw(Box::new(t)) as u32;
+    ptr
+}
+
+#[wasm_bindgen]
+pub fn alt_key_released(app_ptr: u32) {
+    AppPointers::mut_app(app_ptr).alt_key_released(AppPointers::mut_holder(app_ptr));
 }
 
 #[wasm_bindgen]
 pub fn handle_resize(app_ptr: u32, new_client_width: usize) {
-    let app = unsafe { &*(app_ptr as *mut WasmRefCell<NoteCalcApp>) };
-    let mut app = app.borrow_mut();
-    app.handle_resize(new_client_width);
-    // TODO put render into the handle functions?
-    let render_buckets = app.render();
-    send_render_commands_to_js(&render_buckets);
+    AppPointers::mut_app(app_ptr).handle_resize(new_client_width);
 }
 
 #[wasm_bindgen]
-pub fn get_content(app_ptr: u32) -> String {
-    let app = unsafe { &*(app_ptr as *mut WasmRefCell<NoteCalcApp>) };
-    let mut app = app.borrow_mut();
-    return app.get_content();
+pub fn get_compressed_encoded_content(app_ptr: u32) -> String {
+    let app = AppPointers::mut_app(app_ptr);
+    let content = app.get_normalized_content();
+    {
+        use flate2::write::ZlibEncoder;
+        use flate2::Compression;
+        use std::io::prelude::*;
+        let mut e = ZlibEncoder::new(Vec::new(), Compression::default());
+        e.write_all(content.as_bytes()).expect("");
+        let compressed_encoded = e
+            .finish()
+            .map(|it| base64::encode_config(it, base64::URL_SAFE_NO_PAD));
+        return compressed_encoded.unwrap_or("".to_owned());
+    }
 }
 
 #[wasm_bindgen]
-pub fn set_content(app_ptr: u32, text: &str) {
-    let app = unsafe { &*(app_ptr as *mut WasmRefCell<NoteCalcApp>) };
-    let mut app = app.borrow_mut();
-    return app.set_content(text);
+pub fn set_compressed_encoded_content(app_ptr: u32, compressed_encoded: String) {
+    let content = {
+        use flate2::write::ZlibDecoder;
+        use std::io::prelude::*;
 
-    let render_buckets = app.render();
-    send_render_commands_to_js(&render_buckets);
+        let decoded = base64::decode_config(&compressed_encoded, base64::URL_SAFE_NO_PAD);
+        decoded.ok().and_then(|it| {
+            let mut writer = Vec::with_capacity(compressed_encoded.len() * 2);
+            let mut z = ZlibDecoder::new(writer);
+            z.write_all(&it[..]).expect("");
+            writer = z.finish().unwrap_or(Vec::new());
+            String::from_utf8(writer).ok()
+        })
+    };
+    if let Some(content) = content {
+        let app = AppPointers::mut_app(app_ptr);
+        app.set_normalized_content(&content.trim());
+    }
 }
 
 #[wasm_bindgen]
 pub fn handle_time(app_ptr: u32, now: u32) -> bool {
-    let app = unsafe { &*(app_ptr as *mut WasmRefCell<NoteCalcApp>) };
-    let mut app = app.borrow_mut();
-    let rerender_needed = app.editor.handle_tick(now);
+    let rerender_needed = AppPointers::mut_app(app_ptr).handle_time(now);
 
-    let render_buckets = app.render();
-    send_render_commands_to_js(&render_buckets);
     return rerender_needed;
 }
 
 #[wasm_bindgen]
 pub fn handle_drag(app_ptr: u32, x: usize, y: usize) {
-    let app = unsafe { &*(app_ptr as *mut WasmRefCell<NoteCalcApp>) };
-    let mut app: &mut NoteCalcApp = &mut app.borrow_mut();
-    app.handle_drag(x, y);
-
-    let render_buckets = app.render();
-    send_render_commands_to_js(&render_buckets);
+    AppPointers::mut_app(app_ptr).handle_drag(x, y);
 }
 
 #[wasm_bindgen]
 pub fn handle_click(app_ptr: u32, x: usize, y: usize) {
-    let app = unsafe { &*(app_ptr as *mut WasmRefCell<NoteCalcApp>) };
-    let mut app: &mut NoteCalcApp = &mut app.borrow_mut();
-    app.handle_click(x, y);
+    AppPointers::mut_app(app_ptr).handle_click(x, y, AppPointers::mut_holder(app_ptr));
+}
 
-    let render_buckets = app.render();
-    send_render_commands_to_js(&render_buckets);
+#[wasm_bindgen]
+pub fn handle_mouse_up(app_ptr: u32, x: usize, y: usize) {
+    AppPointers::mut_app(app_ptr).handle_mouse_up(x, y);
+}
+
+#[wasm_bindgen]
+pub fn get_clipboard_text(app_ptr: u32) -> String {
+    let app = AppPointers::app(app_ptr);
+    return app.editor.clipboard.clone();
 }
 
 #[wasm_bindgen]
 pub fn get_selected_text(app_ptr: u32) -> Option<String> {
-    let app = unsafe { &*(app_ptr as *mut WasmRefCell<NoteCalcApp>) };
-    let app = app.borrow();
-    return app.get_selected_text();
+    let app = AppPointers::app(app_ptr);
+    // TODO: use fix buffer don't allocate
+    let selection = app.editor.get_selection();
+    return if selection.is_range() {
+        let mut str = String::with_capacity(64);
+        app.editor_content.write_selection_into(selection, &mut str);
+        Some(str)
+    } else {
+        None
+    };
 }
 
 #[wasm_bindgen]
-pub fn handle_paste(app_ptr: u32, input: &str) {
-    let app = unsafe { &*(app_ptr as *mut WasmRefCell<NoteCalcApp>) };
-    let mut app = app.borrow_mut();
-    app.handle_input(InputKey::Text(input), InputModifiers::none());
-
-    let render_buckets = app.render();
-    send_render_commands_to_js(&render_buckets);
+pub fn handle_paste(app_ptr: u32, input: String) {
+    AppPointers::mut_app(app_ptr).handle_paste(input);
 }
 
 #[wasm_bindgen]
-pub fn handle_input(app_ptr: u32, input: u32, modifiers: u8) {
-    let app = unsafe { &*(app_ptr as *mut WasmRefCell<NoteCalcApp>) };
+pub fn render(app_ptr: u32) {
+    let app = AppPointers::mut_app(app_ptr);
+    let units = AppPointers::units(app_ptr);
+    let rb = AppPointers::mut_render_bucket(app_ptr);
+
+    rb.clear();
+    app.render(
+        units,
+        rb,
+        unsafe { &mut RESULT_BUFFER },
+        AppPointers::allocator(app_ptr),
+        AppPointers::mut_holder(app_ptr),
+    );
+
+    send_render_commands_to_js(rb);
+}
+
+#[wasm_bindgen]
+pub fn get_selected_rows_with_results(app_ptr: u32) -> String {
+    let app = AppPointers::mut_app(app_ptr);
+    let units = AppPointers::units(app_ptr);
+    let rb = AppPointers::mut_render_bucket(app_ptr);
+    return app.copy_selected_rows_with_result_to_clipboard(
+        units,
+        rb,
+        unsafe { &mut RESULT_BUFFER },
+        AppPointers::allocator(app_ptr),
+        AppPointers::mut_holder(app_ptr),
+    );
+}
+
+#[wasm_bindgen]
+pub fn handle_input(app_ptr: u32, input: u32, modifiers: u8) -> bool {
     let modifiers = InputModifiers {
         shift: modifiers & 1 != 0,
         ctrl: modifiers & 2 != 0,
         alt: modifiers & 4 != 0,
     };
-    let mut app = app.borrow_mut();
-    let input = match input as u32 {
-        1 => InputKey::Backspace,
-        2 => InputKey::Enter,
-        3 => InputKey::Home,
-        4 => InputKey::End,
-        5 => InputKey::Up,
-        6 => InputKey::Down,
-        7 => InputKey::Left,
-        8 => InputKey::Right,
-        9 => InputKey::Del,
+    let input = match input {
+        1 => EditorInputEvent::Backspace,
+        2 => EditorInputEvent::Enter,
+        3 => EditorInputEvent::Home,
+        4 => EditorInputEvent::End,
+        5 => EditorInputEvent::Up,
+        6 => EditorInputEvent::Down,
+        7 => EditorInputEvent::Left,
+        8 => EditorInputEvent::Right,
+        9 => EditorInputEvent::Del,
+        10 => EditorInputEvent::Esc,
+        11 => EditorInputEvent::PageUp,
+        12 => EditorInputEvent::PageDown,
+        13 => EditorInputEvent::Tab,
         _ => {
             let ch = std::char::from_u32(input);
             if let Some(ch) = ch {
-                InputKey::Char(ch)
+                EditorInputEvent::Char(ch)
             } else {
-                return;
+                return false;
             }
         }
     };
-    app.handle_input(input, modifiers);
-    let mut render_buckets = app.render();
-
-    send_render_commands_to_js(&render_buckets);
+    AppPointers::mut_app(app_ptr).handle_input(input, modifiers, AppPointers::mut_holder(app_ptr))
 }
 
-fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
-    // log(&format!("commands: {:?}", commands));
-    use byteorder::{LittleEndian, WriteBytesExt};
-    use std::io::Write;
-    // let mut js_command_buffer = unsafe { BufWriter::new(&mut WASM_MEMORY_BUFFER[..]) };
-    use std::io::Cursor;
-    let mut js_command_buffer = unsafe { Cursor::new(&mut WASM_MEMORY_BUFFER[..]) };
+pub const COLOR_TEXT: u32 = 0x595959_FF;
+pub const COLOR_NUMBER: u32 = 0xF92672_FF;
+pub const COLOR_OPERATOR: u32 = 0x000000_FF;
+pub const COLOR_UNIT: u32 = 0x000BED_FF;
+pub const COLOR_VARIABLE: u32 = 0x269d94_FF;
 
-    fn write_text_command(js_command_buffer: &mut Cursor<&mut [u8]>, text: &RenderTextMsg) {
-        js_command_buffer.write_u8(1).expect("");
+fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
+    use byteorder::{LittleEndian, WriteBytesExt};
+    use std::io::Cursor;
+    let mut js_command_buffer = unsafe { Cursor::new(&mut RENDER_COMMAND_BUFFER[..]) };
+
+    fn write_utf8_text_command(
+        js_command_buffer: &mut Cursor<&mut [u8]>,
+        text: &RenderUtf8TextMsg,
+    ) {
+        js_command_buffer
+            .write_u8(OutputMessageCommandId::RenderUtf8Text as u8 + 1)
+            .expect("");
 
         js_command_buffer
             .write_u16::<LittleEndian>(text.row as u16)
@@ -188,75 +318,197 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
         }
     }
 
+    fn write_ascii_text_command(
+        js_command_buffer: &mut Cursor<&mut [u8]>,
+        text: &RenderAsciiTextMsg,
+    ) {
+        js_command_buffer
+            .write_u8(OutputMessageCommandId::RenderAsciiText as u8 + 1)
+            .expect("");
+
+        // TODO: these don't must to be u16 (row, column), maybe the column
+        js_command_buffer
+            .write_u16::<LittleEndian>(text.row as u16)
+            .expect("");
+        js_command_buffer
+            .write_u16::<LittleEndian>(text.column as u16)
+            .expect("");
+        js_command_buffer
+            .write_u16::<LittleEndian>(text.text.len() as u16)
+            .expect("");
+        for ch in text.text {
+            js_command_buffer.write_u8(*ch).expect("");
+        }
+    }
+
+    fn write_string_command(js_command_buffer: &mut Cursor<&mut [u8]>, text: &RenderStringMsg) {
+        js_command_buffer
+            .write_u8(OutputMessageCommandId::RenderUtf8Text as u8 + 1)
+            .expect("");
+
+        js_command_buffer
+            .write_u16::<LittleEndian>(text.row as u16)
+            .expect("");
+        js_command_buffer
+            .write_u16::<LittleEndian>(text.column as u16)
+            .expect("");
+        js_command_buffer
+            .write_u16::<LittleEndian>(text.text.chars().count() as u16)
+            .expect("");
+        for ch in text.text.chars() {
+            js_command_buffer
+                .write_u32::<LittleEndian>(ch as u32)
+                .expect("");
+        }
+    }
+
     fn write_command(js_command_buffer: &mut Cursor<&mut [u8]>, command: &OutputMessage) {
         match command {
-            OutputMessage::RenderText(text) => {
-                write_text_command(js_command_buffer, text);
+            OutputMessage::RenderUtf8Text(text) => {
+                write_utf8_text_command(js_command_buffer, text);
             }
             OutputMessage::SetStyle(style) => {
-                js_command_buffer.write_u8(2).expect("");
+                js_command_buffer
+                    .write_u8(OutputMessageCommandId::SetStyle as u8 + 1)
+                    .expect("");
                 js_command_buffer.write_u8(*style as u8).expect("");
             }
             OutputMessage::SetColor(color) => {
-                js_command_buffer.write_u8(3).expect("");
-                js_command_buffer.write(color).expect("");
+                js_command_buffer
+                    .write_u8(OutputMessageCommandId::SetColor as u8 + 1)
+                    .expect("");
+                js_command_buffer
+                    .write_u32::<LittleEndian>(*color)
+                    .expect("");
             }
             OutputMessage::RenderRectangle { x, y, w, h } => {
-                js_command_buffer.write_u8(4).expect("");
+                js_command_buffer
+                    .write_u8(OutputMessageCommandId::RenderRectangle as u8 + 1)
+                    .expect("");
                 js_command_buffer.write_u8(*x as u8).expect("");
                 js_command_buffer.write_u8(*y as u8).expect("");
                 js_command_buffer.write_u8(*w as u8).expect("");
                 js_command_buffer.write_u8(*h as u8).expect("");
             }
             OutputMessage::RenderChar(x, y, ch) => {
-                js_command_buffer.write_u8(5).expect("");
+                js_command_buffer
+                    .write_u8(OutputMessageCommandId::RenderChar as u8 + 1)
+                    .expect("");
                 js_command_buffer.write_u8(*x as u8).expect("");
                 js_command_buffer.write_u8(*y as u8).expect("");
                 js_command_buffer
                     .write_u32::<LittleEndian>(*ch as u32)
                     .expect("");
             }
+            OutputMessage::RenderString(text) => {
+                write_string_command(js_command_buffer, text);
+            }
+            OutputMessage::RenderAsciiText(text) => {
+                write_ascii_text_command(js_command_buffer, text);
+            }
+            OutputMessage::PulsingRectangle {
+                x,
+                y,
+                w,
+                h,
+                start_color,
+                end_color,
+                animation_time,
+            } => {
+                js_command_buffer
+                    .write_u8(OutputMessageCommandId::PulsingRectangle as u8 + 1)
+                    .expect("");
+                js_command_buffer.write_u8(*x as u8).expect("");
+                js_command_buffer.write_u8(*y as u8).expect("");
+                js_command_buffer.write_u8(*w as u8).expect("");
+                js_command_buffer.write_u8(*h as u8).expect("");
+                js_command_buffer
+                    .write_u32::<LittleEndian>(*start_color)
+                    .expect("");
+                js_command_buffer
+                    .write_u32::<LittleEndian>(*end_color)
+                    .expect("");
+                js_command_buffer
+                    .write_u16::<LittleEndian>(animation_time.as_millis() as u16)
+                    .expect("");
+            }
         }
     }
 
-    fn write_commands(js_command_buffer: &mut Cursor<&mut [u8]>, commands: &[RenderTextMsg]) {
+    fn write_commands(js_command_buffer: &mut Cursor<&mut [u8]>, commands: &[RenderUtf8TextMsg]) {
         for text in commands {
-            write_text_command(js_command_buffer, text);
+            write_utf8_text_command(js_command_buffer, text);
         }
     }
 
-    for command in &render_buckets.custom_commands[0] {
+    for command in &render_buckets.clear_commands {
         write_command(&mut js_command_buffer, command);
     }
 
-    write_command(
-        &mut js_command_buffer,
-        &OutputMessage::SetColor([0, 0, 0, 255]),
-    );
+    for command in &render_buckets.custom_commands[Layer::BehindText as usize] {
+        write_command(&mut js_command_buffer, command);
+    }
 
-    write_commands(&mut js_command_buffer, &render_buckets.texts);
+    if !render_buckets.ascii_texts.is_empty() || !render_buckets.utf8_texts.is_empty() {
+        write_command(&mut js_command_buffer, &OutputMessage::SetColor(COLOR_TEXT));
+        write_commands(&mut js_command_buffer, &render_buckets.utf8_texts);
+        for text in &render_buckets.ascii_texts {
+            write_ascii_text_command(&mut js_command_buffer, text);
+        }
+    }
 
-    write_command(
-        &mut js_command_buffer,
-        &OutputMessage::SetColor([0xDD, 0x67, 0x18, 255]),
-    );
-    write_commands(&mut js_command_buffer, &render_buckets.numbers);
+    if !render_buckets.numbers.is_empty() {
+        write_command(
+            &mut js_command_buffer,
+            &OutputMessage::SetColor(COLOR_NUMBER),
+        );
+        write_commands(&mut js_command_buffer, &render_buckets.numbers);
+    }
 
-    write_command(
-        &mut js_command_buffer,
-        &OutputMessage::SetColor([0x6A, 0x87, 0x59, 255]),
-    );
-    write_commands(&mut js_command_buffer, &render_buckets.units);
+    if !render_buckets.units.is_empty() {
+        write_command(&mut js_command_buffer, &OutputMessage::SetColor(COLOR_UNIT));
+        write_commands(&mut js_command_buffer, &render_buckets.units);
+    }
 
-    write_command(
-        &mut js_command_buffer,
-        &OutputMessage::SetColor([0x20, 0x99, 0x9D, 255]),
-    );
-    write_commands(&mut js_command_buffer, &render_buckets.operators);
+    if !render_buckets.line_ref_results.is_empty() {
+        // background for line reference results
+        write_command(
+            &mut js_command_buffer,
+            &OutputMessage::SetColor(0xFFCCCC_FF),
+        );
+        for command in &render_buckets.line_ref_results {
+            write_command(
+                &mut js_command_buffer,
+                &OutputMessage::RenderRectangle {
+                    x: command.column,
+                    y: command.row,
+                    w: command.text.chars().count(),
+                    h: 1,
+                },
+            )
+        }
+    }
 
-    write_commands(&mut js_command_buffer, &render_buckets.variable);
+    if !render_buckets.operators.is_empty() || !render_buckets.line_ref_results.is_empty() {
+        write_command(
+            &mut js_command_buffer,
+            &OutputMessage::SetColor(COLOR_OPERATOR),
+        );
+        write_commands(&mut js_command_buffer, &render_buckets.operators);
+        for command in &render_buckets.line_ref_results {
+            write_string_command(&mut js_command_buffer, command);
+        }
+    }
 
-    for command in &render_buckets.custom_commands[1] {
+    if !render_buckets.variable.is_empty() {
+        write_command(
+            &mut js_command_buffer,
+            &OutputMessage::SetColor(COLOR_VARIABLE),
+        );
+        write_commands(&mut js_command_buffer, &render_buckets.variable);
+    }
+
+    for command in &render_buckets.custom_commands[Layer::AboveText as usize] {
         write_command(&mut js_command_buffer, command);
     }
 
