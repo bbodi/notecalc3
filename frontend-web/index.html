@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>NoteCalc</title>
+    <style>
+        /* Style the tab */
+        .tab {
+            overflow: hidden;
+            border: 1px solid #ccc;
+            background-color: #f1f1f1;
+        }
+
+        /* Style the buttons inside the tab */
+        .tab button {
+            background-color: inherit;
+            float: left;
+            border: none;
+            outline: none;
+            cursor: pointer;
+            padding: 2px 16px;
+            transition: 0.3s;
+            font-size: 17px;
+        }
+
+        /* Change background color of buttons on hover */
+        .tab button:hover {
+            background-color: #ddd;
+        }
+
+        /* Create an active/current tablink class */
+        .tab button.active {
+            background-color: #ccc;
+        }
+
+        /* Style the tab content */
+        .tabcontent {
+
+        }
+
+        .tablinks_name {
+            padding-right: 5px;
+        }
+        .tablinks_close {
+        }
+        .tablinks_close:hover {
+            background-color: #Faa;
+        }
+
+        .unsaved::before {
+            font-weight: bold;
+            /*color: navy;*/
+            content: "*";
+        }
+    </style>
+</head>
+
+
+<body style="overflow: hidden;">
+<div id="tabs" class="tab">
+    <button id="tablink_add" class="" onclick="add_tab_and_switch_to_it('')">+</button>
+</div>
+<!--IF YOU MODIFY THIS, DONT FORGET TO MODIFY ONCLICK-->
+<!--         margin-left: 10px; margin-top: 10px-->
+<div class="tabcontent"
+     style="; border-style:solid"
+     id="containder-div"
+>
+    <canvas id='canvas'></canvas>
+</div>
+<script src="https://ajax.googleapis.com/ajax/libs/webfont/1.5.10/webfont.js"></script>
+<script>
+    let font_width;
+    WebFont.load({
+        custom: {
+            families: ['JetBrainsMono-Regular']
+        },
+        fontloading: function (familyName) {
+
+        }
+    });
+</script>
+
+<style type="text/css">
+    @font-face {
+        font-family: "JetBrainsMono-Regular";
+        src: url("fonts/JetBrainsMono-Regular.woff") format("woff");
+    }
+</style>
+
+<script src="pkg/frontend_web.js"></script>
+<script>
+    let canvas_dirty = 0;
+    let last_drag_event = null;
+    let FONT_HEIGHT = 16;
+    let FONT_VERT_PADDING = 2;
+    let LINE_HEIGHT = FONT_HEIGHT + 2 * FONT_VERT_PADDING;
+    let CLIENT_WIDTH_IN_CHARS = 0;
+    let active_tab_index = 0;
+    let content_was_modified = false;
+    let active_tab_btn_dom;
+    let backbuffer_textarea;
+    let tab_index_counter = 0;
+    const pulsing_rects = [];
+    const canvas = document.getElementById("canvas");
+    var ctx = canvas.getContext("2d");
+    window.addEventListener('load', function () {
+        init_canvas(canvas);
+        font_width = ctx.measureText('a').width;
+
+        canvas.addEventListener('mousedown', on_click);
+        canvas.addEventListener('mouseup', on_mouse_up);
+        canvas.addEventListener('mousemove', on_drag);
+    })
+    let app_ptr;
+    let wasm;
+    window.addEventListener('resize', resizeCanvas, false);
+
+    function create_backbuffer_textarea() {
+        const el = document.createElement('textarea');
+        el.value = '';
+        el.style.position = 'absolute';
+        el.style.left = '-9999px';
+        document.body.appendChild(el);
+        return el;
+    }
+
+
+    function init_canvas() {
+        // some browser extension add a class to the body, so rmeove them
+        let body = document.getElementsByTagName('body').item(0);
+        body.className = '';
+        body.style = "margin: 0";
+        ctx.font = FONT_HEIGHT + 'px JetBrainsMono-Regular';
+        ctx.textBaseline = "bottom";
+        backbuffer_textarea = create_backbuffer_textarea();
+    }
+
+    function calc_client_width() {
+        canvas.width = ((window.innerWidth / font_width) | 0) * font_width - 4 * font_width;
+        canvas.height = ((window.innerHeight / FONT_HEIGHT) | 0) * FONT_HEIGHT - 100;
+        return canvas.width / font_width;
+    }
+
+    function resizeCanvas() {
+        CLIENT_WIDTH_IN_CHARS = calc_client_width();
+
+        const div = document.getElementById('containder-div');
+        div.style.width = (canvas.width + 2 * font_width) + 'px';
+        div.style.height = (canvas.height + 2 * FONT_HEIGHT) + 'px';
+
+        init_canvas(canvas);
+        wasm_bindgen.handle_resize(app_ptr, CLIENT_WIDTH_IN_CHARS);
+        canvas_dirty += 1;
+    }
+
+    function js_log(str) {
+        console.log(str);
+    }
+
+    function tick(now) {
+        let need_update_selected_text = false;
+        if (last_drag_event !== null) {
+            wasm_bindgen.handle_drag(app_ptr, last_drag_event.x | 0, last_drag_event.y | 0);
+            last_drag_event = null;
+            need_update_selected_text = true;
+            canvas_dirty += 1;
+        }
+        if (wasm_bindgen.handle_time(app_ptr, now)) {
+            canvas_dirty += 1;
+            if (content_was_modified) {
+                save_content();
+            }
+        }
+        let started = new Date().getTime();
+        if (canvas_dirty > 0) {
+            wasm_bindgen.render(app_ptr);
+            if (need_update_selected_text) {
+                // hack: it must be called after the render
+                update_selected_text();
+            }
+            let command_count = redraw();
+            let took = new Date().getTime() - started;
+            console.log('render: ', took, ' ms, render command count: ', command_count);
+            canvas_dirty -= 1;
+        }
+        draw_pulsing_rects(pulsing_rects, started);
+
+        requestAnimationFrame(tick);
+    }
+
+    function draw_pulsing_rects(pulsing_rects, now) {
+        function interp(start, end, x) {
+            return start + (end-start)*x;
+        }
+        for (const pulsing_rect of pulsing_rects) {
+            let delta = (now - pulsing_rect.start_time) / pulsing_rect.duration_ms;
+            console.log('delta: ', delta, ' ms');
+            if (delta > 1) {
+                continue;
+            }
+            ctx.putImageData(pulsing_rect.img_data, pulsing_rect.x * font_width, pulsing_rect.y * LINE_HEIGHT);
+            let r = interp((pulsing_rect.start_color & 0xFF000000) >>> 24, (pulsing_rect.end_color & 0xFF000000) >>> 24, delta);
+            let g = interp((pulsing_rect.start_color & 0x00FF0000) >>> 16, (pulsing_rect.end_color & 0x00FF0000) >>> 16, delta);
+            let b = interp((pulsing_rect.start_color & 0x0000FF00) >>> 8, (pulsing_rect.end_color & 0x0000FF00) >>> 8, delta);
+            let a = interp((pulsing_rect.start_color & 0x000000FF) >>> 0, (pulsing_rect.end_color & 0x000000FF) >>> 0, delta);
+            ctx.fillStyle = 'rgba(' + r + ', ' + g + ', ' + b + ', ' + a / 255.0 + ')';
+            ctx.fillRect(
+                pulsing_rect.x * font_width,
+                pulsing_rect.y * LINE_HEIGHT,
+                pulsing_rect.w * font_width,
+                pulsing_rect.h * LINE_HEIGHT
+            );
+        }
+    }
+
+    function save_content() {
+        let content = wasm_bindgen.get_compressed_encoded_content(app_ptr);
+        window.location.hash = content;
+        let notecalc_data = localStorage.getItem('notecalc');
+        if (notecalc_data === null) {
+            notecalc_data = {
+                tabs: []
+            };
+        } else {
+            notecalc_data = JSON.parse(notecalc_data);
+        }
+        notecalc_data.tabs[active_tab_index].encoded_content = content;
+        localStorage.setItem('notecalc', JSON.stringify(notecalc_data));
+        content_was_modified = false;
+        active_tab_btn_dom.className = 'active tablinks'; // remove 'unsaved' class
+    }
+
+    function on_mouse_up(e) {
+        const char_x = (e.offsetX) / font_width;
+        const char_y = (e.offsetY) / LINE_HEIGHT;
+        wasm_bindgen.handle_mouse_up(app_ptr, char_x | 0, char_y | 0);
+    }
+
+    function on_click(e) {
+        if (e.buttons === 1) {
+            const char_x = (e.offsetX) / font_width;
+            const char_y = (e.offsetY) / LINE_HEIGHT;
+            wasm_bindgen.handle_click(app_ptr, char_x | 0, char_y | 0);
+            canvas_dirty += 2;
+        }
+    }
+
+    function update_selected_text() {
+        let selected_text = wasm_bindgen.get_selected_text(app_ptr);
+        if (selected_text !== undefined) {
+            backbuffer_textarea.value = selected_text;
+            backbuffer_textarea.select();
+        }
+    }
+
+
+    function on_drag(e) {
+        if (e.buttons === 1) { //dragged with left mouse button
+            const char_x = (e.offsetX) / font_width;
+            const char_y = (e.offsetY) / LINE_HEIGHT;
+            last_drag_event = {x: char_x, y: char_y};
+        }
+    }
+
+    function doKeyUp(e) {
+        if (e.key === 'Alt') {
+            wasm_bindgen.alt_key_released(app_ptr);
+            set_content_was_modified();
+            canvas_dirty += 1;
+            e.preventDefault();
+            return false;
+        }
+    }
+
+    function set_content_was_modified() {
+        content_was_modified = true;
+        active_tab_btn_dom.className = 'active unsaved tablinks';
+    }
+
+    function doKeyDown(e) {
+        //console.log(e.key);
+        if (e.key[0] === 'F' && e.key.length > 1) {
+            return;
+        } else if (e.key === 'CapsLock') {
+            return
+        }
+        let key;
+        if (e.key === "Backspace") {
+            key = 1;
+        } else if (e.key === "Enter") {
+            key = 2;
+        } else if (e.key === "Home") {
+            key = 3;
+        } else if (e.key === "End") {
+            key = 4;
+        } else if (e.key === "ArrowUp") {
+            key = 5;
+        } else if (e.key === "ArrowDown") {
+            key = 6;
+        } else if (e.key === "ArrowLeft") {
+            key = 7;
+        } else if (e.key === "ArrowRight") {
+            key = 8;
+        } else if (e.key === "Delete") {
+            key = 9;
+        } else if (e.key === "Escape") {
+            key = 10;
+        } else if (e.key === "PageUp") {
+            key = 11;
+        } else if (e.key === "PageDown") {
+            key = 12;
+        } else if (e.key === 'Tab') {
+            key = 13;
+        } else if (e.key === "Shift") {
+            return;
+        } else if (e.key === "Control") {
+            return;
+        } else if (e.key === "Alt") {
+            return;
+        } else if (e.key === "AltGraph") {
+            return;
+        } else if (e.ctrlKey && e.key === 'v') {
+            return;
+        } else if (e.key.length > 1) {
+            return;
+        } else {
+            key = e.key.codePointAt(0);
+        }
+
+        let modifiers = 0;
+        if (e.ctrlKey) {
+            modifiers |= 2;
+        }
+        if (e.altKey) {
+            modifiers |= 4;
+        }
+        if (e.shiftKey) {
+            modifiers |= 1;
+        }
+        if (e.shiftKey && e.ctrlKey && e.key === 'C') {
+            let str = wasm_bindgen.get_selected_rows_with_results(app_ptr);
+            alert(str);
+            return false;
+        }
+
+        console.log('key ' + key);
+        let content_was_modified = wasm_bindgen.handle_input(app_ptr, key, modifiers);
+        if (content_was_modified) {
+            set_content_was_modified();
+        } else {
+            update_selected_text();
+        }
+        if (e.ctrlKey && (e.key === 'c' || e.key === 'x')) {
+            if (e.key === 'x') {
+                canvas_dirty += 1;
+            }
+            return true;
+        }
+
+        canvas_dirty += 1;
+        e.preventDefault();
+        return false;
+    }
+
+    let command_buffer_ptr;
+
+    function redraw() {
+        let command_count = -1;
+        let buf_index = 0;
+        const command_buffer = new Uint8Array(wasm.memory.buffer, command_buffer_ptr);
+        let canvas_img_data = null;
+        const now = new Date().getTime();
+
+        while (true) {
+            command_count += 1;
+            const command_id = command_buffer[buf_index];
+            buf_index += 1;
+            if (command_id === 0 || command_id === undefined) {
+                break;
+            } else if (command_id === 1) { //  SetStyle
+            } else if (command_id === 2) { //  SetColor
+                let a = command_buffer[buf_index + 0];
+                let b = command_buffer[buf_index + 1];
+                let g = command_buffer[buf_index + 2];
+                let r = command_buffer[buf_index + 3];
+                buf_index += 4;
+
+                ctx.fillStyle = 'rgba(' + r + ', ' + g + ', ' + b + ', ' + a / 255.0 + ')';
+            } else if (command_id === 3) { // RenderChar
+                let column_i = read_u8(command_buffer, buf_index);
+                let row_i = read_u8(command_buffer, buf_index + 1);
+                let ch = read_u32(command_buffer, buf_index + 2);
+                buf_index += 1 + 1 + 4;
+
+                ctx.fillText(
+                    String.fromCharCode(ch),
+                    column_i * font_width,
+                    LINE_HEIGHT * row_i + LINE_HEIGHT - FONT_VERT_PADDING
+                );
+            } else if (command_id === 4) { // RenderUtf8Text | RenderString
+                let row_i = read_u16(command_buffer, buf_index);
+                let column_i = read_u16(command_buffer, buf_index + 2);
+                let len = read_u16(command_buffer, buf_index + 4);
+                buf_index += 6;
+                let j;
+                let str = '';
+                for (j = 0; j < len; j++) {
+                    let ch = read_u32(command_buffer, buf_index);
+                    str += String.fromCharCode(ch);
+
+                    buf_index += 4;
+                }
+
+                ctx.fillText(
+                    str,
+                    column_i * font_width,
+                    LINE_HEIGHT * row_i + LINE_HEIGHT - FONT_VERT_PADDING
+                );
+            } else if (command_id === 5) { // RenderAsciiText
+                let row_i = read_u16(command_buffer, buf_index);
+                let column_i = read_u16(command_buffer, buf_index + 2);
+                let len = read_u16(command_buffer, buf_index + 4);
+                buf_index += 6;
+                let j;
+                let str = '';
+                for (j = 0; j < len; j++) {
+                    let ch = read_u8(command_buffer, buf_index);
+                    str += String.fromCharCode(ch);
+
+                    buf_index += 1;
+                }
+
+                ctx.fillText(
+                    str,
+                    column_i * font_width,
+                    LINE_HEIGHT * row_i + LINE_HEIGHT - FONT_VERT_PADDING
+                );
+            } else if (command_id === 7 || command_id === 8) { // RenderRectangle | PulsingRectangle
+                let x = command_buffer[buf_index + 0];
+                let y = command_buffer[buf_index + 1];
+                let w = command_buffer[buf_index + 2];
+                let h = command_buffer[buf_index + 3];
+                buf_index += 4;
+
+                if (command_id === 7) { // RenderRectangle
+                    ctx.fillRect(
+                        x * font_width,
+                        y * LINE_HEIGHT,
+                        w * font_width,
+                        h * LINE_HEIGHT
+                    );
+                } else { // PulsingRectangle
+                    const start_color = read_u32(command_buffer, buf_index);
+                    const end_color = read_u32(command_buffer, buf_index + 4);
+                    const animation_time_ms = read_u16(command_buffer, buf_index + 8);
+                    buf_index += 4 + 4 + 2;
+                    // save  the target area
+                    if (canvas_img_data === null) {
+                        canvas_img_data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    }
+                    const rect_data = ctx.createImageData(w * font_width, h * LINE_HEIGHT);
+                    let dst_index = 0;
+                    for (let row_i = y*LINE_HEIGHT; row_i < (y+h)*LINE_HEIGHT; ++row_i) {
+                        const y = row_i * canvas.width * 4;
+                        for (let col_i = x*font_width*4; col_i < (x+w)*font_width*4; col_i += 4) {
+                            rect_data.data[dst_index++] = canvas_img_data.data[y + col_i + 0];
+                            rect_data.data[dst_index++] = canvas_img_data.data[y + col_i + 1];
+                            rect_data.data[dst_index++] = canvas_img_data.data[y + col_i + 2];
+                            rect_data.data[dst_index++] = canvas_img_data.data[y + col_i + 3];
+                        }
+                    }
+                    pulsing_rects.push({
+                        x,y,w,h,
+                        start_color,
+                        end_color,
+                        start_time: now,
+                        duration_ms: animation_time_ms,
+                        img_data: rect_data
+                    });
+                }
+            }
+        }
+        return command_count;
+    }
+
+    function read_u8(buf, byte_pos) {
+        return buf[byte_pos];
+    }
+
+    function read_u16(buf, byte_pos) {
+        return (buf[byte_pos + 0] << 0) |
+            buf[byte_pos + 1] << 8;
+    }
+
+    function read_u32(buf, byte_pos) {
+        return (buf[byte_pos + 0] << 0) |
+            (buf[byte_pos + 1] << 8) |
+            (buf[byte_pos + 2] << 16) |
+            (buf[byte_pos + 3] << 24);
+    }
+
+    function paste_from_clipboard(pasted_text) {
+        wasm_bindgen.handle_paste(app_ptr, pasted_text);
+        canvas_dirty += 1;
+        save_content();
+        return false;
+    }
+
+    function on_tab_click(index) {
+        let tab_btn = document.getElementById('tablink_' + index);
+        if (tab_btn === null) {
+            return;
+        }
+        let tablinks = document.getElementsByClassName("tablinks");
+        for (i = 0; i < tablinks.length; i++) {
+            tablinks[i].className = 'tablinks';
+        }
+
+        tab_btn.className = 'tablinks active';
+        reload_content(index);
+    }
+
+    function on_tab_close(index) {
+        let notecalc_data = JSON.parse(localStorage.getItem('notecalc'));
+        if (index === 0 && notecalc_data.tabs.length === 1) {
+            return;
+        }
+        if (window.confirm("Are you sure to delete this tab?")) {
+            notecalc_data.tabs.splice(index, 1);
+            localStorage.setItem('notecalc', JSON.stringify(notecalc_data));
+            document.getElementById('tablink_' + index).remove();
+
+            let tablinks = document.getElementsByClassName("tablinks");
+            for (i = 0; i < tablinks.length; i++) {
+                tablinks[i].setAttribute('id', 'tablink_' + i);
+                tablinks[i].setAttribute('onclick', 'on_tab_click(' + i + ')');
+            }
+            let close_btns = document.getElementsByClassName("tablinks_close");
+            for (i = 0; i < close_btns.length; i++) {
+                close_btns[i].setAttribute('id', 'tablink_close' + i);
+                close_btns[i].setAttribute('onclick', 'on_tab_close(' + i + ')');
+            }
+            let tab_names = document.getElementsByClassName("tablinks_name");
+            for (i = 0; i < tab_names.length; i++) {
+                tab_names[i].setAttribute('id', 'tablink_name' + i);
+            }
+            tab_index_counter = tab_names.length;
+            reload_content(Math.min(index, notecalc_data.tabs.length-1));
+        }
+        return false;
+    }
+
+    function set_active_tab_index(index) {
+        active_tab_index = index;
+        active_tab_btn_dom = document.getElementsByClassName('tablinks')[index];
+    }
+
+    function insert_tab_dom() {
+        let index = tab_index_counter;
+        tab_index_counter += 1;
+
+        let tab_name = document.createElement('div');
+        tab_name.setAttribute('id', 'tablink_name' + index);
+        tab_name.className = 'tablinks_name';
+        tab_name.innerHTML = 'Tab ' + index;
+
+        let close_button = document.createElement('div');
+        close_button.setAttribute('id', 'tablink_close' + index);
+        close_button.className = 'tablinks_close';
+        close_button.setAttribute('onclick', 'on_tab_close(' + index + ')');
+        close_button.innerHTML = '☒';
+
+        // button
+        let tab_node = document.createElement('button');
+        tab_node.setAttribute('id', 'tablink_' + index);
+        tab_node.setAttribute('style', 'display: flex;');
+        tab_node.className = 'tablinks';
+        tab_node.setAttribute('onclick', 'on_tab_click(' + index + ')');
+        tab_node.appendChild(tab_name);
+        tab_node.appendChild(close_button);
+        document.getElementById('tabs').insertBefore(tab_node, document.getElementById('tablink_add'));
+        return index;
+    }
+
+    function init_tabs_dom() {
+        let notecalc_data = JSON.parse(localStorage.getItem('notecalc'));
+        for (i = 0; i < notecalc_data.tabs.length; ++i) {
+            insert_tab_dom();
+        }
+    }
+
+    function add_tab_and_switch_to_it(encoded_content) {
+        let notecalc_data = JSON.parse(localStorage.getItem('notecalc'));
+        let index = insert_tab_dom();
+        notecalc_data.tabs.push({
+            encoded_content: encoded_content
+        });
+        localStorage.setItem('notecalc', JSON.stringify(notecalc_data));
+        on_tab_click(index);
+    }
+
+    function reload_content(tab_index) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        let notecalc_data = JSON.parse(localStorage.getItem('notecalc'));
+        let tabs = notecalc_data.tabs;
+        set_active_tab_index(tab_index);
+        wasm_bindgen.set_compressed_encoded_content(
+            app_ptr,
+            tabs[active_tab_index].encoded_content
+        );
+        window.location.hash = tabs[active_tab_index].encoded_content;
+        canvas_dirty += 1;
+    }
+
+    // http://localhost:5000/eJytU81u2zAMvuspeGwzF42dpH_BsMO6nXYasGGAkQJ0otqKZKuVlLTxW_QRcsx5QA9Db0bfa5-dZetQDFiBCo4iSuRH8iOZfpvQ--DMwS1pNZemuTfNxlPVbIxuHky0fTwXKU2gUMpKBrq0rmzWdbP2fEaFvI0oU1VEsnbSU-DcGjxF5KdKVkFdqmlEV7YK1vtmnXdITBXnq7LZOBmaB8raXZO3WrMhuPYyy6SmpTWsIwYIG8VeVfm7zvyrdEFNoYrrvKKSg1O3VpP0ANpUgNfNfZ3Jyj_eUbAaUWt8HzrjwJnVW5wlGy4VFaoKERU2X5HErw0LMBpn32xyGFKpzEoCF-HMmYwswALUctrywiEAAknj8gGuZ6BQEte0mCMpV3LOXe5dfp0J-Gtjzhi5g_CrlvO5BZlm5SS5zg3s5UwF68JTk7_KtOcLdRnoDemFq63b7xS_fP6UPd4ZKFqzZF8p8BHYBTYgii4uOqWPxkL4TViN3AIiyDKHkNg45tZK1XIm_RxMSI2Ul83aBFsHZMPUj5PBcHR0fHL6_yfxcpPXOb2K45t2CZlfv2CJ7b4dn23hQLuRJcRdn5muXX4VBv1iNYpQqCUHbdsp2z1NMYp1t5MvFm3hayEyp7wmuzA06Pf7dEijfmme3-611_sCTTRjoMdDOj7F_aAv4sO9RJeHxb4QFVNpfUBP5uhJRKkpX1nnueoGo7Bt3Wfsib2s26Y5Oych0CpvadT-9Sju94XA2069bn7suqb5DrV48O_XHg3Fkl2rlYiDOI2jJBpM_pyod0OtMKZkDImZPXfrmsUTlXQYj58rwGsp893Ew_P9EmI6SDrDcVvg05M4GkVHAKG0gxgPJ4xsZ55nQqRpEtEA3ySidBTRUUTHkwlGLxZiL056w2QfwvAEXHd0igQ4SOcnZB_IjQ
+    async function run() {
+        wasm = await wasm_bindgen('pkg/frontend_web_bg.wasm');
+
+        CLIENT_WIDTH_IN_CHARS = calc_client_width();
+        app_ptr = wasm.create_app(CLIENT_WIDTH_IN_CHARS);
+        command_buffer_ptr = wasm.get_command_buffer_ptr();
+
+        // window
+        window
+            .addEventListener('keydown', doKeyDown, true);
+        window
+            .addEventListener('keyup', doKeyUp, true);
+        window.addEventListener('paste', (event) => {
+            paste_from_clipboard((event.clipboardData || window.clipboardData).getData('text'));
+            event.preventDefault();
+        });
+
+        resizeCanvas();
+
+        var notecalc_data = JSON.parse(localStorage.getItem('notecalc'));
+        if (!notecalc_data) {
+            notecalc_data = {
+                tabs: [{encoded_content: ''}]
+            };
+            localStorage.setItem('notecalc', JSON.stringify(notecalc_data));
+        }
+
+        init_tabs_dom();
+        if (window.location.hash !== null && window.location.hash.length > 0) {
+            // check if it already has it as a tab
+            let content_from_url = window.location.hash.substr(1);
+            let found = false;
+            let tabs = notecalc_data.tabs;
+            for (i = 0; i < tabs.length; ++i) {
+                let encoded_content = tabs[i].encoded_content;
+                if (encoded_content === content_from_url) {
+                    set_active_tab_index(i);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                add_tab_and_switch_to_it(content_from_url);
+            }
+        } else if (notecalc_data) {
+            set_active_tab_index(0);
+        }
+        on_tab_click(active_tab_index);
+
+        requestAnimationFrame(tick);
+    }
+
+    run();
+
+
+</script>
+</body>
+
+</html>
