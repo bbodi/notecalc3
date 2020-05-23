@@ -64,10 +64,14 @@
 <!--IF YOU MODIFY THIS, DONT FORGET TO MODIFY ONCLICK-->
 <!--         margin-left: 10px; margin-top: 10px-->
 <div class="tabcontent"
-     style="; border-style:solid"
+     style="position: relative; border-style:solid"
      id="containder-div"
 >
     <canvas id='canvas'></canvas>
+    <canvas
+            style="position: absolute;top: 0;left: 0;"
+            id='overlay_canvas'>
+    </canvas>
 </div>
 <script src="https://ajax.googleapis.com/ajax/libs/webfont/1.5.10/webfont.js"></script>
 <script>
@@ -76,8 +80,17 @@
         custom: {
             families: ['JetBrainsMono-Regular']
         },
-        fontloading: function (familyName) {
+        active: function () {
+            init_canvas(canvas);
+            font_width = ctx.measureText('a').width;
+            let m = ctx.measureText('▏');
+            let font_height = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent;
+            line_height = font_height + 1 * FONT_VERT_PADDING;
 
+            canvas.addEventListener('mousedown', on_click);
+            canvas.addEventListener('mouseup', on_mouse_up);
+            canvas.addEventListener('mousemove', on_drag);
+            run();
         }
     });
 </script>
@@ -95,7 +108,7 @@
     let last_drag_event = null;
     let FONT_HEIGHT = 16;
     let FONT_VERT_PADDING = 2;
-    let LINE_HEIGHT = FONT_HEIGHT + 2 * FONT_VERT_PADDING;
+    let line_height = FONT_HEIGHT + 2 * FONT_VERT_PADDING;
     let CLIENT_WIDTH_IN_CHARS = 0;
     let active_tab_index = 0;
     let content_was_modified = false;
@@ -103,15 +116,12 @@
     let backbuffer_textarea;
     let tab_index_counter = 0;
     const pulsing_rects = [];
+    const overlay_canvas = document.getElementById('overlay_canvas');
     const canvas = document.getElementById("canvas");
-    var ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d");
+    const overlay_ctx = overlay_canvas.getContext("2d");
     window.addEventListener('load', function () {
-        init_canvas(canvas);
-        font_width = ctx.measureText('a').width;
 
-        canvas.addEventListener('mousedown', on_click);
-        canvas.addEventListener('mouseup', on_mouse_up);
-        canvas.addEventListener('mousemove', on_drag);
     })
     let app_ptr;
     let wasm;
@@ -137,18 +147,20 @@
         backbuffer_textarea = create_backbuffer_textarea();
     }
 
-    function calc_client_width() {
+    function calc_and_set_client_width() {
         canvas.width = ((window.innerWidth / font_width) | 0) * font_width - 4 * font_width;
-        canvas.height = ((window.innerHeight / FONT_HEIGHT) | 0) * FONT_HEIGHT - 100;
+        canvas.height = ((window.innerHeight / line_height) | 0) * line_height - 100;
+        overlay_canvas.width = canvas.width;
+        overlay_canvas.height = canvas.height;
         return canvas.width / font_width;
     }
 
     function resizeCanvas() {
-        CLIENT_WIDTH_IN_CHARS = calc_client_width();
+        CLIENT_WIDTH_IN_CHARS = calc_and_set_client_width();
 
         const div = document.getElementById('containder-div');
         div.style.width = (canvas.width + 2 * font_width) + 'px';
-        div.style.height = (canvas.height + 2 * FONT_HEIGHT) + 'px';
+        div.style.height = (canvas.height + 2 * line_height) + 'px';
 
         init_canvas(canvas);
         wasm_bindgen.handle_resize(app_ptr, CLIENT_WIDTH_IN_CHARS);
@@ -196,21 +208,26 @@
         }
         for (const pulsing_rect of pulsing_rects) {
             let delta = (now - pulsing_rect.start_time) / pulsing_rect.duration_ms;
-            console.log('delta: ', delta, ' ms');
             if (delta > 1) {
-                continue;
+                pulsing_rects.shift();
+                overlay_ctx.clearRect(
+                    pulsing_rect.x * font_width,
+                    pulsing_rect.y * line_height,
+                    pulsing_rect.w * font_width,
+                    pulsing_rect.h * line_height
+                );
+                break;
             }
-            ctx.putImageData(pulsing_rect.img_data, pulsing_rect.x * font_width, pulsing_rect.y * LINE_HEIGHT);
             let r = interp((pulsing_rect.start_color & 0xFF000000) >>> 24, (pulsing_rect.end_color & 0xFF000000) >>> 24, delta);
             let g = interp((pulsing_rect.start_color & 0x00FF0000) >>> 16, (pulsing_rect.end_color & 0x00FF0000) >>> 16, delta);
             let b = interp((pulsing_rect.start_color & 0x0000FF00) >>> 8, (pulsing_rect.end_color & 0x0000FF00) >>> 8, delta);
             let a = interp((pulsing_rect.start_color & 0x000000FF) >>> 0, (pulsing_rect.end_color & 0x000000FF) >>> 0, delta);
-            ctx.fillStyle = 'rgba(' + r + ', ' + g + ', ' + b + ', ' + a / 255.0 + ')';
-            ctx.fillRect(
+            overlay_ctx.fillStyle = 'rgba(' + r + ', ' + g + ', ' + b + ', ' + a / 255.0 + ')';
+            overlay_ctx.fillRect(
                 pulsing_rect.x * font_width,
-                pulsing_rect.y * LINE_HEIGHT,
+                pulsing_rect.y * line_height,
                 pulsing_rect.w * font_width,
-                pulsing_rect.h * LINE_HEIGHT
+                pulsing_rect.h * line_height
             );
         }
     }
@@ -234,14 +251,14 @@
 
     function on_mouse_up(e) {
         const char_x = (e.offsetX) / font_width;
-        const char_y = (e.offsetY) / LINE_HEIGHT;
+        const char_y = (e.offsetY) / line_height;
         wasm_bindgen.handle_mouse_up(app_ptr, char_x | 0, char_y | 0);
     }
 
     function on_click(e) {
         if (e.buttons === 1) {
             const char_x = (e.offsetX) / font_width;
-            const char_y = (e.offsetY) / LINE_HEIGHT;
+            const char_y = (e.offsetY) / line_height;
             wasm_bindgen.handle_click(app_ptr, char_x | 0, char_y | 0);
             canvas_dirty += 2;
         }
@@ -259,7 +276,7 @@
     function on_drag(e) {
         if (e.buttons === 1) { //dragged with left mouse button
             const char_x = (e.offsetX) / font_width;
-            const char_y = (e.offsetY) / LINE_HEIGHT;
+            const char_y = (e.offsetY) / line_height;
             last_drag_event = {x: char_x, y: char_y};
         }
     }
@@ -370,7 +387,6 @@
         let command_count = -1;
         let buf_index = 0;
         const command_buffer = new Uint8Array(wasm.memory.buffer, command_buffer_ptr);
-        let canvas_img_data = null;
         const now = new Date().getTime();
 
         while (true) {
@@ -397,7 +413,7 @@
                 ctx.fillText(
                     String.fromCharCode(ch),
                     column_i * font_width,
-                    LINE_HEIGHT * row_i + LINE_HEIGHT - FONT_VERT_PADDING
+                    line_height * row_i + line_height - FONT_VERT_PADDING
                 );
             } else if (command_id === 4) { // RenderUtf8Text | RenderString
                 let row_i = read_u16(command_buffer, buf_index);
@@ -416,7 +432,7 @@
                 ctx.fillText(
                     str,
                     column_i * font_width,
-                    LINE_HEIGHT * row_i + LINE_HEIGHT - FONT_VERT_PADDING
+                    line_height * row_i + line_height - FONT_VERT_PADDING
                 );
             } else if (command_id === 5) { // RenderAsciiText
                 let row_i = read_u16(command_buffer, buf_index);
@@ -435,7 +451,7 @@
                 ctx.fillText(
                     str,
                     column_i * font_width,
-                    LINE_HEIGHT * row_i + LINE_HEIGHT - FONT_VERT_PADDING
+                    line_height * row_i + line_height - FONT_VERT_PADDING
                 );
             } else if (command_id === 7 || command_id === 8) { // RenderRectangle | PulsingRectangle
                 let x = command_buffer[buf_index + 0];
@@ -447,37 +463,21 @@
                 if (command_id === 7) { // RenderRectangle
                     ctx.fillRect(
                         x * font_width,
-                        y * LINE_HEIGHT,
+                        y * line_height,
                         w * font_width,
-                        h * LINE_HEIGHT
+                        h * line_height
                     );
                 } else { // PulsingRectangle
                     const start_color = read_u32(command_buffer, buf_index);
                     const end_color = read_u32(command_buffer, buf_index + 4);
                     const animation_time_ms = read_u16(command_buffer, buf_index + 8);
                     buf_index += 4 + 4 + 2;
-                    // save  the target area
-                    if (canvas_img_data === null) {
-                        canvas_img_data = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                    }
-                    const rect_data = ctx.createImageData(w * font_width, h * LINE_HEIGHT);
-                    let dst_index = 0;
-                    for (let row_i = y*LINE_HEIGHT; row_i < (y+h)*LINE_HEIGHT; ++row_i) {
-                        const y = row_i * canvas.width * 4;
-                        for (let col_i = x*font_width*4; col_i < (x+w)*font_width*4; col_i += 4) {
-                            rect_data.data[dst_index++] = canvas_img_data.data[y + col_i + 0];
-                            rect_data.data[dst_index++] = canvas_img_data.data[y + col_i + 1];
-                            rect_data.data[dst_index++] = canvas_img_data.data[y + col_i + 2];
-                            rect_data.data[dst_index++] = canvas_img_data.data[y + col_i + 3];
-                        }
-                    }
                     pulsing_rects.push({
                         x,y,w,h,
                         start_color,
                         end_color,
                         start_time: now,
                         duration_ms: animation_time_ms,
-                        img_data: rect_data
                     });
                 }
             }
@@ -618,7 +618,7 @@
     async function run() {
         wasm = await wasm_bindgen('pkg/frontend_web_bg.wasm');
 
-        CLIENT_WIDTH_IN_CHARS = calc_client_width();
+        CLIENT_WIDTH_IN_CHARS = calc_and_set_client_width();
         app_ptr = wasm.create_app(CLIENT_WIDTH_IN_CHARS);
         command_buffer_ptr = wasm.get_command_buffer_ptr();
 
@@ -666,8 +666,6 @@
 
         requestAnimationFrame(tick);
     }
-
-    run();
 
 
 </script>

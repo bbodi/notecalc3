@@ -1,17 +1,17 @@
 #![feature(ptr_offset_from, const_if_match, const_fn, const_panic, drain_filter)]
 #![feature(type_alias_impl_trait)]
 #![feature(const_in_array_repeat_expressions)]
-#![deny(
-    warnings,
-    anonymous_parameters,
-    unused_extern_crates,
-    unused_import_braces,
-    trivial_casts,
-    variant_size_differences,
-    trivial_numeric_casts,
-    unused_qualifications,
-    clippy::all
-)]
+// #![deny(
+//     warnings,
+//     anonymous_parameters,
+//     unused_extern_crates,
+//     unused_import_braces,
+//     trivial_casts,
+//     variant_size_differences,
+//     trivial_numeric_casts,
+//     unused_qualifications,
+//     clippy::all
+// )]
 
 use crate::calc::{add_op, evaluate_tokens, CalcResult, EvaluationResult};
 use crate::consts::{LINE_NUM_CONSTS, STATIC_LINE_IDS};
@@ -121,13 +121,14 @@ pub struct RenderBuckets<'a> {
     pub operators: Vec<RenderUtf8TextMsg<'a>>,
     pub variable: Vec<RenderUtf8TextMsg<'a>>,
     pub line_ref_results: Vec<RenderStringMsg>,
-    pub custom_commands: [Vec<OutputMessage<'a>>; 2],
+    pub custom_commands: [Vec<OutputMessage<'a>>; 3],
     pub clear_commands: Vec<OutputMessage<'a>>,
 }
 
 #[repr(C)]
 pub enum Layer {
     BehindText,
+    Text,
     AboveText,
 }
 
@@ -136,7 +137,11 @@ impl<'a> RenderBuckets<'a> {
         RenderBuckets {
             ascii_texts: Vec::with_capacity(128),
             utf8_texts: Vec::with_capacity(128),
-            custom_commands: [Vec::with_capacity(128), Vec::with_capacity(128)],
+            custom_commands: [
+                Vec::with_capacity(128),
+                Vec::with_capacity(128),
+                Vec::with_capacity(128),
+            ],
             numbers: Vec::with_capacity(32),
             units: Vec::with_capacity(32),
             operators: Vec::with_capacity(32),
@@ -151,6 +156,7 @@ impl<'a> RenderBuckets<'a> {
         self.utf8_texts.clear();
         self.custom_commands[0].clear();
         self.custom_commands[1].clear();
+        self.custom_commands[2].clear();
         self.numbers.clear();
         self.units.clear();
         self.operators.clear();
@@ -461,10 +467,10 @@ impl MatrixEditing {
                         1,
                     );
                     let chars = &self.editor_content.lines().next().unwrap();
-                    render_buckets.set_color(Layer::AboveText, 0x000000_FF);
+                    render_buckets.set_color(Layer::Text, 0x000000_FF);
                     for (i, char) in chars.iter().enumerate() {
                         render_buckets.draw_char(
-                            Layer::AboveText,
+                            Layer::Text,
                             render_x + padding_x + left_gutter_width + i,
                             render_y + row_i + vert_align_offset,
                             *char,
@@ -486,9 +492,9 @@ impl MatrixEditing {
                     }
                 } else {
                     let chars = &self.cell_strings[row_i * self.col_count + col_i];
-                    render_buckets.set_color(Layer::AboveText, 0x000000_FF);
+                    render_buckets.set_color(Layer::Text, 0x000000_FF);
                     render_buckets.draw_string(
-                        Layer::AboveText,
+                        Layer::Text,
                         render_x + padding_x + left_gutter_width,
                         render_y + row_i + vert_align_offset,
                         (&chars[0..text_len]).to_owned(),
@@ -497,9 +503,9 @@ impl MatrixEditing {
 
                 if self.current_cell == Pos::from_row_column(row_i, col_i) {
                     if self.editor.is_cursor_shown() {
-                        render_buckets.set_color(Layer::AboveText, 0x000000_FF);
+                        render_buckets.set_color(Layer::Text, 0x000000_FF);
                         render_buckets.draw_char(
-                            Layer::AboveText,
+                            Layer::Text,
                             (self.editor.get_selection().get_cursor_pos().column
                                 + left_gutter_width)
                                 + render_x
@@ -729,7 +735,7 @@ impl PerLineRenderData {
 }
 
 enum UpdateReqType {
-    RerenderWholeLine,
+    RerenderEditor,
     RerenderResult,
     ReparseTokens,
     RecalcResult,
@@ -747,6 +753,17 @@ impl UpdateRequirement {
         UpdateRequirement { bitsets }
     }
 
+    fn single_row_2(
+        row_index: usize,
+        typ: UpdateReqType,
+        typ2: UpdateReqType,
+    ) -> UpdateRequirement {
+        UpdateRequirement::combine(
+            UpdateRequirement::single_row(row_index, typ),
+            UpdateRequirement::single_row(row_index, typ2),
+        )
+    }
+
     fn clear(&mut self) {
         self.bitsets = [0u64; 4];
     }
@@ -761,6 +778,17 @@ impl UpdateRequirement {
         UpdateRequirement { bitsets }
     }
 
+    fn all_rows_starting_at_2(
+        row_index: usize,
+        typ: UpdateReqType,
+        typ2: UpdateReqType,
+    ) -> UpdateRequirement {
+        UpdateRequirement::combine(
+            UpdateRequirement::all_rows_starting_at(row_index, typ),
+            UpdateRequirement::all_rows_starting_at(row_index, typ2),
+        )
+    }
+
     fn multiple(indices: &[usize], typ: UpdateReqType) -> UpdateRequirement {
         let mut b = 0;
         for i in indices {
@@ -770,6 +798,13 @@ impl UpdateRequirement {
         bitsets[typ as usize] = b;
 
         UpdateRequirement { bitsets }
+    }
+
+    fn multiple_2(indices: &[usize], typ: UpdateReqType, typ2: UpdateReqType) -> UpdateRequirement {
+        UpdateRequirement::combine(
+            UpdateRequirement::multiple(indices, typ),
+            UpdateRequirement::multiple(indices, typ2),
+        )
     }
 
     fn range(from: usize, to: usize, typ: UpdateReqType) -> UpdateRequirement {
@@ -782,6 +817,18 @@ impl UpdateRequirement {
         bitsets[typ as usize] = (right_to_top_bits ^ right_to_bottom_bits) | top;
 
         UpdateRequirement { bitsets }
+    }
+
+    fn range_2(
+        from: usize,
+        to: usize,
+        typ: UpdateReqType,
+        typ2: UpdateReqType,
+    ) -> UpdateRequirement {
+        UpdateRequirement::combine(
+            UpdateRequirement::range(from, to, typ),
+            UpdateRequirement::range(from, to, typ2),
+        )
     }
 
     fn merge(&mut self, other: &UpdateRequirement) {
@@ -974,8 +1021,7 @@ impl NoteCalcApp {
                     height_might_changed = true;
                 }
 
-                if height_might_changed
-                    || modif_type.need(editor_y, UpdateReqType::RerenderWholeLine)
+                if height_might_changed || modif_type.need(editor_y, UpdateReqType::RerenderEditor)
                 /*e.g. change the size of matrix with alt-key*/
                 {
                     r.calc_rendered_row_height(
@@ -991,7 +1037,7 @@ impl NoteCalcApp {
                             .map(|it| it.row_count),
                     );
                     gr.editor_y_to_rendered_height[editor_y] = r.rendered_row_height;
-                // if uj más mint a régi, rerender mindent
+                // TODO if uj más mint a régi, rerender mindent
                 } else {
                     r.rendered_row_height = gr.editor_y_to_rendered_height[editor_y];
                 }
@@ -1000,17 +1046,18 @@ impl NoteCalcApp {
 
                 if modif_type.need_any_of2(
                     editor_y,
-                    UpdateReqType::RerenderWholeLine,
+                    UpdateReqType::RerenderEditor,
                     UpdateReqType::ReparseTokens,
                 ) {
+                    NoteCalcApp::highlight_current_line(
+                        render_buckets,
+                        &r,
+                        &gr,
+                        editor,
+                        gr.result_gutter_x,
+                    );
+
                     if let Some(tokens) = &holder.tokens[editor_y] {
-                        NoteCalcApp::highlight_current_line(
-                            render_buckets,
-                            &r,
-                            &gr,
-                            editor,
-                            gr.result_gutter_x,
-                        );
                         let need_matrix_renderer = !editor.get_selection().is_range() || {
                             let first = editor.get_selection().get_first();
                             let second = editor.get_selection().get_second();
@@ -1031,18 +1078,7 @@ impl NoteCalcApp {
                             &units,
                             need_matrix_renderer,
                         );
-                        NoteCalcApp::render_wrap_dots(render_buckets, &r, &gr);
-
-                        NoteCalcApp::draw_line_ref_chooser(
-                            render_buckets,
-                            &r,
-                            &gr,
-                            &line_reference_chooser,
-                            gr.result_gutter_x,
-                        );
-
-                        NoteCalcApp::draw_cursor(render_buckets, &r, &gr, &editor, &matrix_editing);
-
+                        // TODO extract
                         for editor_obj in holder.editor_objects[editor_y].iter() {
                             if matches!(editor_obj.typ, EditorObjectType::LineReference) {
                                 let vert_align_offset =
@@ -1057,57 +1093,6 @@ impl NoteCalcApp {
                                 );
                             }
                         }
-
-                        // result
-                        NoteCalcApp::draw_right_gutter_num_prefixes(
-                            render_buckets,
-                            gr.result_gutter_x,
-                            &editor_content,
-                            &r,
-                        );
-                        // result background
-                        render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
-                        render_buckets.draw_rect(
-                            Layer::BehindText,
-                            gr.result_gutter_x + gr.right_gutter_width,
-                            gr.editor_y_to_render_y[editor_y],
-                            gr.current_result_panel_width,
-                            rendered_row_height,
-                        );
-                        // result gutter
-                        render_buckets.set_color(Layer::BehindText, 0xD2D2D2_FF);
-                        render_buckets.draw_rect(
-                            Layer::BehindText,
-                            gr.result_gutter_x,
-                            gr.editor_y_to_render_y[editor_y],
-                            gr.right_gutter_width,
-                            rendered_row_height,
-                        );
-
-                        // line number
-                        {
-                            render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
-                            render_buckets.draw_rect(
-                                Layer::BehindText,
-                                0,
-                                gr.editor_y_to_render_y[editor_y],
-                                gr.left_gutter_width,
-                                rendered_row_height,
-                            );
-                            if editor_y == editor.get_selection().get_cursor_pos().row {
-                                render_buckets.set_color(Layer::BehindText, 0x000000_FF);
-                            } else {
-                                render_buckets.set_color(Layer::BehindText, 0xADADAD_FF);
-                            }
-                            let vert_align_offset = (rendered_row_height - 1) / 2;
-                            render_buckets.custom_commands[Layer::BehindText as usize].push(
-                                OutputMessage::RenderUtf8Text(RenderUtf8TextMsg {
-                                    text: &(LINE_NUM_CONSTS[editor_y][..]),
-                                    row: gr.editor_y_to_render_y[editor_y] + vert_align_offset,
-                                    column: 1,
-                                }),
-                            )
-                        }
                     } else {
                         r.rendered_row_height = 1;
                         NoteCalcApp::render_simple_text_line(
@@ -1116,6 +1101,58 @@ impl NoteCalcApp {
                             gr,
                             render_buckets,
                             allocator,
+                        );
+                    }
+                    NoteCalcApp::render_wrap_dots(render_buckets, &r, &gr);
+
+                    NoteCalcApp::draw_line_ref_chooser(
+                        render_buckets,
+                        &r,
+                        &gr,
+                        &line_reference_chooser,
+                        gr.result_gutter_x,
+                    );
+
+                    NoteCalcApp::draw_cursor(render_buckets, &r, &gr, &editor, &matrix_editing);
+
+                    NoteCalcApp::draw_right_gutter_num_prefixes(
+                        render_buckets,
+                        gr.result_gutter_x,
+                        &editor_content,
+                        &r,
+                    );
+                    // result gutter
+                    render_buckets.set_color(Layer::BehindText, 0xD2D2D2_FF);
+                    render_buckets.draw_rect(
+                        Layer::BehindText,
+                        gr.result_gutter_x,
+                        gr.editor_y_to_render_y[editor_y],
+                        gr.right_gutter_width,
+                        rendered_row_height,
+                    );
+
+                    // line number
+                    {
+                        // TODO: save one setcolor, combining it with result background
+                        render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
+                        render_buckets.draw_rect(
+                            Layer::BehindText,
+                            0,
+                            gr.editor_y_to_render_y[editor_y],
+                            gr.left_gutter_width,
+                            rendered_row_height,
+                        );
+                        if editor_y == editor.get_selection().get_cursor_pos().row {
+                            render_buckets.set_color(Layer::Text, 0x000000_FF);
+                        } else {
+                            render_buckets.set_color(Layer::Text, 0xADADAD_FF);
+                        }
+                        let vert_align_offset = (rendered_row_height - 1) / 2;
+                        render_buckets.draw_text(
+                            Layer::Text,
+                            1,
+                            gr.editor_y_to_render_y[editor_y] + vert_align_offset,
+                            &(LINE_NUM_CONSTS[editor_y][..]),
                         );
                     }
                 } else if modif_type.need(editor_y, UpdateReqType::RerenderResult) {
@@ -1164,6 +1201,60 @@ impl NoteCalcApp {
             }
         }
 
+        render_buckets
+            .clear_commands
+            .push(OutputMessage::SetColor(0xFFFFFF_FF));
+
+        // check if there are fewer lines as before
+        let mut line_i = editor_content.line_count();
+        let mut unneded_line_num = 0;
+        while line_i < MAX_LINE_COUNT && gr.editor_y_to_render_y[line_i] != 0 {
+            gr.editor_y_to_render_y[line_i] = 0;
+            gr.editor_y_to_rendered_height[line_i] = 0;
+            unneded_line_num += 1;
+            line_i += 1;
+        }
+        if unneded_line_num > 0 {
+            let last_valid_row_i = editor_content.line_count() - 1;
+            // left gutter
+            render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
+            let start_y = gr.editor_y_to_render_y[last_valid_row_i]
+                + gr.editor_y_to_rendered_height[last_valid_row_i];
+            render_buckets.draw_rect(
+                Layer::BehindText,
+                0,
+                start_y,
+                gr.left_gutter_width,
+                unneded_line_num,
+            );
+            // editor
+            render_buckets
+                .clear_commands
+                .push(OutputMessage::RenderRectangle {
+                    x: LEFT_GUTTER_WIDTH,
+                    y: start_y,
+                    w: gr.current_editor_width,
+                    h: unneded_line_num,
+                });
+            // result background with same color
+            render_buckets.draw_rect(
+                Layer::BehindText,
+                gr.result_gutter_x + gr.right_gutter_width,
+                start_y,
+                gr.current_result_panel_width,
+                unneded_line_num,
+            );
+            // result gutter
+            render_buckets.set_color(Layer::BehindText, 0xD2D2D2_FF);
+            render_buckets.draw_rect(
+                Layer::BehindText,
+                gr.result_gutter_x,
+                start_y,
+                gr.right_gutter_width,
+                unneded_line_num,
+            );
+        }
+
         // selected text
         NoteCalcApp::render_selection_and_its_sum(
             &units,
@@ -1187,24 +1278,56 @@ impl NoteCalcApp {
             modif_type,
         );
 
-        render_buckets
-            .clear_commands
-            .push(OutputMessage::SetColor(0xFFFFFF_FF));
         for editor_y in 0..editor_content.line_count() {
-            if modif_type.need_any_of2(
+            let rerender_editor = modif_type.need_any_of2(
                 editor_y,
                 UpdateReqType::ReparseTokens,
-                UpdateReqType::RerenderWholeLine,
-            ) {
+                UpdateReqType::RerenderEditor,
+            );
+            let rerender_result = modif_type.need_any_of3(
+                editor_y,
+                UpdateReqType::ReparseTokens,
+                UpdateReqType::RecalcResult,
+                UpdateReqType::RerenderResult,
+            );
+
+            let coords = if rerender_editor && rerender_result {
+                Some((
+                    LEFT_GUTTER_WIDTH,
+                    gr.current_result_panel_width
+                        + gr.current_editor_width
+                        + gr.left_gutter_width
+                        + gr.right_gutter_width,
+                ))
+            } else if rerender_editor {
+                Some((LEFT_GUTTER_WIDTH, gr.current_editor_width))
+            } else if rerender_result {
+                Some((
+                    gr.result_gutter_x,
+                    gr.current_result_panel_width + gr.right_gutter_width,
+                ))
+            } else {
+                None
+            };
+
+            if let Some((x, w)) = coords {
+                render_buckets.custom_commands[Layer::AboveText as usize].push(
+                    OutputMessage::PulsingRectangle {
+                        x,
+                        y: gr.editor_y_to_render_y[editor_y],
+                        w,
+                        h: gr.editor_y_to_rendered_height[editor_y],
+                        start_color: 0xFF88FF_22,
+                        end_color: 0xFFFFFF_00,
+                        animation_time: Duration::from_millis(200),
+                    },
+                );
                 render_buckets
                     .clear_commands
                     .push(OutputMessage::RenderRectangle {
-                        x: LEFT_GUTTER_WIDTH,
+                        x,
                         y: gr.editor_y_to_render_y[editor_y],
-                        w: gr.current_result_panel_width
-                            + gr.current_editor_width
-                            + gr.left_gutter_width
-                            + gr.right_gutter_width,
+                        w,
                         h: gr.editor_y_to_rendered_height[editor_y],
                     });
             }
@@ -1372,8 +1495,9 @@ impl NoteCalcApp {
         gr: &GlobalRenderData,
     ) {
         if r.render_pos.column > gr.current_editor_width {
+            render_buckets.set_color(Layer::Text, 0x000000_FF);
             render_buckets.draw_char(
-                Layer::AboveText,
+                Layer::Text,
                 gr.current_editor_width + gr.left_gutter_width,
                 r.render_pos.row,
                 '…',
@@ -1390,12 +1514,12 @@ impl NoteCalcApp {
     ) {
         if let Some(selection_row) = line_reference_chooser {
             if *selection_row == r.editor_pos.row {
-                render_buckets.set_color(Layer::BehindText, 0xFFCCCC_FF);
+                render_buckets.set_color(Layer::Text, 0xFFCCCC_FF);
                 render_buckets.draw_rect(
-                    Layer::BehindText,
+                    Layer::Text,
                     0,
                     r.render_pos.row,
-                    result_gutter_x + gr.right_gutter_width + MIN_RESULT_PANEL_WIDTH,
+                    result_gutter_x + gr.right_gutter_width + gr.current_result_panel_width,
                     r.rendered_row_height,
                 );
             }
@@ -1436,9 +1560,9 @@ impl NoteCalcApp {
     ) {
         let cursor_pos = editor.get_selection().get_cursor_pos();
         if cursor_pos.row == r.editor_pos.row {
-            render_buckets.set_color(Layer::BehindText, 0xFFFFCC_C8);
+            render_buckets.set_color(Layer::Text, 0xFFFFCC_55);
             render_buckets.draw_rect(
-                Layer::BehindText,
+                Layer::Text,
                 0,
                 r.render_pos.row,
                 result_gutter_x + gr.right_gutter_width + MIN_RESULT_PANEL_WIDTH,
@@ -1930,6 +2054,7 @@ impl NoteCalcApp {
             }
             max_lengths
         };
+        render_buckets.set_color(Layer::Text, 0x000000_FF);
         for col_i in 0..mat.col_count {
             for row_i in 0..mat.row_count {
                 let cell_str = &cells_strs[row_i * mat.col_count + col_i];
@@ -1937,7 +2062,7 @@ impl NoteCalcApp {
                 // Draw integer part
                 let offset_x = max_lengths.int_part_len - lengths.int_part_len;
                 render_buckets.draw_string(
-                    Layer::AboveText,
+                    Layer::Text,
                     render_x + offset_x,
                     render_y + row_i + vert_align_offset,
                     // TOOD nem kell clone, csinálj iter into vhogy
@@ -1947,7 +2072,7 @@ impl NoteCalcApp {
                 let mut frac_offset_x = 0;
                 if lengths.frac_part_len > 0 {
                     render_buckets.draw_string(
-                        Layer::AboveText,
+                        Layer::Text,
                         render_x + offset_x + lengths.int_part_len,
                         render_y + row_i + vert_align_offset,
                         // TOOD nem kell clone, csinálj iter into vhogy
@@ -1957,7 +2082,7 @@ impl NoteCalcApp {
                     )
                 } else if max_lengths.frac_part_len > 0 {
                     render_buckets.draw_char(
-                        Layer::AboveText,
+                        Layer::Text,
                         render_x + offset_x + lengths.int_part_len,
                         render_y + row_i + vert_align_offset,
                         '.',
@@ -1966,7 +2091,7 @@ impl NoteCalcApp {
                 }
                 for i in 0..max_lengths.frac_part_len - lengths.frac_part_len - frac_offset_x {
                     render_buckets.draw_char(
-                        Layer::AboveText,
+                        Layer::Text,
                         render_x
                             + offset_x
                             + lengths.int_part_len
@@ -1979,7 +2104,7 @@ impl NoteCalcApp {
                 }
                 if lengths.unit_part_len > 0 {
                     render_buckets.draw_string(
-                        Layer::AboveText,
+                        Layer::Text,
                         render_x + offset_x + lengths.int_part_len + max_lengths.frac_part_len + 1,
                         render_y + row_i + vert_align_offset,
                         // TOOD nem kell clone, csinálj iter into vhogy
@@ -2190,15 +2315,17 @@ impl NoteCalcApp {
 
         // render results from the buffer
         for (editor_y, result_range) in result_ranges.iter().enumerate() {
-            if !modif_type.need_any_of3(
-                editor_y,
-                UpdateReqType::RecalcResult,
-                UpdateReqType::RerenderResult,
-                UpdateReqType::ReparseTokens,
-            ) {
-                continue;
-            }
             if let Some(result_range) = result_range {
+                // result background
+                render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
+                render_buckets.draw_rect(
+                    Layer::BehindText,
+                    gr.result_gutter_x + gr.right_gutter_width,
+                    gr.editor_y_to_render_y[editor_y],
+                    gr.current_result_panel_width,
+                    gr.editor_y_to_rendered_height[editor_y],
+                );
+
                 let s =
                     unsafe { std::str::from_utf8_unchecked(&result_buffer[result_range.clone()]) };
                 let lengths = get_int_frac_part_len(s);
@@ -2235,6 +2362,22 @@ impl NoteCalcApp {
                         column: x + lengths.int_part_len + lengths.frac_part_len + 1,
                     });
                 }
+            } else if modif_type.need_any_of3(
+                editor_y,
+                UpdateReqType::RecalcResult,
+                UpdateReqType::RerenderResult,
+                UpdateReqType::ReparseTokens,
+            ) {
+                // no reuslt but need rerender
+                // result background
+                render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
+                render_buckets.draw_rect(
+                    Layer::BehindText,
+                    gr.result_gutter_x + gr.right_gutter_width,
+                    gr.editor_y_to_render_y[editor_y],
+                    gr.current_result_panel_width,
+                    gr.editor_y_to_rendered_height[editor_y],
+                );
             }
         }
     }
@@ -2473,6 +2616,11 @@ impl NoteCalcApp {
         for command in &buckets.variable {
             write_char_slice(canvas, command.row, command.column, command.text);
         }
+
+        for command in &buckets.custom_commands[Layer::Text as usize] {
+            write_command(canvas, command);
+        }
+
         for command in &buckets.custom_commands[Layer::AboveText as usize] {
             write_command(canvas, command);
         }
@@ -2579,10 +2727,15 @@ impl NoteCalcApp {
                     let centered_x =
                         (selection_center as isize - (result_w / 2) as isize).max(0) as usize;
                     render_buckets.set_color(Layer::AboveText, 0xAAFFAA_FF);
+                    let rect_y = if start.row == 0 {
+                        r.editor_y_to_render_y[start.row] + 1
+                    } else {
+                        r.editor_y_to_render_y[start.row] - 1
+                    };
                     render_buckets.draw_rect(
                         Layer::AboveText,
                         r.left_gutter_width + centered_x,
-                        r.editor_y_to_render_y[start.row] - 1,
+                        rect_y,
                         result_w,
                         1,
                     );
@@ -2590,7 +2743,7 @@ impl NoteCalcApp {
                     render_buckets.draw_string(
                         Layer::AboveText,
                         r.left_gutter_width + centered_x,
-                        r.editor_y_to_render_y[start.row] - 1,
+                        rect_y,
                         partial_result,
                     );
                 } else {
@@ -2718,20 +2871,23 @@ impl NoteCalcApp {
                 );
                 let new_row = self.editor.get_selection().get_cursor_pos().row;
                 let modif = if prev_selection.is_range() {
-                    let mut m = UpdateRequirement::range(
+                    let mut m = UpdateRequirement::range_2(
                         prev_selection.get_first().row,
                         prev_selection.get_second().row,
-                        UpdateReqType::RerenderWholeLine,
+                        UpdateReqType::RerenderEditor,
+                        UpdateReqType::RerenderResult,
                     );
-                    m.merge(&UpdateRequirement::single_row(
+                    m.merge(&UpdateRequirement::single_row_2(
                         new_row,
-                        UpdateReqType::RerenderWholeLine,
+                        UpdateReqType::RerenderEditor,
+                        UpdateReqType::RerenderResult,
                     ));
                     m
                 } else {
-                    UpdateRequirement::multiple(
+                    UpdateRequirement::multiple_2(
                         &[prev_selection.start.row, new_row],
-                        UpdateReqType::RerenderWholeLine,
+                        UpdateReqType::RerenderEditor,
+                        UpdateReqType::RerenderResult,
                     )
                 };
                 self.last_unrendered_modifications.merge(&modif);
@@ -2792,9 +2948,10 @@ impl NoteCalcApp {
         self.render_data.result_gutter_x = x;
         // todo rerender everything
         self.last_unrendered_modifications
-            .merge(&UpdateRequirement::all_rows_starting_at(
+            .merge(&UpdateRequirement::all_rows_starting_at_2(
                 0,
-                UpdateReqType::RerenderWholeLine,
+                UpdateReqType::RerenderEditor,
+                UpdateReqType::RerenderResult,
             ));
     }
 
@@ -2823,8 +2980,7 @@ impl NoteCalcApp {
         };
         if need_rerender {
             let (from, to) = self.editor.get_selection().get_range();
-            let modif =
-                UpdateRequirement::range(from.row, to.row, UpdateReqType::RerenderWholeLine);
+            let modif = UpdateRequirement::range(from.row, to.row, UpdateReqType::RerenderEditor);
             UpdateRequirement::merge(&mut self.last_unrendered_modifications, &modif);
         }
         need_rerender
@@ -2904,9 +3060,10 @@ impl NoteCalcApp {
         let line_ref_row = self.line_reference_chooser.unwrap();
 
         self.last_unrendered_modifications
-            .merge(&UpdateRequirement::single_row(
+            .merge(&UpdateRequirement::single_row_2(
                 line_ref_row,
-                UpdateReqType::RerenderWholeLine,
+                UpdateReqType::RerenderEditor,
+                UpdateReqType::RerenderResult,
             ));
 
         self.line_reference_chooser = None;
@@ -2929,14 +3086,25 @@ impl NoteCalcApp {
         self.last_unrendered_modifications
             .merge(&UpdateRequirement::single_row(
                 cursor_row,
-                UpdateReqType::RerenderWholeLine,
+                UpdateReqType::ReparseTokens,
             ));
     }
 
-    pub fn handle_paste(&mut self, text: String) -> bool {
-        self.editor
-            .insert_text(&text, &mut self.editor_content)
-            .is_some()
+    pub fn handle_paste(&mut self, text: String) {
+        match self.editor.insert_text(&text, &mut self.editor_content) {
+            Some(t) => {
+                let modif = match t {
+                    RowModificationType::AllLinesFrom(i) => {
+                        UpdateRequirement::all_rows_starting_at(i, UpdateReqType::ReparseTokens)
+                    }
+                    RowModificationType::SingleLine(i) => {
+                        UpdateRequirement::single_row(i, UpdateReqType::ReparseTokens)
+                    }
+                };
+                self.last_unrendered_modifications.merge(&modif);
+            }
+            None => {}
+        };
     }
 
     pub fn handle_input<'b>(
@@ -2995,10 +3163,11 @@ impl NoteCalcApp {
                 };
                 if let Some((prev_selected_row, new_selected_row)) = rows {
                     self.line_reference_chooser = Some(new_selected_row);
-                    Some(UpdateRequirement::range(
+                    Some(UpdateRequirement::range_2(
                         new_selected_row,
                         prev_selected_row,
-                        UpdateReqType::RerenderWholeLine,
+                        UpdateReqType::RerenderEditor,
+                        UpdateReqType::RerenderResult,
                     ))
                 } else {
                     None
@@ -3016,10 +3185,11 @@ impl NoteCalcApp {
                 };
                 if let Some((prev_selected_row, new_selected_row)) = rows {
                     self.line_reference_chooser = Some(new_selected_row);
-                    Some(UpdateRequirement::range(
+                    Some(UpdateRequirement::range_2(
                         prev_selected_row,
                         new_selected_row,
-                        UpdateReqType::RerenderWholeLine,
+                        UpdateReqType::RerenderEditor,
+                        UpdateReqType::RerenderResult,
                     ))
                 } else {
                     None
@@ -3031,16 +3201,22 @@ impl NoteCalcApp {
             let prev_row = self.editor.get_selection().get_cursor_pos().row;
             self.handle_matrix_editor_input(input, modifiers);
             if self.matrix_editing.is_none() {
+                // left a matrix
                 content_was_modified = true;
                 let new_row = self.editor.get_selection().get_cursor_pos().row;
                 Some(UpdateRequirement::combine(
                     UpdateRequirement::single_row(prev_row, UpdateReqType::ReparseTokens),
-                    UpdateRequirement::single_row(new_row, UpdateReqType::RerenderWholeLine),
+                    UpdateRequirement::single_row_2(
+                        new_row,
+                        UpdateReqType::RerenderEditor,
+                        UpdateReqType::RerenderResult,
+                    ),
                 ))
             } else {
-                Some(UpdateRequirement::single_row(
+                Some(UpdateRequirement::single_row_2(
                     prev_row,
-                    UpdateReqType::RerenderWholeLine,
+                    UpdateReqType::RerenderEditor,
+                    UpdateReqType::RerenderResult,
                 ))
             }
         } else {
@@ -3090,24 +3266,27 @@ impl NoteCalcApp {
                         if prev_selection.is_range() {
                             let from = prev_selection.get_first().row.min(new_cursor_y);
                             let to = prev_selection.get_second().row.max(new_cursor_y);
-                            Some(UpdateRequirement::range(
+                            Some(UpdateRequirement::range_2(
                                 from,
                                 to,
-                                UpdateReqType::RerenderWholeLine,
+                                UpdateReqType::RerenderEditor,
+                                UpdateReqType::RerenderResult,
                             ))
                         } else {
                             let old_cursor_y = prev_cursor_pos.row;
                             if old_cursor_y > new_cursor_y {
-                                Some(UpdateRequirement::range(
+                                Some(UpdateRequirement::range_2(
                                     new_cursor_y,
                                     old_cursor_y,
-                                    UpdateReqType::RerenderWholeLine,
+                                    UpdateReqType::RerenderEditor,
+                                    UpdateReqType::RerenderResult,
                                 ))
                             } else if old_cursor_y < new_cursor_y {
-                                Some(UpdateRequirement::range(
+                                Some(UpdateRequirement::range_2(
                                     old_cursor_y,
                                     new_cursor_y,
-                                    UpdateReqType::RerenderWholeLine,
+                                    UpdateReqType::RerenderEditor,
+                                    UpdateReqType::RerenderResult,
                                 ))
                             } else {
                                 let new_cursor_x = cursor_pos.column;
@@ -3115,7 +3294,7 @@ impl NoteCalcApp {
                                 if old_cursor_x != new_cursor_x {
                                     Some(UpdateRequirement::single_row(
                                         new_cursor_y,
-                                        UpdateReqType::RerenderWholeLine,
+                                        UpdateReqType::RerenderEditor,
                                     ))
                                 } else {
                                     None
@@ -3338,7 +3517,7 @@ impl NoteCalcApp {
                     self.editor.set_cursor_pos_r_c(row, start_x);
                     return Some(UpdateRequirement::single_row(
                         cursor_pos.row,
-                        UpdateReqType::RerenderWholeLine,
+                        UpdateReqType::RerenderEditor,
                     ));
                 }
             }
@@ -3356,7 +3535,7 @@ impl NoteCalcApp {
                     self.editor.set_cursor_pos_r_c(row, end_x);
                     return Some(UpdateRequirement::single_row(
                         cursor_pos.row,
-                        UpdateReqType::RerenderWholeLine,
+                        UpdateReqType::RerenderEditor,
                     ));
                 }
             }
@@ -4830,13 +5009,13 @@ mod tests {
         );
         assert!(!app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(!app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
         assert!(!app
             .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderWholeLine));
+            .need(2, UpdateReqType::RerenderEditor));
         app.set_normalized_content("1111\n2222\n14 * &[2]&[2]&[2]\n");
         assert!(app
             .last_unrendered_modifications
@@ -6176,10 +6355,10 @@ sum",
         app.handle_input(EditorInputEvent::Down, InputModifiers::none(), &mut holder);
         assert!(app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
 
         assert_eq!(holder.editor_objects[0].len(), 1);
         assert_eq!(holder.editor_objects[1].len(), 1);
@@ -6199,10 +6378,10 @@ sum",
         );
         assert!(!app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(!app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
 
         assert_eq!(holder.editor_objects[0].len(), 1);
         assert_eq!(holder.editor_objects[1].len(), 1);
@@ -6234,10 +6413,10 @@ sum",
         app.handle_input(EditorInputEvent::Down, InputModifiers::none(), &mut holder);
         assert!(app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
 
         let mut result_buffer = [0; 128];
         app.render(
@@ -6249,16 +6428,16 @@ sum",
         );
         assert!(!app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(!app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
 
         // leave matrix
         app.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut holder);
         assert!(app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
             .need(1, UpdateReqType::ReparseTokens));
@@ -6283,10 +6462,10 @@ sum",
         app.handle_click(4, 0, &mut holder);
         assert!(app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
     }
 
     #[test]
@@ -6307,13 +6486,13 @@ sum",
         app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
         assert!(!app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderWholeLine));
+            .need(2, UpdateReqType::RerenderEditor));
 
         let mut result_buffer = [0; 128];
         app.render(
@@ -6326,13 +6505,13 @@ sum",
         app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
         assert!(app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderWholeLine));
+            .need(2, UpdateReqType::RerenderEditor));
     }
 
     #[test]
@@ -6358,13 +6537,13 @@ sum",
         app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
         assert!(app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderWholeLine));
+            .need(2, UpdateReqType::RerenderEditor));
     }
 
     #[test]
@@ -6395,13 +6574,13 @@ sum",
         app.handle_input(EditorInputEvent::Down, InputModifiers::shift(), &mut holder);
         assert!(app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderWholeLine));
+            .need(2, UpdateReqType::RerenderEditor));
     }
 
     #[test]
@@ -6423,24 +6602,24 @@ sum",
         );
         assert!(!app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(!app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
         assert!(!app
             .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderWholeLine));
+            .need(2, UpdateReqType::RerenderEditor));
 
         app.handle_time(1000);
         assert!(app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderWholeLine));
+            .need(2, UpdateReqType::RerenderEditor));
     }
 
     #[test]
@@ -6472,13 +6651,13 @@ sum",
         app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
         assert!(app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderWholeLine));
+            .need(2, UpdateReqType::RerenderEditor));
     }
 
     #[test]
@@ -6499,13 +6678,13 @@ sum",
         app.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut holder);
         assert!(!app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderWholeLine));
+            .need(2, UpdateReqType::RerenderEditor));
     }
 
     #[test]
@@ -6537,10 +6716,10 @@ sum",
         app.handle_click(4, 0, &mut holder);
         assert!(app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
     }
 
     #[test]
@@ -6561,10 +6740,10 @@ sum",
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
         assert!(!app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
 
         let mut result_buffer = [0; 128];
         app.render(
@@ -6577,10 +6756,10 @@ sum",
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
         assert!(app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
 
         let mut result_buffer = [0; 128];
         app.render(
@@ -6593,13 +6772,13 @@ sum",
         app.alt_key_released(&mut holder);
         assert!(app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(!app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
         assert!(!app
             .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderWholeLine));
+            .need(2, UpdateReqType::RerenderEditor));
     }
 
     #[test]
@@ -6618,12 +6797,32 @@ sum",
             &mut holder,
         );
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
-        assert!(!app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+        assert_eq!(
+            false,
+            app.last_unrendered_modifications
+                .need(0, UpdateReqType::RerenderEditor)
+        );
         assert!(app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
+        assert_eq!(
+            false,
+            app.last_unrendered_modifications
+                .need(2, UpdateReqType::RerenderEditor)
+        );
+        assert_eq!(
+            false,
+            app.last_unrendered_modifications
+                .need(0, UpdateReqType::RerenderResult)
+        );
+        assert!(app
+            .last_unrendered_modifications
+            .need(1, UpdateReqType::RerenderResult));
+        assert_eq!(
+            false,
+            app.last_unrendered_modifications
+                .need(2, UpdateReqType::RerenderResult)
+        );
 
         let mut result_buffer = [0; 128];
         app.render(
@@ -6636,10 +6835,26 @@ sum",
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
         assert!(app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
+        assert_eq!(
+            false,
+            app.last_unrendered_modifications
+                .need(2, UpdateReqType::RerenderEditor)
+        );
+        assert!(app
+            .last_unrendered_modifications
+            .need(0, UpdateReqType::RerenderResult));
+        assert!(app
+            .last_unrendered_modifications
+            .need(1, UpdateReqType::RerenderResult));
+        assert_eq!(
+            false,
+            app.last_unrendered_modifications
+                .need(2, UpdateReqType::RerenderResult)
+        );
 
         let mut result_buffer = [0; 128];
         app.render(
@@ -6652,13 +6867,23 @@ sum",
         app.alt_key_released(&mut holder);
         assert!(app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
-        assert!(!app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
+        assert_eq!(
+            false,
+            app.last_unrendered_modifications
+                .need(1, UpdateReqType::RerenderEditor)
+        );
         assert!(app
             .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderWholeLine));
+            .need(2, UpdateReqType::ReparseTokens));
+        assert!(app
+            .last_unrendered_modifications
+            .need(0, UpdateReqType::RerenderResult));
+        assert_eq!(
+            false,
+            app.last_unrendered_modifications
+                .need(1, UpdateReqType::RerenderResult)
+        );
     }
 
     #[test]
@@ -6679,24 +6904,24 @@ sum",
         app.handle_click(app.render_data.result_gutter_x, 0, &mut holder);
         assert!(!app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(!app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
         assert!(!app
             .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderWholeLine));
+            .need(2, UpdateReqType::RerenderEditor));
 
         app.handle_drag(app.render_data.result_gutter_x - 1, 0);
         assert!(app
             .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderWholeLine));
+            .need(0, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderWholeLine));
+            .need(1, UpdateReqType::RerenderEditor));
         assert!(app
             .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderWholeLine));
+            .need(2, UpdateReqType::RerenderEditor));
     }
 
     #[test]
@@ -6948,5 +7173,128 @@ sum",
             );
             assert_results(&["1", "3", "3"][..], &result_buffer);
         }
+    }
+
+    #[test]
+    fn test_paste_long_text() {
+        let (mut app, units, mut holder) = create_app();
+        let arena = Arena::new();
+
+        app.handle_paste("a\nb\na\nb\na\nb\na\nb\na\nb\na\nb\n1".to_owned());
+        for i in 0..12 {
+            assert!(
+                app.last_unrendered_modifications
+                    .need(i, UpdateReqType::ReparseTokens),
+                "i = {}",
+                i
+            );
+        }
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut holder,
+        );
+        assert_results(
+            &["", "", "", "", "", "", "", "", "", "", "", "1"][..],
+            &result_buffer,
+        );
+    }
+
+    #[test]
+    fn test_ctrl_x() {
+        let (mut app, units, mut holder) = create_app();
+        let arena = Arena::new();
+
+        app.handle_paste("0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12".to_owned());
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut holder,
+        );
+
+        app.handle_input(
+            EditorInputEvent::Up,
+            InputModifiers::shift(),
+            &mut create_holder(),
+        );
+        app.handle_input(
+            EditorInputEvent::Up,
+            InputModifiers::shift(),
+            &mut create_holder(),
+        );
+        app.handle_input(
+            EditorInputEvent::Up,
+            InputModifiers::shift(),
+            &mut create_holder(),
+        );
+        app.handle_input(
+            EditorInputEvent::Char('x'),
+            InputModifiers::ctrl(),
+            &mut create_holder(),
+        );
+        for i in 0..9 {
+            assert_eq!(
+                false,
+                app.last_unrendered_modifications
+                    .need(i, UpdateReqType::ReparseTokens),
+                "i = {}",
+                i
+            );
+        }
+        for i in 9..12 {
+            assert!(
+                app.last_unrendered_modifications
+                    .need(i, UpdateReqType::ReparseTokens),
+                "i = {}",
+                i
+            );
+        }
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut holder,
+        );
+        assert_results(
+            &["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"][..],
+            &result_buffer,
+        );
+    }
+
+    #[test]
+    fn selection_in_the_first_row_should_not_panic() {
+        let (mut app, units, mut holder) = create_app();
+        let arena = Arena::new();
+
+        app.handle_paste("1+1\nasd".to_owned());
+        app.handle_input(
+            EditorInputEvent::Up,
+            InputModifiers::none(),
+            &mut create_holder(),
+        );
+        app.handle_input(
+            EditorInputEvent::Home,
+            InputModifiers::shift(),
+            &mut create_holder(),
+        );
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut holder,
+        );
     }
 }

@@ -284,6 +284,7 @@ pub fn handle_input(app_ptr: u32, input: u32, modifiers: u8) -> bool {
 }
 
 pub const COLOR_TEXT: u32 = 0x595959_FF;
+pub const COLOR_RESULTS: u32 = 0x000000_FF;
 pub const COLOR_NUMBER: u32 = 0xF92672_FF;
 pub const COLOR_OPERATOR: u32 = 0x000000_FF;
 pub const COLOR_UNIT: u32 = 0x000BED_FF;
@@ -449,9 +450,20 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
         write_command(&mut js_command_buffer, command);
     }
 
-    if !render_buckets.ascii_texts.is_empty() || !render_buckets.utf8_texts.is_empty() {
+    for command in &render_buckets.custom_commands[Layer::Text as usize] {
+        write_command(&mut js_command_buffer, command);
+    }
+
+    if !render_buckets.utf8_texts.is_empty() {
         write_command(&mut js_command_buffer, &OutputMessage::SetColor(COLOR_TEXT));
         write_commands(&mut js_command_buffer, &render_buckets.utf8_texts);
+    }
+
+    if !render_buckets.ascii_texts.is_empty() {
+        write_command(
+            &mut js_command_buffer,
+            &OutputMessage::SetColor(COLOR_RESULTS),
+        );
         for text in &render_buckets.ascii_texts {
             write_ascii_text_command(&mut js_command_buffer, text);
         }
