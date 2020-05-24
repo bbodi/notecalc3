@@ -607,7 +607,8 @@ pub struct NoteCalcApp {
     pub line_reference_chooser: Option<usize>,
     pub line_id_generator: usize,
     pub right_gutter_is_dragged: bool,
-    pub last_unrendered_modifications: UpdateRequirement,
+    pub result_area_redraw: EditorRowFlags,
+    pub editor_area_redraw: EditorRowFlags,
     pub render_data: GlobalRenderData,
 }
 
@@ -734,131 +735,63 @@ impl PerLineRenderData {
     }
 }
 
-enum UpdateReqType {
-    RerenderEditor,
-    RerenderResult,
-    ReparseTokens,
-    RecalcResult,
+enum RedrawTarget {
+    EditorArea,
+    ResultArea,
+    Both,
 }
 
 #[derive(Copy, Clone)]
-pub struct UpdateRequirement {
-    bitsets: [u64; 4],
+pub struct EditorRowFlags {
+    bitset: u64,
 }
 
-impl UpdateRequirement {
-    fn single_row(row_index: usize, typ: UpdateReqType) -> UpdateRequirement {
-        let mut bitsets = [0u64; 4];
-        bitsets[typ as usize] = 1u64 << row_index;
-        UpdateRequirement { bitsets }
+impl EditorRowFlags {
+    fn single_row(row_index: usize) -> EditorRowFlags {
+        let mut bitset = 0u64;
+        bitset = 1u64 << row_index;
+        EditorRowFlags { bitset }
     }
-
-    fn single_row_2(
-        row_index: usize,
-        typ: UpdateReqType,
-        typ2: UpdateReqType,
-    ) -> UpdateRequirement {
-        UpdateRequirement::combine(
-            UpdateRequirement::single_row(row_index, typ),
-            UpdateRequirement::single_row(row_index, typ2),
-        )
-    }
-
     fn clear(&mut self) {
-        self.bitsets = [0u64; 4];
+        self.bitset = 0;
     }
 
-    fn all_rows_starting_at(row_index: usize, typ: UpdateReqType) -> UpdateRequirement {
+    fn all_rows_starting_at(row_index: usize) -> EditorRowFlags {
         let s = 1u64 << row_index;
         let right_to_s_bits = s - 1;
         let left_to_s_and_s_bits = !right_to_s_bits;
-        let mut bitsets = [0u64; 4];
-        bitsets[typ as usize] = left_to_s_and_s_bits;
+        let mut bitset = left_to_s_and_s_bits;
 
-        UpdateRequirement { bitsets }
+        EditorRowFlags { bitset }
     }
 
-    fn all_rows_starting_at_2(
-        row_index: usize,
-        typ: UpdateReqType,
-        typ2: UpdateReqType,
-    ) -> UpdateRequirement {
-        UpdateRequirement::combine(
-            UpdateRequirement::all_rows_starting_at(row_index, typ),
-            UpdateRequirement::all_rows_starting_at(row_index, typ2),
-        )
-    }
-
-    fn multiple(indices: &[usize], typ: UpdateReqType) -> UpdateRequirement {
+    fn multiple(indices: &[usize]) -> EditorRowFlags {
         let mut b = 0;
         for i in indices {
             b |= 1 << *i;
         }
-        let mut bitsets = [0u64; 4];
-        bitsets[typ as usize] = b;
+        let mut bitset = b;
 
-        UpdateRequirement { bitsets }
+        EditorRowFlags { bitset }
     }
 
-    fn multiple_2(indices: &[usize], typ: UpdateReqType, typ2: UpdateReqType) -> UpdateRequirement {
-        UpdateRequirement::combine(
-            UpdateRequirement::multiple(indices, typ),
-            UpdateRequirement::multiple(indices, typ2),
-        )
-    }
-
-    fn range(from: usize, to: usize, typ: UpdateReqType) -> UpdateRequirement {
+    fn range(from: usize, to: usize) -> EditorRowFlags {
         debug_assert!(to >= from);
         let top = 1 << to;
         let right_to_top_bits = top - 1;
         let bottom = 1 << from;
         let right_to_bottom_bits = bottom - 1;
-        let mut bitsets = [0u64; 4];
-        bitsets[typ as usize] = (right_to_top_bits ^ right_to_bottom_bits) | top;
+        let bitset = (right_to_top_bits ^ right_to_bottom_bits) | top;
 
-        UpdateRequirement { bitsets }
+        EditorRowFlags { bitset }
     }
 
-    fn range_2(
-        from: usize,
-        to: usize,
-        typ: UpdateReqType,
-        typ2: UpdateReqType,
-    ) -> UpdateRequirement {
-        UpdateRequirement::combine(
-            UpdateRequirement::range(from, to, typ),
-            UpdateRequirement::range(from, to, typ2),
-        )
+    fn merge(&mut self, other: EditorRowFlags) {
+        self.bitset |= other.bitset;
     }
 
-    fn merge(&mut self, other: &UpdateRequirement) {
-        self.bitsets[0] |= other.bitsets[0];
-        self.bitsets[1] |= other.bitsets[1];
-        self.bitsets[2] |= other.bitsets[2];
-        self.bitsets[3] |= other.bitsets[3];
-    }
-
-    fn combine(mut a: UpdateRequirement, b: UpdateRequirement) -> UpdateRequirement {
-        a.merge(&b);
-        a
-    }
-
-    fn need(&self, line_index: usize, typ: UpdateReqType) -> bool {
-        ((1 << line_index) & self.bitsets[typ as usize]) != 0
-    }
-
-    fn need_any_of2(&self, line_index: usize, typ: UpdateReqType, typ2: UpdateReqType) -> bool {
-        self.need(line_index, typ) || self.need(line_index, typ2)
-    }
-
-    fn need_any_of3(
-        &self,
-        line_index: usize,
-        typ: UpdateReqType,
-        typ2: UpdateReqType,
-        typ3: UpdateReqType,
-    ) -> bool {
-        self.need(line_index, typ) || self.need(line_index, typ2) || self.need(line_index, typ3)
+    fn need(&self, line_index: usize) -> bool {
+        ((1 << line_index) & self.bitset) != 0
     }
 }
 
@@ -873,10 +806,8 @@ impl NoteCalcApp {
             matrix_editing: None,
             line_id_generator: 1,
             right_gutter_is_dragged: false,
-            last_unrendered_modifications: UpdateRequirement::all_rows_starting_at(
-                0,
-                UpdateReqType::ReparseTokens,
-            ),
+            result_area_redraw: EditorRowFlags::all_rows_starting_at(0),
+            editor_area_redraw: EditorRowFlags::all_rows_starting_at(0),
             render_data: GlobalRenderData::new(
                 client_width,
                 NoteCalcApp::calc_result_gutter_x(None, client_width),
@@ -886,7 +817,13 @@ impl NoteCalcApp {
         }
     }
 
-    pub fn set_normalized_content(&mut self, mut text: &str) {
+    pub fn set_normalized_content<'b>(
+        &mut self,
+        mut text: &str,
+        units: &Units,
+        allocator: &'b Arena<char>,
+        holder: &mut Holder<'b>,
+    ) {
         if text.is_empty() {
             text = "\n\n\n\n\n\n\n\n\n\n";
         }
@@ -896,8 +833,13 @@ impl NoteCalcApp {
             data.line_id = i + 1;
         }
         self.line_id_generator = self.editor_content.line_count() + 1;
-        self.last_unrendered_modifications =
-            UpdateRequirement::all_rows_starting_at(0, UpdateReqType::ReparseTokens);
+
+        self.update_tokens_and_redraw_requirements(
+            RowModificationType::AllLinesFrom(0),
+            units,
+            allocator,
+            holder,
+        );
     }
 
     pub fn end_matrix_editing(
@@ -956,7 +898,8 @@ impl NoteCalcApp {
         render_buckets: &mut RenderBuckets<'a>,
         result_buffer: &'a mut [u8],
         // RerenderRequirement
-        modif_type: UpdateRequirement,
+        redraw_editor_area: EditorRowFlags,
+        redraw_result_area: EditorRowFlags,
         gr: &mut GlobalRenderData,
         allocator: &'a Arena<char>,
         holder: &mut Holder<'a>,
@@ -989,39 +932,8 @@ impl NoteCalcApp {
                 let editor_y = r.editor_pos.row;
                 //
                 let mut height_might_changed = false;
-                if modif_type.need(editor_y, UpdateReqType::ReparseTokens) {
-                    holder.tokens[editor_y] = NoteCalcApp::reparse_tokens(
-                        line,
-                        editor_y,
-                        units,
-                        &mut holder.vars,
-                        allocator,
-                    );
-                    height_might_changed = true;
-                }
-                if modif_type.need_any_of2(
-                    editor_y,
-                    UpdateReqType::ReparseTokens,
-                    UpdateReqType::RecalcResult,
-                ) {
-                    if let Some(tokens) = &mut holder.tokens[editor_y] {
-                        let result = NoteCalcApp::evaluate_tokens(
-                            &mut holder.vars,
-                            editor_y,
-                            &editor_content,
-                            &mut tokens.shunting_output_stack,
-                            line,
-                            &mut holder.autocompletion_src,
-                        );
-                        let result = result.map(|it| it.map(|it| it.result));
-                        holder.results[editor_y] = result;
-                    } else {
-                        holder.results[editor_y] = Ok(None);
-                    }
-                    height_might_changed = true;
-                }
 
-                if height_might_changed || modif_type.need(editor_y, UpdateReqType::RerenderEditor)
+                if height_might_changed || redraw_editor_area.need(editor_y)
                 /*e.g. change the size of matrix with alt-key*/
                 {
                     r.calc_rendered_row_height(
@@ -1043,11 +955,7 @@ impl NoteCalcApp {
 
                 let rendered_row_height = gr.editor_y_to_rendered_height[editor_y];
 
-                if modif_type.need_any_of2(
-                    editor_y,
-                    UpdateReqType::RerenderEditor,
-                    UpdateReqType::ReparseTokens,
-                ) {
+                if redraw_editor_area.need(editor_y) {
                     NoteCalcApp::highlight_current_line(
                         render_buckets,
                         &r,
@@ -1154,7 +1062,7 @@ impl NoteCalcApp {
                             &(LINE_NUM_CONSTS[editor_y][..]),
                         );
                     }
-                } else if modif_type.need(editor_y, UpdateReqType::RerenderResult) {
+                } else if redraw_result_area.need(editor_y) {
                     NoteCalcApp::draw_right_gutter_num_prefixes(
                         render_buckets,
                         gr.result_gutter_x,
@@ -1274,21 +1182,12 @@ impl NoteCalcApp {
             &editor_content,
             &gr,
             gr.result_gutter_x,
-            modif_type,
+            redraw_result_area,
         );
 
         for editor_y in 0..editor_content.line_count() {
-            let rerender_editor = modif_type.need_any_of2(
-                editor_y,
-                UpdateReqType::ReparseTokens,
-                UpdateReqType::RerenderEditor,
-            );
-            let rerender_result = modif_type.need_any_of3(
-                editor_y,
-                UpdateReqType::ReparseTokens,
-                UpdateReqType::RecalcResult,
-                UpdateReqType::RerenderResult,
-            );
+            let rerender_editor = redraw_editor_area.need(editor_y);
+            let rerender_result = redraw_result_area.need(editor_y);
 
             let coords = if rerender_editor && rerender_result {
                 Some((
@@ -1316,7 +1215,7 @@ impl NoteCalcApp {
                         y: gr.editor_y_to_render_y[editor_y],
                         w,
                         h: gr.editor_y_to_rendered_height[editor_y],
-                        start_color: 0xFF88FF_22,
+                        start_color: 0xFF88FF2,
                         end_color: 0xFFFFFF_00,
                         animation_time: Duration::from_millis(200),
                     },
@@ -1333,7 +1232,7 @@ impl NoteCalcApp {
         }
     }
 
-    pub fn reparse_tokens<'b>(
+    pub fn parse_tokens<'b>(
         line: &[char],
         editor_y: usize,
         units: &Units,
@@ -1596,7 +1495,7 @@ impl NoteCalcApp {
         }
     }
 
-    fn evaluate_tokens(
+    fn evaluate_tokens_and_save_result(
         vars: &mut Vec<Variable>,
         editor_y: usize,
         editor_content: &EditorContent<LineData>,
@@ -2228,7 +2127,7 @@ impl NoteCalcApp {
         editor_content: &EditorContent<LineData>,
         gr: &GlobalRenderData,
         result_gutter_x: usize,
-        modif_type: UpdateRequirement,
+        modif_type: EditorRowFlags,
     ) {
         let (max_lengths, result_ranges) = {
             let mut result_ranges: SmallVec<[Option<Range<usize>>; MAX_LINE_COUNT]> =
@@ -2263,12 +2162,7 @@ impl NoteCalcApp {
                                         &results[editor_y..],
                                     );
                             }
-                            if modif_type.need_any_of3(
-                                editor_y,
-                                UpdateReqType::RecalcResult,
-                                UpdateReqType::RerenderResult,
-                                UpdateReqType::ReparseTokens,
-                            ) {
+                            if modif_type.need(editor_y) {
                                 NoteCalcApp::render_matrix_result(
                                     units,
                                     result_gutter_x + gr.right_gutter_width,
@@ -2361,12 +2255,7 @@ impl NoteCalcApp {
                         column: x + lengths.int_part_len + lengths.frac_part_len + 1,
                     });
                 }
-            } else if modif_type.need_any_of3(
-                editor_y,
-                UpdateReqType::RecalcResult,
-                UpdateReqType::RerenderResult,
-                UpdateReqType::ReparseTokens,
-            ) {
+            } else if modif_type.need(editor_y) {
                 // no reuslt but need rerender
                 // result background
                 render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
@@ -2524,7 +2413,7 @@ impl NoteCalcApp {
             &self.editor_content,
             &gr,
             result_gutter_x,
-            UpdateRequirement::all_rows_starting_at(0, UpdateReqType::ReparseTokens),
+            EditorRowFlags::all_rows_starting_at(0),
         );
         for i in 0..render_height {
             render_buckets.draw_char(Layer::AboveText, result_gutter_x, i, '‖');
@@ -2870,26 +2759,17 @@ impl NoteCalcApp {
                 );
                 let new_row = self.editor.get_selection().get_cursor_pos().row;
                 let modif = if prev_selection.is_range() {
-                    let mut m = UpdateRequirement::range_2(
+                    let mut m = EditorRowFlags::range(
                         prev_selection.get_first().row,
                         prev_selection.get_second().row,
-                        UpdateReqType::RerenderEditor,
-                        UpdateReqType::RerenderResult,
                     );
-                    m.merge(&UpdateRequirement::single_row_2(
-                        new_row,
-                        UpdateReqType::RerenderEditor,
-                        UpdateReqType::RerenderResult,
-                    ));
+                    m.merge(EditorRowFlags::single_row(new_row));
                     m
                 } else {
-                    UpdateRequirement::multiple_2(
-                        &[prev_selection.start.row, new_row],
-                        UpdateReqType::RerenderEditor,
-                        UpdateReqType::RerenderResult,
-                    )
+                    EditorRowFlags::multiple(&[prev_selection.start.row, new_row])
                 };
-                self.last_unrendered_modifications.merge(&modif);
+                self.result_area_redraw.merge(modif);
+                self.editor_area_redraw.merge(modif);
                 self.editor.blink_cursor();
             }
         } else if x - self.render_data.result_gutter_x < RIGHT_GUTTER_WIDTH {
@@ -2945,13 +2825,10 @@ impl NoteCalcApp {
 
     pub fn set_result_gutter_x(&mut self, x: usize) {
         self.render_data.result_gutter_x = x;
-        // todo rerender everything
-        self.last_unrendered_modifications
-            .merge(&UpdateRequirement::all_rows_starting_at_2(
-                0,
-                UpdateReqType::RerenderEditor,
-                UpdateReqType::RerenderResult,
-            ));
+        self.result_area_redraw
+            .merge(EditorRowFlags::all_rows_starting_at(0));
+        self.editor_area_redraw
+            .merge(EditorRowFlags::all_rows_starting_at(0));
     }
 
     pub fn handle_resize(&mut self, new_client_width: usize) {
@@ -2979,8 +2856,8 @@ impl NoteCalcApp {
         };
         if need_rerender {
             let (from, to) = self.editor.get_selection().get_range();
-            let modif = UpdateRequirement::range(from.row, to.row, UpdateReqType::RerenderEditor);
-            UpdateRequirement::merge(&mut self.last_unrendered_modifications, &modif);
+            self.editor_area_redraw
+                .merge(EditorRowFlags::range(from.row, to.row));
         }
         need_rerender
     }
@@ -3050,7 +2927,12 @@ impl NoteCalcApp {
         return result;
     }
 
-    pub fn alt_key_released<'b>(&mut self, holder: &Holder<'b>) {
+    pub fn alt_key_released<'b>(
+        &mut self,
+        holder: &mut Holder<'b>,
+        units: &Units,
+        allocator: &'b Arena<char>,
+    ) {
         if self.line_reference_chooser.is_none() {
             return;
         }
@@ -3058,12 +2940,10 @@ impl NoteCalcApp {
         let cursor_row = self.editor.get_selection().get_cursor_pos().row;
         let line_ref_row = self.line_reference_chooser.unwrap();
 
-        self.last_unrendered_modifications
-            .merge(&UpdateRequirement::single_row_2(
-                line_ref_row,
-                UpdateReqType::RerenderEditor,
-                UpdateReqType::RerenderResult,
-            ));
+        self.editor_area_redraw
+            .merge(EditorRowFlags::single_row(line_ref_row));
+        self.result_area_redraw
+            .merge(EditorRowFlags::single_row(line_ref_row));
 
         self.line_reference_chooser = None;
 
@@ -3082,25 +2962,25 @@ impl NoteCalcApp {
         let inserting_text = format!("&[{}]", line_id);
         self.editor
             .insert_text(&inserting_text, &mut self.editor_content);
-        self.last_unrendered_modifications
-            .merge(&UpdateRequirement::single_row(
-                cursor_row,
-                UpdateReqType::ReparseTokens,
-            ));
+
+        self.update_tokens_and_redraw_requirements(
+            RowModificationType::SingleLine(cursor_row),
+            units,
+            allocator,
+            holder,
+        );
     }
 
-    pub fn handle_paste(&mut self, text: String) {
+    pub fn handle_paste<'b>(
+        &mut self,
+        text: String,
+        holder: &mut Holder<'b>,
+        units: &Units,
+        allocator: &'b Arena<char>,
+    ) {
         match self.editor.insert_text(&text, &mut self.editor_content) {
-            Some(t) => {
-                let modif = match t {
-                    RowModificationType::AllLinesFrom(i) => {
-                        UpdateRequirement::all_rows_starting_at(i, UpdateReqType::ReparseTokens)
-                    }
-                    RowModificationType::SingleLine(i) => {
-                        UpdateRequirement::single_row(i, UpdateReqType::ReparseTokens)
-                    }
-                };
-                self.last_unrendered_modifications.merge(&modif);
+            Some(modif) => {
+                self.update_tokens_and_redraw_requirements(modif, units, allocator, holder);
             }
             None => {}
         };
@@ -3112,9 +2992,13 @@ impl NoteCalcApp {
         modifiers: InputModifiers,
         // TODO azt adjuk át ami kell neki ne az egész holdert
         holder: &mut Holder<'b>,
-    ) -> bool {
-        let mut content_was_modified = false;
-        let modif = if self.matrix_editing.is_none() && modifiers.alt {
+    ) -> Option<RowModificationType> {
+        struct InputResult {
+            modif: Option<RowModificationType>,
+            redraw: Option<(EditorRowFlags, RedrawTarget)>,
+        };
+        let cur_row = self.editor.get_selection().get_cursor_pos().row;
+        let input_res: InputResult = if self.matrix_editing.is_none() && modifiers.alt {
             if input == EditorInputEvent::Left {
                 let selection = self.editor.get_selection();
                 let (start, end) = selection.get_range();
@@ -3126,11 +3010,13 @@ impl NoteCalcApp {
                     };
                     self.editor_content.mut_data(row_i).result_format = new_format;
                 }
-                Some(UpdateRequirement::range(
-                    start.row,
-                    end.row,
-                    UpdateReqType::RerenderResult,
-                ))
+                InputResult {
+                    modif: None,
+                    redraw: Some((
+                        EditorRowFlags::range(start.row, end.row),
+                        RedrawTarget::ResultArea,
+                    )),
+                }
             } else if input == EditorInputEvent::Right {
                 let selection = self.editor.get_selection();
                 let (start, end) = selection.get_range();
@@ -3142,11 +3028,13 @@ impl NoteCalcApp {
                     };
                     self.editor_content.mut_data(row_i).result_format = new_format;
                 }
-                Some(UpdateRequirement::range(
-                    start.row,
-                    end.row,
-                    UpdateReqType::RerenderResult,
-                ))
+                InputResult {
+                    modif: None,
+                    redraw: Some((
+                        EditorRowFlags::range(start.row, end.row),
+                        RedrawTarget::ResultArea,
+                    )),
+                }
             } else if input == EditorInputEvent::Up {
                 let cur_pos = self.editor.get_selection().get_cursor_pos();
                 let rows = if let Some(selector_row) = self.line_reference_chooser {
@@ -3162,14 +3050,18 @@ impl NoteCalcApp {
                 };
                 if let Some((prev_selected_row, new_selected_row)) = rows {
                     self.line_reference_chooser = Some(new_selected_row);
-                    Some(UpdateRequirement::range_2(
-                        new_selected_row,
-                        prev_selected_row,
-                        UpdateReqType::RerenderEditor,
-                        UpdateReqType::RerenderResult,
-                    ))
+                    InputResult {
+                        modif: None,
+                        redraw: Some((
+                            EditorRowFlags::range(new_selected_row, prev_selected_row),
+                            RedrawTarget::Both,
+                        )),
+                    }
                 } else {
-                    None
+                    InputResult {
+                        modif: None,
+                        redraw: None,
+                    }
                 }
             } else if input == EditorInputEvent::Down {
                 let cur_pos = self.editor.get_selection().get_cursor_pos();
@@ -3184,58 +3076,67 @@ impl NoteCalcApp {
                 };
                 if let Some((prev_selected_row, new_selected_row)) = rows {
                     self.line_reference_chooser = Some(new_selected_row);
-                    Some(UpdateRequirement::range_2(
-                        prev_selected_row,
-                        new_selected_row,
-                        UpdateReqType::RerenderEditor,
-                        UpdateReqType::RerenderResult,
-                    ))
+                    InputResult {
+                        modif: None,
+                        redraw: Some((
+                            EditorRowFlags::range(prev_selected_row, new_selected_row),
+                            RedrawTarget::Both,
+                        )),
+                    }
                 } else {
-                    None
+                    InputResult {
+                        modif: None,
+                        redraw: None,
+                    }
                 }
             } else {
-                None
+                InputResult {
+                    modif: None,
+                    redraw: None,
+                }
             }
         } else if self.matrix_editing.is_some() {
-            let prev_row = self.editor.get_selection().get_cursor_pos().row;
+            let prev_row = cur_row;
             self.handle_matrix_editor_input(input, modifiers);
             if self.matrix_editing.is_none() {
-                // left a matrix
-                content_was_modified = true;
-                let new_row = self.editor.get_selection().get_cursor_pos().row;
-                Some(UpdateRequirement::combine(
-                    UpdateRequirement::single_row(prev_row, UpdateReqType::ReparseTokens),
-                    UpdateRequirement::single_row_2(
-                        new_row,
-                        UpdateReqType::RerenderEditor,
-                        UpdateReqType::RerenderResult,
-                    ),
-                ))
+                // user left a matrix
+                let new_row = cur_row;
+
+                InputResult {
+                    modif: Some(RowModificationType::SingleLine(prev_row)),
+                    redraw: Some((EditorRowFlags::single_row(new_row), RedrawTarget::Both)),
+                }
             } else {
-                Some(UpdateRequirement::single_row_2(
-                    prev_row,
-                    UpdateReqType::RerenderEditor,
-                    UpdateReqType::RerenderResult,
-                ))
+                InputResult {
+                    modif: None,
+                    redraw: Some((EditorRowFlags::single_row(prev_row), RedrawTarget::Both)),
+                }
             }
         } else {
-            if let Some(render_req) = self.handle_completion(
+            if self.handle_completion(
                 &input,
                 &mut holder.editor_objects,
                 &holder.autocompletion_src,
             ) {
-                content_was_modified = true;
-                Some(render_req)
-            } else if let Some(render_req) =
+                InputResult {
+                    modif: Some(RowModificationType::SingleLine(cur_row)),
+                    redraw: None,
+                }
+            } else if let Some(modif_type) =
                 self.handle_obj_deletion(&input, &mut holder.editor_objects)
             {
-                content_was_modified = true;
-                Some(render_req)
-            } else if let Some(render_req) =
-                self.handle_obj_jump_over(&input, modifiers, &holder.editor_objects)
-            {
-                content_was_modified = false;
-                Some(render_req)
+                InputResult {
+                    modif: Some(modif_type),
+                    redraw: None,
+                }
+            } else if self.handle_obj_jump_over(&input, modifiers, &holder.editor_objects) {
+                InputResult {
+                    modif: None,
+                    redraw: Some((
+                        EditorRowFlags::single_row(cur_row),
+                        RedrawTarget::EditorArea,
+                    )),
+                }
             } else {
                 let prev_selection = self.editor.get_selection();
                 let prev_cursor_pos = prev_selection.get_cursor_pos();
@@ -3243,60 +3144,61 @@ impl NoteCalcApp {
                 let modif_type =
                     self.editor
                         .handle_input(input, modifiers, &mut self.editor_content);
+
                 if modif_type.is_none() {
                     // it is possible to step into a matrix only through navigation
                     self.check_stepping_into_matrix(prev_cursor_pos, &holder.editor_objects);
                 }
 
-                content_was_modified = modif_type.is_some();
                 match modif_type {
-                    Some(RowModificationType::SingleLine(index)) => Some(
-                        UpdateRequirement::single_row(index, UpdateReqType::ReparseTokens),
-                    ),
-                    Some(RowModificationType::AllLinesFrom(index)) => {
-                        Some(UpdateRequirement::all_rows_starting_at(
-                            index,
-                            UpdateReqType::ReparseTokens,
-                        ))
-                    }
+                    Some(r) => InputResult {
+                        modif: Some(r),
+                        redraw: None,
+                    },
                     None => {
                         let cursor_pos = self.editor.get_selection().get_cursor_pos();
                         let new_cursor_y = cursor_pos.row;
                         if prev_selection.is_range() {
                             let from = prev_selection.get_first().row.min(new_cursor_y);
                             let to = prev_selection.get_second().row.max(new_cursor_y);
-                            Some(UpdateRequirement::range_2(
-                                from,
-                                to,
-                                UpdateReqType::RerenderEditor,
-                                UpdateReqType::RerenderResult,
-                            ))
+                            InputResult {
+                                modif: None,
+                                redraw: Some((EditorRowFlags::range(from, to), RedrawTarget::Both)),
+                            }
                         } else {
                             let old_cursor_y = prev_cursor_pos.row;
                             if old_cursor_y > new_cursor_y {
-                                Some(UpdateRequirement::range_2(
-                                    new_cursor_y,
-                                    old_cursor_y,
-                                    UpdateReqType::RerenderEditor,
-                                    UpdateReqType::RerenderResult,
-                                ))
+                                InputResult {
+                                    modif: None,
+                                    redraw: Some((
+                                        EditorRowFlags::range(new_cursor_y, old_cursor_y),
+                                        RedrawTarget::Both,
+                                    )),
+                                }
                             } else if old_cursor_y < new_cursor_y {
-                                Some(UpdateRequirement::range_2(
-                                    old_cursor_y,
-                                    new_cursor_y,
-                                    UpdateReqType::RerenderEditor,
-                                    UpdateReqType::RerenderResult,
-                                ))
+                                InputResult {
+                                    modif: None,
+                                    redraw: Some((
+                                        EditorRowFlags::range(old_cursor_y, new_cursor_y),
+                                        RedrawTarget::Both,
+                                    )),
+                                }
                             } else {
                                 let new_cursor_x = cursor_pos.column;
                                 let old_cursor_x = prev_cursor_pos.column;
                                 if old_cursor_x != new_cursor_x {
-                                    Some(UpdateRequirement::single_row(
-                                        new_cursor_y,
-                                        UpdateReqType::RerenderEditor,
-                                    ))
+                                    InputResult {
+                                        modif: None,
+                                        redraw: Some((
+                                            EditorRowFlags::single_row(new_cursor_y),
+                                            RedrawTarget::Both,
+                                        )),
+                                    }
                                 } else {
-                                    None
+                                    InputResult {
+                                        modif: None,
+                                        redraw: None,
+                                    }
                                 }
                             }
                         }
@@ -3305,10 +3207,78 @@ impl NoteCalcApp {
             }
         };
 
-        if let Some(modif) = modif {
-            UpdateRequirement::merge(&mut self.last_unrendered_modifications, &modif);
+        if let Some((flags, target)) = &input_res.redraw {
+            match target {
+                RedrawTarget::Both => {
+                    self.editor_area_redraw.merge(*flags);
+                    self.result_area_redraw.merge(*flags);
+                }
+                RedrawTarget::EditorArea => {
+                    self.editor_area_redraw.merge(*flags);
+                }
+                RedrawTarget::ResultArea => {
+                    self.result_area_redraw.merge(*flags);
+                }
+            }
         }
-        return content_was_modified;
+
+        return input_res.modif;
+    }
+
+    pub fn update_tokens_and_redraw_requirements<'b>(
+        &mut self,
+        input_effect: RowModificationType,
+        units: &Units,
+        allocator: &'b Arena<char>,
+        // TODO azt adjuk át ami kell neki ne az egész holdert
+        holder: &mut Holder<'b>,
+    ) {
+        match input_effect {
+            RowModificationType::SingleLine(editor_y) => {
+                holder.tokens[editor_y] = NoteCalcApp::parse_tokens(
+                    self.editor_content.get_line_chars(editor_y),
+                    editor_y,
+                    units,
+                    &mut holder.vars,
+                    allocator,
+                );
+                if let Some(tokens) = &mut holder.tokens[editor_y] {
+                    let result = NoteCalcApp::evaluate_tokens_and_save_result(
+                        &mut holder.vars,
+                        editor_y,
+                        &self.editor_content,
+                        &mut tokens.shunting_output_stack,
+                        self.editor_content.get_line_chars(editor_y),
+                        &mut holder.autocompletion_src,
+                    );
+                    let result = result.map(|it| it.map(|it| it.result));
+                    holder.results[editor_y] = result;
+                } else {
+                    holder.results[editor_y] = Ok(None);
+                }
+
+                self.editor_area_redraw
+                    .merge(EditorRowFlags::single_row(editor_y));
+                self.result_area_redraw
+                    .merge(EditorRowFlags::single_row(editor_y));
+            }
+            RowModificationType::AllLinesFrom(start_editor_y) => {
+                for (editor_y, line) in self.editor_content.lines().skip(start_editor_y).enumerate()
+                {
+                    holder.tokens[editor_y] = NoteCalcApp::parse_tokens(
+                        line,
+                        editor_y,
+                        units,
+                        &mut holder.vars,
+                        allocator,
+                    );
+                }
+                self.editor_area_redraw
+                    .merge(EditorRowFlags::all_rows_starting_at(start_editor_y));
+                self.result_area_redraw
+                    .merge(EditorRowFlags::all_rows_starting_at(start_editor_y));
+            }
+        }
     }
 
     fn handle_completion<'b>(
@@ -3316,9 +3286,10 @@ impl NoteCalcApp {
         input: &EditorInputEvent,
         editor_objects: &mut Vec<Vec<EditorObject>>,
         autocompletion_src: &[char],
-    ) -> Option<UpdateRequirement> {
+    ) -> bool {
         let cursor_pos = self.editor.get_selection();
         if *input == EditorInputEvent::Tab && cursor_pos.get_cursor_pos().column > 0 {
+            // matrix autocompletion 'm' + tab
             let cursor_pos = cursor_pos.get_cursor_pos();
             let line = self.editor_content.get_line_chars(cursor_pos.row);
             let is_m = line[cursor_pos.column - 1] == 'm';
@@ -3365,10 +3336,7 @@ impl NoteCalcApp {
                     rendered_h: 1,
                 });
                 self.check_stepping_into_matrix(Pos::from_row_column(0, 0), &editor_objects);
-                return Some(UpdateRequirement::single_row(
-                    cursor_pos.row,
-                    UpdateReqType::ReparseTokens,
-                ));
+                return true;
             } else {
                 // check for autocompletion
                 // find space
@@ -3430,21 +3398,18 @@ impl NoteCalcApp {
                         );
                         i += 1;
                     }
-                    return Some(UpdateRequirement::single_row(
-                        cursor_pos.row,
-                        UpdateReqType::ReparseTokens,
-                    ));
+                    return true;
                 }
             }
         }
-        return None;
+        return false;
     }
 
     fn handle_obj_deletion<'b>(
         &mut self,
         input: &EditorInputEvent,
         editor_objects: &mut Vec<Vec<EditorObject>>,
-    ) -> Option<UpdateRequirement> {
+    ) -> Option<RowModificationType> {
         let selection = self.editor.get_selection();
         let cursor_pos = selection.get_cursor_pos();
         if *input == EditorInputEvent::Backspace
@@ -3467,15 +3432,9 @@ impl NoteCalcApp {
                     &mut self.editor_content,
                 );
                 return if obj.rendered_h > 1 {
-                    Some(UpdateRequirement::all_rows_starting_at(
-                        cursor_pos.row,
-                        UpdateReqType::ReparseTokens,
-                    ))
+                    Some(RowModificationType::AllLinesFrom(cursor_pos.row))
                 } else {
-                    Some(UpdateRequirement::single_row(
-                        cursor_pos.row,
-                        UpdateReqType::ReparseTokens,
-                    ))
+                    Some(RowModificationType::SingleLine(cursor_pos.row))
                 };
             }
         } else if *input == EditorInputEvent::Del && !selection.is_range() {
@@ -3493,15 +3452,9 @@ impl NoteCalcApp {
                     &mut self.editor_content,
                 );
                 return if obj.rendered_h > 1 {
-                    Some(UpdateRequirement::all_rows_starting_at(
-                        cursor_pos.row,
-                        UpdateReqType::ReparseTokens,
-                    ))
+                    Some(RowModificationType::AllLinesFrom(cursor_pos.row))
                 } else {
-                    Some(UpdateRequirement::single_row(
-                        cursor_pos.row,
-                        UpdateReqType::ReparseTokens,
-                    ))
+                    Some(RowModificationType::SingleLine(cursor_pos.row))
                 };
             }
         }
@@ -3513,7 +3466,7 @@ impl NoteCalcApp {
         input: &EditorInputEvent,
         modifiers: InputModifiers,
         editor_objects: &Vec<Vec<EditorObject>>,
-    ) -> Option<UpdateRequirement> {
+    ) -> bool {
         let selection = self.editor.get_selection();
         let cursor_pos = selection.get_cursor_pos();
         if *input == EditorInputEvent::Left
@@ -3528,10 +3481,7 @@ impl NoteCalcApp {
                 if obj_typ == EditorObjectType::LineReference {
                     //  jump over it
                     self.editor.set_cursor_pos_r_c(row, start_x);
-                    return Some(UpdateRequirement::single_row(
-                        cursor_pos.row,
-                        UpdateReqType::RerenderEditor,
-                    ));
+                    return true;
                 }
             }
         } else if *input == EditorInputEvent::Right
@@ -3546,14 +3496,11 @@ impl NoteCalcApp {
                 if obj_typ == EditorObjectType::LineReference {
                     //  jump over it
                     self.editor.set_cursor_pos_r_c(row, end_x);
-                    return Some(UpdateRequirement::single_row(
-                        cursor_pos.row,
-                        UpdateReqType::RerenderEditor,
-                    ));
+                    return true;
                 }
             }
         }
-        return None;
+        return false;
     }
 
     fn check_stepping_into_matrix<'b>(
@@ -3758,8 +3705,6 @@ impl NoteCalcApp {
         allocator: &'a Arena<char>,
         holder: &mut Holder<'a>,
     ) {
-        // Arena::with_capacity(MAX_LINE_COUNT * MAX_EDITOR_WIDTH)
-        let _sh = self.last_unrendered_modifications;
         NoteCalcApp::renderr(
             &mut self.editor,
             &self.editor_content,
@@ -3768,12 +3713,14 @@ impl NoteCalcApp {
             &mut self.line_reference_chooser,
             render_buckets,
             result_buffer,
-            self.last_unrendered_modifications,
+            self.editor_area_redraw,
+            self.result_area_redraw,
             &mut self.render_data,
             allocator,
             holder,
         );
-        self.last_unrendered_modifications.clear();
+        self.editor_area_redraw.clear();
+        self.result_area_redraw.clear();
     }
 }
 
@@ -3925,7 +3872,7 @@ mod tests {
         app.editor
             .set_selection_save_col(Selection::single_r_c(1, 2));
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
-        app.alt_key_released(&mut holder);
+        app.alt_key_released(&mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -3957,7 +3904,7 @@ mod tests {
         app.editor
             .set_selection_save_col(Selection::single_r_c(1, 0));
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
-        app.alt_key_released(&mut holder);
+        app.alt_key_released(&mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -3994,7 +3941,7 @@ mod tests {
         app.editor
             .set_selection_save_col(Selection::single_r_c(1, 2));
         app.handle_input(EditorInputEvent::Down, InputModifiers::alt(), &mut holder);
-        app.alt_key_released(&mut holder);
+        app.alt_key_released(&mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -4032,7 +3979,7 @@ mod tests {
             .set_selection_save_col(Selection::single_r_c(1, 2));
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
         app.handle_input(EditorInputEvent::Down, InputModifiers::alt(), &mut holder);
-        app.alt_key_released(&mut holder);
+        app.alt_key_released(&mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -4877,10 +4824,8 @@ mod tests {
             &mut holder,
         );
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
-        app.alt_key_released(&mut holder);
+        app.alt_key_released(&mut holder, &units, &arena);
         assert_eq!("16892313\n14 * &[1]", app.editor_content.get_content());
-        app.last_unrendered_modifications =
-            UpdateRequirement::all_rows_starting_at(0, UpdateReqType::ReparseTokens);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -4974,11 +4919,11 @@ mod tests {
             &mut holder,
         );
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
-        app.alt_key_released(&mut holder);
+        app.alt_key_released(&mut holder, &units, &arena);
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
-        app.alt_key_released(&mut holder);
+        app.alt_key_released(&mut holder, &units, &arena);
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
-        app.alt_key_released(&mut holder);
+        app.alt_key_released(&mut holder, &units, &arena);
         assert_eq!(
             "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13&[1]&[1]&[1]\n",
             &app.editor_content.get_content()
@@ -4991,8 +4936,14 @@ mod tests {
 
     #[test]
     fn test_line_ref_denormalization() {
-        let (mut app, _units, _holder) = create_app();
-        app.set_normalized_content("1111\n2222\n14 * &[2]&[2]&[2]\n");
+        let (mut app, units, mut holder) = create_app();
+        let arena = Arena::new();
+        app.set_normalized_content(
+            "1111\n2222\n14 * &[2]&[2]&[2]\n",
+            &units,
+            &arena,
+            &mut holder,
+        );
         assert_eq!(1, app.editor_content.get_data(0).line_id);
         assert_eq!(2, app.editor_content.get_data(1).line_id);
         assert_eq!(3, app.editor_content.get_data(2).line_id);
@@ -5003,15 +4954,12 @@ mod tests {
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        assert!(app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::ReparseTokens));
-        assert!(app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::ReparseTokens));
-        assert!(app
-            .last_unrendered_modifications
-            .need(2, UpdateReqType::ReparseTokens));
+        assert!(app.editor_area_redraw.need(0));
+        assert!(app.result_area_redraw.need(0));
+        assert!(app.editor_area_redraw.need(1));
+        assert!(app.result_area_redraw.need(1));
+        assert!(app.editor_area_redraw.need(2));
+        assert!(app.result_area_redraw.need(2));
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -5020,25 +4968,24 @@ mod tests {
             &arena,
             &mut holder,
         );
-        assert!(!app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(!app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
-        assert!(!app
-            .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderEditor));
-        app.set_normalized_content("1111\n2222\n14 * &[2]&[2]&[2]\n");
-        assert!(app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::ReparseTokens));
-        assert!(app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::ReparseTokens));
-        assert!(app
-            .last_unrendered_modifications
-            .need(2, UpdateReqType::ReparseTokens));
+        assert!(!app.editor_area_redraw.need(0));
+        assert!(!app.result_area_redraw.need(0));
+        assert!(!app.editor_area_redraw.need(1));
+        assert!(!app.result_area_redraw.need(1));
+        assert!(!app.editor_area_redraw.need(2));
+        assert!(!app.result_area_redraw.need(2));
+        app.set_normalized_content(
+            "1111\n2222\n14 * &[2]&[2]&[2]\n",
+            &units,
+            &arena,
+            &mut holder,
+        );
+        assert!(app.editor_area_redraw.need(0));
+        assert!(app.result_area_redraw.need(0));
+        assert!(app.editor_area_redraw.need(1));
+        assert!(app.result_area_redraw.need(1));
+        assert!(app.editor_area_redraw.need(2));
+        assert!(app.result_area_redraw.need(2));
     }
 
     #[test]
@@ -5265,8 +5212,7 @@ sum",
         app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
         app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
         app.handle_input(EditorInputEvent::Left, InputModifiers::alt(), &mut holder);
-        app.last_unrendered_modifications =
-            UpdateRequirement::all_rows_starting_at(0, UpdateReqType::ReparseTokens);
+
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -5421,7 +5367,7 @@ sum",
                 &mut holder,
             );
             app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
-            app.alt_key_released(&mut holder);
+            app.alt_key_released(&mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5456,9 +5402,8 @@ sum",
                 &mut holder,
             );
             app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
-            app.alt_key_released(&mut holder);
-            app.last_unrendered_modifications =
-                UpdateRequirement::all_rows_starting_at(0, UpdateReqType::ReparseTokens);
+            app.alt_key_released(&mut holder, &units, &arena);
+
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -6118,7 +6063,7 @@ sum",
     }
 
     #[test]
-    fn test_click_2() {
+    fn test_click() {
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
@@ -6253,8 +6198,7 @@ sum",
         app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
         app.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut holder);
         app.editor.insert_text("apple + 2", &mut app.editor_content);
-        app.last_unrendered_modifications =
-            UpdateRequirement::all_rows_starting_at(0, UpdateReqType::ReparseTokens);
+
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6366,12 +6310,8 @@ sum",
         );
 
         app.handle_input(EditorInputEvent::Down, InputModifiers::none(), &mut holder);
-        assert!(app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
+        assert!(app.editor_area_redraw.need(0));
+        assert!(app.editor_area_redraw.need(1));
 
         assert_eq!(holder.editor_objects[0].len(), 1);
         assert_eq!(holder.editor_objects[1].len(), 1);
@@ -6389,12 +6329,8 @@ sum",
             &arena,
             &mut holder,
         );
-        assert!(!app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(!app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
+        assert!(!app.editor_area_redraw.need(0));
+        assert!(!app.editor_area_redraw.need(1));
 
         assert_eq!(holder.editor_objects[0].len(), 1);
         assert_eq!(holder.editor_objects[1].len(), 1);
@@ -6424,12 +6360,8 @@ sum",
 
         // step into matrix
         app.handle_input(EditorInputEvent::Down, InputModifiers::none(), &mut holder);
-        assert!(app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
+        assert!(app.editor_area_redraw.need(0));
+        assert!(app.editor_area_redraw.need(1));
 
         let mut result_buffer = [0; 128];
         app.render(
@@ -6439,21 +6371,15 @@ sum",
             &arena,
             &mut holder,
         );
-        assert!(!app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(!app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
+        assert!(!app.editor_area_redraw.need(0));
+        assert!(!app.editor_area_redraw.need(1));
 
         // leave matrix
         app.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut holder);
-        assert!(app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::ReparseTokens));
+        assert!(app.editor_area_redraw.need(0));
+        assert!(!app.result_area_redraw.need(0));
+        assert!(app.editor_area_redraw.need(1));
+        assert!(app.result_area_redraw.need(1));
     }
 
     #[test]
@@ -6473,12 +6399,8 @@ sum",
         );
 
         app.handle_click(4, 0, &mut holder);
-        assert!(app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
+        assert!(app.editor_area_redraw.need(0));
+        assert!(app.editor_area_redraw.need(1));
     }
 
     #[test]
@@ -6497,15 +6419,12 @@ sum",
             &mut holder,
         );
         app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
-        assert!(!app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderEditor));
+        assert!(!app.editor_area_redraw.need(0));
+        assert!(!app.result_area_redraw.need(0));
+        assert!(app.editor_area_redraw.need(1));
+        assert!(app.result_area_redraw.need(1));
+        assert!(app.editor_area_redraw.need(2));
+        assert!(app.result_area_redraw.need(2));
 
         let mut result_buffer = [0; 128];
         app.render(
@@ -6516,15 +6435,12 @@ sum",
             &mut holder,
         );
         app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
-        assert!(app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderEditor));
+        assert!(app.editor_area_redraw.need(0));
+        assert!(app.result_area_redraw.need(0));
+        assert!(app.editor_area_redraw.need(1));
+        assert!(app.result_area_redraw.need(1));
+        assert!(app.editor_area_redraw.need(2));
+        assert!(app.result_area_redraw.need(2));
     }
 
     #[test]
@@ -6548,15 +6464,12 @@ sum",
         );
 
         app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
-        assert!(app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderEditor));
+        assert!(app.editor_area_redraw.need(0));
+        assert!(app.result_area_redraw.need(0));
+        assert!(app.editor_area_redraw.need(1));
+        assert!(app.result_area_redraw.need(1));
+        assert!(app.editor_area_redraw.need(2));
+        assert!(app.result_area_redraw.need(2));
     }
 
     #[test]
@@ -6585,15 +6498,12 @@ sum",
             &mut holder,
         );
         app.handle_input(EditorInputEvent::Down, InputModifiers::shift(), &mut holder);
-        assert!(app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderEditor));
+        assert!(app.editor_area_redraw.need(0));
+        assert!(app.result_area_redraw.need(0));
+        assert!(app.editor_area_redraw.need(1));
+        assert!(app.result_area_redraw.need(1));
+        assert!(app.editor_area_redraw.need(2));
+        assert!(app.result_area_redraw.need(2));
     }
 
     #[test]
@@ -6613,26 +6523,20 @@ sum",
             &arena,
             &mut holder,
         );
-        assert!(!app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(!app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
-        assert!(!app
-            .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderEditor));
+        assert!(!app.editor_area_redraw.need(0));
+        assert!(!app.result_area_redraw.need(0));
+        assert!(!app.editor_area_redraw.need(1));
+        assert!(!app.result_area_redraw.need(1));
+        assert!(!app.editor_area_redraw.need(2));
+        assert!(!app.result_area_redraw.need(2));
 
         app.handle_time(1000);
-        assert!(app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderEditor));
+        assert!(app.editor_area_redraw.need(0));
+        assert!(!app.result_area_redraw.need(0));
+        assert!(app.editor_area_redraw.need(1));
+        assert!(!app.result_area_redraw.need(1));
+        assert!(app.editor_area_redraw.need(2));
+        assert!(!app.result_area_redraw.need(2));
     }
 
     #[test]
@@ -6662,15 +6566,13 @@ sum",
         );
         // cancels selection
         app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
-        assert!(app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderEditor));
+
+        assert!(app.editor_area_redraw.need(0));
+        assert!(app.result_area_redraw.need(0));
+        assert!(app.editor_area_redraw.need(1));
+        assert!(app.result_area_redraw.need(1));
+        assert!(app.editor_area_redraw.need(2));
+        assert!(app.result_area_redraw.need(2));
     }
 
     #[test]
@@ -6689,15 +6591,12 @@ sum",
             &mut holder,
         );
         app.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut holder);
-        assert!(!app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderEditor));
+        assert!(!app.editor_area_redraw.need(0));
+        assert!(!app.result_area_redraw.need(0));
+        assert!(app.editor_area_redraw.need(1));
+        assert!(app.result_area_redraw.need(1));
+        assert!(app.editor_area_redraw.need(2));
+        assert!(app.result_area_redraw.need(2));
     }
 
     #[test]
@@ -6727,12 +6626,10 @@ sum",
         );
         // cancels selection
         app.handle_click(4, 0, &mut holder);
-        assert!(app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
+        assert!(app.editor_area_redraw.need(0));
+        assert!(app.result_area_redraw.need(0));
+        assert!(app.editor_area_redraw.need(1));
+        assert!(app.result_area_redraw.need(1));
     }
 
     #[test]
@@ -6751,12 +6648,10 @@ sum",
             &mut holder,
         );
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
-        assert!(!app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
+        assert!(!app.editor_area_redraw.need(0));
+        assert!(!app.result_area_redraw.need(0));
+        assert!(app.editor_area_redraw.need(1));
+        assert!(app.result_area_redraw.need(1));
 
         let mut result_buffer = [0; 128];
         app.render(
@@ -6767,12 +6662,10 @@ sum",
             &mut holder,
         );
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
-        assert!(app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
+        assert!(app.editor_area_redraw.need(0));
+        assert!(app.result_area_redraw.need(0));
+        assert!(app.editor_area_redraw.need(1));
+        assert!(app.result_area_redraw.need(1));
 
         let mut result_buffer = [0; 128];
         app.render(
@@ -6782,16 +6675,13 @@ sum",
             &arena,
             &mut holder,
         );
-        app.alt_key_released(&mut holder);
-        assert!(app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(!app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
-        assert!(!app
-            .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderEditor));
+        app.alt_key_released(&mut holder, &units, &arena);
+        assert!(app.editor_area_redraw.need(0));
+        assert!(app.result_area_redraw.need(0));
+        assert!(!app.editor_area_redraw.need(1));
+        assert!(!app.result_area_redraw.need(1));
+        assert!(!app.editor_area_redraw.need(2));
+        assert!(!app.result_area_redraw.need(2));
     }
 
     #[test]
@@ -6810,32 +6700,12 @@ sum",
             &mut holder,
         );
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
-        assert_eq!(
-            false,
-            app.last_unrendered_modifications
-                .need(0, UpdateReqType::RerenderEditor)
-        );
-        assert!(app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
-        assert_eq!(
-            false,
-            app.last_unrendered_modifications
-                .need(2, UpdateReqType::RerenderEditor)
-        );
-        assert_eq!(
-            false,
-            app.last_unrendered_modifications
-                .need(0, UpdateReqType::RerenderResult)
-        );
-        assert!(app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderResult));
-        assert_eq!(
-            false,
-            app.last_unrendered_modifications
-                .need(2, UpdateReqType::RerenderResult)
-        );
+        assert!(!app.editor_area_redraw.need(0));
+        assert!(!app.result_area_redraw.need(0));
+        assert!(app.editor_area_redraw.need(1));
+        assert!(app.result_area_redraw.need(1));
+        assert!(!app.editor_area_redraw.need(2));
+        assert!(!app.result_area_redraw.need(2));
 
         let mut result_buffer = [0; 128];
         app.render(
@@ -6846,28 +6716,13 @@ sum",
             &mut holder,
         );
         app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
-        assert!(app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
-        assert_eq!(
-            false,
-            app.last_unrendered_modifications
-                .need(2, UpdateReqType::RerenderEditor)
-        );
-        assert!(app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderResult));
-        assert!(app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderResult));
-        assert_eq!(
-            false,
-            app.last_unrendered_modifications
-                .need(2, UpdateReqType::RerenderResult)
-        );
+
+        assert!(app.editor_area_redraw.need(0));
+        assert!(app.result_area_redraw.need(0));
+        assert!(app.editor_area_redraw.need(1));
+        assert!(app.result_area_redraw.need(1));
+        assert!(!app.editor_area_redraw.need(2));
+        assert!(!app.result_area_redraw.need(2));
 
         let mut result_buffer = [0; 128];
         app.render(
@@ -6877,26 +6732,14 @@ sum",
             &arena,
             &mut holder,
         );
-        app.alt_key_released(&mut holder);
-        assert!(app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert_eq!(
-            false,
-            app.last_unrendered_modifications
-                .need(1, UpdateReqType::RerenderEditor)
-        );
-        assert!(app
-            .last_unrendered_modifications
-            .need(2, UpdateReqType::ReparseTokens));
-        assert!(app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderResult));
-        assert_eq!(
-            false,
-            app.last_unrendered_modifications
-                .need(1, UpdateReqType::RerenderResult)
-        );
+        app.alt_key_released(&mut holder, &units, &arena);
+
+        assert!(app.editor_area_redraw.need(0));
+        assert!(app.result_area_redraw.need(0));
+        assert!(!app.editor_area_redraw.need(1));
+        assert!(!app.result_area_redraw.need(1));
+        assert!(app.editor_area_redraw.need(2));
+        assert!(app.result_area_redraw.need(2));
     }
 
     #[test]
@@ -6915,26 +6758,21 @@ sum",
             &mut holder,
         );
         app.handle_click(app.render_data.result_gutter_x, 0, &mut holder);
-        assert!(!app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(!app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
-        assert!(!app
-            .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderEditor));
+        assert!(!app.editor_area_redraw.need(0));
+        assert!(!app.result_area_redraw.need(0));
+        assert!(!app.editor_area_redraw.need(1));
+        assert!(!app.result_area_redraw.need(1));
+        assert!(!app.editor_area_redraw.need(2));
+        assert!(!app.result_area_redraw.need(2));
 
         app.handle_drag(app.render_data.result_gutter_x - 1, 0);
-        assert!(app
-            .last_unrendered_modifications
-            .need(0, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(1, UpdateReqType::RerenderEditor));
-        assert!(app
-            .last_unrendered_modifications
-            .need(2, UpdateReqType::RerenderEditor));
+
+        assert!(app.editor_area_redraw.need(0));
+        assert!(app.result_area_redraw.need(0));
+        assert!(app.editor_area_redraw.need(1));
+        assert!(app.result_area_redraw.need(1));
+        assert!(app.editor_area_redraw.need(2));
+        assert!(app.result_area_redraw.need(2));
     }
 
     #[test]
@@ -7193,14 +7031,15 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.handle_paste("a\nb\na\nb\na\nb\na\nb\na\nb\na\nb\n1".to_owned());
+        app.handle_paste(
+            "a\nb\na\nb\na\nb\na\nb\na\nb\na\nb\n1".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
+        );
         for i in 0..12 {
-            assert!(
-                app.last_unrendered_modifications
-                    .need(i, UpdateReqType::ReparseTokens),
-                "i = {}",
-                i
-            );
+            assert!(app.editor_area_redraw.need(i));
+            assert!(app.result_area_redraw.need(i));
         }
 
         let mut result_buffer = [0; 128];
@@ -7222,7 +7061,12 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.handle_paste("0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12".to_owned());
+        app.handle_paste(
+            "0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -7253,21 +7097,12 @@ sum",
             &mut create_holder(),
         );
         for i in 0..9 {
-            assert_eq!(
-                false,
-                app.last_unrendered_modifications
-                    .need(i, UpdateReqType::ReparseTokens),
-                "i = {}",
-                i
-            );
+            assert!(!app.editor_area_redraw.need(i));
+            assert!(!app.result_area_redraw.need(i));
         }
         for i in 9..12 {
-            assert!(
-                app.last_unrendered_modifications
-                    .need(i, UpdateReqType::ReparseTokens),
-                "i = {}",
-                i
-            );
+            assert!(app.editor_area_redraw.need(i));
+            assert!(app.result_area_redraw.need(i));
         }
 
         let mut result_buffer = [0; 128];
@@ -7289,7 +7124,7 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.handle_paste("1+1\nasd".to_owned());
+        app.handle_paste("1+1\nasd".to_owned(), &mut holder, &units, &arena);
         app.handle_input(
             EditorInputEvent::Up,
             InputModifiers::none(),
@@ -7316,7 +7151,12 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.handle_paste("a\nb\n[1;2;3]\nb\na\nb\na\nb\na\nb\na\nb\n1".to_owned());
+        app.handle_paste(
+            "a\nb\n[1;2;3]\nb\na\nb\na\nb\na\nb\na\nb\n1".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
+        );
         app.editor
             .set_selection_save_col(Selection::single(Pos::from_row_column(2, 7)));
 
@@ -7337,21 +7177,12 @@ sum",
         );
 
         for i in 0..2 {
-            assert_eq!(
-                false,
-                app.last_unrendered_modifications
-                    .need(i, UpdateReqType::ReparseTokens),
-                "i = {}",
-                i
-            );
+            assert!(!app.editor_area_redraw.need(i));
+            assert!(!app.result_area_redraw.need(i));
         }
         for i in 2..12 {
-            assert!(
-                app.last_unrendered_modifications
-                    .need(i, UpdateReqType::ReparseTokens),
-                "i = {}",
-                i
-            );
+            assert!(app.editor_area_redraw.need(i));
+            assert!(app.result_area_redraw.need(i));
         }
     }
 
@@ -7360,7 +7191,12 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.handle_paste("a\nb\n[1;2;3]\nX\na\n1".to_owned());
+        app.handle_paste(
+            "a\nb\n[1;2;3]\nX\na\n1".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
+        );
         app.editor
             .set_selection_save_col(Selection::single(Pos::from_row_column(3, 0)));
 

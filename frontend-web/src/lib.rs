@@ -125,7 +125,11 @@ fn to_box_ptr<T>(t: T) -> u32 {
 
 #[wasm_bindgen]
 pub fn alt_key_released(app_ptr: u32) {
-    AppPointers::mut_app(app_ptr).alt_key_released(AppPointers::mut_holder(app_ptr));
+    AppPointers::mut_app(app_ptr).alt_key_released(
+        AppPointers::mut_holder(app_ptr),
+        AppPointers::units(app_ptr),
+        AppPointers::allocator(app_ptr),
+    );
 }
 
 #[wasm_bindgen]
@@ -167,7 +171,12 @@ pub fn set_compressed_encoded_content(app_ptr: u32, compressed_encoded: String) 
     };
     if let Some(content) = content {
         let app = AppPointers::mut_app(app_ptr);
-        app.set_normalized_content(&content.trim());
+        app.set_normalized_content(
+            &content.trim(),
+            AppPointers::units(app_ptr),
+            AppPointers::allocator(app_ptr),
+            AppPointers::mut_holder(app_ptr),
+        );
     }
 }
 
@@ -215,18 +224,21 @@ pub fn get_selected_text(app_ptr: u32) -> Option<String> {
 
 #[wasm_bindgen]
 pub fn handle_paste(app_ptr: u32, input: String) {
-    AppPointers::mut_app(app_ptr).handle_paste(input);
+    AppPointers::mut_app(app_ptr).handle_paste(
+        input,
+        AppPointers::mut_holder(app_ptr),
+        AppPointers::units(app_ptr),
+        AppPointers::allocator(app_ptr),
+    );
 }
 
 #[wasm_bindgen]
 pub fn render(app_ptr: u32) {
-    let app = AppPointers::mut_app(app_ptr);
-    let units = AppPointers::units(app_ptr);
     let rb = AppPointers::mut_render_bucket(app_ptr);
 
     rb.clear();
-    app.render(
-        units,
+    AppPointers::mut_app(app_ptr).render(
+        AppPointers::units(app_ptr),
         rb,
         unsafe { &mut RESULT_BUFFER },
         AppPointers::allocator(app_ptr),
@@ -280,7 +292,20 @@ pub fn handle_input(app_ptr: u32, input: u32, modifiers: u8) -> bool {
             }
         }
     };
-    AppPointers::mut_app(app_ptr).handle_input(input, modifiers, AppPointers::mut_holder(app_ptr))
+    let app = AppPointers::mut_app(app_ptr);
+    let modif = app.handle_input(input, modifiers, AppPointers::mut_holder(app_ptr));
+
+    return if let Some(modif) = modif {
+        app.update_tokens_and_redraw_requirements(
+            modif,
+            AppPointers::units(app_ptr),
+            AppPointers::allocator(app_ptr),
+            AppPointers::mut_holder(app_ptr),
+        );
+        true
+    } else {
+        false
+    };
 }
 
 pub const COLOR_TEXT: u32 = 0x595959_FF;
