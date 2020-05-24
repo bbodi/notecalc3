@@ -1037,7 +1037,6 @@ impl NoteCalcApp {
                             .map(|it| it.row_count),
                     );
                     gr.editor_y_to_rendered_height[editor_y] = r.rendered_row_height;
-                // TODO if uj más mint a régi, rerender mindent
                 } else {
                     r.rendered_row_height = gr.editor_y_to_rendered_height[editor_y];
                 }
@@ -3467,10 +3466,17 @@ impl NoteCalcApp {
                     InputModifiers::none(),
                     &mut self.editor_content,
                 );
-                return Some(UpdateRequirement::single_row(
-                    cursor_pos.row,
-                    UpdateReqType::ReparseTokens,
-                ));
+                return if obj.rendered_h > 1 {
+                    Some(UpdateRequirement::all_rows_starting_at(
+                        cursor_pos.row,
+                        UpdateReqType::ReparseTokens,
+                    ))
+                } else {
+                    Some(UpdateRequirement::single_row(
+                        cursor_pos.row,
+                        UpdateReqType::ReparseTokens,
+                    ))
+                };
             }
         } else if *input == EditorInputEvent::Del && !selection.is_range() {
             if let Some(index) = self.index_of_matrix_or_lineref_at(cursor_pos, editor_objects) {
@@ -3486,10 +3492,17 @@ impl NoteCalcApp {
                     InputModifiers::none(),
                     &mut self.editor_content,
                 );
-                return Some(UpdateRequirement::single_row(
-                    cursor_pos.row,
-                    UpdateReqType::ReparseTokens,
-                ));
+                return if obj.rendered_h > 1 {
+                    Some(UpdateRequirement::all_rows_starting_at(
+                        cursor_pos.row,
+                        UpdateReqType::ReparseTokens,
+                    ))
+                } else {
+                    Some(UpdateRequirement::single_row(
+                        cursor_pos.row,
+                        UpdateReqType::ReparseTokens,
+                    ))
+                };
             }
         }
         return None;
@@ -7296,5 +7309,90 @@ sum",
             &arena,
             &mut holder,
         );
+    }
+
+    #[test]
+    fn test_removing_height_matrix_rerenders_everything_below_it() {
+        let (mut app, units, mut holder) = create_app();
+        let arena = Arena::new();
+
+        app.handle_paste("a\nb\n[1;2;3]\nb\na\nb\na\nb\na\nb\na\nb\n1".to_owned());
+        app.editor
+            .set_selection_save_col(Selection::single(Pos::from_row_column(2, 7)));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut holder,
+        );
+
+        // step into the vector
+        app.handle_input(
+            EditorInputEvent::Backspace,
+            InputModifiers::none(),
+            &mut holder,
+        );
+
+        for i in 0..2 {
+            assert_eq!(
+                false,
+                app.last_unrendered_modifications
+                    .need(i, UpdateReqType::ReparseTokens),
+                "i = {}",
+                i
+            );
+        }
+        for i in 2..12 {
+            assert!(
+                app.last_unrendered_modifications
+                    .need(i, UpdateReqType::ReparseTokens),
+                "i = {}",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_that_removed_tail_rows_are_cleared() {
+        let (mut app, units, mut holder) = create_app();
+        let arena = Arena::new();
+
+        app.handle_paste("a\nb\n[1;2;3]\nX\na\n1".to_owned());
+        app.editor
+            .set_selection_save_col(Selection::single(Pos::from_row_column(3, 0)));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut holder,
+        );
+        assert_ne!(app.render_data.editor_y_to_render_y[5], 0);
+
+        // removing a line
+        app.handle_input(
+            EditorInputEvent::Backspace,
+            InputModifiers::none(),
+            &mut holder,
+        );
+
+        // they must not be 0, otherwise the rendere can't decide if they needed to be cleared,
+        assert_ne!(app.render_data.editor_y_to_render_y[5], 0);
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut holder,
+        );
+
+        assert_eq!(app.render_data.editor_y_to_render_y[5], 0);
     }
 }
