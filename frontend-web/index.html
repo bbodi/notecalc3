@@ -90,6 +90,10 @@
             canvas.addEventListener('mousedown', on_click);
             canvas.addEventListener('mouseup', on_mouse_up);
             canvas.addEventListener('mousemove', on_drag);
+
+            overlay_canvas.addEventListener('mousedown', on_click);
+            overlay_canvas.addEventListener('mouseup', on_mouse_up);
+            overlay_canvas.addEventListener('mousemove', on_drag);
             run();
         }
     });

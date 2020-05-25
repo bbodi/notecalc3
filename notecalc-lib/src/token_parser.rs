@@ -466,6 +466,8 @@ impl TokenParser {
             if "=%/+-*^()[]".chars().any(|it| it == *ch) || ch.is_ascii_whitespace() {
                 break;
             }
+            // it means somwewhere we passed an invalid slice
+            debug_assert!(*ch as u8 != 0);
             i += 1;
         }
         if i > 0 {

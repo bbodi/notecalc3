@@ -89,7 +89,6 @@ pub fn create_app(client_width: usize) -> u32 {
         editor_objects: std::iter::repeat(Vec::with_capacity(8))
             .take(MAX_LINE_COUNT)
             .collect::<Vec<_>>(),
-        autocompletion_src: Vec::with_capacity(256),
         // TODO: array?
         results: [Ok(None); MAX_LINE_COUNT],
         vars: Vec::with_capacity(MAX_LINE_COUNT),
@@ -293,19 +292,15 @@ pub fn handle_input(app_ptr: u32, input: u32, modifiers: u8) -> bool {
         }
     };
     let app = AppPointers::mut_app(app_ptr);
-    let modif = app.handle_input(input, modifiers, AppPointers::mut_holder(app_ptr));
+    let modif = app.handle_input_and_update_tokens_plus_redraw_requirements(
+        input,
+        modifiers,
+        AppPointers::mut_holder(app_ptr),
+        AppPointers::allocator(app_ptr),
+        AppPointers::units(app_ptr),
+    );
 
-    return if let Some(modif) = modif {
-        app.update_tokens_and_redraw_requirements(
-            modif,
-            AppPointers::units(app_ptr),
-            AppPointers::allocator(app_ptr),
-            AppPointers::mut_holder(app_ptr),
-        );
-        true
-    } else {
-        false
-    };
+    return modif.is_some();
 }
 
 pub const COLOR_TEXT: u32 = 0x595959_FF;

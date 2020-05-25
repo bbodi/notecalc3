@@ -24,6 +24,7 @@ use crate::renderer::{render_result, render_result_into};
 use crate::shunting_yard::ShuntingYard;
 use crate::token_parser::{OperatorTokenType, Token, TokenParser, TokenType};
 use crate::units::units::Units;
+use smallvec::alloc::alloc::alloc;
 use smallvec::SmallVec;
 use std::io::Cursor;
 use std::mem::MaybeUninit;
@@ -593,10 +594,6 @@ pub struct Holder<'a> {
     pub results: [LineResult; MAX_LINE_COUNT],
     pub vars: Vec<Variable>,
     pub tokens: [Option<Tokens<'a>>; MAX_LINE_COUNT],
-
-    // contains variable names separated by 0
-    // the first char is the row index the variable was defined at
-    pub autocompletion_src: Vec<char>,
 }
 
 pub struct NoteCalcApp {
@@ -902,6 +899,9 @@ impl NoteCalcApp {
         redraw_result_area: EditorRowFlags,
         gr: &mut GlobalRenderData,
         allocator: &'a Arena<char>,
+        //  TODO csak az editor objectet add át mut-ként
+        // mivel azt itt egyszeröbb kitö9lteni (tudni kell hozzá
+        // a renderelt magasságot és szélességet)
         holder: &mut Holder<'a>,
     ) {
         // holder.results.clear();
@@ -923,7 +923,6 @@ impl NoteCalcApp {
 
         // TODO: kell ez?
         {
-            let mut sum_is_null = true;
             let mut r = PerLineRenderData::new();
             for line in editor_content.lines().take(MAX_LINE_COUNT) {
                 r.new_line_started();
@@ -1089,21 +1088,6 @@ impl NoteCalcApp {
                     );
                 }
 
-                if line.starts_with(&['-', '-']) {
-                    sum_is_null = true;
-                }
-
-                match &holder.results[editor_y] {
-                    Ok(Some(result)) => {
-                        NoteCalcApp::sum_result(
-                            &mut holder.vars[SUM_VARIABLE_INDEX],
-                            result,
-                            &mut sum_is_null,
-                        );
-                    }
-                    Err(_) | Ok(None) => {}
-                }
-
                 r.line_render_ended(gr.editor_y_to_rendered_height[editor_y]);
             }
         }
@@ -1215,7 +1199,7 @@ impl NoteCalcApp {
                         y: gr.editor_y_to_render_y[editor_y],
                         w,
                         h: gr.editor_y_to_rendered_height[editor_y],
-                        start_color: 0xFF88FF2,
+                        start_color: 0xFF88FF_11,
                         end_color: 0xFFFFFF_00,
                         animation_time: Duration::from_millis(200),
                     },
@@ -1501,7 +1485,6 @@ impl NoteCalcApp {
         editor_content: &EditorContent<LineData>,
         shunting_output_stack: &mut Vec<TokenType>,
         line: &[char],
-        autocompletion_src: &mut Vec<char>,
     ) -> Result<Option<EvaluationResult>, ()> {
         let result = evaluate_tokens(shunting_output_stack, &vars);
         if let Ok(Some(result)) = &result {
@@ -1531,12 +1514,8 @@ impl NoteCalcApp {
                     value: Ok(result.result.clone()),
                     defined_at_row: editor_y,
                 });
-                autocompletion_src.push(editor_y as u8 as char);
-                for ch in var_name {
-                    autocompletion_src.push(*ch);
-                }
-                autocompletion_src.push(0 as char);
-            } else if line_data.line_id != 0 {
+            } else {
+                debug_assert!(line_data.line_id > 0);
                 let line_id = line_data.line_id;
                 vars.push(Variable {
                     name: Box::from(STATIC_LINE_IDS[line_id]),
@@ -2719,7 +2698,7 @@ impl NoteCalcApp {
                             self.matrix_editing = Some(MatrixEditing::new(
                                 row_count,
                                 col_count,
-                                &self.editor_content.get_line_chars(editor_obj.row)
+                                &self.editor_content.get_line_valid_chars(editor_obj.row)
                                     [editor_obj.start_x..editor_obj.end_x],
                                 editor_obj.row,
                                 editor_obj.start_x,
@@ -2952,11 +2931,7 @@ impl NoteCalcApp {
             return;
         }
         let line_id = {
-            let line_data = self.editor_content.mut_data(line_ref_row);
-            if line_data.line_id == 0 {
-                line_data.line_id = self.line_id_generator;
-                self.line_id_generator += 1;
-            }
+            let line_data = self.editor_content.get_data(line_ref_row);
             line_data.line_id
         };
         let inserting_text = format!("&[{}]", line_id);
@@ -2986,12 +2961,14 @@ impl NoteCalcApp {
         };
     }
 
-    pub fn handle_input<'b>(
+    pub fn handle_input_and_update_tokens_plus_redraw_requirements<'b>(
         &mut self,
         input: EditorInputEvent,
         modifiers: InputModifiers,
         // TODO azt adjuk át ami kell neki ne az egész holdert
         holder: &mut Holder<'b>,
+        allocator: &'b Arena<char>,
+        units: &Units,
     ) -> Option<RowModificationType> {
         struct InputResult {
             modif: Option<RowModificationType>,
@@ -3113,11 +3090,7 @@ impl NoteCalcApp {
                 }
             }
         } else {
-            if self.handle_completion(
-                &input,
-                &mut holder.editor_objects,
-                &holder.autocompletion_src,
-            ) {
+            if self.handle_completion(&input, &mut holder.editor_objects, &holder.vars) {
                 InputResult {
                     modif: Some(RowModificationType::SingleLine(cur_row)),
                     redraw: None,
@@ -3207,6 +3180,10 @@ impl NoteCalcApp {
             }
         };
 
+        if let Some(modif) = input_res.modif {
+            self.update_tokens_and_redraw_requirements(modif, units, allocator, holder);
+        }
+
         if let Some((flags, target)) = &input_res.redraw {
             match target {
                 RedrawTarget::Both => {
@@ -3233,50 +3210,101 @@ impl NoteCalcApp {
         // TODO azt adjuk át ami kell neki ne az egész holdert
         holder: &mut Holder<'b>,
     ) {
-        match input_effect {
-            RowModificationType::SingleLine(editor_y) => {
-                holder.tokens[editor_y] = NoteCalcApp::parse_tokens(
-                    self.editor_content.get_line_chars(editor_y),
-                    editor_y,
-                    units,
+        fn eval_line<'b>(
+            editor_content: &EditorContent<LineData>,
+            line: &[char],
+            units: &Units,
+            allocator: &'b Arena<char>,
+            holder: &mut Holder<'b>,
+            editor_y: usize,
+        ) {
+            holder.tokens[editor_y] =
+                NoteCalcApp::parse_tokens(line, editor_y, units, &mut holder.vars, allocator);
+            if let Some(tokens) = &mut holder.tokens[editor_y] {
+                let result = NoteCalcApp::evaluate_tokens_and_save_result(
                     &mut holder.vars,
-                    allocator,
+                    editor_y,
+                    editor_content,
+                    &mut tokens.shunting_output_stack,
+                    editor_content.get_line_valid_chars(editor_y),
                 );
-                if let Some(tokens) = &mut holder.tokens[editor_y] {
-                    let result = NoteCalcApp::evaluate_tokens_and_save_result(
-                        &mut holder.vars,
-                        editor_y,
-                        &self.editor_content,
-                        &mut tokens.shunting_output_stack,
-                        self.editor_content.get_line_chars(editor_y),
-                        &mut holder.autocompletion_src,
-                    );
-                    let result = result.map(|it| it.map(|it| it.result));
-                    holder.results[editor_y] = result;
-                } else {
-                    holder.results[editor_y] = Ok(None);
-                }
-
-                self.editor_area_redraw
-                    .merge(EditorRowFlags::single_row(editor_y));
-                self.result_area_redraw
-                    .merge(EditorRowFlags::single_row(editor_y));
+                let result = result.map(|it| it.map(|it| it.result));
+                holder.results[editor_y] = result;
+            } else {
+                holder.results[editor_y] = Ok(None);
             }
-            RowModificationType::AllLinesFrom(start_editor_y) => {
-                for (editor_y, line) in self.editor_content.lines().skip(start_editor_y).enumerate()
-                {
-                    holder.tokens[editor_y] = NoteCalcApp::parse_tokens(
-                        line,
-                        editor_y,
-                        units,
-                        &mut holder.vars,
-                        allocator,
+        }
+
+        let mut sum_is_null = true;
+        for editor_y in 0..self.editor_content.line_count() {
+            match input_effect {
+                RowModificationType::SingleLine(to_change_index) => {
+                    if to_change_index == editor_y {
+                        if self.editor_content.get_data(to_change_index).line_id == 0 {
+                            self.editor_content.mut_data(to_change_index).line_id =
+                                self.line_id_generator;
+                            self.line_id_generator += 1;
+                        }
+                        eval_line(
+                            &self.editor_content,
+                            self.editor_content.get_line_valid_chars(to_change_index),
+                            units,
+                            allocator,
+                            holder,
+                            to_change_index,
+                        );
+                    }
+                }
+                RowModificationType::AllLinesFrom(to_change_index_from) => {
+                    if editor_y >= to_change_index_from {
+                        if self.editor_content.get_data(editor_y).line_id == 0 {
+                            self.editor_content.mut_data(editor_y).line_id = self.line_id_generator;
+                            self.line_id_generator += 1;
+                        }
+                        eval_line(
+                            &self.editor_content,
+                            self.editor_content.get_line_valid_chars(editor_y),
+                            units,
+                            allocator,
+                            holder,
+                            editor_y,
+                        );
+                    }
+                }
+            }
+
+            if self
+                .editor_content
+                .get_line_valid_chars(editor_y)
+                .starts_with(&['-', '-'])
+            {
+                sum_is_null = true;
+            }
+
+            match &holder.results[editor_y] {
+                Ok(Some(result)) => {
+                    NoteCalcApp::sum_result(
+                        &mut holder.vars[SUM_VARIABLE_INDEX],
+                        result,
+                        &mut sum_is_null,
                     );
                 }
+                Err(_) | Ok(None) => {}
+            }
+        }
+
+        match input_effect {
+            RowModificationType::SingleLine(to_change_index) => {
                 self.editor_area_redraw
-                    .merge(EditorRowFlags::all_rows_starting_at(start_editor_y));
+                    .merge(EditorRowFlags::single_row(to_change_index));
                 self.result_area_redraw
-                    .merge(EditorRowFlags::all_rows_starting_at(start_editor_y));
+                    .merge(EditorRowFlags::single_row(to_change_index));
+            }
+            RowModificationType::AllLinesFrom(to_change_index_from) => {
+                self.editor_area_redraw
+                    .merge(EditorRowFlags::all_rows_starting_at(to_change_index_from));
+                self.result_area_redraw
+                    .merge(EditorRowFlags::all_rows_starting_at(to_change_index_from));
             }
         }
     }
@@ -3285,13 +3313,13 @@ impl NoteCalcApp {
         &mut self,
         input: &EditorInputEvent,
         editor_objects: &mut Vec<Vec<EditorObject>>,
-        autocompletion_src: &[char],
+        vars: &[Variable],
     ) -> bool {
         let cursor_pos = self.editor.get_selection();
         if *input == EditorInputEvent::Tab && cursor_pos.get_cursor_pos().column > 0 {
             // matrix autocompletion 'm' + tab
             let cursor_pos = cursor_pos.get_cursor_pos();
-            let line = self.editor_content.get_line_chars(cursor_pos.row);
+            let line = self.editor_content.get_line_valid_chars(cursor_pos.row);
             let is_m = line[cursor_pos.column - 1] == 'm';
             if is_m
                 && (cursor_pos.column == 1
@@ -3352,51 +3380,40 @@ impl NoteCalcApp {
                     (begin_index, len)
                 };
                 // find the best match
-                let mut autocomp_src_i = 0;
                 let mut word_i = begin_index;
-                let mut match_begin_index = None;
-                let curr_row_index = cursor_pos.row;
-                let aut_comp_entrs = &autocompletion_src;
-                'main: while autocomp_src_i < aut_comp_entrs.len()
-                    && (aut_comp_entrs[autocomp_src_i] as usize) < curr_row_index
-                    && aut_comp_entrs[autocomp_src_i + 1] != 0 as char
-                {
-                    // skip the row index
-                    autocomp_src_i += 1;
-                    let start_autocomp_src_i = autocomp_src_i;
-                    while autocomp_src_i < aut_comp_entrs.len()
-                        && aut_comp_entrs[autocomp_src_i] != 0 as char
-                        && aut_comp_entrs[autocomp_src_i] == line[word_i]
-                    {
-                        autocomp_src_i += 1;
-                        word_i += 1;
+                let mut matched_var_index = None;
+                for (var_i, var) in vars.iter().enumerate() {
+                    if var.defined_at_row >= cursor_pos.row {
+                        break;
                     }
-                    if (autocomp_src_i - start_autocomp_src_i) == expected_len {
-                        if match_begin_index.is_some() {
+                    let mut match_len = 0;
+                    for ch in var.name.iter() {
+                        if word_i >= line.len() {
+                            break;
+                        }
+                        if line[word_i] != *ch {
+                            break;
+                        }
+                        match_len += 1;
+                    }
+                    if expected_len == match_len {
+                        if matched_var_index.is_some() {
                             // multiple match, don't autocomplete
-                            match_begin_index = None;
-                            break 'main;
+                            matched_var_index = None;
+                            break;
                         } else {
-                            match_begin_index = Some(autocomp_src_i - expected_len);
+                            matched_var_index = Some(var_i);
                         }
                     }
-                    // jump to the next autocompletion entry
-                    while aut_comp_entrs[autocomp_src_i] != 0 as char {
-                        autocomp_src_i += 1;
-                    }
-                    // skip 0
-                    autocomp_src_i += 1;
-                    word_i = begin_index;
                 }
-                if let Some(match_begin_index) = match_begin_index {
-                    let mut i = match_begin_index + expected_len;
-                    while i < aut_comp_entrs.len() && aut_comp_entrs[i] != 0 as char {
+
+                if let Some(matched_var_index) = matched_var_index {
+                    for ch in vars[matched_var_index].name.iter().skip(expected_len) {
                         self.editor.handle_input(
-                            EditorInputEvent::Char(aut_comp_entrs[i]),
+                            EditorInputEvent::Char(*ch),
                             InputModifiers::none(),
                             &mut self.editor_content,
                         );
-                        i += 1;
                     }
                     return true;
                 }
@@ -3521,7 +3538,7 @@ impl NoteCalcApp {
                         self.matrix_editing = Some(MatrixEditing::new(
                             row_count,
                             col_count,
-                            &self.editor_content.get_line_chars(editor_obj.row)
+                            &self.editor_content.get_line_valid_chars(editor_obj.row)
                                 [editor_obj.start_x..editor_obj.end_x],
                             editor_obj.row,
                             editor_obj.start_x,
@@ -3782,7 +3799,6 @@ mod tests {
             editor_objects: std::iter::repeat(Vec::with_capacity(8))
                 .take(MAX_LINE_COUNT)
                 .collect::<Vec<_>>(),
-            autocompletion_src: Vec::with_capacity(256),
             // TODO: array?
             results: [Ok(None); MAX_LINE_COUNT],
             vars: Vec::with_capacity(MAX_LINE_COUNT),
@@ -3807,17 +3823,22 @@ mod tests {
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor.insert_text(
-            "[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]",
-            &mut app.editor_content,
+        app.handle_paste(
+            "[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
         );
-        app.editor.insert_text(
-            "[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]",
-            &mut app.editor_content,
-        );
+
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 33));
-        app.handle_input(EditorInputEvent::Right, InputModifiers::alt(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Right,
+            InputModifiers::alt(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -3830,15 +3851,24 @@ mod tests {
 
     #[test]
     fn bug2() {
+        let arena = Arena::new();
         let (mut app, units, mut holder) = create_app();
-        app.editor.insert_text(
-            "[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]",
-            &mut app.editor_content,
+        app.handle_paste(
+            "[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
         );
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 1));
 
-        app.handle_input(EditorInputEvent::Right, InputModifiers::alt(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Right,
+            InputModifiers::alt(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         let arena = Arena::new();
         let mut result_buffer = [0; 128];
         app.render(
@@ -3848,7 +3878,13 @@ mod tests {
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Down, InputModifiers::none(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Down,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -3864,14 +3900,23 @@ mod tests {
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor.insert_text(
+        app.handle_paste(
             "1\n\
-                2+",
-            &mut app.editor_content,
+                2+"
+            .to_owned(),
+            &mut holder,
+            &units,
+            &arena,
         );
         app.editor
             .set_selection_save_col(Selection::single_r_c(1, 2));
-        app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::alt(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         app.alt_key_released(&mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
@@ -3888,10 +3933,13 @@ mod tests {
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor.insert_text(
+        app.handle_paste(
             "1\n\
-                ",
-            &mut app.editor_content,
+                "
+            .to_owned(),
+            &mut holder,
+            &units,
+            &arena,
         );
         let mut result_buffer = [0; 128];
         app.render(
@@ -3903,7 +3951,13 @@ mod tests {
         );
         app.editor
             .set_selection_save_col(Selection::single_r_c(1, 0));
-        app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::alt(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         app.alt_key_released(&mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
@@ -3921,14 +3975,35 @@ mod tests {
     }
 
     #[test]
+    fn bug5() {
+        let (mut app, units, mut holder) = create_app();
+        let arena = Arena::new();
+
+        app.handle_paste("123\na ".to_owned(), &mut holder, &units, &arena);
+
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::alt(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.alt_key_released(&mut holder, &units, &arena);
+        assert_eq!(3, holder.tokens[1].as_ref().unwrap().tokens.len());
+    }
+
+    #[test]
     fn it_is_not_allowed_to_ref_lines_below() {
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor.insert_text(
+        app.handle_paste(
             "1\n\
-                2+\n3\n4",
-            &mut app.editor_content,
+                2+\n3\n4"
+                .to_owned(),
+            &mut holder,
+            &units,
+            &arena,
         );
         let mut result_buffer = [0; 128];
         app.render(
@@ -3940,7 +4015,13 @@ mod tests {
         );
         app.editor
             .set_selection_save_col(Selection::single_r_c(1, 2));
-        app.handle_input(EditorInputEvent::Down, InputModifiers::alt(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Down,
+            InputModifiers::alt(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         app.alt_key_released(&mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
@@ -3962,10 +4043,13 @@ mod tests {
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor.insert_text(
-            &"1\n\
-                2+\n3\n4",
-            &mut app.editor_content,
+        app.handle_paste(
+            "1\n\
+                2+\n3\n4"
+                .to_owned(),
+            &mut holder,
+            &units,
+            &arena,
         );
         let mut result_buffer = [0; 128];
         app.render(
@@ -3977,8 +4061,20 @@ mod tests {
         );
         app.editor
             .set_selection_save_col(Selection::single_r_c(1, 2));
-        app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
-        app.handle_input(EditorInputEvent::Down, InputModifiers::alt(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::alt(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Down,
+            InputModifiers::alt(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         app.alt_key_released(&mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
@@ -4000,8 +4096,7 @@ mod tests {
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("abcd [1,2,3;4,5,6]", &mut app.editor_content);
+        app.handle_paste("abcd [1,2,3;4,5,6]".to_owned(), &mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -4010,10 +4105,12 @@ mod tests {
             &arena,
             &mut holder,
         );
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Backspace,
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
         assert_eq!("abcd ", app.editor_content.get_content());
     }
@@ -4025,8 +4122,7 @@ mod tests {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("abcd [1,2,3;4,5,6]", &mut app.editor_content);
+            app.handle_paste("abcd [1,2,3;4,5,6]".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4035,7 +4131,13 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4044,12 +4146,20 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Char('1'),
                 InputModifiers::none(),
                 &mut holder,
+                &arena,
+                &units,
             );
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             assert_eq!("abcd [1,2,1;4,5,6]", app.editor_content.get_content());
         }
         // from left
@@ -4057,8 +4167,7 @@ mod tests {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("abcd [1,2,3;4,5,6]", &mut app.editor_content);
+            app.handle_paste("abcd [1,2,3;4,5,6]".to_owned(), &mut holder, &units, &arena);
             app.editor
                 .set_selection_save_col(Selection::single_r_c(0, 5));
             let mut result_buffer = [0; 128];
@@ -4069,7 +4178,13 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Right, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Right,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4078,12 +4193,20 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Char('9'),
                 InputModifiers::none(),
                 &mut holder,
+                &arena,
+                &units,
             );
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             assert_eq!("abcd [9,2,3;4,5,6]", app.editor_content.get_content());
         }
         // from below
@@ -4091,9 +4214,11 @@ mod tests {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor.insert_text(
-                "abcd [1,2,3;4,5,6]\naaaaaaaaaaaaaaaaaa",
-                &mut app.editor_content,
+            app.handle_paste(
+                "abcd [1,2,3;4,5,6]\naaaaaaaaaaaaaaaaaa".to_owned(),
+                &mut holder,
+                &units,
+                &arena,
             );
             app.editor
                 .set_selection_save_col(Selection::single_r_c(1, 7));
@@ -4105,7 +4230,13 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Up,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4114,12 +4245,20 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Char('9'),
                 InputModifiers::none(),
                 &mut holder,
+                &arena,
+                &units,
             );
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             assert_eq!(
                 "abcd [1,2,3;9,5,6]\naaaaaaaaaaaaaaaaaa",
                 app.editor_content.get_content()
@@ -4130,9 +4269,11 @@ mod tests {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor.insert_text(
-                "aaaaaaaaaaaaaaaaaa\nabcd [1,2,3;4,5,6]",
-                &mut app.editor_content,
+            app.handle_paste(
+                "aaaaaaaaaaaaaaaaaa\nabcd [1,2,3;4,5,6]".to_owned(),
+                &mut holder,
+                &units,
+                &arena,
             );
             app.editor
                 .set_selection_save_col(Selection::single_r_c(0, 7));
@@ -4144,7 +4285,13 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Down, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Down,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4153,12 +4300,20 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Char('9'),
                 InputModifiers::none(),
                 &mut holder,
+                &arena,
+                &units,
             );
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             assert_eq!(
                 "aaaaaaaaaaaaaaaaaa\nabcd [9,2,3;4,5,6]",
                 app.editor_content.get_content()
@@ -4171,8 +4326,7 @@ mod tests {
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("abcd [1,2,3;4,5,6]", &mut app.editor_content);
+        app.handle_paste("abcd [1,2,3;4,5,6]".to_owned(), &mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -4181,7 +4335,13 @@ mod tests {
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Left,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -4190,10 +4350,12 @@ mod tests {
             &arena,
             &mut holder,
         );
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('6'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
         let mut result_buffer = [0; 128];
         app.render(
@@ -4203,7 +4365,13 @@ mod tests {
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Enter,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -4212,10 +4380,12 @@ mod tests {
             &arena,
             &mut holder,
         );
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('9'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
         assert_eq!(app.editor_content.get_content(), "abcd [1,2,6;4,5,6]9");
     }
@@ -4225,8 +4395,7 @@ mod tests {
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("abcd [1,2,3;4,5,6]", &mut app.editor_content);
+        app.handle_paste("abcd [1,2,3;4,5,6]".to_owned(), &mut holder, &units, &arena);
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 5));
         let mut result_buffer = [0; 128];
@@ -4237,7 +4406,13 @@ mod tests {
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Del, InputModifiers::none(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Del,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         assert_eq!("abcd ", app.editor_content.get_content());
     }
 
@@ -4248,8 +4423,7 @@ mod tests {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("abcd [1,2,3;4,5,6]", &mut app.editor_content);
+            app.handle_paste("abcd [1,2,3;4,5,6]".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4258,7 +4432,13 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4267,14 +4447,34 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
-            app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
-            app.handle_input(
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Char('9'),
                 InputModifiers::none(),
                 &mut holder,
+                &arena,
+                &units,
             );
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4290,8 +4490,7 @@ mod tests {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("abcd [1,2,3;4,5,6]", &mut app.editor_content);
+            app.handle_paste("abcd [1,2,3;4,5,6]".to_owned(), &mut holder, &units, &arena);
             app.editor
                 .set_selection_save_col(Selection::single_r_c(0, 5));
             let mut result_buffer = [0; 128];
@@ -4302,7 +4501,13 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Right, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Right,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4311,14 +4516,34 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Right, InputModifiers::none(), &mut holder);
-            app.handle_input(EditorInputEvent::Right, InputModifiers::none(), &mut holder);
-            app.handle_input(
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Right,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Right,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Char('9'),
                 InputModifiers::none(),
                 &mut holder,
+                &arena,
+                &units,
             );
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4334,8 +4559,12 @@ mod tests {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("abcd [1111,22,3;44,55555,666]", &mut app.editor_content);
+            app.handle_paste(
+                "abcd [1111,22,3;44,55555,666]".to_owned(),
+                &mut holder,
+                &units,
+                &arena,
+            );
             app.editor
                 .set_selection_save_col(Selection::single_r_c(0, 5));
             let mut result_buffer = [0; 128];
@@ -4346,7 +4575,13 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Right, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Right,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4356,7 +4591,13 @@ mod tests {
                 &mut holder,
             );
             // inside the matrix
-            app.handle_input(EditorInputEvent::Down, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Down,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4365,10 +4606,12 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Char('9'),
                 InputModifiers::none(),
                 &mut holder,
+                &arena,
+                &units,
             );
             let mut result_buffer = [0; 128];
             app.render(
@@ -4378,7 +4621,13 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4398,8 +4647,12 @@ mod tests {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("abcd [1111,22,3;44,55555,666]", &mut app.editor_content);
+            app.handle_paste(
+                "abcd [1111,22,3;44,55555,666]".to_owned(),
+                &mut holder,
+                &units,
+                &arena,
+            );
             app.editor
                 .set_selection_save_col(Selection::single_r_c(0, 5));
             let mut result_buffer = [0; 128];
@@ -4410,7 +4663,13 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Right, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Right,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4420,8 +4679,20 @@ mod tests {
                 &mut holder,
             );
             // inside the matrix
-            app.handle_input(EditorInputEvent::Down, InputModifiers::none(), &mut holder);
-            app.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Down,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Up,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4430,10 +4701,12 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Char('9'),
                 InputModifiers::none(),
                 &mut holder,
+                &arena,
+                &units,
             );
             let mut result_buffer = [0; 128];
             app.render(
@@ -4443,7 +4716,13 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4464,8 +4743,7 @@ mod tests {
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("[1,2,3;4,5,6]", &mut app.editor_content);
+        app.handle_paste("[1,2,3;4,5,6]".to_owned(), &mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -4474,44 +4752,104 @@ mod tests {
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Home, InputModifiers::none(), &mut holder);
-        app.handle_input(EditorInputEvent::Right, InputModifiers::none(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Home,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Right,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
 
-        app.handle_input(EditorInputEvent::Tab, InputModifiers::none(), &mut holder);
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Tab,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('7'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
-        app.handle_input(EditorInputEvent::Tab, InputModifiers::none(), &mut holder);
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Tab,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('8'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
-        app.handle_input(EditorInputEvent::Tab, InputModifiers::none(), &mut holder);
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Tab,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('9'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
-        app.handle_input(EditorInputEvent::Tab, InputModifiers::none(), &mut holder);
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Tab,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('0'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
-        app.handle_input(EditorInputEvent::Tab, InputModifiers::none(), &mut holder);
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Tab,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('9'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
-        app.handle_input(EditorInputEvent::Tab, InputModifiers::none(), &mut holder);
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Tab,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('4'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
         let mut result_buffer = [0; 128];
         app.render(
@@ -4529,8 +4867,7 @@ mod tests {
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("[1,2,3;4,5,6]", &mut app.editor_content);
+        app.handle_paste("[1,2,3;4,5,6]".to_owned(), &mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -4539,7 +4876,13 @@ mod tests {
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Left,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -4548,15 +4891,41 @@ mod tests {
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Tab, InputModifiers::none(), &mut holder);
-        app.handle_input(EditorInputEvent::Tab, InputModifiers::none(), &mut holder);
-        app.handle_input(EditorInputEvent::Tab, InputModifiers::none(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Tab,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Tab,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Tab,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         // the next tab should leave the matrix
-        app.handle_input(EditorInputEvent::Tab, InputModifiers::none(), &mut holder);
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Tab,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('7'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
         let mut result_buffer = [0; 128];
         app.render(
@@ -4575,8 +4944,12 @@ mod tests {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("abcd [1111,22,3;44,55555,666] qq", &mut app.editor_content);
+            app.handle_paste(
+                "abcd [1111,22,3;44,55555,666] qq".to_owned(),
+                &mut holder,
+                &units,
+                &arena,
+            );
             app.editor
                 .set_selection_save_col(Selection::single_r_c(0, 5));
             let mut result_buffer = [0; 128];
@@ -4587,7 +4960,13 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Right, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Right,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4597,7 +4976,13 @@ mod tests {
                 &mut holder,
             );
             // inside the matrix
-            app.handle_input(EditorInputEvent::End, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::End,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4606,10 +4991,12 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Char('9'),
                 InputModifiers::none(),
                 &mut holder,
+                &arena,
+                &units,
             );
             let mut result_buffer = [0; 128];
             app.render(
@@ -4619,7 +5006,13 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4638,8 +5031,12 @@ mod tests {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("abcd [1111,22,3;44,55555,666] qq", &mut app.editor_content);
+            app.handle_paste(
+                "abcd [1111,22,3;44,55555,666] qq".to_owned(),
+                &mut holder,
+                &units,
+                &arena,
+            );
             app.editor
                 .set_selection_save_col(Selection::single_r_c(0, 5));
             let mut result_buffer = [0; 128];
@@ -4650,9 +5047,21 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Right, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Right,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             // inside the matrix
-            app.handle_input(EditorInputEvent::End, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::End,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4661,7 +5070,13 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::End, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::End,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4670,10 +5085,12 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Char('9'),
                 InputModifiers::none(),
                 &mut holder,
+                &arena,
+                &units,
             );
             let mut result_buffer = [0; 128];
             app.render(
@@ -4696,8 +5113,12 @@ mod tests {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("abcd [1111,22,3;44,55555,666]", &mut app.editor_content);
+            app.handle_paste(
+                "abcd [1111,22,3;44,55555,666]".to_owned(),
+                &mut holder,
+                &units,
+                &arena,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4706,7 +5127,13 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4716,7 +5143,13 @@ mod tests {
                 &mut holder,
             );
             // inside the matrix
-            app.handle_input(EditorInputEvent::Home, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Home,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4725,10 +5158,12 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Char('9'),
                 InputModifiers::none(),
                 &mut holder,
+                &arena,
+                &units,
             );
             let mut result_buffer = [0; 128];
             app.render(
@@ -4738,7 +5173,13 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4756,8 +5197,12 @@ mod tests {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("abcd [1111,22,3;44,55555,666]", &mut app.editor_content);
+            app.handle_paste(
+                "abcd [1111,22,3;44,55555,666]".to_owned(),
+                &mut holder,
+                &units,
+                &arena,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4766,9 +5211,21 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             // inside the matrix
-            app.handle_input(EditorInputEvent::Home, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Home,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4777,7 +5234,13 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Home, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Home,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -4786,10 +5249,12 @@ mod tests {
                 &arena,
                 &mut holder,
             );
-            app.handle_input(
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Char('6'),
                 InputModifiers::none(),
                 &mut holder,
+                &arena,
+                &units,
             );
             let mut result_buffer = [0; 128];
             app.render(
@@ -4811,8 +5276,7 @@ mod tests {
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("16892313\n14 * ", &mut app.editor_content);
+        app.handle_paste("16892313\n14 * ".to_owned(), &mut holder, &units, &arena);
         app.editor
             .set_selection_save_col(Selection::single_r_c(1, 5));
         let mut result_buffer = [0; 128];
@@ -4823,7 +5287,13 @@ mod tests {
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::alt(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         app.alt_key_released(&mut holder, &units, &arena);
         assert_eq!("16892313\n14 * &[1]", app.editor_content.get_content());
         let mut result_buffer = [0; 128];
@@ -4835,21 +5305,31 @@ mod tests {
             &mut holder,
         );
         app.handle_time(1000);
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Backspace,
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
         assert_eq!("16892313\n14 * ", app.editor_content.get_content());
 
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('z'),
             InputModifiers::ctrl(),
             &mut holder,
+            &arena,
+            &units,
         );
         assert_eq!("16892313\n14 * &[1]", app.editor_content.get_content());
 
-        app.handle_input(EditorInputEvent::Right, InputModifiers::none(), &mut holder); // end selection
+        let input_eff = app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Right,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        ); // end selection
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -4858,18 +5338,28 @@ mod tests {
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Left,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('a'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
         assert_eq!("16892313\n14 * a&[1]", app.editor_content.get_content());
 
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char(' '),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
         let mut result_buffer = [0; 128];
         app.render(
@@ -4879,22 +5369,56 @@ mod tests {
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Right, InputModifiers::none(), &mut holder);
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Right,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('b'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
         assert_eq!("16892313\n14 * a &[1]b", app.editor_content.get_content());
 
-        app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
-        app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
-        app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
-        app.handle_input(EditorInputEvent::Right, InputModifiers::none(), &mut holder);
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Left,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Left,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Left,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Right,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('c'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
         assert_eq!("16892313\n14 * a c&[1]b", app.editor_content.get_content());
     }
@@ -4904,9 +5428,11 @@ mod tests {
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor.insert_text(
-            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n",
-            &mut app.editor_content,
+        app.handle_paste(
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
         );
         app.editor
             .set_selection_save_col(Selection::single_r_c(12, 2));
@@ -4918,18 +5444,75 @@ mod tests {
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
+        // remove a line
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('x'),
+            InputModifiers::ctrl(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+
+        // Move to end
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::PageDown,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::End,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        // ALT
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::alt(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         app.alt_key_released(&mut holder, &units, &arena);
-        app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::alt(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         app.alt_key_released(&mut holder, &units, &arena);
-        app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::alt(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         app.alt_key_released(&mut holder, &units, &arena);
         assert_eq!(
-            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13&[1]&[1]&[1]\n",
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n12\n13\n&[13]&[13]&[13]",
             &app.editor_content.get_content()
         );
         assert_eq!(
-            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13&[12]&[12]&[12]\n\n",
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n12\n13\n&[12]&[12]&[12]\n",
             &app.get_normalized_content()
         );
     }
@@ -4993,9 +5576,11 @@ mod tests {
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor.insert_text(
-            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n",
-            &mut app.editor_content,
+        app.handle_paste(
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
         );
         app.editor
             .set_selection_save_col(Selection::single_r_c(12, 2));
@@ -5007,7 +5592,13 @@ mod tests {
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::shift(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -5023,7 +5614,7 @@ mod tests {
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor.insert_text(" [1,2,3]", &mut app.editor_content);
+        app.handle_paste(" [1,2,3]".to_owned(), &mut holder, &units, &arena);
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 0));
         let mut result_buffer = [0; 128];
@@ -5034,7 +5625,13 @@ mod tests {
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Del, InputModifiers::none(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Del,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         assert_eq!("[1,2,3]", app.editor_content.get_content());
     }
 
@@ -5043,7 +5640,7 @@ mod tests {
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor.insert_text("[1,2,3]", &mut app.editor_content);
+        app.handle_paste("[1,2,3]".to_owned(), &mut holder, &units, &arena);
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 0));
         let mut result_buffer = [0; 128];
@@ -5054,13 +5651,21 @@ mod tests {
             &arena,
             &mut holder,
         );
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('a'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
         assert_eq!("a[1,2,3]", app.editor_content.get_content());
-        app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Enter,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         assert_eq!("a\n[1,2,3]", app.editor_content.get_content());
     }
 
@@ -5069,8 +5674,7 @@ mod tests {
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("'[X] nth, sum fv", &mut app.editor_content);
+        app.handle_paste("'[X] nth, sum fv".to_owned(), &mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -5081,7 +5685,13 @@ mod tests {
         );
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 0));
-        app.handle_input(EditorInputEvent::Del, InputModifiers::none(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Del,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -5124,13 +5734,16 @@ mod tests {
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor.insert_text(
+        app.handle_paste(
             "3m * 2m
 --
 1
 2
-sum",
-            &mut app.editor_content,
+sum"
+            .to_owned(),
+            &mut holder,
+            &units,
+            &arena,
         );
         let mut result_buffer = [0; 128];
         app.render(
@@ -5148,11 +5761,14 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor.insert_text(
-            &"3m * 2m\n\
+        app.handle_paste(
+            "3m * 2m\n\
                 4\n\
-                sum",
-            &mut app.editor_content,
+                sum"
+            .to_owned(),
+            &mut holder,
+            &units,
+            &arena,
         );
         let mut result_buffer = [0; 128];
         app.render(
@@ -5170,7 +5786,7 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor.insert_text("aaaaaaaaa", &mut app.editor_content);
+        app.handle_paste("aaaaaaaaa".to_owned(), &mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -5179,13 +5795,33 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Left, InputModifiers::shift(), &mut holder);
-        app.handle_input(EditorInputEvent::Left, InputModifiers::shift(), &mut holder);
-        app.handle_input(EditorInputEvent::Left, InputModifiers::shift(), &mut holder);
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Left,
+            InputModifiers::shift(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Left,
+            InputModifiers::shift(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Left,
+            InputModifiers::shift(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('c'),
             InputModifiers::ctrl(),
             &mut holder,
+            &arena,
+            &units,
         );
         assert_eq!("aaa", &app.editor.clipboard);
     }
@@ -5195,11 +5831,14 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor.insert_text(
-            &"2\n\
+        app.handle_paste(
+            "2\n\
                     4\n\
-                    5",
-            &mut app.editor_content,
+                    5"
+            .to_owned(),
+            &mut holder,
+            &units,
+            &arena,
         );
         let mut result_buffer = [0; 128];
         app.render(
@@ -5209,9 +5848,27 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
-        app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
-        app.handle_input(EditorInputEvent::Left, InputModifiers::alt(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::shift(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::shift(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Left,
+            InputModifiers::alt(),
+            &mut holder,
+            &arena,
+            &units,
+        );
 
         let mut result_buffer = [0; 128];
         app.render(
@@ -5229,8 +5886,7 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("[1,2,3]\nsum", &mut app.editor_content);
+        app.handle_paste("[1,2,3]\nsum".to_owned(), &mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -5249,7 +5905,7 @@ sum",
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor.insert_text(&content, &mut app.editor_content);
+            app.handle_paste(content.to_owned(), &mut holder, &units, &arena);
             app.editor.set_selection_save_col(Selection::range(
                 Pos::from_row_column(*selected_range.start(), 0),
                 Pos::from_row_column(*selected_range.end(), 0),
@@ -5354,8 +6010,7 @@ sum",
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("16892313\n14 * ", &mut app.editor_content);
+            app.handle_paste("16892313\n14 * ".to_owned(), &mut holder, &units, &arena);
             app.editor
                 .set_selection_save_col(Selection::single_r_c(1, 5));
             let mut result_buffer = [0; 128];
@@ -5366,7 +6021,13 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Up,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             app.alt_key_released(&mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
@@ -5376,11 +6037,19 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::shift(), &mut holder);
-            app.handle_input(
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::shift(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Backspace,
                 InputModifiers::none(),
                 &mut holder,
+                &arena,
+                &units,
             );
             assert_eq!("16892313\n14 * &[1", app.editor_content.get_content());
         }
@@ -5389,8 +6058,7 @@ sum",
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("16892313\n14 * ", &mut app.editor_content);
+            app.handle_paste("16892313\n14 * ".to_owned(), &mut holder, &units, &arena);
             app.editor
                 .set_selection_save_col(Selection::single_r_c(1, 5));
             let mut result_buffer = [0; 128];
@@ -5401,7 +6069,13 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Up,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             app.alt_key_released(&mut holder, &units, &arena);
 
             let mut result_buffer = [0; 128];
@@ -5412,13 +6086,27 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
-            app.handle_input(
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Right,
                 InputModifiers::shift(),
                 &mut holder,
+                &arena,
+                &units,
             );
-            app.handle_input(EditorInputEvent::Del, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Del,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             assert_eq!("16892313\n14 * [1]", app.editor_content.get_content());
         }
     }
@@ -5429,7 +6117,7 @@ sum",
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor.insert_text("m", &mut app.editor_content);
+            app.handle_paste("m".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5438,7 +6126,13 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Tab, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Tab,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5453,7 +6147,7 @@ sum",
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor.insert_text("am", &mut app.editor_content);
+            app.handle_paste("am".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5462,7 +6156,13 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Tab, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Tab,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5477,7 +6177,7 @@ sum",
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor.insert_text("a m", &mut app.editor_content);
+            app.handle_paste("a m".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5486,7 +6186,13 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Tab, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Tab,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5501,15 +6207,30 @@ sum",
 
     #[test]
     fn test_that_cursor_is_inside_matrix_on_creation() {
-        let (mut app, _units, mut holder) = create_app();
-        app.editor.insert_text("m", &mut app.editor_content);
-        app.handle_input(EditorInputEvent::Tab, InputModifiers::none(), &mut holder);
-        app.handle_input(
+        let (mut app, units, mut holder) = create_app();
+        let arena = Arena::new();
+        app.handle_paste("m".to_owned(), &mut holder, &units, &arena);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Tab,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('1'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
-        app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Enter,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         assert_eq!("[1]", app.editor_content.get_content());
     }
 
@@ -5519,7 +6240,7 @@ sum",
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor.insert_text("[1]", &mut app.editor_content);
+            app.handle_paste("[1]".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5528,7 +6249,13 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5537,15 +6264,27 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Right, InputModifiers::alt(), &mut holder);
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Right,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             assert_eq!("[1,0]", app.editor_content.get_content());
         }
         {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor.insert_text("[1]", &mut app.editor_content);
+            app.handle_paste("[1]".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5554,7 +6293,13 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5563,17 +6308,41 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Right, InputModifiers::alt(), &mut holder);
-            app.handle_input(EditorInputEvent::Right, InputModifiers::alt(), &mut holder);
-            app.handle_input(EditorInputEvent::Right, InputModifiers::alt(), &mut holder);
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Right,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Right,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Right,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             assert_eq!("[1,0,0,0]", app.editor_content.get_content());
         }
         {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor.insert_text("[1;2]", &mut app.editor_content);
+            app.handle_paste("[1;2]".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5582,7 +6351,13 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5591,8 +6366,20 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Right, InputModifiers::alt(), &mut holder);
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Right,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             assert_eq!("[1,0;2,0]", app.editor_content.get_content());
         }
     }
@@ -5603,7 +6390,7 @@ sum",
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor.insert_text("[1]", &mut app.editor_content);
+            app.handle_paste("[1]".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5612,7 +6399,13 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5621,15 +6414,27 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::alt(), &mut holder);
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             assert_eq!("[1]", app.editor_content.get_content());
         }
         {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor.insert_text("[1, 2, 3]", &mut app.editor_content);
+            app.handle_paste("[1, 2, 3]".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5638,7 +6443,13 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5647,15 +6458,27 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::alt(), &mut holder);
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             assert_eq!("[1,2]", app.editor_content.get_content());
         }
         {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor.insert_text("[1, 2, 3]", &mut app.editor_content);
+            app.handle_paste("[1, 2, 3]".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5664,7 +6487,13 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5673,17 +6502,34 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::alt(), &mut holder);
-            app.handle_input(EditorInputEvent::Left, InputModifiers::alt(), &mut holder);
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             assert_eq!("[1]", app.editor_content.get_content());
         }
         {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("[1, 2, 3; 4,5,6]", &mut app.editor_content);
+            app.handle_paste("[1, 2, 3; 4,5,6]".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5692,7 +6538,13 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5701,8 +6553,20 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::alt(), &mut holder);
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             assert_eq!("[1,2;4,5]", app.editor_content.get_content());
         }
     }
@@ -5713,7 +6577,7 @@ sum",
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor.insert_text("[1]", &mut app.editor_content);
+            app.handle_paste("[1]".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5722,7 +6586,13 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5731,15 +6601,27 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Down, InputModifiers::alt(), &mut holder);
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Down,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             assert_eq!("[1;0]", app.editor_content.get_content());
         }
         {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor.insert_text("[1]", &mut app.editor_content);
+            app.handle_paste("[1]".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5748,7 +6630,13 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5757,17 +6645,41 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Down, InputModifiers::alt(), &mut holder);
-            app.handle_input(EditorInputEvent::Down, InputModifiers::alt(), &mut holder);
-            app.handle_input(EditorInputEvent::Down, InputModifiers::alt(), &mut holder);
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Down,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Down,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Down,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             assert_eq!("[1;0;0;0]", app.editor_content.get_content());
         }
         {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor.insert_text("[1,2]", &mut app.editor_content);
+            app.handle_paste("[1,2]".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5776,7 +6688,13 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5785,7 +6703,13 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Down, InputModifiers::alt(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Down,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             // this render is important, it tests a bug!
             let mut result_buffer = [0; 128];
             app.render(
@@ -5795,7 +6719,13 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             assert_eq!("[1,2;0,0]", app.editor_content.get_content());
         }
     }
@@ -5806,7 +6736,7 @@ sum",
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor.insert_text("[1]", &mut app.editor_content);
+            app.handle_paste("[1]".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5815,7 +6745,13 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5824,15 +6760,27 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Up,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             assert_eq!("[1]", app.editor_content.get_content());
         }
         {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor.insert_text("[1; 2; 3]", &mut app.editor_content);
+            app.handle_paste("[1; 2; 3]".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5841,7 +6789,13 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5850,15 +6804,27 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Up,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             assert_eq!("[1;2]", app.editor_content.get_content());
         }
         {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor.insert_text("[1; 2; 3]", &mut app.editor_content);
+            app.handle_paste("[1; 2; 3]".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5867,7 +6833,13 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5876,17 +6848,34 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
-            app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Up,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Up,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             assert_eq!("[1]", app.editor_content.get_content());
         }
         {
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("[1, 2, 3; 4,5,6]", &mut app.editor_content);
+            app.handle_paste("[1, 2, 3; 4,5,6]".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5895,7 +6884,13 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -5904,8 +6899,20 @@ sum",
                 &arena,
                 &mut holder,
             );
-            app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
-            app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Up,
+                InputModifiers::alt(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             assert_eq!("[1,2,3]", app.editor_content.get_content());
         }
     }
@@ -5915,8 +6922,7 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("apple = 12$", &mut app.editor_content);
+        app.handle_paste("apple = 12$".to_owned(), &mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -5925,13 +6931,27 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Enter,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('a'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
-        app.handle_input(EditorInputEvent::Tab, InputModifiers::none(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Tab,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         assert_eq!("apple = 12$\napple", app.editor_content.get_content());
     }
 
@@ -5940,8 +6960,7 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("apple = 12$", &mut app.editor_content);
+        app.handle_paste("apple = 12$".to_owned(), &mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -5950,15 +6969,41 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Home, InputModifiers::none(), &mut holder);
-        app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
-        app.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut holder);
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Home,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Enter,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('a'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
-        app.handle_input(EditorInputEvent::Tab, InputModifiers::none(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Tab,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         assert_eq!("a   \napple = 12$", app.editor_content.get_content());
     }
 
@@ -5967,8 +7012,12 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("apple = 12$\nbanana = 7$\n", &mut app.editor_content);
+        app.handle_paste(
+            "apple = 12$\nbanana = 7$\n".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -5977,28 +7026,46 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('a'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
-        app.handle_input(EditorInputEvent::Tab, InputModifiers::none(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Tab,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         assert_eq!(
             "apple = 12$\nbanana = 7$\napple",
             app.editor_content.get_content()
         );
 
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char(' '),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('b'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
-        app.handle_input(EditorInputEvent::Tab, InputModifiers::none(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Tab,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         assert_eq!(
             "apple = 12$\nbanana = 7$\napple banana",
             app.editor_content.get_content()
@@ -6010,8 +7077,12 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("apple = 12$\nananas = 7$\n", &mut app.editor_content);
+        app.handle_paste(
+            "apple = 12$\nananas = 7$\n".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6020,12 +7091,20 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('a'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
-        app.handle_input(EditorInputEvent::Tab, InputModifiers::none(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Tab,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         assert_eq!(
             "apple = 12$\nananas = 7$\na   ",
             app.editor_content.get_content()
@@ -6037,9 +7116,11 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor.insert_text(
-            "'1st row\n[1;2;3] some text\n'3rd row",
-            &mut app.editor_content,
+        app.handle_paste(
+            "'1st row\n[1;2;3] some text\n'3rd row".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
         );
         let mut result_buffer = [0; 128];
         app.render(
@@ -6051,10 +7132,12 @@ sum",
         );
         // click after the vector in 2nd row
         app.handle_click(LEFT_GUTTER_WIDTH + 4, 2, &mut holder);
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('X'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
         assert_eq!(
             "'1st row\n[1;2;3] Xsome text\n'3rd row",
@@ -6067,9 +7150,11 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor.insert_text(
-            "'1st row\nsome text [1;2;3]\n'3rd row",
-            &mut app.editor_content,
+        app.handle_paste(
+            "'1st row\nsome text [1;2;3]\n'3rd row".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
         );
         let mut result_buffer = [0; 128];
         app.render(
@@ -6081,10 +7166,12 @@ sum",
         );
         // click after the vector in 2nd row
         app.handle_click(LEFT_GUTTER_WIDTH + 4, 2, &mut holder);
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('X'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
         assert_eq!(
             "'1st row\nsomeX text [1;2;3]\n'3rd row",
@@ -6097,9 +7184,11 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor.insert_text(
-            "'1st row\n[1;2;3] some text\n'3rd row",
-            &mut app.editor_content,
+        app.handle_paste(
+            "'1st row\n[1;2;3] some text\n'3rd row".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
         );
         let mut result_buffer = [0; 128];
         app.render(
@@ -6110,10 +7199,12 @@ sum",
             &mut holder,
         );
         app.handle_click(LEFT_GUTTER_WIDTH + 40, 2, &mut holder);
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('X'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
         assert_eq!(
             "'1st row\n[1;2;3] some textX\n'3rd row",
@@ -6126,9 +7217,11 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor.insert_text(
-            "'1st row\n[1;2;3] some text\n'3rd row",
-            &mut app.editor_content,
+        app.handle_paste(
+            "'1st row\n[1;2;3] some text\n'3rd row".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
         );
         let mut result_buffer = [0; 128];
         app.render(
@@ -6139,10 +7232,12 @@ sum",
             &mut holder,
         );
         app.handle_click(LEFT_GUTTER_WIDTH + 40, 40, &mut holder);
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('X'),
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
         assert_eq!(
             "'1st row\n[1;2;3] some text\n'3rd rowX",
@@ -6155,8 +7250,7 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("apple = 12", &mut app.editor_content);
+        app.handle_paste("apple = 12".to_owned(), &mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6165,8 +7259,14 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
-        app.editor.insert_text("apple + 2", &mut app.editor_content);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Enter,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_paste("apple + 2".to_owned(), &mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6184,8 +7284,7 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("apple = 12", &mut app.editor_content);
+        app.handle_paste("apple = 12".to_owned(), &mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6194,10 +7293,28 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Home, InputModifiers::none(), &mut holder);
-        app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
-        app.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut holder);
-        app.editor.insert_text("apple + 2", &mut app.editor_content);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Home,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Enter,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_paste("apple + 2".to_owned(), &mut holder, &units, &arena);
 
         let mut result_buffer = [0; 128];
         app.render(
@@ -6215,8 +7332,7 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("apple = 12", &mut app.editor_content);
+        app.handle_paste("apple = 12".to_owned(), &mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6225,12 +7341,30 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
-        app.editor.insert_text("apple + 2", &mut app.editor_content);
-        app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
-        app.editor.insert_text("apple = 0", &mut app.editor_content);
-        app.handle_input(EditorInputEvent::Enter, InputModifiers::none(), &mut holder);
-        app.editor.insert_text("apple + 3", &mut app.editor_content);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Enter,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_paste("apple + 2".to_owned(), &mut holder, &units, &arena);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Enter,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_paste("apple = 0".to_owned(), &mut holder, &units, &arena);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Enter,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_paste("apple + 3".to_owned(), &mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6247,8 +7381,7 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("asd sad asd asd sX", &mut app.editor_content);
+        app.handle_paste("asd sad asd asd sX".to_owned(), &mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6257,10 +7390,12 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Backspace,
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
         assert_eq!("asd sad asd asd s", app.editor_content.get_content());
     }
@@ -6270,8 +7405,7 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("apple = 12$\nasd q", &mut app.editor_content);
+        app.handle_paste("apple = 12$\nasd q".to_owned(), &mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6280,7 +7414,13 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6296,8 +7436,7 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("asdsad\n[1;2;3;4]", &mut app.editor_content);
+        app.handle_paste("asdsad\n[1;2;3;4]".to_owned(), &mut holder, &units, &arena);
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 2));
         let mut result_buffer = [0; 128];
@@ -6309,7 +7448,13 @@ sum",
             &mut holder,
         );
 
-        app.handle_input(EditorInputEvent::Down, InputModifiers::none(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Down,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         assert!(app.editor_area_redraw.need(0));
         assert!(app.editor_area_redraw.need(1));
 
@@ -6345,8 +7490,7 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("asdsad\n[1;2;3;4]", &mut app.editor_content);
+        app.handle_paste("asdsad\n[1;2;3;4]".to_owned(), &mut holder, &units, &arena);
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 2));
         let mut result_buffer = [0; 128];
@@ -6359,7 +7503,13 @@ sum",
         );
 
         // step into matrix
-        app.handle_input(EditorInputEvent::Down, InputModifiers::none(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Down,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         assert!(app.editor_area_redraw.need(0));
         assert!(app.editor_area_redraw.need(1));
 
@@ -6375,8 +7525,14 @@ sum",
         assert!(!app.editor_area_redraw.need(1));
 
         // leave matrix
-        app.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut holder);
-        assert!(app.editor_area_redraw.need(0));
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        assert!(!app.editor_area_redraw.need(0));
         assert!(!app.result_area_redraw.need(0));
         assert!(app.editor_area_redraw.need(1));
         assert!(app.result_area_redraw.need(1));
@@ -6387,8 +7543,7 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("asdsad\n[1;2;3;4]", &mut app.editor_content);
+        app.handle_paste("asdsad\n[1;2;3;4]".to_owned(), &mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6408,8 +7563,12 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("first\nasdsad\n[1;2;3;4]", &mut app.editor_content);
+        app.handle_paste(
+            "first\nasdsad\n[1;2;3;4]".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6418,7 +7577,13 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::shift(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         assert!(!app.editor_area_redraw.need(0));
         assert!(!app.result_area_redraw.need(0));
         assert!(app.editor_area_redraw.need(1));
@@ -6434,7 +7599,13 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::shift(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         assert!(app.editor_area_redraw.need(0));
         assert!(app.result_area_redraw.need(0));
         assert!(app.editor_area_redraw.need(1));
@@ -6448,12 +7619,28 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("first\nasdsad\n[1;2;3;4]", &mut app.editor_content);
+        app.handle_paste(
+            "first\nasdsad\n[1;2;3;4]".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
+        );
         app.editor
             .set_selection_save_col(Selection::single_r_c(0, 0));
-        app.handle_input(EditorInputEvent::Down, InputModifiers::shift(), &mut holder);
-        app.handle_input(EditorInputEvent::Down, InputModifiers::shift(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Down,
+            InputModifiers::shift(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Down,
+            InputModifiers::shift(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6463,7 +7650,13 @@ sum",
             &mut holder,
         );
 
-        app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::shift(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         assert!(app.editor_area_redraw.need(0));
         assert!(app.result_area_redraw.need(0));
         assert!(app.editor_area_redraw.need(1));
@@ -6477,8 +7670,12 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("first\nasdsad\n[1;2;3;4]", &mut app.editor_content);
+        app.handle_paste(
+            "first\nasdsad\n[1;2;3;4]".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6487,8 +7684,20 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
-        app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::shift(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::shift(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6497,7 +7706,13 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Down, InputModifiers::shift(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Down,
+            InputModifiers::shift(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         assert!(app.editor_area_redraw.need(0));
         assert!(app.result_area_redraw.need(0));
         assert!(app.editor_area_redraw.need(1));
@@ -6511,10 +7726,26 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("first\nasdsad\n[1;2;3;4]", &mut app.editor_content);
-        app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
-        app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
+        app.handle_paste(
+            "first\nasdsad\n[1;2;3;4]".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::shift(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::shift(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6544,8 +7775,12 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("r1\nr2 asdsad\nr3 [1;2;3;4]", &mut app.editor_content);
+        app.handle_paste(
+            "r1\nr2 asdsad\nr3 [1;2;3;4]".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6554,8 +7789,20 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
-        app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::shift(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::shift(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6565,7 +7812,13 @@ sum",
             &mut holder,
         );
         // cancels selection
-        app.handle_input(EditorInputEvent::Left, InputModifiers::none(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Left,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
 
         assert!(app.editor_area_redraw.need(0));
         assert!(app.result_area_redraw.need(0));
@@ -6580,8 +7833,12 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("r1\nr2 asdsad\nr3 [1;2;3;4]", &mut app.editor_content);
+        app.handle_paste(
+            "r1\nr2 asdsad\nr3 [1;2;3;4]".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6590,7 +7847,13 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         assert!(!app.editor_area_redraw.need(0));
         assert!(!app.result_area_redraw.need(0));
         assert!(app.editor_area_redraw.need(1));
@@ -6604,8 +7867,7 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("asdsad\n[1;2;3;4]", &mut app.editor_content);
+        app.handle_paste("asdsad\n[1;2;3;4]".to_owned(), &mut holder, &units, &arena);
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6614,8 +7876,20 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
-        app.handle_input(EditorInputEvent::Up, InputModifiers::shift(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::shift(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::shift(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6637,8 +7911,12 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("first\nasdsad\n[1;2;3;4]", &mut app.editor_content);
+        app.handle_paste(
+            "first\nasdsad\n[1;2;3;4]".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6647,7 +7925,13 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::alt(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         assert!(!app.editor_area_redraw.need(0));
         assert!(!app.result_area_redraw.need(0));
         assert!(app.editor_area_redraw.need(1));
@@ -6661,7 +7945,13 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::alt(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         assert!(app.editor_area_redraw.need(0));
         assert!(app.result_area_redraw.need(0));
         assert!(app.editor_area_redraw.need(1));
@@ -6689,8 +7979,12 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("firs 1t\nasdsad\n[1;2;3;4]", &mut app.editor_content);
+        app.handle_paste(
+            "firs 1t\nasdsad\n[1;2;3;4]".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6699,7 +7993,13 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::alt(),
+            &mut holder,
+            &arena,
+            &units,
+        );
         assert!(!app.editor_area_redraw.need(0));
         assert!(!app.result_area_redraw.need(0));
         assert!(app.editor_area_redraw.need(1));
@@ -6715,7 +8015,13 @@ sum",
             &arena,
             &mut holder,
         );
-        app.handle_input(EditorInputEvent::Up, InputModifiers::alt(), &mut holder);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::alt(),
+            &mut holder,
+            &arena,
+            &units,
+        );
 
         assert!(app.editor_area_redraw.need(0));
         assert!(app.result_area_redraw.need(0));
@@ -6747,8 +8053,12 @@ sum",
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
 
-        app.editor
-            .insert_text("firs 1t\nasdsad\n[1;2;3;4]", &mut app.editor_content);
+        app.handle_paste(
+            "firs 1t\nasdsad\n[1;2;3;4]".to_owned(),
+            &mut holder,
+            &units,
+            &arena,
+        );
         let mut result_buffer = [0; 128];
         app.render(
             &units,
@@ -6782,8 +8092,7 @@ sum",
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("1\n2\n3\nsum", &mut app.editor_content);
+            app.handle_paste("1\n2\n3\nsum".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -6798,9 +8107,14 @@ sum",
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("1\n2\n3\nsum", &mut app.editor_content);
-            app.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut holder);
+            app.handle_paste("1\n2\n3\nsum".to_owned(), &mut holder, &units, &arena);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Up,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -6815,10 +8129,21 @@ sum",
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("1\n2\n3\nsum", &mut app.editor_content);
-            app.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut holder);
-            app.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut holder);
+            app.handle_paste("1\n2\n3\nsum".to_owned(), &mut holder, &units, &arena);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Up,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Up,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -6833,11 +8158,28 @@ sum",
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("1\n2\n3\nsum", &mut app.editor_content);
-            app.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut holder);
-            app.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut holder);
-            app.handle_input(EditorInputEvent::Down, InputModifiers::none(), &mut holder);
+            app.handle_paste("1\n2\n3\nsum".to_owned(), &mut holder, &units, &arena);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Up,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Up,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Down,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -6852,12 +8194,35 @@ sum",
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("1\n2\n3\nsum", &mut app.editor_content);
-            app.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut holder);
-            app.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut holder);
-            app.handle_input(EditorInputEvent::Down, InputModifiers::none(), &mut holder);
-            app.handle_input(EditorInputEvent::Down, InputModifiers::none(), &mut holder);
+            app.handle_paste("1\n2\n3\nsum".to_owned(), &mut holder, &units, &arena);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Up,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Up,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Down,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Down,
+                InputModifiers::none(),
+                &mut holder,
+                &arena,
+                &units,
+            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -6876,8 +8241,7 @@ sum",
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("1\n'2\n3\nsum", &mut app.editor_content);
+            app.handle_paste("1\n'2\n3\nsum".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -6889,14 +8253,15 @@ sum",
             assert_results(&["1", "3", "4"][..], &result_buffer);
         }
         {
-            let (mut app, units, _holder) = create_app();
+            let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
-            app.editor
-                .insert_text("1\n'2\n3\nsum", &mut app.editor_content);
-            app.handle_input(
+            app.handle_paste("1\n'2\n3\nsum".to_owned(), &mut holder, &units, &arena);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Up,
                 InputModifiers::none(),
-                &mut create_holder(),
+                &mut holder,
+                &arena,
+                &units,
             );
             let mut result_buffer = [0; 128];
             app.render(
@@ -6904,24 +8269,27 @@ sum",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut create_holder(),
+                &mut holder,
             );
             assert_results(&["1", "3", "4"][..], &result_buffer);
         }
         {
-            let (mut app, units, _holder) = create_app();
+            let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
-            app.editor
-                .insert_text("1\n'2\n3\nsum", &mut app.editor_content);
-            app.handle_input(
+            app.handle_paste("1\n'2\n3\nsum".to_owned(), &mut holder, &units, &arena);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Up,
                 InputModifiers::none(),
-                &mut create_holder(),
+                &mut holder,
+                &arena,
+                &units,
             );
-            app.handle_input(
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Up,
                 InputModifiers::none(),
-                &mut create_holder(),
+                &mut holder,
+                &arena,
+                &units,
             );
             let mut result_buffer = [0; 128];
             app.render(
@@ -6929,24 +8297,27 @@ sum",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut create_holder(),
+                &mut holder,
             );
             assert_results(&["1", "3", "4"][..], &result_buffer);
         }
         {
-            let (mut app, units, _holder) = create_app();
+            let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
-            app.editor
-                .insert_text("1\n'2\n3\nsum", &mut app.editor_content);
-            app.handle_input(
+            app.handle_paste("1\n'2\n3\nsum".to_owned(), &mut holder, &units, &arena);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Up,
                 InputModifiers::none(),
-                &mut create_holder(),
+                &mut holder,
+                &arena,
+                &units,
             );
-            app.handle_input(
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Down,
                 InputModifiers::none(),
-                &mut create_holder(),
+                &mut holder,
+                &arena,
+                &units,
             );
             let mut result_buffer = [0; 128];
             app.render(
@@ -6954,24 +8325,27 @@ sum",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut create_holder(),
+                &mut holder,
             );
             assert_results(&["1", "3", "4"][..], &result_buffer);
         }
         {
-            let (mut app, units, _holder) = create_app();
+            let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
-            app.editor
-                .insert_text("1\n'2\n3\nsum", &mut app.editor_content);
-            app.handle_input(
+            app.handle_paste("1\n'2\n3\nsum".to_owned(), &mut holder, &units, &arena);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Up,
                 InputModifiers::none(),
-                &mut create_holder(),
+                &mut holder,
+                &arena,
+                &units,
             );
-            app.handle_input(
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Down,
                 InputModifiers::none(),
-                &mut create_holder(),
+                &mut holder,
+                &arena,
+                &units,
             );
             let mut result_buffer = [0; 128];
             app.render(
@@ -6979,7 +8353,7 @@ sum",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut create_holder(),
+                &mut holder,
             );
             assert_results(&["1", "3", "4"][..], &result_buffer);
         }
@@ -6991,8 +8365,7 @@ sum",
             let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("1\n--2\n3\nsum", &mut app.editor_content);
+            app.handle_paste("1\n--2\n3\nsum".to_owned(), &mut holder, &units, &arena);
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
@@ -7004,15 +8377,16 @@ sum",
             assert_results(&["1", "3", "3"][..], &result_buffer);
         }
         {
-            let (mut app, units, _) = create_app();
+            let (mut app, units, mut holder) = create_app();
             let arena = Arena::new();
 
-            app.editor
-                .insert_text("1\n--2\n3\nsum", &mut app.editor_content);
-            app.handle_input(
+            app.handle_paste("1\n--2\n3\nsum".to_owned(), &mut holder, &units, &arena);
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Up,
                 InputModifiers::none(),
-                &mut create_holder(),
+                &mut holder,
+                &arena,
+                &units,
             );
             let mut result_buffer = [0; 128];
             app.render(
@@ -7020,7 +8394,7 @@ sum",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut create_holder(),
+                &mut holder,
             );
             assert_results(&["1", "3", "3"][..], &result_buffer);
         }
@@ -7076,25 +8450,33 @@ sum",
             &mut holder,
         );
 
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Up,
             InputModifiers::shift(),
             &mut create_holder(),
+            &arena,
+            &units,
         );
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Up,
             InputModifiers::shift(),
             &mut create_holder(),
+            &arena,
+            &units,
         );
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Up,
             InputModifiers::shift(),
             &mut create_holder(),
+            &arena,
+            &units,
         );
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('x'),
             InputModifiers::ctrl(),
             &mut create_holder(),
+            &arena,
+            &units,
         );
         for i in 0..9 {
             assert!(!app.editor_area_redraw.need(i));
@@ -7125,15 +8507,19 @@ sum",
         let arena = Arena::new();
 
         app.handle_paste("1+1\nasd".to_owned(), &mut holder, &units, &arena);
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Up,
             InputModifiers::none(),
             &mut create_holder(),
+            &arena,
+            &units,
         );
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Home,
             InputModifiers::shift(),
             &mut create_holder(),
+            &arena,
+            &units,
         );
 
         let mut result_buffer = [0; 128];
@@ -7170,10 +8556,12 @@ sum",
         );
 
         // step into the vector
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Backspace,
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
 
         for i in 0..2 {
@@ -7211,10 +8599,12 @@ sum",
         assert_ne!(app.render_data.editor_y_to_render_y[5], 0);
 
         // removing a line
-        app.handle_input(
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Backspace,
             InputModifiers::none(),
             &mut holder,
+            &arena,
+            &units,
         );
 
         // they must not be 0, otherwise the rendere can't decide if they needed to be cleared,

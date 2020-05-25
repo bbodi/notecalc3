@@ -352,7 +352,7 @@ impl Editor {
         } else {
             let start = selection.get_first();
             let end = selection.get_second();
-            Some(&content.get_line_chars(start.row)[start.column..end.column])
+            Some(&content.get_line_valid_chars(start.row)[start.column..end.column])
         };
     }
 
