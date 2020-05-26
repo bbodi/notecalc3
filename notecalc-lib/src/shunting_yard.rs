@@ -226,6 +226,7 @@ impl ShuntingYard {
         while input_index + 1 < tokens.len() as isize {
             input_index += 1; // it is here so it is incremented always when "continue"
             let input_token = &tokens[input_index as usize];
+            dbg!(&input_token);
             match &input_token.typ {
                 TokenType::StringLiteral => {
                     if let Some(fn_type) = FnType::value_of(input_token.ptr) {

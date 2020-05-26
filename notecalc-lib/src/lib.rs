@@ -574,6 +574,7 @@ pub struct EditorObject {
     rendered_h: usize,
 }
 
+#[derive(Debug)]
 pub struct Variable {
     pub name: Box<[char]>,
     pub value: Result<CalcResult, ()>,
@@ -2804,6 +2805,7 @@ impl NoteCalcApp {
 
     pub fn set_result_gutter_x(&mut self, x: usize) {
         self.render_data.result_gutter_x = x;
+        self.render_data.current_editor_width = x - self.render_data.left_gutter_width;
         self.result_area_redraw
             .merge(EditorRowFlags::all_rows_starting_at(0));
         self.editor_area_redraw
@@ -3229,6 +3231,7 @@ impl NoteCalcApp {
                     editor_content.get_line_valid_chars(editor_y),
                 );
                 let result = result.map(|it| it.map(|it| it.result));
+                dbg!(&result);
                 holder.results[editor_y] = result;
             } else {
                 holder.results[editor_y] = Ok(None);
@@ -3380,18 +3383,18 @@ impl NoteCalcApp {
                     (begin_index, len)
                 };
                 // find the best match
-                let mut word_i = begin_index;
                 let mut matched_var_index = None;
                 for (var_i, var) in vars.iter().enumerate() {
                     if var.defined_at_row >= cursor_pos.row {
                         break;
                     }
                     let mut match_len = 0;
-                    for ch in var.name.iter() {
-                        if word_i >= line.len() {
-                            break;
-                        }
-                        if line[word_i] != *ch {
+                    for (var_ch, actual_ch) in var
+                        .name
+                        .iter()
+                        .zip(&line[begin_index..begin_index + expected_len])
+                    {
+                        if *var_ch != *actual_ch {
                             break;
                         }
                         match_len += 1;
@@ -5424,6 +5427,43 @@ mod tests {
     }
 
     #[test]
+    fn test_referenced_line_calc() {
+        let (mut app, units, mut holder) = create_app();
+        let arena = Arena::new();
+
+        app.handle_paste("2\n3 * ".to_owned(), &mut holder, &units, &arena);
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(1, 4));
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut holder,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::alt(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.alt_key_released(&mut holder, &units, &arena);
+        assert_eq!("2\n3 * &[1]", app.editor_content.get_content());
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut holder,
+        );
+
+        assert_results(&["2", "6"][..], &result_buffer);
+    }
+
+    #[test]
     fn test_line_ref_normalization() {
         let (mut app, units, mut holder) = create_app();
         let arena = Arena::new();
@@ -6953,6 +6993,182 @@ sum"
             &units,
         );
         assert_eq!("apple = 12$\napple", app.editor_content.get_content());
+    }
+
+    #[test]
+    fn test_autocompletion_var_name_with_space() {
+        let (mut app, units, mut holder) = create_app();
+        let arena = Arena::new();
+
+        app.handle_paste("some apples = 12$".to_owned(), &mut holder, &units, &arena);
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut holder,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Enter,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('s'),
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('o'),
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Tab,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        assert_eq!(
+            "some apples = 12$\nsome apples",
+            app.editor_content.get_content()
+        );
+    }
+
+    #[test]
+    fn test_autocompletion_var_name_with_space2() {
+        let (mut app, units, mut holder) = create_app();
+        let arena = Arena::new();
+
+        app.handle_paste("some apples = 12$".to_owned(), &mut holder, &units, &arena);
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut holder,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Enter,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('s'),
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('o'),
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('m'),
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('e'),
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Tab,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        assert_eq!(
+            "some apples = 12$\nsome apples",
+            app.editor_content.get_content()
+        );
+    }
+
+    #[test]
+    fn test_autocompletion_var_name_with_space3() {
+        let (mut app, units, mut holder) = create_app();
+        let arena = Arena::new();
+
+        app.handle_paste("men BMR = 12".to_owned(), &mut holder, &units, &arena);
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut holder,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Enter,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('m'),
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('e'),
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('n'),
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char(' '),
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Left,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Tab,
+            InputModifiers::none(),
+            &mut holder,
+            &arena,
+            &units,
+        );
+        assert_eq!("men BMR = 12\nmen BMR ", app.editor_content.get_content());
     }
 
     #[test]
