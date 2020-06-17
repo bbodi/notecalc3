@@ -90,10 +90,12 @@
             canvas.addEventListener('mousedown', on_click);
             canvas.addEventListener('mouseup', on_mouse_up);
             canvas.addEventListener('mousemove', on_drag);
+            canvas.addEventListener('wheel', on_wheel);
 
             overlay_canvas.addEventListener('mousedown', on_click);
             overlay_canvas.addEventListener('mouseup', on_mouse_up);
             overlay_canvas.addEventListener('mousemove', on_drag);
+            overlay_canvas.addEventListener('wheel', on_wheel);
             run();
         }
     });
@@ -114,6 +116,7 @@
     let FONT_VERT_PADDING = 2;
     let line_height = FONT_HEIGHT + 2 * FONT_VERT_PADDING;
     let CLIENT_WIDTH_IN_CHARS = 0;
+    let CLIENT_HEIGHT_IN_CHARS = 0;
     let active_tab_index = 0;
     let content_was_modified = false;
     let active_tab_btn_dom;
@@ -156,11 +159,13 @@
         canvas.height = ((window.innerHeight / line_height) | 0) * line_height - 100;
         overlay_canvas.width = canvas.width;
         overlay_canvas.height = canvas.height;
-        return canvas.width / font_width;
+        return [canvas.width / font_width, canvas.height / line_height];
     }
 
     function resizeCanvas() {
-        CLIENT_WIDTH_IN_CHARS = calc_and_set_client_width();
+        const t = calc_and_set_client_width();
+        CLIENT_WIDTH_IN_CHARS = t[0];
+        CLIENT_HEIGHT_IN_CHARS = t[1];
 
         const div = document.getElementById('containder-div');
         div.style.width = (canvas.width + 2 * font_width) + 'px';
@@ -258,6 +263,23 @@
         const char_y = (e.offsetY) / line_height;
         wasm_bindgen.handle_mouse_up(app_ptr, char_x | 0, char_y | 0);
     }
+
+    function on_wheel(e) {
+        if (e.ctrlKey) {
+            return;
+        }
+        e.preventDefault();
+        let dir;
+        if (e.deltaY > 0) {
+            // down
+            dir = 1;
+        } else if (e.deltaY < 0) {
+            dir = 0;
+        }
+        wasm_bindgen.handle_wheel(app_ptr, dir);
+        canvas_dirty += 1;
+    }
+
 
     function on_click(e) {
         if (e.buttons === 1) {
@@ -622,8 +644,10 @@
     async function run() {
         wasm = await wasm_bindgen('pkg/frontend_web_bg.wasm');
 
-        CLIENT_WIDTH_IN_CHARS = calc_and_set_client_width();
-        app_ptr = wasm.create_app(CLIENT_WIDTH_IN_CHARS);
+        const t = calc_and_set_client_width();
+        CLIENT_WIDTH_IN_CHARS = t[0];
+        CLIENT_HEIGHT_IN_CHARS = t[1];
+        app_ptr = wasm.create_app(CLIENT_WIDTH_IN_CHARS, CLIENT_HEIGHT_IN_CHARS);
         command_buffer_ptr = wasm.get_command_buffer_ptr();
 
         // window

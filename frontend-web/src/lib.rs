@@ -16,10 +16,11 @@ use wasm_bindgen::prelude::*;
 
 use crate::utils::set_panic_hook;
 use notecalc_lib::editor::editor::{EditorInputEvent, InputModifiers};
+use notecalc_lib::helper::*;
 use notecalc_lib::units::units::Units;
 use notecalc_lib::{
-    Holder, Layer, NoteCalcApp, OutputMessage, OutputMessageCommandId, RenderAsciiTextMsg,
-    RenderBuckets, RenderStringMsg, RenderUtf8TextMsg, Variable, MAX_LINE_COUNT,
+    Layer, NoteCalcApp, OutputMessage, OutputMessageCommandId, RenderAsciiTextMsg, RenderBuckets,
+    RenderStringMsg, RenderUtf8TextMsg, Variable, MAX_LINE_COUNT,
 };
 use typed_arena::Arena;
 
@@ -45,7 +46,10 @@ struct AppPointers {
     app_ptr: u32,
     units_ptr: u32,
     render_bucket_ptr: u32,
-    holder_ptr: u32,
+    tokens_ptr: u32,
+    results_ptr: u32,
+    vars_ptr: u32,
+    editor_objects_ptr: u32,
     allocator: u32,
 }
 
@@ -70,9 +74,29 @@ impl AppPointers {
         unsafe { &mut *(ptr_holder.render_bucket_ptr as *mut RenderBuckets) }
     }
 
-    fn mut_holder<'a>(ptr: u32) -> &'a mut Holder<'a> {
+    fn mut_tokens<'a>(ptr: u32) -> &'a mut AppTokens<'a> {
         let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
-        unsafe { &mut *(ptr_holder.holder_ptr as *mut Holder) }
+        unsafe { &mut *(ptr_holder.tokens_ptr as *mut AppTokens) }
+    }
+
+    fn mut_results<'a>(ptr: u32) -> &'a mut Results {
+        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
+        unsafe { &mut *(ptr_holder.results_ptr as *mut Results) }
+    }
+
+    fn mut_editor_objects<'a>(ptr: u32) -> &'a mut EditorObjects {
+        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
+        unsafe { &mut *(ptr_holder.editor_objects_ptr as *mut EditorObjects) }
+    }
+
+    fn editor_objects<'a>(ptr: u32) -> &'a EditorObjects {
+        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
+        unsafe { &*(ptr_holder.editor_objects_ptr as *const EditorObjects) }
+    }
+
+    fn mut_vars<'a>(ptr: u32) -> &'a mut Vec<Variable> {
+        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
+        unsafe { &mut *(ptr_holder.vars_ptr as *mut Vec<Variable>) }
     }
 
     fn allocator<'a>(ptr: u32) -> &'a Arena<char> {
@@ -82,30 +106,29 @@ impl AppPointers {
 }
 
 #[wasm_bindgen]
-pub fn create_app(client_width: usize) -> u32 {
+pub fn create_app(client_width: usize, client_height: usize) -> u32 {
     set_panic_hook();
     js_log(&format!("client_width: {}", client_width));
-    let mut holder = Holder {
-        editor_objects: std::iter::repeat(Vec::with_capacity(8))
-            .take(MAX_LINE_COUNT)
-            .collect::<Vec<_>>(),
-        // TODO: array?
-        results: [Ok(None); MAX_LINE_COUNT],
-        vars: Vec::with_capacity(MAX_LINE_COUNT),
-        tokens: [None; MAX_LINE_COUNT],
-    };
-    holder.vars.push(Variable {
+    js_log(&format!("client_height: {}", client_height));
+    let editor_objects = EditorObjects::new();
+    let tokens = AppTokens::new();
+    let results = Results::new();
+    let mut vars = Vec::new();
+    vars.push(Variable {
         name: Box::from(&['s', 'u', 'm'][..]),
         value: Err(()),
         defined_at_row: 0,
     });
 
-    let app = NoteCalcApp::new(client_width);
+    let app = NoteCalcApp::new(client_width, client_height);
     to_box_ptr(AppPointers {
         app_ptr: to_box_ptr(app),
         units_ptr: to_box_ptr(Units::new()),
         render_bucket_ptr: to_box_ptr(RenderBuckets::new()),
-        holder_ptr: to_box_ptr(holder),
+        tokens_ptr: to_box_ptr(tokens),
+        results_ptr: to_box_ptr(results),
+        vars_ptr: to_box_ptr(vars),
+        editor_objects_ptr: to_box_ptr(editor_objects),
         allocator: to_box_ptr(Arena::<char>::with_capacity(MAX_LINE_COUNT * 120)),
     })
 }
@@ -125,9 +148,11 @@ fn to_box_ptr<T>(t: T) -> u32 {
 #[wasm_bindgen]
 pub fn alt_key_released(app_ptr: u32) {
     AppPointers::mut_app(app_ptr).alt_key_released(
-        AppPointers::mut_holder(app_ptr),
         AppPointers::units(app_ptr),
         AppPointers::allocator(app_ptr),
+        AppPointers::mut_tokens(app_ptr),
+        AppPointers::mut_results(app_ptr),
+        AppPointers::mut_vars(app_ptr),
     );
 }
 
@@ -171,10 +196,12 @@ pub fn set_compressed_encoded_content(app_ptr: u32, compressed_encoded: String) 
     if let Some(content) = content {
         let app = AppPointers::mut_app(app_ptr);
         app.set_normalized_content(
-            &content.trim(),
+            &content.trim_end(),
             AppPointers::units(app_ptr),
             AppPointers::allocator(app_ptr),
-            AppPointers::mut_holder(app_ptr),
+            AppPointers::mut_tokens(app_ptr),
+            AppPointers::mut_results(app_ptr),
+            AppPointers::mut_vars(app_ptr),
         );
     }
 }
@@ -188,12 +215,21 @@ pub fn handle_time(app_ptr: u32, now: u32) -> bool {
 
 #[wasm_bindgen]
 pub fn handle_drag(app_ptr: u32, x: usize, y: usize) {
-    AppPointers::mut_app(app_ptr).handle_drag(x, y);
+    AppPointers::mut_app(app_ptr).handle_drag(x, RenderPosY::new(y));
 }
 
 #[wasm_bindgen]
 pub fn handle_click(app_ptr: u32, x: usize, y: usize) {
-    AppPointers::mut_app(app_ptr).handle_click(x, y, AppPointers::mut_holder(app_ptr));
+    AppPointers::mut_app(app_ptr).handle_click(
+        x,
+        RenderPosY::new(y),
+        AppPointers::editor_objects(app_ptr),
+    );
+}
+
+#[wasm_bindgen]
+pub fn handle_wheel(app_ptr: u32, dir: usize) {
+    AppPointers::mut_app(app_ptr).handle_wheel(dir);
 }
 
 #[wasm_bindgen]
@@ -225,9 +261,11 @@ pub fn get_selected_text(app_ptr: u32) -> Option<String> {
 pub fn handle_paste(app_ptr: u32, input: String) {
     AppPointers::mut_app(app_ptr).handle_paste(
         input,
-        AppPointers::mut_holder(app_ptr),
         AppPointers::units(app_ptr),
         AppPointers::allocator(app_ptr),
+        AppPointers::mut_tokens(app_ptr),
+        AppPointers::mut_results(app_ptr),
+        AppPointers::mut_vars(app_ptr),
     );
 }
 
@@ -241,7 +279,10 @@ pub fn render(app_ptr: u32) {
         rb,
         unsafe { &mut RESULT_BUFFER },
         AppPointers::allocator(app_ptr),
-        AppPointers::mut_holder(app_ptr),
+        AppPointers::mut_tokens(app_ptr),
+        AppPointers::mut_results(app_ptr),
+        AppPointers::mut_vars(app_ptr),
+        AppPointers::mut_editor_objects(app_ptr),
     );
 
     send_render_commands_to_js(rb);
@@ -257,7 +298,7 @@ pub fn get_selected_rows_with_results(app_ptr: u32) -> String {
         rb,
         unsafe { &mut RESULT_BUFFER },
         AppPointers::allocator(app_ptr),
-        AppPointers::mut_holder(app_ptr),
+        AppPointers::mut_results(app_ptr),
     );
 }
 
@@ -295,9 +336,12 @@ pub fn handle_input(app_ptr: u32, input: u32, modifiers: u8) -> bool {
     let modif = app.handle_input_and_update_tokens_plus_redraw_requirements(
         input,
         modifiers,
-        AppPointers::mut_holder(app_ptr),
         AppPointers::allocator(app_ptr),
         AppPointers::units(app_ptr),
+        AppPointers::mut_tokens(app_ptr),
+        AppPointers::mut_results(app_ptr),
+        AppPointers::mut_vars(app_ptr),
+        AppPointers::mut_editor_objects(app_ptr),
     );
 
     return modif.is_some();
@@ -324,7 +368,7 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
             .expect("");
 
         js_command_buffer
-            .write_u16::<LittleEndian>(text.row as u16)
+            .write_u16::<LittleEndian>(text.row.as_usize() as u16)
             .expect("");
         js_command_buffer
             .write_u16::<LittleEndian>(text.column as u16)
@@ -349,7 +393,7 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
 
         // TODO: these don't must to be u16 (row, column), maybe the column
         js_command_buffer
-            .write_u16::<LittleEndian>(text.row as u16)
+            .write_u16::<LittleEndian>(text.row.as_usize() as u16)
             .expect("");
         js_command_buffer
             .write_u16::<LittleEndian>(text.column as u16)
@@ -368,7 +412,7 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
             .expect("");
 
         js_command_buffer
-            .write_u16::<LittleEndian>(text.row as u16)
+            .write_u16::<LittleEndian>(text.row.as_usize() as u16)
             .expect("");
         js_command_buffer
             .write_u16::<LittleEndian>(text.column as u16)
@@ -407,7 +451,7 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
                     .write_u8(OutputMessageCommandId::RenderRectangle as u8 + 1)
                     .expect("");
                 js_command_buffer.write_u8(*x as u8).expect("");
-                js_command_buffer.write_u8(*y as u8).expect("");
+                js_command_buffer.write_u8(y.as_usize() as u8).expect("");
                 js_command_buffer.write_u8(*w as u8).expect("");
                 js_command_buffer.write_u8(*h as u8).expect("");
             }
@@ -440,7 +484,7 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
                     .write_u8(OutputMessageCommandId::PulsingRectangle as u8 + 1)
                     .expect("");
                 js_command_buffer.write_u8(*x as u8).expect("");
-                js_command_buffer.write_u8(*y as u8).expect("");
+                js_command_buffer.write_u8(y.as_usize() as u8).expect("");
                 js_command_buffer.write_u8(*w as u8).expect("");
                 js_command_buffer.write_u8(*h as u8).expect("");
                 js_command_buffer

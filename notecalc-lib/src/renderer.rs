@@ -1,4 +1,4 @@
-use crate::calc::CalcResult;
+use crate::calc::{dec, CalcResult};
 use crate::units::units::Units;
 use crate::ResultFormat;
 use bigdecimal::{BigDecimal, ToPrimitive};
@@ -10,7 +10,7 @@ pub fn render_result(
     result: &CalcResult,
     format: &ResultFormat,
     there_was_unit_conversion: bool,
-    decimal_count: usize,
+    decimal_count: Option<usize>,
 ) -> String {
     let mut c = Cursor::new(Vec::with_capacity(64));
     render_result_into(
@@ -30,7 +30,7 @@ pub fn render_result_into(
     format: &ResultFormat,
     there_was_unit_conversion: bool,
     f: &mut impl std::io::Write,
-    decimal_count: usize,
+    decimal_count: Option<usize>,
 ) {
     match &result {
         CalcResult::Quantity(num, unit) => {
@@ -84,15 +84,19 @@ fn num_to_string(
     f: &mut impl std::io::Write,
     num: &BigDecimal,
     format: &ResultFormat,
-    _decimal_count: usize,
+    decimal_count: Option<usize>,
 ) {
-    let num = if *format != ResultFormat::Dec && num.is_integer() {
-        num.with_scale(0)
+    let num_a = if *format != ResultFormat::Dec && num.is_integer() {
+        Some(num.with_scale(0))
+    } else if let Some(decimal_count) = decimal_count {
+        let (_, scale) = num.as_bigint_and_exponent();
+        let digits = num.digits();
+        let a = (digits as i64 - (scale - decimal_count as i64)).max(0) as u64;
+        Some(strip_trailing_zeroes(&num.with_prec(a)))
     } else {
-        strip_trailing_zeroes(num)
+        None
     };
-    // let num = strip_trailing_zeroes(&num.with_scale(decimal_count as i64));
-    // let num = num.with_scale(decimal_count as i64);
+    let num = num_a.as_ref().unwrap_or(num);
 
     if *format == ResultFormat::Bin || *format == ResultFormat::Hex {
         if let Some(n) = num.to_i64() {
