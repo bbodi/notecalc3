@@ -20,11 +20,10 @@ use crate::editor::editor::{
 };
 use crate::editor::editor_content::EditorContent;
 use crate::matrix::MatrixData;
-use crate::renderer::{render_result, render_result_into};
+use crate::renderer::{get_int_frac_part_len, render_result, render_result_into};
 use crate::shunting_yard::ShuntingYard;
 use crate::token_parser::{OperatorTokenType, Token, TokenParser, TokenType};
 use crate::units::units::Units;
-use smallvec::alloc::alloc::alloc;
 use smallvec::SmallVec;
 use std::io::Cursor;
 use std::mem::MaybeUninit;
@@ -148,8 +147,7 @@ pub mod helper {
 
     impl EditorRowFlags {
         pub fn single_row(row_index: usize) -> EditorRowFlags {
-            let mut bitset = 0u64;
-            bitset = 1u64 << row_index;
+            let bitset = 1u64 << row_index;
             EditorRowFlags { bitset }
         }
         pub fn clear(&mut self) {
@@ -2310,8 +2308,13 @@ impl NoteCalcApp {
         modif_type: EditorRowFlags,
         decimal_count: Option<usize>,
     ) {
+        struct ResultTmp {
+            buffer_ptr: Option<Range<usize>>,
+            editor_y: EditorY,
+            lengths: ResultLengths,
+        }
         let (max_lengths, result_ranges) = {
-            let mut result_ranges: SmallVec<[(Option<Range<usize>>, EditorY); MAX_LINE_COUNT]> =
+            let mut result_ranges: SmallVec<[ResultTmp; MAX_LINE_COUNT]> =
                 SmallVec::with_capacity(MAX_LINE_COUNT);
             let mut result_buffer_index = 0;
             let mut max_lengths = ResultLengths {
@@ -2338,8 +2341,15 @@ impl NoteCalcApp {
                     result_buffer[result_buffer_index] = b'E';
                     result_buffer[result_buffer_index + 1] = b'r';
                     result_buffer[result_buffer_index + 2] = b'r';
-                    result_ranges
-                        .push((Some(result_buffer_index..result_buffer_index + 3), editor_y));
+                    result_ranges.push(ResultTmp {
+                        buffer_ptr: Some(result_buffer_index..result_buffer_index + 3),
+                        editor_y,
+                        lengths: ResultLengths {
+                            int_part_len: 0,
+                            frac_part_len: 0,
+                            unit_part_len: 0,
+                        },
+                    });
                     result_buffer_index += 3;
                     prev_result_matrix_length = None;
                 } else if let Ok(Some(result)) = result {
@@ -2364,13 +2374,21 @@ impl NoteCalcApp {
                                     decimal_count,
                                 );
                             }
-                            result_ranges.push((None, editor_y));
+                            result_ranges.push(ResultTmp {
+                                buffer_ptr: None,
+                                editor_y,
+                                lengths: ResultLengths {
+                                    int_part_len: 0,
+                                    frac_part_len: 0,
+                                    unit_part_len: 0,
+                                },
+                            });
                         }
                         _ => {
                             prev_result_matrix_length = None;
                             let start = result_buffer_index;
                             let mut c = Cursor::new(&mut result_buffer[start..]);
-                            render_result_into(
+                            let lens = render_result_into(
                                 &units,
                                 &result,
                                 &editor_content.get_data(editor_y.as_usize()).result_format,
@@ -2380,87 +2398,90 @@ impl NoteCalcApp {
                             );
                             let len = c.position() as usize;
                             let range = start..start + len;
-                            let s = unsafe {
-                                std::str::from_utf8_unchecked(&result_buffer[range.clone()])
-                            };
-                            let lengths = get_int_frac_part_len(s);
-                            max_lengths.set_max(&lengths);
-                            result_ranges.push((Some(range), editor_y));
+                            max_lengths.set_max(&lens);
+                            result_ranges.push(ResultTmp {
+                                buffer_ptr: Some(range),
+                                editor_y,
+                                lengths: lens,
+                            });
                             result_buffer_index += len;
                         }
                     };
                 } else {
                     prev_result_matrix_length = None;
-                    result_ranges.push((None, editor_y));
+                    result_ranges.push(ResultTmp {
+                        buffer_ptr: None,
+                        editor_y,
+                        lengths: ResultLengths {
+                            int_part_len: 0,
+                            frac_part_len: 0,
+                            unit_part_len: 0,
+                        },
+                    });
                 }
             }
             (max_lengths, result_ranges)
         };
 
         // render results from the buffer
-        for result_range in result_ranges.iter() {
-            if let (result_range, editor_y) = result_range {
-                let rendered_row_height = gr.get_rendered_height(*editor_y);
-                let render_y = gr.get_render_y(*editor_y).expect("");
-                if let Some(result_range) = result_range {
-                    // result background
-                    render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
-                    render_buckets.draw_rect(
-                        Layer::BehindText,
-                        gr.result_gutter_x + RIGHT_GUTTER_WIDTH,
-                        render_y,
-                        gr.current_result_panel_width,
-                        rendered_row_height,
-                    );
+        for result_tmp in result_ranges.iter() {
+            let rendered_row_height = gr.get_rendered_height(result_tmp.editor_y);
+            let render_y = gr.get_render_y(result_tmp.editor_y).expect("");
+            if let Some(result_range) = &result_tmp.buffer_ptr {
+                // result background
+                render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
+                render_buckets.draw_rect(
+                    Layer::BehindText,
+                    gr.result_gutter_x + RIGHT_GUTTER_WIDTH,
+                    render_y,
+                    gr.current_result_panel_width,
+                    rendered_row_height,
+                );
 
-                    let s = unsafe {
-                        std::str::from_utf8_unchecked(&result_buffer[result_range.clone()])
-                    };
-                    let lengths = get_int_frac_part_len(s);
-                    let from = result_range.start;
-                    let vert_align_offset = (rendered_row_height - 1) / 2;
-                    let row = render_y.add(vert_align_offset);
-                    let offset_x = if max_lengths.int_part_len < lengths.int_part_len {
-                        // it is an "Err"
-                        0
-                    } else {
-                        max_lengths.int_part_len - lengths.int_part_len
-                    };
-                    let x = result_gutter_x + RIGHT_GUTTER_WIDTH + offset_x;
+                let lengths = &result_tmp.lengths;
+                let from = result_range.start;
+                let vert_align_offset = (rendered_row_height - 1) / 2;
+                let row = render_y.add(vert_align_offset);
+                let offset_x = if max_lengths.int_part_len < lengths.int_part_len {
+                    // it is an "Err"
+                    0
+                } else {
+                    max_lengths.int_part_len - lengths.int_part_len
+                };
+                let x = result_gutter_x + RIGHT_GUTTER_WIDTH + offset_x;
+                render_buckets.ascii_texts.push(RenderAsciiTextMsg {
+                    text: &result_buffer[from..from + lengths.int_part_len],
+                    row,
+                    column: x,
+                });
+                if lengths.frac_part_len > 0 {
+                    let from = result_range.start + lengths.int_part_len;
                     render_buckets.ascii_texts.push(RenderAsciiTextMsg {
-                        text: &result_buffer[from..from + lengths.int_part_len],
+                        text: &result_buffer[from..from + lengths.frac_part_len],
                         row,
-                        column: x,
+                        column: x + lengths.int_part_len,
                     });
-                    if lengths.frac_part_len > 0 {
-                        let from = result_range.start + lengths.int_part_len;
-                        render_buckets.ascii_texts.push(RenderAsciiTextMsg {
-                            text: &result_buffer[from..from + lengths.frac_part_len],
-                            row,
-                            column: x + lengths.int_part_len,
-                        });
-                    }
-                    if lengths.unit_part_len > 0 {
-                        let from =
-                            result_range.start + lengths.int_part_len + lengths.frac_part_len + 1;
-                        render_buckets.ascii_texts.push(RenderAsciiTextMsg {
-                            text: &result_buffer[from..result_range.end],
-                            row,
-                            column: x + lengths.int_part_len + lengths.frac_part_len + 1,
-                        });
-                    }
-                } else if modif_type.need(*editor_y) {
-                    // no reuslt but need rerender
-                    // result background
-                    render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
-                    render_buckets.draw_rect(
-                        Layer::BehindText,
-                        gr.result_gutter_x + RIGHT_GUTTER_WIDTH,
-                        render_y,
-                        gr.current_result_panel_width,
-                        rendered_row_height,
-                    );
                 }
+                if lengths.unit_part_len > 0 {
+                    let from =
+                        result_range.start + lengths.int_part_len + lengths.frac_part_len + 1;
+                    render_buckets.ascii_texts.push(RenderAsciiTextMsg {
+                        text: &result_buffer[from..result_range.end],
+                        row,
+                        column: x + lengths.int_part_len + lengths.frac_part_len + 1,
+                    });
+                }
+            } else if modif_type.need(result_tmp.editor_y) {
+                // no reuslt but need rerender
+                // result background
+                render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
+                render_buckets.draw_rect(
+                    Layer::BehindText,
+                    gr.result_gutter_x + RIGHT_GUTTER_WIDTH,
+                    render_y,
+                    gr.current_result_panel_width,
+                    rendered_row_height,
+                );
             }
         }
     }
@@ -3096,7 +3117,6 @@ impl NoteCalcApp {
                     let delta_y = y.as_usize() as isize - original_click_y.as_usize() as isize;
 
                     let scroll_bar_h = ((scroll_coeff * gr.client_height as f64) as usize).max(1);
-                    let scroll_bar_step = self.editor_content.line_count() / scroll_bar_h;
 
                     // gr.scroll_y = y / scroll_bar_step;
                     gr.scroll_y = (original_scroll_y as isize + delta_y).max(0) as usize;
@@ -4136,7 +4156,7 @@ impl NoteCalcApp {
     }
 }
 
-struct ResultLengths {
+pub struct ResultLengths {
     int_part_len: usize,
     frac_part_len: usize,
     unit_part_len: usize,
@@ -4154,33 +4174,6 @@ impl ResultLengths {
             self.unit_part_len = other.unit_part_len;
         }
     }
-}
-
-fn get_int_frac_part_len(cell_str: &str) -> ResultLengths {
-    let mut int_part_len = 0;
-    let mut frac_part_len = 0;
-    let mut unit_part_len = 0;
-    let mut was_point = false;
-    let mut was_space = false;
-    for ch in cell_str.as_bytes() {
-        if *ch == b'.' {
-            was_point = true;
-        } else if *ch == b' ' {
-            was_space = true;
-        }
-        if was_space {
-            unit_part_len += 1;
-        } else if was_point {
-            frac_part_len += 1;
-        } else {
-            int_part_len += 1;
-        }
-    }
-    return ResultLengths {
-        int_part_len,
-        frac_part_len,
-        unit_part_len,
-    };
 }
 
 #[cfg(test)]
@@ -11064,6 +11057,75 @@ sum"
             &["", "", "", "", "", "", "", "", "", "", "", "1"][..],
             &result_buffer,
         );
+    }
+
+    #[test]
+    fn test_thousand_separator_and_alignment_in_result() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "1\n2.3\n2222\n4km".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(2, 0));
+        // set result to binary repr
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Left,
+            InputModifiers::alt(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+
+        let mut result_buffer = [0; 128];
+        let mut render_buckets = RenderBuckets::new();
+        app.render(
+            &units,
+            &mut render_buckets,
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+
+        let base_y = render_buckets.ascii_texts[0].column;
+        assert_eq!(render_buckets.ascii_texts[0].text, "1".as_bytes());
+        assert_eq!(render_buckets.ascii_texts[0].row, RenderPosY::new(0));
+
+        assert_eq!(render_buckets.ascii_texts[1].text, "2".as_bytes());
+        assert_eq!(render_buckets.ascii_texts[1].row, RenderPosY::new(1));
+        assert_eq!(render_buckets.ascii_texts[1].column, base_y);
+
+        assert_eq!(render_buckets.ascii_texts[2].text, ".3".as_bytes());
+        assert_eq!(render_buckets.ascii_texts[2].row, RenderPosY::new(1));
+        assert_eq!(render_buckets.ascii_texts[2].column, base_y + 1);
+
+        assert_eq!(
+            render_buckets.ascii_texts[3].text,
+            "1000 10101110".as_bytes()
+        );
+        assert_eq!(render_buckets.ascii_texts[3].row, RenderPosY::new(2));
+        assert_eq!(render_buckets.ascii_texts[3].column, base_y - 12);
+
+        assert_eq!(render_buckets.ascii_texts[4].text, "4".as_bytes());
+        assert_eq!(render_buckets.ascii_texts[4].row, RenderPosY::new(3));
+        assert_eq!(render_buckets.ascii_texts[4].column, base_y);
+
+        assert_eq!(render_buckets.ascii_texts[5].text, "km".as_bytes());
+        assert_eq!(render_buckets.ascii_texts[5].row, RenderPosY::new(3));
+        assert_eq!(render_buckets.ascii_texts[5].column, base_y + 2);
     }
 
     #[test]
