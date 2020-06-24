@@ -2962,94 +2962,22 @@ impl NoteCalcApp {
         }
     }
 
-    pub fn handle_click(&mut self, x: usize, clicked_y: RenderPosY, editor_objs: &EditorObjects) {
+    pub fn handle_click<'b>(
+        &mut self,
+        x: usize,
+        clicked_y: RenderPosY,
+        editor_objs: &EditorObjects,
+        units: &Units,
+        allocator: &'b Arena<char>,
+        tokens: &mut AppTokens<'b>,
+        results: &mut Results,
+        vars: &mut Vec<Variable>,
+    ) {
         let scroll_bar_x = self.render_data.result_gutter_x - SCROLL_BAR_WIDTH;
         if x < LEFT_GUTTER_WIDTH {
             // clicked on left gutter
         } else if x < scroll_bar_x {
-            // TODO extract, editorba kattintás
-            let clicked_x = x - LEFT_GUTTER_WIDTH;
-            let prev_selection = self.editor.get_selection();
-            let editor_click_pos = if let Some(editor_obj) =
-                self.get_obj_at_rendered_pos(clicked_x, clicked_y, editor_objs)
-            {
-                match editor_obj.typ {
-                    EditorObjectType::LineReference => Some(Pos::from_row_column(
-                        editor_obj.row.as_usize(),
-                        editor_obj.end_x,
-                    )),
-                    EditorObjectType::Matrix {
-                        row_count,
-                        col_count,
-                    } => {
-                        if self.matrix_editing.is_some() {
-                            NoteCalcApp::end_matrix_editing(
-                                &mut self.matrix_editing,
-                                &mut self.editor,
-                                &mut self.editor_content,
-                                None,
-                            );
-                        } else {
-                            self.matrix_editing = Some(MatrixEditing::new(
-                                row_count,
-                                col_count,
-                                &self
-                                    .editor_content
-                                    .get_line_valid_chars(editor_obj.row.as_usize())
-                                    [editor_obj.start_x..editor_obj.end_x],
-                                editor_obj.row,
-                                editor_obj.start_x,
-                                editor_obj.end_x,
-                                Pos::from_row_column(0, 0),
-                            ))
-                        }
-                        // Some(Pos::from_row_column(editor_obj.row, editor_obj.end_x))
-                        None
-                    }
-                    EditorObjectType::SimpleTokens => {
-                        let x_pos_within = clicked_x - editor_obj.rendered_x;
-                        Some(Pos::from_row_column(
-                            editor_obj.row.as_usize(),
-                            editor_obj.start_x + x_pos_within,
-                        ))
-                    }
-                }
-            } else {
-                self.rendered_y_to_editor_y(clicked_y)
-                    .map(|it| Pos::from_row_column(it.as_usize(), clicked_x))
-            };
-
-            if let Some(editor_click_pos) = editor_click_pos {
-                if self.matrix_editing.is_some() {
-                    NoteCalcApp::end_matrix_editing(
-                        &mut self.matrix_editing,
-                        &mut self.editor,
-                        &mut self.editor_content,
-                        None,
-                    );
-                }
-                self.editor.handle_click(
-                    editor_click_pos.column,
-                    editor_click_pos.row,
-                    &self.editor_content,
-                );
-                let new_row = self.editor.get_selection().get_cursor_pos().row;
-                let modif = if prev_selection.is_range() {
-                    let mut m = EditorRowFlags::range(
-                        prev_selection.get_first().row,
-                        prev_selection.get_second().row,
-                    );
-                    m.merge(EditorRowFlags::single_row(new_row));
-                    m
-                } else {
-                    EditorRowFlags::multiple(&[prev_selection.start.row, new_row])
-                };
-                self.set_redraw_flag(modif, RedrawTarget::Both);
-                self.editor.blink_cursor();
-            }
-            if self.mouse_state.is_none() {
-                self.mouse_state = Some(MouseState::ClickedInEditor);
-            }
+            self.handle_editor_area_click(x, clicked_y, editor_objs);
         } else if self.mouse_state.is_none() {
             self.mouse_state = if x - scroll_bar_x < SCROLL_BAR_WIDTH {
                 Some(MouseState::ClickedInScrollBar {
@@ -3059,8 +2987,101 @@ impl NoteCalcApp {
             } else if x - self.render_data.result_gutter_x < RIGHT_GUTTER_WIDTH {
                 Some(MouseState::RightGutterIsDragged)
             } else {
+                // clicked in result
+                if let Some(editor_y) = self.rendered_y_to_editor_y(clicked_y) {
+                    self.insert_line_ref(units, allocator, tokens, results, vars, editor_y);
+                }
                 None
             };
+        }
+    }
+
+    fn handle_editor_area_click(
+        &mut self,
+        x: usize,
+        clicked_y: RenderPosY,
+        editor_objs: &EditorObjects,
+    ) {
+        let clicked_x = x - LEFT_GUTTER_WIDTH;
+        let prev_selection = self.editor.get_selection();
+        let editor_click_pos = if let Some(editor_obj) =
+            self.get_obj_at_rendered_pos(clicked_x, clicked_y, editor_objs)
+        {
+            match editor_obj.typ {
+                EditorObjectType::LineReference => Some(Pos::from_row_column(
+                    editor_obj.row.as_usize(),
+                    editor_obj.end_x,
+                )),
+                EditorObjectType::Matrix {
+                    row_count,
+                    col_count,
+                } => {
+                    if self.matrix_editing.is_some() {
+                        NoteCalcApp::end_matrix_editing(
+                            &mut self.matrix_editing,
+                            &mut self.editor,
+                            &mut self.editor_content,
+                            None,
+                        );
+                    } else {
+                        self.matrix_editing = Some(MatrixEditing::new(
+                            row_count,
+                            col_count,
+                            &self
+                                .editor_content
+                                .get_line_valid_chars(editor_obj.row.as_usize())
+                                [editor_obj.start_x..editor_obj.end_x],
+                            editor_obj.row,
+                            editor_obj.start_x,
+                            editor_obj.end_x,
+                            Pos::from_row_column(0, 0),
+                        ))
+                    }
+                    None
+                }
+                EditorObjectType::SimpleTokens => {
+                    let x_pos_within = clicked_x - editor_obj.rendered_x;
+                    Some(Pos::from_row_column(
+                        editor_obj.row.as_usize(),
+                        editor_obj.start_x + x_pos_within,
+                    ))
+                }
+            }
+        } else {
+            self.rendered_y_to_editor_y(clicked_y)
+                .map(|it| Pos::from_row_column(it.as_usize(), clicked_x))
+        };
+
+        if let Some(editor_click_pos) = editor_click_pos {
+            if self.matrix_editing.is_some() {
+                NoteCalcApp::end_matrix_editing(
+                    &mut self.matrix_editing,
+                    &mut self.editor,
+                    &mut self.editor_content,
+                    None,
+                );
+            }
+            self.editor.handle_click(
+                editor_click_pos.column,
+                editor_click_pos.row,
+                &self.editor_content,
+            );
+            let new_row = self.editor.get_selection().get_cursor_pos().row;
+            let modif = if prev_selection.is_range() {
+                let mut m = EditorRowFlags::range(
+                    prev_selection.get_first().row,
+                    prev_selection.get_second().row,
+                );
+                m.merge(EditorRowFlags::single_row(new_row));
+                m
+            } else {
+                EditorRowFlags::multiple(&[prev_selection.start.row, new_row])
+            };
+            self.set_redraw_flag(modif, RedrawTarget::Both);
+            self.editor.blink_cursor();
+        }
+        if self.mouse_state.is_none() {
+            self.mouse_state = Some(MouseState::ClickedInEditor);
         }
     }
 
@@ -3247,16 +3268,27 @@ impl NoteCalcApp {
             return;
         }
 
-        let cursor_row = self.editor.get_selection().get_cursor_pos().row;
         let line_ref_row = self.line_reference_chooser.unwrap();
 
+        self.insert_line_ref(units, allocator, tokens, results, vars, line_ref_row);
         self.set_redraw_flag(
             EditorRowFlags::single_row(line_ref_row.as_usize()),
             RedrawTarget::Both,
         );
 
         self.line_reference_chooser = None;
+    }
 
+    pub fn insert_line_ref<'b>(
+        &mut self,
+        units: &Units,
+        allocator: &'b Arena<char>,
+        tokens: &mut AppTokens<'b>,
+        results: &mut Results,
+        vars: &mut Vec<Variable>,
+        line_ref_row: EditorY,
+    ) {
+        let cursor_row = self.editor.get_selection().get_cursor_pos().row;
         if cursor_row == line_ref_row.as_usize()
             || matches!(&results[line_ref_row], Err(_) | Ok(None))
         {
@@ -7438,6 +7470,79 @@ sum"
     }
 
     #[test]
+    fn test_line_ref_selection_with_mouse() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "16892313\n3\n14 * ".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(2, 5));
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+
+        app.handle_click(
+            125,
+            RenderPosY::new(0),
+            &editor_objects,
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Left,
+            InputModifiers::shift(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Backspace,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert_eq!("16892313\n3\n14 * &[1", app.editor_content.get_content());
+    }
+
+    #[test]
     fn test_pressing_tab_on_m_char() {
         {
             let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
@@ -9213,7 +9318,16 @@ sum"
             &mut editor_objects,
         );
         // click after the vector in 2nd row
-        app.handle_click(LEFT_GUTTER_WIDTH + 4, RenderPosY::new(2), &editor_objects);
+        app.handle_click(
+            LEFT_GUTTER_WIDTH + 4,
+            RenderPosY::new(2),
+            &editor_objects,
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('X'),
             InputModifiers::none(),
@@ -9256,7 +9370,16 @@ sum"
             &mut editor_objects,
         );
         // click after the vector in 2nd row
-        app.handle_click(LEFT_GUTTER_WIDTH + 4, RenderPosY::new(2), &editor_objects);
+        app.handle_click(
+            LEFT_GUTTER_WIDTH + 4,
+            RenderPosY::new(2),
+            &editor_objects,
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('X'),
             InputModifiers::none(),
@@ -9298,7 +9421,16 @@ sum"
             &mut vars,
             &mut editor_objects,
         );
-        app.handle_click(LEFT_GUTTER_WIDTH + 40, RenderPosY::new(2), &editor_objects);
+        app.handle_click(
+            LEFT_GUTTER_WIDTH + 40,
+            RenderPosY::new(2),
+            &editor_objects,
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('X'),
             InputModifiers::none(),
@@ -9340,7 +9472,16 @@ sum"
             &mut vars,
             &mut editor_objects,
         );
-        app.handle_click(LEFT_GUTTER_WIDTH + 40, RenderPosY::new(40), &editor_objects);
+        app.handle_click(
+            LEFT_GUTTER_WIDTH + 40,
+            RenderPosY::new(40),
+            &editor_objects,
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Char('X'),
             InputModifiers::none(),
@@ -9854,7 +9995,16 @@ sum"
             &mut editor_objects,
         );
 
-        app.handle_click(4, RenderPosY::new(0), &editor_objects);
+        app.handle_click(
+            4,
+            RenderPosY::new(0),
+            &editor_objects,
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
         assert!(app.editor_area_redraw.need(EditorY::new(0)));
         assert!(app.editor_area_redraw.need(EditorY::new(1)));
     }
@@ -10307,7 +10457,16 @@ sum"
             &mut editor_objects,
         );
         // cancels selection
-        app.handle_click(4, RenderPosY::new(0), &editor_objects);
+        app.handle_click(
+            4,
+            RenderPosY::new(0),
+            &editor_objects,
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
         assert!(app.editor_area_redraw.need(EditorY::new(0)));
         assert!(app.result_area_redraw.need(EditorY::new(0)));
         assert!(app.editor_area_redraw.need(EditorY::new(1)));
@@ -10521,6 +10680,11 @@ sum"
             app.render_data.result_gutter_x,
             RenderPosY::new(0),
             &editor_objects,
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
         );
         assert!(!app.editor_area_redraw.need(EditorY::new(0)));
         assert!(!app.result_area_redraw.need(EditorY::new(0)));

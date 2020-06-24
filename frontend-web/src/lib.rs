@@ -224,6 +224,11 @@ pub fn handle_click(app_ptr: u32, x: usize, y: usize) {
         x,
         RenderPosY::new(y),
         AppPointers::editor_objects(app_ptr),
+        AppPointers::units(app_ptr),
+        AppPointers::allocator(app_ptr),
+        AppPointers::mut_tokens(app_ptr),
+        AppPointers::mut_results(app_ptr),
+        AppPointers::mut_vars(app_ptr),
     );
 }
 
