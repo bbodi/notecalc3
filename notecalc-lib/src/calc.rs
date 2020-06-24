@@ -860,7 +860,8 @@ mod tests {
                     &result.as_ref().unwrap().as_ref().unwrap().result,
                     &ResultFormat::Dec,
                     *there_was_unit_conversion,
-                    Some(dec_count)
+                    Some(dec_count),
+                    false,
                 )
             );
         } else if let Ok(..) = &result {
@@ -872,7 +873,8 @@ mod tests {
                         &it.result,
                         &ResultFormat::Dec,
                         false,
-                        Some(dec_count)
+                        Some(dec_count),
+                        false
                     ))
                     .unwrap_or(" ".to_string()),
                 expected,

@@ -1856,6 +1856,7 @@ impl NoteCalcApp {
                             &editor_content.get_data(sel.start.row).result_format,
                             result.there_was_unit_conversion,
                             Some(4),
+                            true,
                         );
                         return Some(result_str);
                     }
@@ -1889,6 +1890,7 @@ impl NoteCalcApp {
                     &editor_content.get_data(sel.start.row).result_format,
                     false,
                     Some(4),
+                    true,
                 );
                 return Some(result_str);
             }
@@ -2101,7 +2103,7 @@ impl NoteCalcApp {
 
             for cell in mat.cells.iter() {
                 let result_str =
-                    render_result(units, cell, &ResultFormat::Dec, false, decimal_count);
+                    render_result(units, cell, &ResultFormat::Dec, false, decimal_count, true);
                 tokens_per_cell.push(result_str);
             }
             tokens_per_cell
@@ -2229,7 +2231,8 @@ impl NoteCalcApp {
             let mut tokens_per_cell: SmallVec<[String; 32]> = SmallVec::with_capacity(32);
 
             for cell in mat.cells.iter() {
-                let result_str = render_result(units, cell, &ResultFormat::Dec, false, Some(4));
+                let result_str =
+                    render_result(units, cell, &ResultFormat::Dec, false, Some(4), true);
                 tokens_per_cell.push(result_str);
             }
             tokens_per_cell
@@ -2273,7 +2276,8 @@ impl NoteCalcApp {
             }
             Ok(result) => {
                 // TODO: optimize string alloc
-                let result_str = render_result(&units, result, &ResultFormat::Dec, false, Some(2));
+                let result_str =
+                    render_result(&units, result, &ResultFormat::Dec, false, Some(2), true);
                 let text_len = result_str
                     .chars()
                     .count()
@@ -2395,6 +2399,7 @@ impl NoteCalcApp {
                                 false,
                                 &mut c,
                                 decimal_count,
+                                true,
                             );
                             let len = c.position() as usize;
                             let range = start..start + len;
@@ -7212,9 +7217,9 @@ sum"
             "1\n\
            23\n\
            99999.66666",
-            "1            ‖     1\n\
-             23           ‖    23\n\
-             99999.66666  ‖ 99999.66666\n",
+            "1            ‖      1\n\
+             23           ‖     23\n\
+             99999.66666  ‖ 99 999.66666\n",
             0..=2,
         );
         t("[1]", "[1]  ‖ [1]\n", 0..=0);

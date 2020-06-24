@@ -3,6 +3,7 @@ use crate::units::units::Units;
 use crate::{ResultFormat, ResultLengths};
 use bigdecimal::{BigDecimal, ToPrimitive};
 use byteorder::WriteBytesExt;
+use smallvec::SmallVec;
 use std::io::Cursor;
 
 pub fn render_result(
@@ -11,6 +12,7 @@ pub fn render_result(
     format: &ResultFormat,
     there_was_unit_conversion: bool,
     decimal_count: Option<usize>,
+    use_grouping: bool,
 ) -> String {
     let mut c = Cursor::new(Vec::with_capacity(64));
     render_result_into(
@@ -20,6 +22,7 @@ pub fn render_result(
         there_was_unit_conversion,
         &mut c,
         decimal_count,
+        use_grouping,
     );
     return unsafe { String::from_utf8_unchecked(c.into_inner()) };
 }
@@ -31,6 +34,7 @@ pub fn render_result_into(
     there_was_unit_conversion: bool,
     f: &mut impl std::io::Write,
     decimal_count: Option<usize>,
+    use_grouping: bool,
 ) -> ResultLengths {
     match &result {
         CalcResult::Quantity(num, unit) => {
@@ -41,10 +45,15 @@ pub fn render_result_into(
             };
             let unit = final_unit.as_ref().unwrap_or(unit);
             if unit.units.is_empty() {
-                num_to_string(f, &num, &ResultFormat::Dec, decimal_count)
+                num_to_string(f, &num, &ResultFormat::Dec, decimal_count, use_grouping)
             } else {
-                let mut lens =
-                    num_to_string(f, &unit.denormalize(num), &ResultFormat::Dec, decimal_count);
+                let mut lens = num_to_string(
+                    f,
+                    &unit.denormalize(num),
+                    &ResultFormat::Dec,
+                    decimal_count,
+                    use_grouping,
+                );
                 f.write_u8(b' ').expect("");
                 // TODO to_string -> into(buf)
                 for ch in unit.to_string().as_bytes() {
@@ -56,10 +65,10 @@ pub fn render_result_into(
         }
         CalcResult::Number(num) => {
             // TODO optimize
-            num_to_string(f, num, format, decimal_count)
+            num_to_string(f, num, format, decimal_count, use_grouping)
         }
         CalcResult::Percentage(num) => {
-            let mut lens = num_to_string(f, num, &ResultFormat::Dec, decimal_count);
+            let mut lens = num_to_string(f, num, &ResultFormat::Dec, decimal_count, use_grouping);
             f.write_u8(b'%').expect("");
             lens.unit_part_len += 1;
             lens
@@ -77,7 +86,7 @@ pub fn render_result_into(
                         f.write_u8(b' ').expect("");
                     }
                     let cell = &mat.cells[row_i * mat.col_count + col_i];
-                    render_result_into(units, cell, format, false, f, decimal_count);
+                    render_result_into(units, cell, format, false, f, decimal_count, use_grouping);
                 }
             }
             f.write_u8(b']').expect("");
@@ -95,6 +104,7 @@ fn num_to_string(
     num: &BigDecimal,
     format: &ResultFormat,
     decimal_count: Option<usize>,
+    use_grouping: bool,
 ) -> ResultLengths {
     let num_a = if *format != ResultFormat::Dec && num.is_integer() {
         Some(num.with_scale(0))
@@ -108,29 +118,27 @@ fn num_to_string(
     };
     let num = num_a.as_ref().unwrap_or(num);
 
-    if *format == ResultFormat::Bin || *format == ResultFormat::Hex {
+    return if *format == ResultFormat::Bin || *format == ResultFormat::Hex {
         if let Some(n) = num.to_i64() {
             let mut ss = if *format == ResultFormat::Bin {
                 format!("{:b}", n)
             } else {
                 format!("{:X}", n)
             };
-            let s = unsafe { ss.as_bytes_mut() };
-            s.reverse();
-            let group_size = if *format == ResultFormat::Bin { 8 } else { 2 };
-            let mut len = 0;
-            for (i, group) in s.chunks(group_size).rev().enumerate() {
-                if i > 0 {
-                    f.write_u8(b' ').expect("");
-                    len += 1;
-                }
-                for ch in group.iter().rev() {
-                    f.write_u8(*ch).expect("");
-                    len += 1;
-                }
-            }
             ResultLengths {
-                int_part_len: len,
+                int_part_len: apply_grouping(
+                    f,
+                    &ss,
+                    if use_grouping {
+                        if *format == ResultFormat::Bin {
+                            8
+                        } else {
+                            2
+                        }
+                    } else {
+                        std::i32::MAX as usize
+                    },
+                ),
                 frac_part_len: 0,
                 unit_part_len: 0,
             }
@@ -140,16 +148,68 @@ fn num_to_string(
             for ch in string.as_bytes() {
                 f.write_u8(*ch).expect("");
             }
-            return get_int_frac_part_len(&string);
+            get_int_frac_part_len(&string)
         }
     } else {
         // TODO to_string opt
         let string = num.to_string();
-        for ch in string.as_bytes() {
-            f.write_u8(*ch).expect("");
+        if let Some(pos) = string.bytes().position(|it| it == b'.') {
+            let (int_part, fract_part) = string.split_at(pos);
+            let int_len = apply_grouping(
+                f,
+                &int_part,
+                if use_grouping {
+                    3
+                } else {
+                    std::i32::MAX as usize
+                },
+            );
+            for ch in fract_part.as_bytes() {
+                f.write_u8(*ch).expect("");
+            }
+            ResultLengths {
+                int_part_len: int_len,
+                frac_part_len: fract_part.len(),
+                unit_part_len: 0,
+            }
+        } else {
+            ResultLengths {
+                int_part_len: apply_grouping(
+                    f,
+                    &string,
+                    if use_grouping {
+                        3
+                    } else {
+                        std::i32::MAX as usize
+                    },
+                ),
+                frac_part_len: 0,
+                unit_part_len: 0,
+            }
         }
-        return get_int_frac_part_len(&string);
+    };
+}
+
+fn apply_grouping(f: &mut impl std::io::Write, ss: &str, group_size: usize) -> usize {
+    // TODO isnt it too much/is it enough?
+    let mut buf: SmallVec<[u8; 128]> = SmallVec::with_capacity(ss.len());
+    for ch in ss.as_bytes() {
+        buf.push(*ch);
     }
+    let mut buff = &mut buf[0..ss.len()];
+    buff.reverse();
+    let mut len = 0;
+    for (i, group) in buff.chunks(group_size).rev().enumerate() {
+        if i > 0 {
+            f.write_u8(b' ').expect("");
+            len += 1;
+        }
+        for ch in group.iter().rev() {
+            f.write_u8(*ch).expect("");
+            len += 1;
+        }
+    }
+    return len;
 }
 
 pub fn get_int_frac_part_len(cell_str: &str) -> ResultLengths {
