@@ -7266,6 +7266,18 @@ sum"
              [10  20  30]  ‖ [10  20  30]\n",
             0..=3,
         );
+
+        // test alignment + thousand grouping
+        t(
+            "[1;2.3;2222;4km;50000]",
+            // Result
+            "⎡    1⎤  ‖ ⎡     1.0   ⎤\n\
+             ⎢  2.3⎥  ‖ ⎢     2.3   ⎥\n\
+             ⎢ 2222⎥  ‖ ⎢ 2 222.0   ⎥\n\
+             ⎢  4km⎥  ‖ ⎢     4.0 km⎥\n\
+             ⎣50000⎦  ‖ ⎣50 000.0   ⎦\n",
+            0..=0,
+        );
     }
 
     #[test]
@@ -11071,7 +11083,7 @@ sum"
         let arena = Arena::new();
 
         app.handle_paste(
-            "1\n2.3\n2222\n4km".to_owned(),
+            "1\n2.3\n2222\n4km\n50000".to_owned(),
             &units,
             &arena,
             &mut tokens,
@@ -11131,6 +11143,10 @@ sum"
         assert_eq!(render_buckets.ascii_texts[5].text, "km".as_bytes());
         assert_eq!(render_buckets.ascii_texts[5].row, RenderPosY::new(3));
         assert_eq!(render_buckets.ascii_texts[5].column, base_y + 2);
+
+        assert_eq!(render_buckets.ascii_texts[6].text, "50 000".as_bytes());
+        assert_eq!(render_buckets.ascii_texts[6].row, RenderPosY::new(4));
+        assert_eq!(render_buckets.ascii_texts[6].column, base_y - 5);
     }
 
     #[test]

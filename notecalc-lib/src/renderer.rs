@@ -114,7 +114,11 @@ fn num_to_string(
         let a = (digits as i64 - (scale - decimal_count as i64)).max(0) as u64;
         Some(strip_trailing_zeroes(&num.with_prec(a)))
     } else {
-        None
+        if num.is_integer() {
+            Some(num.with_scale(0))
+        } else {
+            None
+        }
     };
     let num = num_a.as_ref().unwrap_or(num);
 
@@ -218,14 +222,29 @@ pub fn get_int_frac_part_len(cell_str: &str) -> ResultLengths {
     let mut unit_part_len = 0;
     let mut was_point = false;
     let mut was_space = false;
+    let mut only_digits_or_space_so_far = true;
     for ch in cell_str.as_bytes() {
         if *ch == b'.' {
             was_point = true;
+            only_digits_or_space_so_far = false;
         } else if *ch == b' ' {
             was_space = true;
         }
         if was_space {
-            unit_part_len += 1;
+            if only_digits_or_space_so_far && ch.is_ascii_digit() {
+                // this space was just a thousand separator
+                int_part_len += 1;
+                if unit_part_len > 0 {
+                    // 2 000, that space was registered as unit, so add it to int_part
+                    int_part_len += 1;
+                }
+                unit_part_len = 0;
+            } else {
+                if only_digits_or_space_so_far && !ch.is_ascii_whitespace() {
+                    only_digits_or_space_so_far = false;
+                }
+                unit_part_len += 1;
+            }
         } else if was_point {
             frac_part_len += 1;
         } else {

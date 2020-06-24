@@ -83,9 +83,20 @@
         active: function () {
             init_canvas(canvas);
             font_width = ctx.measureText('a').width;
-            let m = ctx.measureText('▏');
-            let font_height = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent;
-            line_height = font_height + 1 * FONT_VERT_PADDING;
+            let max_h = 0;
+            const find_max_char_h = function(ch) {
+                let m = ctx.measureText(ch);
+                let font_height = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent;
+                console.log(ch, ' ', font_height);
+                if (font_height > max_h) {
+                    max_h = font_height;
+                }
+            };
+            find_max_char_h('▏');
+            find_max_char_h('⎡');
+            find_max_char_h('⎤');
+            line_height = max_h + 2 * FONT_VERT_PADDING;
+            console.log('line_height', line_height);
 
             canvas.addEventListener('mousedown', on_click);
             canvas.addEventListener('mouseup', on_mouse_up);
@@ -323,7 +334,6 @@
     }
 
     function doKeyDown(e) {
-        //console.log(e.key);
         if (e.key[0] === 'F' && e.key.length > 1) {
             return;
         } else if (e.key === 'CapsLock') {
