@@ -1,17 +1,17 @@
 #![feature(ptr_offset_from, const_if_match, const_fn, const_panic, drain_filter)]
 #![feature(type_alias_impl_trait)]
 #![feature(const_in_array_repeat_expressions)]
-// #![deny(
-//     warnings,
-//     anonymous_parameters,
-//     unused_extern_crates,
-//     unused_import_braces,
-//     trivial_casts,
-//     variant_size_differences,
-//     trivial_numeric_casts,
-//     unused_qualifications,
-//     clippy::all
-// )]
+#![deny(
+    warnings,
+    anonymous_parameters,
+    unused_extern_crates,
+    unused_import_braces,
+    trivial_casts,
+    variant_size_differences,
+    trivial_numeric_casts,
+    unused_qualifications,
+    clippy::all
+)]
 
 use crate::calc::{add_op, evaluate_tokens, CalcResult, EvaluationResult};
 use crate::consts::{LINE_NUM_CONSTS, STATIC_LINE_IDS};
@@ -125,6 +125,10 @@ pub mod helper {
         pub fn new() -> AppTokens<'a> {
             AppTokens([None; MAX_LINE_COUNT])
         }
+
+        pub fn iter(&self) -> std::slice::Iter<Option<Tokens<'a>>> {
+            self.0.iter()
+        }
     }
     impl<'a> Index<EditorY> for AppTokens<'a> {
         type Output = Option<Tokens<'a>>;
@@ -146,6 +150,10 @@ pub mod helper {
     }
 
     impl EditorRowFlags {
+        pub fn empty() -> EditorRowFlags {
+            EditorRowFlags { bitset: 0 }
+        }
+
         pub fn single_row(row_index: usize) -> EditorRowFlags {
             let bitset = 1u64 << row_index;
             EditorRowFlags { bitset }
@@ -1300,7 +1308,7 @@ impl NoteCalcApp {
             Some(4),
         );
 
-        // clear and pulse rerendered lines
+        // clears rerendered lines
         for ((render_y, render_height), target) in &rerendered_lines {
             let x_w_coords = match *target {
                 RedrawTarget::Both => Some((
@@ -1320,17 +1328,6 @@ impl NoteCalcApp {
             };
 
             if let Some((x, w)) = x_w_coords {
-                render_buckets.custom_commands[Layer::AboveText as usize].push(
-                    OutputMessage::PulsingRectangle {
-                        x,
-                        y: *render_y,
-                        w,
-                        h: *render_height,
-                        start_color: 0xFF88FF_11,
-                        end_color: 0xFFFFFF_00,
-                        animation_time: Duration::from_millis(200),
-                    },
-                );
                 render_buckets
                     .clear_commands
                     .push(OutputMessage::RenderRectangle {
@@ -1339,6 +1336,49 @@ impl NoteCalcApp {
                         w,
                         h: *render_height,
                     });
+            }
+        }
+
+        // pulses rerendered lines
+        for ((render_y, render_height), target) in &rerendered_lines {
+            // for DEBUG, pulses the whole line
+            let x_w_coords = match *target {
+                RedrawTarget::Both => Some((
+                    LEFT_GUTTER_WIDTH,
+                    gr.current_result_panel_width
+                        + gr.current_editor_width
+                        + gr.left_gutter_width
+                        + SCROLL_BAR_WIDTH
+                        + RIGHT_GUTTER_WIDTH,
+                )),
+                RedrawTarget::EditorArea => Some((LEFT_GUTTER_WIDTH, gr.current_editor_width)),
+
+                RedrawTarget::ResultArea => Some((
+                    gr.result_gutter_x,
+                    gr.current_result_panel_width + RIGHT_GUTTER_WIDTH,
+                )),
+            };
+            // pulses only the result
+            // let x_w_coords = match *target {
+            //     RedrawTarget::Both | RedrawTarget::ResultArea => Some((
+            //         gr.result_gutter_x,
+            //         gr.current_result_panel_width + RIGHT_GUTTER_WIDTH,
+            //     )),
+            //     _ => None,
+            // };
+
+            if let Some((x, w)) = x_w_coords {
+                render_buckets.custom_commands[Layer::AboveText as usize].push(
+                    OutputMessage::PulsingRectangle {
+                        x,
+                        y: *render_y,
+                        w,
+                        h: *render_height,
+                        start_color: 0xFF88FF_11,
+                        end_color: 0xFFFFFF_00,
+                        animation_time: Duration::from_millis(500),
+                    },
+                );
             }
         }
 
@@ -1406,11 +1446,9 @@ impl NoteCalcApp {
         line: &[char],
         editor_y: usize,
         units: &Units,
-        vars: &mut Vec<Variable>,
+        vars: &Vec<Variable>,
         allocator: &'b Arena<char>,
     ) -> Option<Tokens<'b>> {
-        vars.drain_filter(|it| &*it.name != &['s', 'u', 'm'][..] && it.defined_at_row == editor_y);
-
         return if line.starts_with(&['-', '-']) || line.starts_with(&['\'']) {
             None
         } else {
@@ -1750,7 +1788,7 @@ impl NoteCalcApp {
         editor: &Editor,
         matrix_editing: &Option<MatrixEditing>,
         // TODO: why unused?
-        decimal_count: Option<usize>,
+        _decimal_count: Option<usize>,
     ) -> usize {
         let mut text_width = 0;
         let mut end_token_index = token_index;
@@ -3142,8 +3180,6 @@ impl NoteCalcApp {
                 if scroll_coeff < 1.0 {
                     let delta_y = y.as_usize() as isize - original_click_y.as_usize() as isize;
 
-                    let scroll_bar_h = ((scroll_coeff * gr.client_height as f64) as usize).max(1);
-
                     // gr.scroll_y = y / scroll_bar_step;
                     gr.scroll_y = (original_scroll_y as isize + delta_y).max(0) as usize;
                 }
@@ -3638,14 +3674,26 @@ impl NoteCalcApp {
             line: &[char],
             units: &Units,
             allocator: &'b Arena<char>,
-            tokens: &mut AppTokens<'b>,
+            tokens_per_lines: &mut AppTokens<'b>,
             results: &mut Results,
             vars: &mut Vec<Variable>,
             editor_y: EditorY,
-        ) {
-            tokens[editor_y] =
+        ) -> EditorRowFlags {
+            // TODO avoid clone
+            let prev_var_name = vars
+                .iter()
+                .find(|it| {
+                    it.defined_at_row == editor_y.as_usize()
+                        && !it.name.starts_with(&['&'])
+                        && &*it.name != &['s', 'u', 'm'][..]
+                })
+                .map(|it| it.name.clone());
+            vars.drain_filter(|it| {
+                &*it.name != &['s', 'u', 'm'][..] && it.defined_at_row == editor_y.as_usize()
+            });
+            tokens_per_lines[editor_y] =
                 NoteCalcApp::parse_tokens(line, editor_y.as_usize(), units, vars, allocator);
-            if let Some(tokens) = &mut tokens[editor_y] {
+            if let Some(tokens) = &mut tokens_per_lines[editor_y] {
                 let result = NoteCalcApp::evaluate_tokens_and_save_result(
                     vars,
                     editor_y.as_usize(),
@@ -3658,66 +3706,146 @@ impl NoteCalcApp {
             } else {
                 results[editor_y] = Ok(None);
             }
+            let curr_var_name = vars
+                .iter()
+                .find(|it| {
+                    it.defined_at_row == editor_y.as_usize()
+                        && !it.name.starts_with(&['&'])
+                        && &*it.name != &['s', 'u', 'm'][..]
+                })
+                .map(|it| &it.name);
+            return find_variable_dependant_lines(
+                curr_var_name,
+                prev_var_name,
+                tokens_per_lines,
+                editor_y.as_usize(),
+            );
+        }
+
+        fn find_variable_dependant_lines<'b>(
+            curr_var_name: Option<&Box<[char]>>,
+            prev_var_name: Option<Box<[char]>>,
+            tokens_per_lines: &AppTokens<'b>,
+            editor_y: usize,
+        ) -> EditorRowFlags {
+            let mut rows_to_recalc = EditorRowFlags::empty();
+            match (prev_var_name, curr_var_name) {
+                (None, Some(var_name)) => {
+                    // nem volt még, de most van
+                    // recalc all the rows which uses this variable name
+                    for (i, tokens) in tokens_per_lines.iter().skip(editor_y + 1).enumerate() {
+                        if let Some(tokens) = tokens {
+                            for token in &tokens.tokens {
+                                match token.typ {
+                                    TokenType::StringLiteral if *token.ptr == **var_name => {
+                                        rows_to_recalc
+                                            .merge(EditorRowFlags::single_row(editor_y + 1 + i));
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+                (Some(old_var_name), None) => {
+                    // volt, de most nincs
+                    // recalc all the rows which uses the old variable name
+                    for (i, tokens) in tokens_per_lines.iter().skip(editor_y + 1).enumerate() {
+                        if let Some(tokens) = tokens {
+                            for token in &tokens.tokens {
+                                match token.typ {
+                                    TokenType::Variable { .. } if *token.ptr == *old_var_name => {
+                                        rows_to_recalc
+                                            .merge(EditorRowFlags::single_row(editor_y + 1 + i));
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+                (Some(old_var_name), Some(var_name)) if old_var_name != *var_name => {
+                    // volt, de most más a neve
+                    for (i, tokens) in tokens_per_lines.iter().skip(editor_y + 1).enumerate() {
+                        if let Some(tokens) = tokens {
+                            for token in &tokens.tokens {
+                                let recalc = match token.typ {
+                                    TokenType::StringLiteral if *token.ptr == **var_name => true,
+                                    TokenType::Variable { .. } if *token.ptr == *old_var_name => {
+                                        true
+                                    }
+                                    _ => false,
+                                };
+                                if recalc {
+                                    rows_to_recalc
+                                        .merge(EditorRowFlags::single_row(editor_y + 1 + i));
+                                }
+                            }
+                        }
+                    }
+                }
+                (Some(_old_var_name), Some(var_name)) => {
+                    // volt is, van is, a neve is ugyanaz, ugyanaz a neve
+                    for (i, tokens) in tokens_per_lines.iter().skip(editor_y + 1).enumerate() {
+                        if let Some(tokens) = tokens {
+                            for token in &tokens.tokens {
+                                let recalc = match token.typ {
+                                    TokenType::Variable { .. } if *token.ptr == **var_name => true,
+                                    _ => false,
+                                };
+                                if recalc {
+                                    rows_to_recalc
+                                        .merge(EditorRowFlags::single_row(editor_y + 1 + i));
+                                }
+                            }
+                        }
+                    }
+                }
+                (None, None) => {}
+            }
+            return rows_to_recalc;
         }
 
         let mut sum_is_null = true;
+        let mut dependant_rows = EditorRowFlags::empty();
         for editor_y in 0..self.editor_content.line_count() {
-            match input_effect {
-                RowModificationType::SingleLine(to_change_index) => {
-                    if to_change_index == editor_y {
-                        if self.editor_content.get_data(to_change_index).line_id == 0 {
-                            self.editor_content.mut_data(to_change_index).line_id =
-                                self.line_id_generator;
-                            self.line_id_generator += 1;
-                        }
-                        eval_line(
-                            &self.editor_content,
-                            self.editor_content.get_line_valid_chars(to_change_index),
-                            units,
-                            allocator,
-                            tokens,
-                            results,
-                            vars,
-                            EditorY::new(to_change_index),
-                        );
-                        NoteCalcApp::update_rendered_height(
-                            EditorY::new(editor_y),
-                            &mut self.render_data,
-                            &self.matrix_editing,
-                            tokens,
-                            results,
-                            vars,
-                        );
-                    }
+            let recalc = match input_effect {
+                RowModificationType::SingleLine(to_change_index) if to_change_index == editor_y => {
+                    true
                 }
-                RowModificationType::AllLinesFrom(to_change_index_from) => {
-                    if editor_y >= to_change_index_from {
-                        if self.editor_content.get_data(editor_y).line_id == 0 {
-                            self.editor_content.mut_data(editor_y).line_id = self.line_id_generator;
-                            self.line_id_generator += 1;
-                        }
-                        eval_line(
-                            &self.editor_content,
-                            self.editor_content.get_line_valid_chars(editor_y),
-                            units,
-                            allocator,
-                            tokens,
-                            results,
-                            vars,
-                            EditorY::new(editor_y),
-                        );
-                        NoteCalcApp::update_rendered_height(
-                            EditorY::new(editor_y),
-                            &mut self.render_data,
-                            &self.matrix_editing,
-                            tokens,
-                            results,
-                            vars,
-                        );
-                    }
+                RowModificationType::AllLinesFrom(to_change_index_from)
+                    if editor_y >= to_change_index_from =>
+                {
+                    true
                 }
+                _ => dependant_rows.need(EditorY::new(editor_y)),
+            };
+            if recalc {
+                if self.editor_content.get_data(editor_y).line_id == 0 {
+                    self.editor_content.mut_data(editor_y).line_id = self.line_id_generator;
+                    self.line_id_generator += 1;
+                }
+                let rows_to_recalc = eval_line(
+                    &self.editor_content,
+                    self.editor_content.get_line_valid_chars(editor_y),
+                    units,
+                    allocator,
+                    tokens,
+                    results,
+                    vars,
+                    EditorY::new(editor_y),
+                );
+                dependant_rows.merge(rows_to_recalc);
+                self.set_redraw_flag(rows_to_recalc, RedrawTarget::Both);
+                NoteCalcApp::update_rendered_height(
+                    EditorY::new(editor_y),
+                    &mut self.render_data,
+                    &self.matrix_editing,
+                    tokens,
+                    results,
+                    vars,
+                );
             }
-
             if self
                 .editor_content
                 .get_line_valid_chars(editor_y)
@@ -6329,7 +6457,7 @@ mod tests {
         );
         assert_eq!("16892313\n14 * &[1]", app.editor_content.get_content());
 
-        let input_eff = app.handle_input_and_update_tokens_plus_redraw_requirements(
+        let _input_eff = app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Right,
             InputModifiers::none(),
             &arena,
@@ -9557,7 +9685,6 @@ sum"
 
     #[test]
     fn test_variable_must_be_defined() {
-        // ez majd akkor fog müködni ha a változókból ki lesz törölve az, ami ujra kell kalkulálva legyen
         let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
             create_app(35);
         let arena = Arena::new();
@@ -9632,6 +9759,336 @@ sum"
             &mut editor_objects,
         );
         assert_results(&["2", "12"][..], &result_buffer);
+    }
+
+    #[test]
+    fn test_variables_can_be_defined_afterwards_of_their_usage() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "apple * 2".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 0));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Enter,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert_results(&["", "2"][..], &result_buffer);
+        // now define the variable 'apple'
+        app.handle_paste(
+            "apple = 3".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        assert!(app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(app.result_area_redraw.need(EditorY::new(1)));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert_results(&["3", "6"][..], &result_buffer);
+    }
+
+    #[test]
+    fn test_renaming_variable_declaration() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "apple = 2\napple * 3".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 0));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert_results(&["2", "6"][..], &result_buffer);
+
+        // rename apple to aapple
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('a'),
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert!(app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(app.result_area_redraw.need(EditorY::new(1)));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert_results(&["2", "3"][..], &result_buffer);
+    }
+
+    #[test]
+    fn test_renaming_variable_declaration2() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "apple = 2\naapple * 3".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 0));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert_results(&["2", "3"][..], &result_buffer);
+
+        // rename apple to aapple
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('a'),
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert!(app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(app.result_area_redraw.need(EditorY::new(1)));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert_results(&["2", "6"][..], &result_buffer);
+    }
+
+    #[test]
+    fn test_removing_variable_declaration() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "apple = 2\napple * 3".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 0));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert_results(&["2", "6"][..], &result_buffer);
+
+        // remove the content of the first line
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::End,
+            InputModifiers::shift(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(!app.result_area_redraw.need(EditorY::new(1)));
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Del,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert!(app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(app.result_area_redraw.need(EditorY::new(1)));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert_results(&["", "3"][..], &result_buffer);
+    }
+
+    #[test]
+    fn test_that_variable_dependent_rows_are_recalculated() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "apple = 2\napple * 3".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 9));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert_results(&["2", "6"][..], &result_buffer);
+
+        // change value of 'apple' from 2 to 24
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('4'),
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert!(app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(app.result_area_redraw.need(EditorY::new(1)));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert_results(&["24", "72"][..], &result_buffer);
     }
 
     #[test]
@@ -11808,7 +12265,7 @@ sum"
         );
 
         // step into last-1 line
-        for i in 0..(client_height - 2) {
+        for _i in 0..(client_height - 2) {
             app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Down,
                 InputModifiers::none(),
@@ -12005,9 +12462,7 @@ sum"
             &mut vars,
             &mut editor_objects,
         );
-        dbg!(&render_buckets.clear_commands);
 
-        let asd = &render_buckets.clear_commands;
         // [0] SetColor
         // [1] clears the scrollbar
         // [2] clears the first row
@@ -12027,7 +12482,7 @@ sum"
                 assert_eq!(*x, LEFT_GUTTER_WIDTH);
                 assert_eq!(y.as_usize(), 0);
                 assert!(*w > app.render_data.current_editor_width);
-                // assert_eq!(*h, client_height);
+                assert_eq!(*h, client_height);
             }
             _ => assert!(false),
         }

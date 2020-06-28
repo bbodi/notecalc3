@@ -124,7 +124,7 @@ fn num_to_string(
 
     return if *format == ResultFormat::Bin || *format == ResultFormat::Hex {
         if let Some(n) = num.to_i64() {
-            let mut ss = if *format == ResultFormat::Bin {
+            let ss = if *format == ResultFormat::Bin {
                 format!("{:b}", n)
             } else {
                 format!("{:X}", n)
@@ -200,7 +200,7 @@ fn apply_grouping(f: &mut impl std::io::Write, ss: &str, group_size: usize) -> u
     for ch in ss.as_bytes() {
         buf.push(*ch);
     }
-    let mut buff = &mut buf[0..ss.len()];
+    let buff = &mut buf[0..ss.len()];
     buff.reverse();
     let mut len = 0;
     for (i, group) in buff.chunks(group_size).rev().enumerate() {
