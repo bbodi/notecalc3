@@ -3334,6 +3334,7 @@ impl NoteCalcApp {
             let line_data = self.editor_content.get_data(line_ref_row.as_usize());
             line_data.line_id
         };
+        // TODO STATIC_LINE_IDS[line_id]
         let inserting_text = format!("&[{}]", line_id);
         self.editor
             .insert_text(&inserting_text, &mut self.editor_content);
@@ -3706,6 +3707,13 @@ impl NoteCalcApp {
             } else {
                 results[editor_y] = Ok(None);
             }
+
+            let mut rows_to_recalc = find_line_ref_dependant_lines(
+                editor_content,
+                tokens_per_lines,
+                editor_y.as_usize(),
+            );
+
             let curr_var_name = vars
                 .iter()
                 .find(|it| {
@@ -3714,12 +3722,36 @@ impl NoteCalcApp {
                         && &*it.name != &['s', 'u', 'm'][..]
                 })
                 .map(|it| &it.name);
-            return find_variable_dependant_lines(
+            rows_to_recalc.merge(find_variable_dependant_lines(
                 curr_var_name,
                 prev_var_name,
                 tokens_per_lines,
                 editor_y.as_usize(),
-            );
+            ));
+            return rows_to_recalc;
+        }
+
+        fn find_line_ref_dependant_lines<'b>(
+            editor_content: &EditorContent<LineData>,
+            tokens_per_lines: &AppTokens<'b>,
+            editor_y: usize,
+        ) -> EditorRowFlags {
+            let mut rows_to_recalc = EditorRowFlags::empty();
+            let line_data = editor_content.get_data(editor_y);
+            let line_ref_name = &STATIC_LINE_IDS[line_data.line_id];
+            for (i, tokens) in tokens_per_lines.iter().skip(editor_y + 1).enumerate() {
+                if let Some(tokens) = tokens {
+                    for token in &tokens.tokens {
+                        match token.typ {
+                            TokenType::LineReference { .. } if token.ptr == *line_ref_name => {
+                                rows_to_recalc.merge(EditorRowFlags::single_row(editor_y + 1 + i));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            return rows_to_recalc;
         }
 
         fn find_variable_dependant_lines<'b>(
@@ -9903,6 +9935,109 @@ sum"
             &mut editor_objects,
         );
         assert_results(&["2", "3"][..], &result_buffer);
+    }
+
+    #[test]
+    fn test_modifying_a_lineref_recalcs_its_dependants() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "2\n * 3".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(1, 0));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert_results(&["2", "3"][..], &result_buffer);
+
+        // insert linref of 1st line
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::alt(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert_results(&["2", "6"][..], &result_buffer);
+
+        // now modify the first row
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Home,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('1'),
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert!(app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(app.result_area_redraw.need(EditorY::new(1)));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert_results(&["12", "36"][..], &result_buffer);
     }
 
     #[test]

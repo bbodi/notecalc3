@@ -618,6 +618,7 @@ impl Editor {
         } else {
             EditorCommand::InsertText {
                 pos: cur_pos,
+                // TODO: to owned...
                 text: (*str).to_owned(),
                 is_there_line_overflow,
             }
