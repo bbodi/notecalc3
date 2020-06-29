@@ -54,8 +54,14 @@ pub enum EditorCommand<T: Default + Clone> {
         selection: Selection,
         selected_text: String,
     },
-    CutLine(Pos),
-    DuplicateLine(Pos),
+    CutLine {
+        pos: Pos,
+        removed_text: String,
+    },
+    DuplicateLine {
+        pos: Pos,
+        inserted_text: String,
+    },
     InsertText {
         pos: Pos,
         text: String,
@@ -143,7 +149,7 @@ impl<T: Default + Clone> EditorContent<T> {
     }
 
     pub fn write_selection_into(&self, selection: Selection, result: &mut String) {
-        if !selection.is_range() {
+        if selection.is_range().is_none() {
             return;
         }
         let start = selection.get_first();

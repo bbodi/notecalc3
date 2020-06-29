@@ -821,9 +821,7 @@ impl MatrixEditing {
                         );
                     }
                     let sel = self.editor.get_selection();
-                    if sel.is_range() {
-                        let first = sel.get_first();
-                        let second = sel.get_second();
+                    if let Some((first, second)) = sel.is_range() {
                         let len = second.column - first.column;
                         render_buckets.set_color(Layer::BehindText, 0xA6D2FF_FF);
                         render_buckets.draw_rect(
@@ -1143,11 +1141,12 @@ impl NoteCalcApp {
                     );
 
                     if let Some(tokens) = &tokens[editor_y] {
-                        let need_matrix_renderer = !editor.get_selection().is_range() || {
-                            let first = editor.get_selection().get_first();
-                            let second = editor.get_selection().get_second();
-                            !(first.row..=second.row).contains(&(editor_y.as_usize()))
-                        };
+                        let need_matrix_renderer =
+                            if let Some((first, second)) = editor.get_selection().is_range() {
+                                !(first.row..=second.row).contains(&(editor_y.as_usize()))
+                            } else {
+                                true
+                            };
                         // Todo: refactor the parameters into a struct
                         NoteCalcApp::render_tokens(
                             &tokens.tokens,
@@ -1801,7 +1800,7 @@ impl NoteCalcApp {
         end_token_index += 1;
 
         let cursor_pos = editor.get_selection().get_cursor_pos();
-        let cursor_isnide_matrix: bool = if !editor.get_selection().is_range()
+        let cursor_isnide_matrix: bool = if editor.get_selection().is_range().is_none()
             && cursor_pos.row == r.editor_y.as_usize()
             && cursor_pos.column > r.editor_x
             && cursor_pos.column < r.editor_x + text_width
@@ -2807,9 +2806,7 @@ impl NoteCalcApp {
         allocator: &'text_ptr Arena<char>,
     ) {
         render_buckets.set_color(Layer::BehindText, 0xA6D2FF_FF);
-        if editor.get_selection().is_range() {
-            let start = editor.get_selection().get_first();
-            let end = editor.get_selection().get_second();
+        if let Some((start, end)) = editor.get_selection().is_range() {
             if end.row > start.row {
                 // first line
                 if let Some(start_render_y) = gr.get_render_y(EditorY::new(start.row)) {
@@ -3105,11 +3102,8 @@ impl NoteCalcApp {
                 &self.editor_content,
             );
             let new_row = self.editor.get_selection().get_cursor_pos().row;
-            let modif = if prev_selection.is_range() {
-                let mut m = EditorRowFlags::range(
-                    prev_selection.get_first().row,
-                    prev_selection.get_second().row,
-                );
+            let modif = if let Some((first, second)) = prev_selection.is_range() {
+                let mut m = EditorRowFlags::range(first.row, second.row);
                 m.merge(EditorRowFlags::single_row(new_row));
                 m
             } else {
@@ -3577,14 +3571,15 @@ impl NoteCalcApp {
                         let redraw = if scrolled {
                             Some((EditorRowFlags::all_rows_starting_at(0), RedrawTarget::Both))
                         } else {
-                            if prev_selection.is_range() {
-                                let from = prev_selection.get_first().row.min(new_cursor_y);
-                                let to = prev_selection.get_second().row.max(new_cursor_y);
+                            if let Some((first, second)) = prev_selection.is_range() {
+                                let from = first.row.min(new_cursor_y);
+                                let to = second.row.max(new_cursor_y);
                                 Some((EditorRowFlags::range(from, to), RedrawTarget::Both))
-                            } else if self.editor.get_selection().is_range() {
-                                let cur_selection = self.editor.get_selection();
-                                let from = cur_selection.get_first().row.min(new_cursor_y);
-                                let to = cur_selection.get_second().row.max(new_cursor_y);
+                            } else if let Some((first, second)) =
+                                self.editor.get_selection().is_range()
+                            {
+                                let from = first.row.min(new_cursor_y);
+                                let to = second.row.max(new_cursor_y);
                                 Some((EditorRowFlags::range(from, to), RedrawTarget::Both))
                             } else {
                                 let old_cursor_y = prev_cursor_pos.row;
@@ -4035,7 +4030,7 @@ impl NoteCalcApp {
         let selection = self.editor.get_selection();
         let cursor_pos = selection.get_cursor_pos();
         if *input == EditorInputEvent::Backspace
-            && !selection.is_range()
+            && selection.is_range().is_none()
             && selection.start.column > 0
         {
             if let Some(index) =
@@ -4059,7 +4054,7 @@ impl NoteCalcApp {
                     Some(RowModificationType::SingleLine(cursor_pos.row))
                 };
             }
-        } else if *input == EditorInputEvent::Del && !selection.is_range() {
+        } else if *input == EditorInputEvent::Del && selection.is_range().is_none() {
             if let Some(index) = self.index_of_matrix_or_lineref_at(cursor_pos, editor_objects) {
                 // remove it
                 let obj = editor_objects[EditorY::new(cursor_pos.row)].remove(index);
@@ -4092,7 +4087,7 @@ impl NoteCalcApp {
         let selection = self.editor.get_selection();
         let cursor_pos = selection.get_cursor_pos();
         if *input == EditorInputEvent::Left
-            && !selection.is_range()
+            && selection.is_range().is_none()
             && selection.start.column > 0
             && modifiers.shift == false
         {
@@ -4107,7 +4102,7 @@ impl NoteCalcApp {
                 }
             }
         } else if *input == EditorInputEvent::Right
-            && !selection.is_range()
+            && selection.is_range().is_none()
             && modifiers.shift == false
         {
             let obj = self
@@ -4139,7 +4134,9 @@ impl NoteCalcApp {
                     row_count,
                     col_count,
                 } => {
-                    if self.matrix_editing.is_none() && !self.editor.get_selection().is_range() {
+                    if self.matrix_editing.is_none()
+                        && self.editor.get_selection().is_range().is_none()
+                    {
                         self.matrix_editing = Some(MatrixEditing::new(
                             row_count,
                             col_count,
@@ -11995,6 +11992,80 @@ sum"
             &["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"][..],
             &result_buffer,
         );
+    }
+
+    #[test]
+    fn test_ctrl_x_then_ctrl_z() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "12".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.handle_time(1000);
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert_results(&["12"][..], &result_buffer);
+
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('x'),
+            InputModifiers::ctrl(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert_results(&[""][..], &result_buffer);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('z'),
+            InputModifiers::ctrl(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert_results(&["12"][..], &result_buffer);
     }
 
     #[test]

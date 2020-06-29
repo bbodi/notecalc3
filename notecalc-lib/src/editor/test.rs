@@ -230,14 +230,14 @@ mod tests {
                 expected_selection_start,
                 "Selection start"
             );
-            assert!(editor.get_selection().is_range());
+            assert!(editor.get_selection().is_range().is_some());
             assert_eq!(
                 editor.get_selection().end.unwrap(),
                 expected_selection_end,
                 "Selection end"
             );
         } else {
-            if !expected_cursor.is_range() && params.undo_count > 0 {
+            if expected_cursor.is_range().is_none() && params.undo_count > 0 {
                 // the cursor is not reverted back during undo
                 assert_eq!(
                     editor.get_selection().start.row,
@@ -2727,7 +2727,6 @@ mod tests {
     /// //////////////////////////////////////
     /// Edit
     /// //////////////////////////////////////
-
     #[test]
     fn test_insert_char() {
         test(
@@ -5320,7 +5319,8 @@ mod tests {
             initial_content: "█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzab\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[],
-            text_input: Some("long text ❤"), delay_after_inputs: &[],
+            text_input: Some("long text ❤"),
+            delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "long text ❤█abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopq\n\
             rstuvwxyzab\n\
@@ -5344,7 +5344,8 @@ mod tests {
             initial_content: "aaaaaaaaaXaaaaaaaaaXaaaaaaaaaXaaaaa█aaaaXaaaaaaaaaXaaaaaaaaaX\n\
             abcdefghijkXlmnopqrstuvwxyz",
             inputs: &[],
-            text_input: Some("xxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxX"), delay_after_inputs: &[],
+            text_input: Some("xxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxX"),
+            delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "aaaaaaaaaXaaaaaaaaaXaaaaaaaaaXaaaaaxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxx\n\
             xxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxX█aaaaX\n\
@@ -5380,7 +5381,8 @@ mod tests {
             initial_content: "❰ab❱cdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzab\n\
             abcdefghijklmnopqrstuvwxyz",
             inputs: &[],
-            text_input: Some("long text ❤"), delay_after_inputs: &[],
+            text_input: Some("long text ❤"),
+            delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "long text ❤█cdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrs\n\
             tuvwxyzab\n\
@@ -5391,7 +5393,8 @@ mod tests {
             initial_content: "aaaaaaaaaXaaaaaaaaaXaaaaaaaaaXaaaaa❰ab❱aaXaaaaaaaaaXaaaaaaaaaX\n\
             abcdefghijkXlmnopqrstuvwxyz",
             inputs: &[],
-            text_input: Some("xxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxX"), delay_after_inputs: &[],
+            text_input: Some("xxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxX"),
+            delay_after_inputs: &[],
             modifiers: InputModifiers::none(),
             expected_content: "aaaaaaaaaXaaaaaaaaaXaaaaaaaaaXaaaaaxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxx\n\
             xxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxXxxxxxxxxxX█aaXaa\n\
@@ -5527,6 +5530,22 @@ mod tests {
             },
         );
         assert_eq!("aaaaa12s aa\n", &editor.clipboard);
+        test_normal_undo_redo(TestParams2 {
+            text_input: None,
+            initial_content: "aaa█aa12s aa\n\
+            a\n\
+            a\n\
+            a\n\
+            a",
+            inputs: &[EditorInputEvent::Char('x')],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "█a\n\
+            a\n\
+            a\n\
+            a",
+        });
+
         test0(
             &mut editor,
             &mut content,
@@ -5550,6 +5569,22 @@ mod tests {
             },
         );
         assert_eq!("a", &editor.clipboard);
+        test_normal_undo_redo(TestParams2 {
+            text_input: None,
+            initial_content: "aaaaa12s aa\n\
+            a\n\
+            a\n\
+            a\n\
+            a█",
+            inputs: &[EditorInputEvent::Char('x')],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "aaaaa12s aa\n\
+            a\n\
+            a\n\
+            a\n\
+            █",
+        });
 
         test0(
             &mut editor,
@@ -5574,6 +5609,22 @@ mod tests {
             },
         );
         assert_eq!("aa12s a", &editor.clipboard);
+        test_normal_undo_redo(TestParams2 {
+            text_input: None,
+            initial_content: "aaa❱aa12s a❰a\n\
+            a\n\
+            a\n\
+            a\n\
+            a",
+            inputs: &[EditorInputEvent::Char('x')],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "aaa█a\n\
+            a\n\
+            a\n\
+            a\n\
+            a",
+        });
         test0(
             &mut editor,
             &mut content,
@@ -5593,6 +5644,18 @@ mod tests {
             },
         );
         assert_eq!("aaaa12s aa\na\na\na\n", &editor.clipboard);
+        test_normal_undo_redo(TestParams2 {
+            text_input: None,
+            initial_content: "a❱aaaa12s aa\n\
+            a\n\
+            a\n\
+            a\n\
+            ❰a",
+            inputs: &[EditorInputEvent::Char('x')],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "a█a",
+        });
     }
 
     #[test]
@@ -5622,8 +5685,12 @@ mod tests {
             },
         );
         assert_eq!(
-            Editor::clone_selected_text(editor.get_selection(), &content),
-            Some("12s aa\na\na\na\na".to_owned())
+            Editor::clone_range(
+                editor.get_selection().start,
+                editor.get_selection().end.unwrap(),
+                &content
+            ),
+            "12s aa\na\na\na\na".to_owned()
         )
     }
 }

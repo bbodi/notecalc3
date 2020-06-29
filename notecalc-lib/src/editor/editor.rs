@@ -165,10 +165,6 @@ impl Selection {
         }
     }
 
-    pub fn is_range(&self) -> bool {
-        return self.end.is_some();
-    }
-
     pub fn get_range(&self) -> (Pos, Pos) {
         if let Some(end) = self.end {
             let end_index = end.row * 1024 + end.column;
@@ -180,6 +176,20 @@ impl Selection {
             }
         } else {
             (self.start, self.start)
+        }
+    }
+
+    pub fn is_range(&self) -> Option<(Pos, Pos)> {
+        if let Some(end) = self.end {
+            let end_index = end.row * 1024 + end.column;
+            let start_index = self.start.row * 1024 + self.start.column;
+            if end_index < start_index {
+                Some((end, self.start))
+            } else {
+                Some((self.start, end))
+            }
+        } else {
+            None
         }
     }
 
@@ -356,20 +366,15 @@ impl Editor {
         };
     }
 
-    pub fn clone_selected_text<T: Default + Clone>(
-        selection: Selection,
+    pub fn clone_range<T: Default + Clone>(
+        start: Pos,
+        end: Pos,
         content: &EditorContent<T>,
-    ) -> Option<String> {
-        return if selection.end.is_none() {
-            None
-        } else {
-            let start = selection.get_first();
-            let end = selection.get_second();
-            let mut result = String::with_capacity((end.row - start.row) * content.max_line_len());
+    ) -> String {
+        let mut result = String::with_capacity((end.row - start.row) * content.max_line_len());
 
-            content.write_selection_into(selection, &mut result);
-            Some(result)
-        };
+        content.write_selection_into(Selection::range(start, end), &mut result);
+        result
     }
 
     #[inline]
@@ -462,9 +467,9 @@ impl Editor {
             }
             EditorInputEvent::Esc => None,
             EditorInputEvent::Del => {
-                if selection.is_range() {
+                if let Some((start, end)) = selection.is_range() {
                     Some(EditorCommand::DelSelection {
-                        removed_text: Editor::clone_selected_text(selection, content).unwrap(),
+                        removed_text: Editor::clone_range(start, end, content),
                         selection,
                     })
                 } else if cur_pos.column == content.line_len(cur_pos.row) {
@@ -485,10 +490,15 @@ impl Editor {
                     }
                 } else if modifiers.ctrl {
                     let col = content.jump_word_forward(&cur_pos, JumpMode::ConsiderWhitespaces);
-                    let removed_text = Editor::clone_selected_text(
-                        Selection::range(cur_pos, cur_pos.with_column(col)),
-                        content,
-                    );
+                    let removed_text = if col == cur_pos.column {
+                        None
+                    } else {
+                        Some(Editor::clone_range(
+                            cur_pos,
+                            cur_pos.with_column(col),
+                            content,
+                        ))
+                    };
                     Some(EditorCommand::DelCtrl {
                         removed_text,
                         pos: cur_pos,
@@ -503,19 +513,19 @@ impl Editor {
             EditorInputEvent::Enter => {
                 if modifiers.ctrl {
                     Some(EditorCommand::InsertEmptyRow(cur_pos.row))
-                } else if selection.is_range() {
+                } else if let Some((start, end)) = selection.is_range() {
                     Some(EditorCommand::EnterSelection {
                         selection,
-                        selected_text: Editor::clone_selected_text(selection, content).unwrap(),
+                        selected_text: Editor::clone_range(start, end, content),
                     })
                 } else {
                     Some(EditorCommand::Enter(cur_pos))
                 }
             }
             EditorInputEvent::Backspace => {
-                if selection.is_range() {
+                if let Some((start, end)) = selection.is_range() {
                     Some(EditorCommand::BackspaceSelection {
-                        removed_text: Editor::clone_selected_text(selection, content).unwrap(),
+                        removed_text: Editor::clone_range(start, end, content),
                         selection,
                     })
                 } else if cur_pos.column == 0 {
@@ -539,10 +549,15 @@ impl Editor {
                     }
                 } else if modifiers.ctrl {
                     let col = content.jump_word_backward(&cur_pos, JumpMode::IgnoreWhitespaces);
-                    let removed_text = Editor::clone_selected_text(
-                        Selection::range(cur_pos.with_column(col), cur_pos),
-                        content,
-                    );
+                    let removed_text = if col == cur_pos.column {
+                        None
+                    } else {
+                        Some(Editor::clone_range(
+                            cur_pos.with_column(col),
+                            cur_pos,
+                            content,
+                        ))
+                    };
                     Some(EditorCommand::BackspaceCtrl {
                         removed_text,
                         pos: cur_pos,
@@ -560,27 +575,41 @@ impl Editor {
                 } else if *ch == 'c' && modifiers.ctrl {
                     None
                 } else if *ch == 'x' && modifiers.ctrl {
-                    if selection.is_range() {
+                    if let Some((start, end)) = selection.is_range() {
                         Some(EditorCommand::DelSelection {
                             selection,
-                            removed_text: Editor::clone_selected_text(selection, content).unwrap(),
+                            removed_text: Editor::clone_range(start, end, content),
                         })
                     } else {
-                        Some(EditorCommand::CutLine(cur_pos))
+                        Some(EditorCommand::CutLine {
+                            pos: cur_pos,
+                            removed_text: Editor::clone_range(
+                                cur_pos.with_column(0),
+                                cur_pos.with_column(content.line_len(cur_pos.row)),
+                                content,
+                            ),
+                        })
                     }
                 } else if *ch == 'd' && modifiers.ctrl {
-                    Some(EditorCommand::DuplicateLine(cur_pos))
+                    Some(EditorCommand::DuplicateLine {
+                        pos: cur_pos,
+                        inserted_text: Editor::clone_range(
+                            cur_pos.with_column(0),
+                            cur_pos.with_column(content.line_len(cur_pos.row)),
+                            content,
+                        ),
+                    })
                 } else if *ch == 'a' && modifiers.ctrl {
                     None
                 } else if *ch == 'z' && modifiers.ctrl && modifiers.shift {
                     None
                 } else if *ch == 'z' && modifiers.ctrl {
                     None
-                } else if selection.is_range() {
+                } else if let Some((start, end)) = selection.is_range() {
                     Some(EditorCommand::InsertCharSelection {
                         ch: *ch,
                         selection,
-                        selected_text: Editor::clone_selected_text(selection, content).unwrap(),
+                        selected_text: Editor::clone_range(start, end, content),
                     })
                 } else {
                     if content.line_len(cur_pos.row) == content.max_line_len() {
@@ -608,10 +637,10 @@ impl Editor {
         let remaining_text_len_in_this_row = content.line_len(cur_pos.row) - cur_pos.column;
         let is_there_line_overflow =
             inserted_text_end_pos.column + remaining_text_len_in_this_row > content.max_line_len();
-        let command = if selection.is_range() {
+        let command = if let Some((start, end)) = selection.is_range() {
             EditorCommand::InsertTextSelection {
                 selection,
-                removed_text: Editor::clone_selected_text(selection, content).unwrap(),
+                removed_text: Editor::clone_range(start, end, content),
                 text: (*str).to_owned(),
                 is_there_line_overflow,
             }
@@ -849,7 +878,10 @@ impl Editor {
                 }
                 modif_type
             }
-            EditorCommand::CutLine(pos) => {
+            EditorCommand::CutLine {
+                pos,
+                removed_text: _removed_text,
+            } => {
                 self.send_selection_to_clipboard(
                     Selection::range(
                         pos.with_column(0),
@@ -869,7 +901,10 @@ impl Editor {
                 self.set_selection_save_col(Selection::single(pos.with_column(0)));
                 Some(RowModificationType::AllLinesFrom(pos.row))
             }
-            EditorCommand::DuplicateLine(pos) => {
+            EditorCommand::DuplicateLine {
+                pos,
+                inserted_text: _inserted_text,
+            } => {
                 content.duplicate_line(pos.row);
                 self.set_selection_save_col(Selection::single(pos.with_next_row()));
                 Some(RowModificationType::AllLinesFrom(pos.row))
@@ -963,8 +998,8 @@ impl Editor {
                 let selection = if modifiers.shift {
                     self.selection.extend(new_pos)
                 } else {
-                    if self.selection.is_range() {
-                        Selection::single(self.selection.get_second())
+                    if let Some((_start, end)) = self.selection.is_range() {
+                        Selection::single(end)
                     } else {
                         Selection::single(new_pos)
                     }
@@ -991,8 +1026,8 @@ impl Editor {
                 let selection = if modifiers.shift {
                     self.selection.extend(new_pos)
                 } else {
-                    if self.selection.is_range() {
-                        Selection::single(self.selection.get_first())
+                    if let Some((start, _end)) = self.selection.is_range() {
+                        Selection::single(start)
                     } else {
                         Selection::single(new_pos)
                     }
@@ -1042,7 +1077,7 @@ impl Editor {
                 if *ch == 'w' && modifiers.ctrl {
                     let prev_index = content.jump_word_backward(
                         &selection.get_first(),
-                        if selection.is_range() {
+                        if selection.is_range().is_some() {
                             JumpMode::IgnoreWhitespaces
                         } else {
                             JumpMode::BlockOnWhitespace
@@ -1050,7 +1085,7 @@ impl Editor {
                     );
                     let next_index = content.jump_word_forward(
                         &selection.get_second(),
-                        if selection.is_range() {
+                        if selection.is_range().is_some() {
                             JumpMode::IgnoreWhitespaces
                         } else {
                             JumpMode::BlockOnWhitespace
@@ -1250,11 +1285,15 @@ impl Editor {
                     Some(RowModificationType::AllLinesFrom(first.row))
                 }
             }
-            EditorCommand::CutLine(_) => {
-                // TODO
-                None
+            EditorCommand::CutLine { pos, removed_text } => {
+                if pos.row != content.line_count() - 1 {
+                    content.insert_line_at(pos.row);
+                }
+                content.insert_str_at(pos.with_column(0), removed_text);
+                self.set_selection_save_col(Selection::single(*pos));
+                Some(RowModificationType::AllLinesFrom(pos.row))
             }
-            EditorCommand::DuplicateLine(_) => {
+            EditorCommand::DuplicateLine { .. } => {
                 // TODO
                 None
             }
@@ -1319,9 +1358,8 @@ impl Editor {
         selection: Selection,
         content: &mut EditorContent<T>,
     ) {
-        if selection.is_range() {
-            let first = selection.get_first();
-            content.remove_selection(selection);
+        if let Some((first, second)) = selection.is_range() {
+            content.remove_selection(Selection::range(first, second));
             content.split_line(first.row, first.column);
             self.set_selection_save_col(Selection::single(Pos::from_row_column(first.row + 1, 0)));
         } else {

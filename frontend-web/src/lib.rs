@@ -253,7 +253,7 @@ pub fn get_selected_text(app_ptr: u32) -> Option<String> {
     let app = AppPointers::app(app_ptr);
     // TODO: use fix buffer don't allocate
     let selection = app.editor.get_selection();
-    return if selection.is_range() {
+    return if selection.is_range().is_some() {
         let mut str = String::with_capacity(64);
         app.editor_content.write_selection_into(selection, &mut str);
         Some(str)
