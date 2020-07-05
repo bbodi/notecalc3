@@ -2655,13 +2655,7 @@ impl NoteCalcApp {
         });
         let mut tokens = Vec::with_capacity(128);
 
-        let mut gr = GlobalRenderData::new(
-            self.client_width,
-            1000, /*dummy value*/
-            self.render_data.result_gutter_x,
-            0,
-            2,
-        );
+        let mut gr = GlobalRenderData::new(1024, 1000 /*dummy value*/, 1024 / 2, 0, 2);
         // evaluate all the lines so variables are defined even if they are not selected
         let mut render_height = 0;
         {
@@ -2717,6 +2711,7 @@ impl NoteCalcApp {
             }
         }
 
+        // TODO what is this 256?
         let mut tmp_canvas: Vec<[char; 256]> = Vec::with_capacity(render_height);
         for _ in 0..render_height {
             tmp_canvas.push([' '; 256]);
@@ -2737,6 +2732,8 @@ impl NoteCalcApp {
             }
         }
 
+        //////////////////////////////////////////////////////////////////////////
+        //////////////////////////////////////////////////////////////////////////
         render_buckets.clear();
         let result_gutter_x = max_len + 2;
         NoteCalcApp::render_results(
@@ -7419,7 +7416,7 @@ sum"
                 Pos::from_row_column(*selected_range.start(), 0),
                 Pos::from_row_column(*selected_range.end(), 0),
             ));
-            let mut result_buffer = [0; 128];
+            let mut result_buffer = [0; 256];
             app.render(
                 &units,
                 &mut RenderBuckets::new(),
@@ -7430,7 +7427,6 @@ sum"
                 &mut vars,
                 &mut editor_objects,
             );
-            let mut result_buffer = [0; 128];
             assert_eq!(
                 expected,
                 &app.copy_selected_rows_with_result_to_clipboard(
@@ -7524,6 +7520,33 @@ sum"
              ⎢  4km⎥  ‖ ⎢     4.0 km⎥\n\
              ⎣50000⎦  ‖ ⎣50 000.0   ⎦\n",
             0..=0,
+        );
+        // test selecting only a single line
+        t(
+            "[1, 2, 3]\n'asd\n[1, 2, 3]\n[10, 20, 30]",
+            "[1  2  3]  ‖ [1  2  3]\n",
+            2..=2,
+        );
+        t(
+            "_999
+22222
+3
+4
+2
+&[4]
+722
+alma = 3
+alma * 2
+alma * &[7] + &[6] 
+&[7]
+2222222222222222222722.22222
+^
+human brain: 10^16 op/s
+so far 100 000 000 000 humans lived
+avg. human lifespan is 50 years
+total human brain activity is &[14] * &[15] * (&[16]/1s)",
+            "2222222222222222222722.22222  ‖ 2 222 222 222 222 222 222 722.22222\n",
+            11..=11,
         );
     }
 

@@ -298,6 +298,7 @@ pub fn get_selected_rows_with_results(app_ptr: u32) -> String {
     let app = AppPointers::mut_app(app_ptr);
     let units = AppPointers::units(app_ptr);
     let rb = AppPointers::mut_render_bucket(app_ptr);
+    rb.clear();
     return app.copy_selected_rows_with_result_to_clipboard(
         units,
         rb,
