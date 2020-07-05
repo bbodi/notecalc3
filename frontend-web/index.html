@@ -154,7 +154,6 @@
         return el;
     }
 
-
     function init_canvas() {
         // some browser extension add a class to the body, so rmeove them
         let body = document.getElementsByTagName('body').item(0);
@@ -170,13 +169,16 @@
         canvas.height = ((window.innerHeight / line_height) | 0) * line_height - 100;
         overlay_canvas.width = canvas.width;
         overlay_canvas.height = canvas.height;
-        return [canvas.width / font_width, canvas.height / line_height];
+        return [(canvas.width / font_width) | 0, (canvas.height / line_height) | 0];
     }
 
     function resizeCanvas() {
         const t = calc_and_set_client_width();
         CLIENT_WIDTH_IN_CHARS = t[0];
         CLIENT_HEIGHT_IN_CHARS = t[1];
+        if (CLIENT_WIDTH_IN_CHARS * font_width < canvas.width) {
+            CLIENT_WIDTH_IN_CHARS += 1;
+        }
 
         const div = document.getElementById('containder-div');
         div.style.width = (canvas.width + 2 * font_width) + 'px';
@@ -374,6 +376,8 @@
             return;
         } else if (e.key === "AltGraph") {
             return;
+        } else if (e.key === "Dead") {
+            return;
         } else if (e.ctrlKey && e.key === 'v') {
             return;
         } else if (e.key.length > 1) {
@@ -425,6 +429,7 @@
         const command_buffer = new Uint8Array(wasm.memory.buffer, command_buffer_ptr);
         const now = new Date().getTime();
 
+        const debug_commands = [];
         while (true) {
             command_count += 1;
             const command_id = command_buffer[buf_index];
@@ -439,15 +444,19 @@
                 let r = command_buffer[buf_index + 3];
                 buf_index += 4;
 
-                ctx.fillStyle = 'rgba(' + r + ', ' + g + ', ' + b + ', ' + a / 255.0 + ')';
+                let fillStyle = 'rgba(' + r + ', ' + g + ', ' + b + ', ' + a / 255.0 + ')';
+                debug_commands.push(fillStyle);
+                ctx.fillStyle = fillStyle;
             } else if (command_id === 3) { // RenderChar
                 let column_i = read_u8(command_buffer, buf_index);
                 let row_i = read_u8(command_buffer, buf_index + 1);
                 let ch = read_u32(command_buffer, buf_index + 2);
                 buf_index += 1 + 1 + 4;
 
+                let rch = String.fromCharCode(ch);
+                debug_commands.push(rch);
                 ctx.fillText(
-                    String.fromCharCode(ch),
+                    rch,
                     column_i * font_width,
                     line_height * row_i + line_height - FONT_VERT_PADDING
                 );
@@ -465,6 +474,7 @@
                     buf_index += 4;
                 }
 
+                debug_commands.push(str);
                 ctx.fillText(
                     str,
                     column_i * font_width,
@@ -484,6 +494,7 @@
                     buf_index += 1;
                 }
 
+                debug_commands.push(str);
                 ctx.fillText(
                     str,
                     column_i * font_width,
@@ -497,6 +508,7 @@
                 buf_index += 4;
 
                 if (command_id === 7) { // RenderRectangle
+                    debug_commands.push([x, y, w, h]);
                     ctx.fillRect(
                         x * font_width,
                         y * line_height,
@@ -508,16 +520,19 @@
                     const end_color = read_u32(command_buffer, buf_index + 4);
                     const animation_time_ms = read_u16(command_buffer, buf_index + 8);
                     buf_index += 4 + 4 + 2;
-                    pulsing_rects.push({
+                    let item = {
                         x,y,w,h,
                         start_color,
                         end_color,
                         start_time: now,
                         duration_ms: animation_time_ms,
-                    });
+                    };
+                    debug_commands.push(item);
+                    pulsing_rects.push(item);
                 }
             }
         }
+        console.log(debug_commands);
         return command_count;
     }
 

@@ -1137,7 +1137,8 @@ impl NoteCalcApp {
                         render_buckets,
                         &r,
                         editor,
-                        gr.result_gutter_x,
+                        &gr,
+                        redraw_result_area,
                     );
 
                     if let Some(tokens) = &tokens[editor_y] {
@@ -1341,30 +1342,30 @@ impl NoteCalcApp {
         // pulses rerendered lines
         for ((render_y, render_height), target) in &rerendered_lines {
             // for DEBUG, pulses the whole line
-            let x_w_coords = match *target {
-                RedrawTarget::Both => Some((
-                    LEFT_GUTTER_WIDTH,
-                    gr.current_result_panel_width
-                        + gr.current_editor_width
-                        + gr.left_gutter_width
-                        + SCROLL_BAR_WIDTH
-                        + RIGHT_GUTTER_WIDTH,
-                )),
-                RedrawTarget::EditorArea => Some((LEFT_GUTTER_WIDTH, gr.current_editor_width)),
-
-                RedrawTarget::ResultArea => Some((
-                    gr.result_gutter_x,
-                    gr.current_result_panel_width + RIGHT_GUTTER_WIDTH,
-                )),
-            };
-            // pulses only the result
             // let x_w_coords = match *target {
-            //     RedrawTarget::Both | RedrawTarget::ResultArea => Some((
+            //     RedrawTarget::Both => Some((
+            //         LEFT_GUTTER_WIDTH,
+            //         gr.current_result_panel_width
+            //             + gr.current_editor_width
+            //             + gr.left_gutter_width
+            //             + SCROLL_BAR_WIDTH
+            //             + RIGHT_GUTTER_WIDTH,
+            //     )),
+            //     RedrawTarget::EditorArea => Some((LEFT_GUTTER_WIDTH, gr.current_editor_width)),
+            //
+            //     RedrawTarget::ResultArea => Some((
             //         gr.result_gutter_x,
             //         gr.current_result_panel_width + RIGHT_GUTTER_WIDTH,
             //     )),
-            //     _ => None,
             // };
+            // pulses only the result
+            let x_w_coords = match *target {
+                RedrawTarget::Both | RedrawTarget::ResultArea => Some((
+                    gr.result_gutter_x,
+                    gr.current_result_panel_width + RIGHT_GUTTER_WIDTH,
+                )),
+                _ => None,
+            };
 
             if let Some((x, w)) = x_w_coords {
                 render_buckets.custom_commands[Layer::AboveText as usize].push(
@@ -1668,7 +1669,8 @@ impl NoteCalcApp {
         render_buckets: &mut RenderBuckets,
         r: &PerLineRenderData,
         editor: &Editor,
-        result_gutter_x: usize,
+        gr: &GlobalRenderData,
+        redraw_result_area: EditorRowFlags,
     ) {
         let cursor_pos = editor.get_selection().get_cursor_pos();
         if cursor_pos.row == r.editor_y.as_usize() {
@@ -1677,7 +1679,12 @@ impl NoteCalcApp {
                 Layer::Text,
                 0,
                 r.render_y,
-                result_gutter_x + RIGHT_GUTTER_WIDTH + MIN_RESULT_PANEL_WIDTH,
+                gr.result_gutter_x
+                    + if redraw_result_area.need(r.editor_y) {
+                        RIGHT_GUTTER_WIDTH + gr.current_result_panel_width
+                    } else {
+                        0
+                    },
                 r.rendered_row_height,
             );
         }
@@ -2470,6 +2477,9 @@ impl NoteCalcApp {
             let rendered_row_height = gr.get_rendered_height(result_tmp.editor_y);
             let render_y = gr.get_render_y(result_tmp.editor_y).expect("");
             if let Some(result_range) = &result_tmp.buffer_ptr {
+                if !modif_type.need(result_tmp.editor_y) {
+                    continue;
+                }
                 // result background
                 render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
                 render_buckets.draw_rect(
@@ -2484,13 +2494,36 @@ impl NoteCalcApp {
                 let from = result_range.start;
                 let vert_align_offset = (rendered_row_height - 1) / 2;
                 let row = render_y.add(vert_align_offset);
+                enum ResultOffsetX {
+                    Err,
+                    Ok(usize),
+                    TooLong,
+                }
                 let offset_x = if max_lengths.int_part_len < lengths.int_part_len {
                     // it is an "Err"
-                    0
+                    ResultOffsetX::Err
                 } else {
-                    max_lengths.int_part_len - lengths.int_part_len
+                    let offset_x = max_lengths.int_part_len - lengths.int_part_len;
+                    let sum_len = lengths.int_part_len
+                        + max_lengths.frac_part_len
+                        + max_lengths.unit_part_len;
+                    if offset_x + sum_len > gr.current_result_panel_width {
+                        if sum_len > gr.current_result_panel_width {
+                            ResultOffsetX::TooLong
+                        } else {
+                            ResultOffsetX::Ok(gr.current_result_panel_width - sum_len)
+                        }
+                    } else {
+                        ResultOffsetX::Ok(offset_x)
+                    }
                 };
-                let x = result_gutter_x + RIGHT_GUTTER_WIDTH + offset_x;
+                let x = result_gutter_x
+                    + RIGHT_GUTTER_WIDTH
+                    + match offset_x {
+                        ResultOffsetX::Err => 0,
+                        ResultOffsetX::TooLong => 0,
+                        ResultOffsetX::Ok(n) => n,
+                    };
                 render_buckets.ascii_texts.push(RenderAsciiTextMsg {
                     text: &result_buffer[from..from + lengths.int_part_len],
                     row,
@@ -2513,8 +2546,29 @@ impl NoteCalcApp {
                         column: x + lengths.int_part_len + lengths.frac_part_len + 1,
                     });
                 }
+                match offset_x {
+                    ResultOffsetX::TooLong => {
+                        render_buckets.set_color(Layer::AboveText, 0xF2F2F2_FF);
+                        render_buckets.draw_char(
+                            Layer::AboveText,
+                            gr.result_gutter_x + RIGHT_GUTTER_WIDTH + gr.current_result_panel_width
+                                - 1,
+                            row,
+                            '█',
+                        );
+                        render_buckets.set_color(Layer::AboveText, 0xFF0000_FF);
+                        render_buckets.draw_char(
+                            Layer::AboveText,
+                            gr.result_gutter_x + RIGHT_GUTTER_WIDTH + gr.current_result_panel_width
+                                - 1,
+                            row,
+                            '…',
+                        );
+                    }
+                    _ => {}
+                }
             } else if modif_type.need(result_tmp.editor_y) {
-                // no reuslt but need rerender
+                // no result but need rerender
                 // result background
                 render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
                 render_buckets.draw_rect(
@@ -3149,10 +3203,10 @@ impl NoteCalcApp {
     pub fn handle_drag(&mut self, x: usize, y: RenderPosY) {
         match self.mouse_state {
             Some(MouseState::RightGutterIsDragged) => {
-                self.set_result_gutter_x(NoteCalcApp::calc_result_gutter_x(
-                    Some(x),
+                self.set_result_gutter_x(
                     self.client_width,
-                ));
+                    NoteCalcApp::calc_result_gutter_x(Some(x), self.client_width),
+                );
             }
             Some(MouseState::ClickedInEditor) => {
                 if let Some(y) = self.rendered_y_to_editor_y(y) {
@@ -3182,18 +3236,22 @@ impl NoteCalcApp {
         }
     }
 
-    pub fn set_result_gutter_x(&mut self, x: usize) {
+    pub fn set_result_gutter_x(&mut self, client_width: usize, x: usize) {
         self.render_data.result_gutter_x = x;
         self.render_data.current_editor_width = x - self.render_data.left_gutter_width;
+        self.render_data.current_result_panel_width = client_width - x - RIGHT_GUTTER_WIDTH;
         self.set_redraw_flag(EditorRowFlags::all_rows_starting_at(0), RedrawTarget::Both);
     }
 
     pub fn handle_resize(&mut self, new_client_width: usize) {
         self.client_width = new_client_width;
-        self.set_result_gutter_x(NoteCalcApp::calc_result_gutter_x(
-            Some(self.render_data.result_gutter_x),
+        self.set_result_gutter_x(
             new_client_width,
-        ));
+            NoteCalcApp::calc_result_gutter_x(
+                Some(self.render_data.result_gutter_x),
+                new_client_width,
+            ),
+        );
     }
 
     fn calc_result_gutter_x(current_x: Option<usize>, client_width: usize) -> usize {
@@ -11282,7 +11340,9 @@ sum"
         assert!(!app.editor_area_redraw.need(EditorY::new(2)));
         assert!(!app.result_area_redraw.need(EditorY::new(2)));
 
+        assert_eq!(app.render_data.current_result_panel_width, 30);
         app.handle_drag(app.render_data.result_gutter_x - 1, RenderPosY::new(0));
+        assert_eq!(app.render_data.current_result_panel_width, 31);
 
         assert!(app.editor_area_redraw.need(EditorY::new(0)));
         assert!(app.result_area_redraw.need(EditorY::new(0)));
