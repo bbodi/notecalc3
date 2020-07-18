@@ -136,7 +136,7 @@
             const find_max_char_h = function(ch) {
                 let m = ctx.measureText(ch);
                 let font_height = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent;
-                console.log(ch, ' ', font_height);
+                console.log(ch, ' ', ch.charCodeAt(0), ' ', font_height);
                 if (font_height > max_h) {
                     max_h = font_height;
                 }
@@ -144,6 +144,7 @@
             find_max_char_h('▏');
             find_max_char_h('⎡');
             find_max_char_h('⎤');
+            find_max_char_h('⎫');
             line_height = max_h + 2 * FONT_VERT_PADDING;
             console.log('line_height', line_height);
 
@@ -173,7 +174,8 @@
     let canvas_dirty = 0;
     let last_drag_event = null;
     let FONT_HEIGHT = 16;
-    let FONT_VERT_PADDING = 2;
+    // 3 px because of this char: ⎫, it is 20 px tall but rendered at 3px above bottom
+    let FONT_VERT_PADDING = 3;
     let line_height = FONT_HEIGHT + 2 * FONT_VERT_PADDING;
     let CLIENT_WIDTH_IN_CHARS = 0;
     let CLIENT_HEIGHT_IN_CHARS = 0;

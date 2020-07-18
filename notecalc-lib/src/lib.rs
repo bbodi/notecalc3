@@ -1227,7 +1227,6 @@ impl NoteCalcApp {
                 h: gr.client_height,
             });
 
-        // selected text
         render_selection_and_its_sum(
             &units,
             render_buckets,
@@ -3368,7 +3367,7 @@ fn evaluate_selection(
     let sel = editor.get_selection();
     // TODO optimize vec allocations
     let mut tokens = Vec::with_capacity(128);
-    // TODO we should be able to mark the arena allcoator and free it at the eond of the function
+    // TODO we should be able to mark the arena allcoator and free it at the end of the function
     if sel.start.row == sel.end.unwrap().row {
         if let Some(selected_text) = Editor::get_selected_text_single_line(sel, &editor_content) {
             if let Ok(Some(result)) = evaluate_text(
@@ -4293,7 +4292,7 @@ fn render_selection_and_its_sum<'text_ptr>(
                     );
                 }
             } else {
-                partial_result.insert_str(0, "⎬ ∑ = ");
+                partial_result.insert_str(0, " ∑ = ");
                 let result_w = partial_result.chars().count();
                 let x = (start.row..=end.row)
                     .map(|it| editor_content.line_len(it))
@@ -10800,6 +10799,76 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         );
         assert!(app.editor_area_redraw.need(EditorY::new(0)));
         assert!(app.editor_area_redraw.need(EditorY::new(1)));
+    }
+
+    #[test]
+    fn select_only_2_lines_render_bug() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "1\n2\n3".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::shift(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+
+        let mut result_buffer = [0; 128];
+        let mut render_buckets = RenderBuckets::new();
+        app.render(
+            &units,
+            &mut render_buckets,
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        dbg!(&render_buckets.custom_commands[Layer::AboveText as usize]);
+        let mut ok = vec![];
+        for command in &render_buckets.custom_commands[Layer::AboveText as usize] {
+            match command {
+                OutputMessage::RenderChar(x, y, ch) => {
+                    if *x == 8 && *y == 1 && *ch == '⎫' {
+                        ok.push('a');
+                    } else if *x == 8 && *y == 2 && *ch == '⎭' {
+                        ok.push('b');
+                    }
+                }
+                OutputMessage::RenderString(RenderStringMsg { text, row, column }) => {
+                    if text == " ∑ = 5" && row.as_usize() == 1 && *column == 8 {
+                        ok.push('c');
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(vec!['a', 'b', 'c'], ok);
     }
 
     #[test]
