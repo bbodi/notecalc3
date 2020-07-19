@@ -316,7 +316,13 @@ pub mod helper {
             let result_row_height = if let Ok(result) = result {
                 if let Some(result) = result {
                     let result_row_height = match &result {
-                        CalcResult::Matrix(mat) => mat.row_count,
+                        CalcResult::Matrix(mat) => {
+                            if mat.row_count == 1 {
+                                1
+                            } else {
+                                mat.row_count + 2
+                            }
+                        }
                         _ => max_height,
                     };
                     result_row_height
@@ -333,7 +339,13 @@ pub mod helper {
                     TokenType::Operator(OperatorTokenType::Matrix {
                         row_count,
                         col_count: _,
-                    }) => row_count,
+                    }) => {
+                        if row_count == 1 {
+                            1
+                        } else {
+                            row_count + 2
+                        }
+                    }
                     TokenType::LineReference { var_index } => {
                         let var = &vars[var_index];
                         match &var.value {
@@ -750,33 +762,19 @@ impl MatrixEditing {
         render_buckets: &mut RenderBuckets<'b>,
         rendered_row_height: usize,
     ) -> usize {
-        let vert_align_offset = (rendered_row_height - self.row_count) / 2;
-
-        if self.row_count == 1 {
-            render_buckets.operators.push(RenderUtf8TextMsg {
-                text: &['['],
-                row: render_y.add(vert_align_offset),
-                column: render_x + left_gutter_width,
-            });
+        let vert_align_offset = if self.row_count == 1 {
+            (rendered_row_height - 1) / 2
         } else {
-            render_buckets.operators.push(RenderUtf8TextMsg {
-                text: &['⎡'],
-                row: render_y.add(vert_align_offset),
-                column: render_x + left_gutter_width,
-            });
-            for i in 1..self.row_count - 1 {
-                render_buckets.operators.push(RenderUtf8TextMsg {
-                    text: &['⎢'],
-                    row: render_y.add(i + vert_align_offset),
-                    column: render_x + left_gutter_width,
-                });
-            }
-            render_buckets.operators.push(RenderUtf8TextMsg {
-                text: &['⎣'],
-                row: render_y.add(self.row_count - 1 + vert_align_offset),
-                column: render_x + left_gutter_width,
-            });
-        }
+            (rendered_row_height - (self.row_count + 2)) / 2
+        };
+
+        render_matrix_left_brackets(
+            render_x + left_gutter_width,
+            render_y,
+            self.row_count,
+            render_buckets,
+            vert_align_offset,
+        );
         render_x += 1;
 
         for col_i in 0..self.col_count {
@@ -794,6 +792,9 @@ impl MatrixEditing {
                 .max()
                 .unwrap();
             for row_i in 0..self.row_count {
+                // the content of the matrix starts from the second row
+                let matrix_ascii_header_offset = if self.row_count == 1 { 0 } else { 1 };
+                let dst_y = render_y.add(row_i + vert_align_offset + matrix_ascii_header_offset);
                 let len: usize = if self.current_cell == Pos::from_row_column(row_i, col_i) {
                     self.editor_content.line_len(0)
                 } else {
@@ -810,7 +811,7 @@ impl MatrixEditing {
                     render_buckets.draw_rect(
                         Layer::BehindText,
                         render_x + padding_x + left_gutter_width,
-                        render_y.add(row_i + vert_align_offset),
+                        dst_y,
                         text_len,
                         1,
                     );
@@ -820,7 +821,7 @@ impl MatrixEditing {
                         render_buckets.draw_char(
                             Layer::Text,
                             render_x + padding_x + left_gutter_width + i,
-                            render_y.add(row_i + vert_align_offset),
+                            dst_y,
                             *char,
                         );
                     }
@@ -831,7 +832,7 @@ impl MatrixEditing {
                         render_buckets.draw_rect(
                             Layer::BehindText,
                             render_x + padding_x + left_gutter_width + first.column,
-                            render_y.add(row_i + vert_align_offset),
+                            dst_y,
                             len,
                             1,
                         );
@@ -842,7 +843,7 @@ impl MatrixEditing {
                     render_buckets.draw_string(
                         Layer::Text,
                         render_x + padding_x + left_gutter_width,
-                        render_y.add(row_i + vert_align_offset),
+                        dst_y,
                         (&chars[0..text_len]).to_owned(),
                     );
                 }
@@ -856,7 +857,7 @@ impl MatrixEditing {
                                 + left_gutter_width)
                                 + render_x
                                 + padding_x,
-                            render_y.add(row_i + vert_align_offset),
+                            dst_y,
                             '▏',
                         );
                     }
@@ -869,33 +870,15 @@ impl MatrixEditing {
             };
         }
 
-        if self.row_count == 1 {
-            render_buckets.operators.push(RenderUtf8TextMsg {
-                text: &[']'],
-                row: render_y.add(vert_align_offset),
-                column: render_x + left_gutter_width,
-            });
-        } else {
-            render_buckets.operators.push(RenderUtf8TextMsg {
-                text: &['⎤'],
-                row: render_y.add(vert_align_offset),
-                column: render_x + left_gutter_width,
-            });
-            for i in 1..self.row_count - 1 {
-                render_buckets.operators.push(RenderUtf8TextMsg {
-                    text: &['⎥'],
-                    row: render_y.add(i + vert_align_offset),
-                    column: render_x + left_gutter_width,
-                });
-            }
-            render_buckets.operators.push(RenderUtf8TextMsg {
-                text: &['⎦'],
-                row: render_y.add(self.row_count - 1 + vert_align_offset),
-                column: render_x + left_gutter_width,
-            });
-            render_x += 1;
-        }
+        render_matrix_right_brackets(
+            render_x + left_gutter_width,
+            render_y,
+            self.row_count,
+            render_buckets,
+            vert_align_offset,
+        );
 
+        render_x += 1;
         render_x
     }
 }
@@ -2284,7 +2267,7 @@ impl NoteCalcApp {
             None,
         );
         for i in 0..render_height {
-            render_buckets.draw_char(Layer::AboveText, result_gutter_x, RenderPosY::new(i), '‖');
+            render_buckets.draw_char(Layer::AboveText, result_gutter_x, RenderPosY::new(i), '█');
         }
         render_buckets_into(&render_buckets, &mut tmp_canvas);
         let mut result_str = String::with_capacity(row_nums * 64);
@@ -3452,33 +3435,19 @@ fn render_matrix_obj<'text_ptr>(
     render_buckets: &mut RenderBuckets<'text_ptr>,
     rendered_row_height: usize,
 ) -> usize {
-    let vert_align_offset = (rendered_row_height - row_count) / 2;
-
-    if row_count == 1 {
-        render_buckets.operators.push(RenderUtf8TextMsg {
-            text: &['['],
-            row: render_y.add(vert_align_offset),
-            column: render_x + left_gutter_width,
-        });
+    let vert_align_offset = if row_count == 1 {
+        (rendered_row_height - 1) / 2
     } else {
-        render_buckets.operators.push(RenderUtf8TextMsg {
-            text: &['⎡'],
-            row: render_y.add(vert_align_offset),
-            column: render_x + left_gutter_width,
-        });
-        for i in 1..row_count - 1 {
-            render_buckets.operators.push(RenderUtf8TextMsg {
-                text: &['⎢'],
-                row: render_y.add(i + vert_align_offset),
-                column: render_x + left_gutter_width,
-            });
-        }
-        render_buckets.operators.push(RenderUtf8TextMsg {
-            text: &['⎣'],
-            row: render_y.add(row_count - 1 + vert_align_offset),
-            column: render_x + left_gutter_width,
-        });
-    }
+        (rendered_row_height - (row_count + 2)) / 2
+    };
+
+    render_matrix_left_brackets(
+        render_x + left_gutter_width,
+        render_y,
+        row_count,
+        render_buckets,
+        vert_align_offset,
+    );
     render_x += 1;
 
     let tokens_per_cell = {
@@ -3539,11 +3508,14 @@ fn render_matrix_obj<'text_ptr>(
             let len: usize = tokens.iter().map(|it| it.ptr.len()).sum();
             let offset_x = max_width - len;
             let mut local_x = 0;
+            // the content of the matrix starts from the second row
+            let matrix_ascii_header_offset = if row_count == 1 { 0 } else { 1 };
+            let dst_y = row_i + vert_align_offset + matrix_ascii_header_offset;
             for token in tokens.iter() {
                 draw_token(
                     token,
                     render_x + offset_x + local_x,
-                    render_y.add(row_i + vert_align_offset),
+                    render_y.add(dst_y),
                     current_editor_width,
                     left_gutter_width,
                     render_buckets,
@@ -3558,34 +3530,84 @@ fn render_matrix_obj<'text_ptr>(
         };
     }
 
+    render_matrix_right_brackets(
+        render_x + left_gutter_width,
+        render_y,
+        row_count,
+        render_buckets,
+        vert_align_offset,
+    );
+    render_x += 1;
+
+    render_x
+}
+
+fn render_matrix_left_brackets(
+    x: usize,
+    render_y: RenderPosY,
+    row_count: usize,
+    render_buckets: &mut RenderBuckets,
+    vert_align_offset: usize,
+) {
+    if row_count == 1 {
+        render_buckets.operators.push(RenderUtf8TextMsg {
+            text: &['['],
+            row: render_y.add(vert_align_offset),
+            column: x,
+        });
+    } else {
+        render_buckets.operators.push(RenderUtf8TextMsg {
+            text: &['┌'],
+            row: render_y.add(vert_align_offset),
+            column: x,
+        });
+        for i in 0..row_count {
+            render_buckets.operators.push(RenderUtf8TextMsg {
+                text: &['│'],
+                row: render_y.add(i + vert_align_offset + 1),
+                column: x,
+            });
+        }
+        render_buckets.operators.push(RenderUtf8TextMsg {
+            text: &['└'],
+            row: render_y.add(row_count + vert_align_offset + 1),
+            column: x,
+        });
+    };
+}
+
+fn render_matrix_right_brackets(
+    x: usize,
+    render_y: RenderPosY,
+    row_count: usize,
+    render_buckets: &mut RenderBuckets,
+    vert_align_offset: usize,
+) {
     if row_count == 1 {
         render_buckets.operators.push(RenderUtf8TextMsg {
             text: &[']'],
             row: render_y.add(vert_align_offset),
-            column: render_x + left_gutter_width,
+            column: x,
         });
     } else {
         render_buckets.operators.push(RenderUtf8TextMsg {
-            text: &['⎤'],
+            text: &['┐'],
             row: render_y.add(vert_align_offset),
-            column: render_x + left_gutter_width,
+            column: x,
         });
-        for i in 1..row_count - 1 {
+        for i in 0..row_count {
             render_buckets.operators.push(RenderUtf8TextMsg {
-                text: &['⎥'],
-                row: render_y.add(i + vert_align_offset),
-                column: render_x + left_gutter_width,
+                text: &['│'],
+                row: render_y.add(i + 1 + vert_align_offset),
+                column: x,
             });
         }
         render_buckets.operators.push(RenderUtf8TextMsg {
-            text: &['⎦'],
-            row: render_y.add(row_count - 1 + vert_align_offset),
-            column: render_x + left_gutter_width,
+            text: &['┘'],
+            row: render_y.add(row_count + 1 + vert_align_offset),
+            column: x,
         });
     }
-    render_x += 1;
-
-    render_x
 }
 
 fn render_matrix_result<'text_ptr>(
@@ -3598,33 +3620,19 @@ fn render_matrix_result<'text_ptr>(
     rendered_row_height: usize,
     decimal_count: Option<usize>,
 ) -> usize {
-    let vert_align_offset = (rendered_row_height - mat.row_count) / 2;
     let start_x = render_x;
-    if mat.row_count == 1 {
-        render_buckets.operators.push(RenderUtf8TextMsg {
-            text: &['['],
-            row: render_y.add(vert_align_offset),
-            column: render_x,
-        });
+    let vert_align_offset = if mat.row_count == 1 {
+        (rendered_row_height - 1) / 2
     } else {
-        render_buckets.operators.push(RenderUtf8TextMsg {
-            text: &['⎡'],
-            row: render_y.add(vert_align_offset),
-            column: render_x,
-        });
-        for i in 1..mat.row_count - 1 {
-            render_buckets.operators.push(RenderUtf8TextMsg {
-                text: &['⎢'],
-                row: render_y.add(i + vert_align_offset),
-                column: render_x,
-            });
-        }
-        render_buckets.operators.push(RenderUtf8TextMsg {
-            text: &['⎣'],
-            row: render_y.add(mat.row_count - 1 + vert_align_offset),
-            column: render_x,
-        });
-    }
+        (rendered_row_height - (mat.row_count + 2)) / 2
+    };
+    render_matrix_left_brackets(
+        start_x,
+        render_y,
+        mat.row_count,
+        render_buckets,
+        vert_align_offset,
+    );
     render_x += 1;
 
     let cells_strs = {
@@ -3660,16 +3668,20 @@ fn render_matrix_result<'text_ptr>(
         max_lengths
     };
     render_buckets.set_color(Layer::Text, 0x000000_FF);
+
     for col_i in 0..mat.col_count {
         for row_i in 0..mat.row_count {
             let cell_str = &cells_strs[row_i * mat.col_count + col_i];
             let lengths = get_int_frac_part_len(cell_str);
             // Draw integer part
             let offset_x = max_lengths.int_part_len - lengths.int_part_len;
+            // the content of the matrix starts from the second row
+            let matrix_ascii_header_offset = if mat.row_count == 1 { 0 } else { 1 };
+            let dst_y = render_y.add(row_i + vert_align_offset + matrix_ascii_header_offset);
             render_buckets.draw_string(
                 Layer::Text,
                 render_x + offset_x,
-                render_y.add(row_i + vert_align_offset),
+                dst_y,
                 // TOOD nem kell clone, csinálj iter into vhogy
                 cell_str[0..lengths.int_part_len].to_owned(),
             );
@@ -3679,7 +3691,7 @@ fn render_matrix_result<'text_ptr>(
                 render_buckets.draw_string(
                     Layer::Text,
                     render_x + offset_x + lengths.int_part_len,
-                    render_y.add(row_i + vert_align_offset),
+                    dst_y,
                     // TOOD nem kell clone, csinálj iter into vhogy
                     cell_str[lengths.int_part_len..lengths.int_part_len + lengths.frac_part_len]
                         .to_owned(),
@@ -3688,7 +3700,7 @@ fn render_matrix_result<'text_ptr>(
                 render_buckets.draw_char(
                     Layer::Text,
                     render_x + offset_x + lengths.int_part_len,
-                    render_y.add(row_i + vert_align_offset),
+                    dst_y,
                     '.',
                 );
                 frac_offset_x = 1;
@@ -3702,7 +3714,7 @@ fn render_matrix_result<'text_ptr>(
                         + lengths.frac_part_len
                         + frac_offset_x
                         + i,
-                    render_y.add(row_i + vert_align_offset),
+                    dst_y,
                     '0',
                 )
             }
@@ -3710,7 +3722,7 @@ fn render_matrix_result<'text_ptr>(
                 render_buckets.draw_string(
                     Layer::Text,
                     render_x + offset_x + lengths.int_part_len + max_lengths.frac_part_len + 1,
-                    render_y.add(row_i + vert_align_offset),
+                    dst_y,
                     // TOOD nem kell clone, csinálj iter into vhogy
                     // +1, skip space
                     cell_str[lengths.int_part_len + lengths.frac_part_len + 1..].to_owned(),
@@ -3724,58 +3736,15 @@ fn render_matrix_result<'text_ptr>(
         };
     }
 
-    if mat.row_count == 1 {
-        render_buckets.operators.push(RenderUtf8TextMsg {
-            text: &[']'],
-            row: render_y.add(vert_align_offset),
-            column: render_x,
-        });
-    } else {
-        render_buckets.operators.push(RenderUtf8TextMsg {
-            text: &['⎤'],
-            row: render_y.add(vert_align_offset),
-            column: render_x,
-        });
-        for i in 1..mat.row_count - 1 {
-            render_buckets.operators.push(RenderUtf8TextMsg {
-                text: &['⎥'],
-                row: render_y.add(i + vert_align_offset),
-                column: render_x,
-            });
-        }
-        render_buckets.operators.push(RenderUtf8TextMsg {
-            text: &['⎦'],
-            row: render_y.add(mat.row_count - 1 + vert_align_offset),
-            column: render_x,
-        });
-    }
+    render_matrix_right_brackets(
+        render_x,
+        render_y,
+        mat.row_count,
+        render_buckets,
+        vert_align_offset,
+    );
     render_x += 1;
     return render_x - start_x;
-}
-
-fn calc_matrix_max_lengths(units: &Units, mat: &MatrixData) -> ResultLengths {
-    let cells_strs = {
-        let mut tokens_per_cell: SmallVec<[String; 32]> = SmallVec::with_capacity(32);
-
-        for cell in mat.cells.iter() {
-            let result_str = render_result(units, cell, &ResultFormat::Dec, false, Some(4), true);
-            tokens_per_cell.push(result_str);
-        }
-        tokens_per_cell
-    };
-    let max_lengths = {
-        let mut max_lengths = ResultLengths {
-            int_part_len: 0,
-            frac_part_len: 0,
-            unit_part_len: 0,
-        };
-        for cell_str in &cells_strs {
-            let lengths = get_int_frac_part_len(cell_str);
-            max_lengths.set_max(&lengths);
-        }
-        max_lengths
-    };
-    return max_lengths;
 }
 
 fn render_single_result<'text_ptr>(
@@ -4079,6 +4048,31 @@ fn calc_consecutive_matrices_max_lengths(
             }
         }
     }
+    return max_lengths;
+}
+
+fn calc_matrix_max_lengths(units: &Units, mat: &MatrixData) -> ResultLengths {
+    let cells_strs = {
+        let mut tokens_per_cell: SmallVec<[String; 32]> = SmallVec::with_capacity(32);
+
+        for cell in mat.cells.iter() {
+            let result_str = render_result(units, cell, &ResultFormat::Dec, false, Some(4), true);
+            tokens_per_cell.push(result_str);
+        }
+        tokens_per_cell
+    };
+    let max_lengths = {
+        let mut max_lengths = ResultLengths {
+            int_part_len: 0,
+            frac_part_len: 0,
+            unit_part_len: 0,
+        };
+        for cell_str in &cells_strs {
+            let lengths = get_int_frac_part_len(cell_str);
+            max_lengths.set_max(&lengths);
+        }
+        max_lengths
+    };
     return max_lengths;
 }
 
@@ -4388,7 +4382,13 @@ fn calc_rendered_height<'b>(
             matrix_editing
                 .as_ref()
                 .filter(|it| it.row_index == editor_y)
-                .map(|it| it.row_count),
+                .map(|it| {
+                    if it.row_count == 1 {
+                        1
+                    } else {
+                        it.row_count + 2
+                    }
+                }),
         );
         h
     } else {
@@ -7142,12 +7142,12 @@ mod tests {
             &mut editor_objects,
         );
 
-        // the 3., and 4.ros must be cleared, since the matrix shrinked back from being 3 rows height to 1
+        // the 3., and 4. rows must be cleared, since the matrix shrinked back from being 3 rows height to 1
         let mut ok = false;
         for clear_command in &render_buckets.clear_commands {
             match clear_command {
                 OutputMessage::RenderRectangle { x, y, w, h } => {
-                    if *x == 4 && y.as_usize() == 3 && *h == 2 && *w == 121 {
+                    if *x == 4 && y.as_usize() == 3 && *h == 4 && *w == 121 {
                         ok = true;
                     }
                 }
@@ -7549,7 +7549,16 @@ sum"
                 &mut vars,
                 &mut editor_objects,
             );
-            assert_eq!(
+            fn trimmed_compare(a: &str, b: &str) {
+                assert_eq!(a.lines().count(), b.lines().count(), "{} != {}", a, b);
+
+                let a_lines = a.lines();
+                let b_lines = b.lines();
+                for (a_line, b_line) in a_lines.zip(b_lines) {
+                    assert_eq!(a_line.trim_start(), b_line.trim_start());
+                }
+            }
+            trimmed_compare(
                 expected,
                 &app.copy_selected_rows_with_result_to_clipboard(
                     &units,
@@ -7557,78 +7566,82 @@ sum"
                     &mut result_buffer,
                     &arena,
                     &results,
-                )
+                ),
             );
         }
-        t("1", "1  ‖ 1\n", 0..=0);
-        t("1 + 2", "1 + 2  ‖ 3\n", 0..=0);
-        t("23", "23  ‖ 23\n", 0..=0);
+        t("1", "1  █ 1\n", 0..=0);
+        t("1 + 2", "1 + 2  █ 3\n", 0..=0);
+        t("23", "23  █ 23\n", 0..=0);
         t(
             "1\n\
            23",
-            "1   ‖  1\n\
-             23  ‖ 23\n",
+            "1   █  1\n\
+             23  █ 23\n",
             0..=1,
         );
         t(
             "1\n\
            23\n\
            99999.66666",
-            "1   ‖  1\n\
-                 23  ‖ 23\n",
+            "1   █  1\n\
+                 23  █ 23\n",
             0..=1,
         );
         t(
             "1\n\
            23\n\
            99999.66666",
-            "1            ‖      1\n\
-             23           ‖     23\n\
-             99999.66666  ‖ 99 999.66666\n",
+            "1            █      1\n\
+             23           █     23\n\
+             99999.66666  █ 99 999.66666\n",
             0..=2,
         );
-        t("[1]", "[1]  ‖ [1]\n", 0..=0);
+        t("[1]", "[1]  █ [1]\n", 0..=0);
         t(
             "[1]\n\
              [23]",
-            "[1]  ‖ [1]\n",
+            "[1]  █ [1]\n",
             0..=0,
         );
         t(
             "[1]\n\
              [23]",
-            "[1]   ‖ [ 1]\n\
-             [23]  ‖ [23]\n",
+            "[1]   █ [ 1]\n\
+             [23]  █ [23]\n",
             0..=1,
         );
-        t("[1,2,3]", "[1  2  3]  ‖ [1  2  3]\n", 0..=0);
+        t("[1,2,3]", "[1  2  3]  █ [1  2  3]\n", 0..=0);
         t(
             "[1,2,3]\n[33, 44, 55]",
-            "[1  2  3]     ‖ [ 1   2   3]\n\
-             [33  44  55]  ‖ [33  44  55]\n",
+            "[1  2  3]     █ [ 1   2   3]\n\
+             [33  44  55]  █ [33  44  55]\n",
             0..=1,
         );
         t(
             "[1;2;3]",
-            "⎡1⎤  ‖ ⎡1⎤\n\
-             ⎢2⎥  ‖ ⎢2⎥\n\
-             ⎣3⎦  ‖ ⎣3⎦\n",
+            "┌ ┐  █ ┌ ┐\n\
+             │1│  █ │1│\n\
+             │2│  █ │2│\n\
+             │3│  █ │3│\n\
+             └ ┘  █ └ ┘\n",
             0..=0,
         );
         t(
             "[1, 2, 3] * [1;2;3]",
-            "            ⎡1⎤  ‖\n\
-             [1  2  3] * ⎢2⎥  ‖ [14]
-            ⎣3⎦  ‖\n",
+            "            ┌ ┐  █\n\
+                         │1│  █\n\
+             [1  2  3] * │2│  █ [14]\n\
+                         │3│  █\n\
+                         └ ┘  █\n",
             0..=0,
         );
         // test alignment
         t(
             "[1, 2, 3]\n'asd\n[1, 2, 3]\n[10, 20, 30]",
-            "[1  2  3]     ‖ [1  2  3]\n\
-             'asd          ‖\n\
-             [1  2  3]     ‖ [ 1   2   3]\n\
-             [10  20  30]  ‖ [10  20  30]\n",
+            "[1  2  3]     █ [1  2  3]\n\
+             'asd          █\n\
+             [1  2  3]     █ [ 1   2   3]\n\
+             [10  20  30]  █ [10  20  30]\n",
             0..=3,
         );
 
@@ -7636,17 +7649,19 @@ sum"
         t(
             "[1;2.3;2222;4km;50000]",
             // Result
-            "⎡    1⎤  ‖ ⎡     1.0   ⎤\n\
-             ⎢  2.3⎥  ‖ ⎢     2.3   ⎥\n\
-             ⎢ 2222⎥  ‖ ⎢ 2 222.0   ⎥\n\
-             ⎢  4km⎥  ‖ ⎢     4.0 km⎥\n\
-             ⎣50000⎦  ‖ ⎣50 000.0   ⎦\n",
+            "┌     ┐  █ ┌           ┐\n\
+             │    1│  █ │     1.0   │\n\
+             │  2.3│  █ │     2.3   │\n\
+             │ 2222│  █ │ 2 222.0   │\n\
+             │  4km│  █ │     4.0 km│\n\
+             │50000│  █ │50 000.0   │\n\
+             └     ┘  █ └           ┘\n",
             0..=0,
         );
         // test selecting only a single line
         t(
             "[1, 2, 3]\n'asd\n[1, 2, 3]\n[10, 20, 30]",
-            "[1  2  3]  ‖ [1  2  3]\n",
+            "[1  2  3]  █ [1  2  3]\n",
             2..=2,
         );
         t(
@@ -7667,7 +7682,7 @@ human brain: 10^16 op/s
 so far 100 000 000 000 humans lived
 avg. human lifespan is 50 years
 total human brain activity is &[14] * &[15] * (&[16]/1s)",
-            "2222222222222222222722.22222  ‖ 2 222 222 222 222 222 222 722.22222\n",
+            "2222222222222222222722.22222  █ 2 222 222 222 222 222 222 722.22222\n",
             11..=11,
         );
     }
@@ -10650,7 +10665,7 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         assert_eq!(editor_objects[EditorY::new(1)].len(), 1);
 
         assert_eq!(app.render_data.get_rendered_height(EditorY::new(0)), 1);
-        assert_eq!(app.render_data.get_rendered_height(EditorY::new(1)), 4);
+        assert_eq!(app.render_data.get_rendered_height(EditorY::new(1)), 6);
         assert_eq!(
             app.render_data.get_render_y(EditorY::new(0)),
             Some(RenderPosY::new(0))
@@ -10677,7 +10692,7 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         assert_eq!(editor_objects[EditorY::new(0)].len(), 1);
         assert_eq!(editor_objects[EditorY::new(1)].len(), 1);
         assert_eq!(app.render_data.get_rendered_height(EditorY::new(0)), 1);
-        assert_eq!(app.render_data.get_rendered_height(EditorY::new(1)), 4);
+        assert_eq!(app.render_data.get_rendered_height(EditorY::new(1)), 6);
         assert_eq!(
             app.render_data.get_render_y(EditorY::new(0)),
             Some(RenderPosY::new(0))
