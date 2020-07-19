@@ -50,6 +50,7 @@ const SCROLL_BAR_WIDTH: usize = 1;
 const RIGHT_GUTTER_WIDTH: usize = 2;
 const MIN_RESULT_PANEL_WIDTH: usize = 30;
 const SUM_VARIABLE_INDEX: usize = 0;
+const MATRIX_ASCII_HEADER_FOOTER_LINE_COUNT: usize = 2;
 
 pub enum Click {
     Simple(Pos),
@@ -320,7 +321,7 @@ pub mod helper {
                             if mat.row_count == 1 {
                                 1
                             } else {
-                                mat.row_count + 2
+                                mat.row_count + MATRIX_ASCII_HEADER_FOOTER_LINE_COUNT
                             }
                         }
                         _ => max_height,
@@ -343,7 +344,7 @@ pub mod helper {
                         if row_count == 1 {
                             1
                         } else {
-                            row_count + 2
+                            row_count + MATRIX_ASCII_HEADER_FOOTER_LINE_COUNT
                         }
                     }
                     TokenType::LineReference { var_index } => {
@@ -765,7 +766,7 @@ impl MatrixEditing {
         let vert_align_offset = if self.row_count == 1 {
             (rendered_row_height - 1) / 2
         } else {
-            (rendered_row_height - (self.row_count + 2)) / 2
+            (rendered_row_height - (self.row_count + MATRIX_ASCII_HEADER_FOOTER_LINE_COUNT)) / 2
         };
 
         render_matrix_left_brackets(
@@ -864,7 +865,7 @@ impl MatrixEditing {
                 }
             }
             render_x += if col_i + 1 < self.col_count {
-                max_width + 2
+                max_width + MATRIX_ASCII_HEADER_FOOTER_LINE_COUNT
             } else {
                 max_width
             };
@@ -1758,21 +1759,20 @@ impl NoteCalcApp {
                     redraw: Some((EditorRowFlags::single_row(new_row), RedrawTarget::Both)),
                 }
             } else {
+                let mut redraw_flags = EditorRowFlags::single_row(cur_row);
                 if modifiers.alt {
-                    self.render_data.set_rendered_height(
-                        EditorY::new(cur_row),
-                        calc_rendered_height(
-                            EditorY::new(cur_row),
-                            &self.matrix_editing,
-                            tokens,
-                            results,
-                            vars,
-                        ),
-                    );
-                }
+                    let y = EditorY::new(cur_row);
+                    let old_h = self.render_data.get_rendered_height(y);
+                    let new_h =
+                        calc_rendered_height(y, &self.matrix_editing, tokens, results, vars);
+                    self.render_data.set_rendered_height(y, new_h);
+                    if new_h != old_h {
+                        redraw_flags.merge(EditorRowFlags::all_rows_starting_at(cur_row))
+                    }
+                };
                 InputResult {
                     modif: None,
-                    redraw: Some((EditorRowFlags::single_row(prev_row), RedrawTarget::Both)),
+                    redraw: Some((redraw_flags, RedrawTarget::Both)),
                 }
             }
         } else {
@@ -3438,7 +3438,7 @@ fn render_matrix_obj<'text_ptr>(
     let vert_align_offset = if row_count == 1 {
         (rendered_row_height - 1) / 2
     } else {
-        (rendered_row_height - (row_count + 2)) / 2
+        (rendered_row_height - (row_count + MATRIX_ASCII_HEADER_FOOTER_LINE_COUNT)) / 2
     };
 
     render_matrix_left_brackets(
@@ -3624,7 +3624,7 @@ fn render_matrix_result<'text_ptr>(
     let vert_align_offset = if mat.row_count == 1 {
         (rendered_row_height - 1) / 2
     } else {
-        (rendered_row_height - (mat.row_count + 2)) / 2
+        (rendered_row_height - (mat.row_count + MATRIX_ASCII_HEADER_FOOTER_LINE_COUNT)) / 2
     };
     render_matrix_left_brackets(
         start_x,
@@ -4386,7 +4386,7 @@ fn calc_rendered_height<'b>(
                     if it.row_count == 1 {
                         1
                     } else {
-                        it.row_count + 2
+                        it.row_count + MATRIX_ASCII_HEADER_FOOTER_LINE_COUNT
                     }
                 }),
         );
@@ -8849,6 +8849,72 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut editor_objects,
             );
             assert_eq!("[1,2;0,0]", app.editor_content.get_content());
+        }
+    }
+
+    #[test]
+    fn test_that_enlarging_matrix_rerenders_everything_below_it() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "[1]\n1\n2\n3".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        // move behind the matrix
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 3));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Left,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Down,
+            InputModifiers::alt(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        for i in 0..3 {
+            assert!(app.result_area_redraw.need(EditorY::new(i)));
+            assert!(app.editor_area_redraw.need(EditorY::new(i)));
         }
     }
 
