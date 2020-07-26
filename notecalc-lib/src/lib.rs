@@ -105,6 +105,10 @@ pub mod helper {
         pub fn as_slice(&self) -> &[LineResult] {
             &self.0[..]
         }
+
+        pub fn as_mut_slice(&mut self) -> &mut [LineResult] {
+            &mut self.0[..]
+        }
     }
     impl Index<EditorY> for Results {
         type Output = LineResult;
@@ -159,6 +163,7 @@ pub mod helper {
             let bitset = 1u64 << row_index;
             EditorRowFlags { bitset }
         }
+
         pub fn clear(&mut self) {
             self.bitset = 0;
         }
@@ -238,6 +243,17 @@ pub mod helper {
             r.current_editor_width = result_gutter_x - left_gutter_width;
             r.current_result_panel_width = client_width - result_gutter_x - right_gutter_width;
             r
+        }
+
+        pub fn clear(&mut self) {
+            for e in self.editor_y_to_render_y.iter_mut() {
+                *e = None;
+            }
+            for e in self.editor_y_to_rendered_height.iter_mut() {
+                *e = 0;
+            }
+            self.scroll_y = 0;
+            self.latest_bottom = RenderPosY::new(0);
         }
 
         pub fn get_render_y(&self, y: EditorY) -> Option<RenderPosY> {
@@ -988,7 +1004,11 @@ impl NoteCalcApp {
         }
         self.line_id_generator = self.editor_content.line_count() + 1;
 
-        self.render_data.scroll_y = 0;
+        for r in results.as_mut_slice() {
+            *r = Ok(None)
+        }
+        vars.clear();
+        self.render_data.clear();
         self.update_tokens_and_redraw_requirements(
             RowModificationType::AllLinesFrom(0),
             units,
@@ -1839,45 +1859,82 @@ impl NoteCalcApp {
                         },
                     },
                     None => {
+                        fn clear_single_line_selection_rows(pos: Pos) -> EditorRowFlags {
+                            // single line selection, clear the line above/below to redraw the SUM
+                            if pos.row == 0 {
+                                EditorRowFlags::range(0, 1)
+                            } else {
+                                EditorRowFlags::range(pos.row - 1, pos.row)
+                            }
+                        }
                         let new_cursor_y = cursor_pos.row;
                         let redraw = if scrolled {
                             Some((EditorRowFlags::all_rows_starting_at(0), RedrawTarget::Both))
                         } else {
-                            if let Some((first, second)) = prev_selection.is_range() {
-                                let from = first.row.min(new_cursor_y);
-                                let to = second.row.max(new_cursor_y);
-                                Some((EditorRowFlags::range(from, to), RedrawTarget::Both))
-                            } else if let Some((first, second)) =
-                                self.editor.get_selection().is_range()
-                            {
-                                let from = first.row.min(new_cursor_y);
-                                let to = second.row.max(new_cursor_y);
-                                Some((EditorRowFlags::range(from, to), RedrawTarget::Both))
-                            } else {
-                                let old_cursor_y = prev_cursor_pos.row;
-                                if old_cursor_y > new_cursor_y {
-                                    Some((
-                                        EditorRowFlags::range(new_cursor_y, old_cursor_y),
-                                        RedrawTarget::Both,
-                                    ))
-                                } else if old_cursor_y < new_cursor_y {
-                                    Some((
-                                        EditorRowFlags::range(old_cursor_y, new_cursor_y),
-                                        RedrawTarget::Both,
-                                    ))
-                                } else {
-                                    let new_cursor_x = cursor_pos.column;
-                                    let old_cursor_x = prev_cursor_pos.column;
-                                    if old_cursor_x != new_cursor_x {
-                                        Some((
-                                            EditorRowFlags::single_row(new_cursor_y),
-                                            RedrawTarget::Both,
-                                        ))
-                                    } else {
-                                        None
+                            let flag = match (
+                                prev_selection.is_range(),
+                                self.editor.get_selection().is_range(),
+                            ) {
+                                (Some((old_first, old_second)), Some((new_first, new_second))) => {
+                                    let was_single_line_sel = old_first.row == old_second.row;
+                                    let is_single_line_sel = new_first.row == new_second.row;
+                                    match (was_single_line_sel, is_single_line_sel) {
+                                        (true, true) => {
+                                            clear_single_line_selection_rows(new_second)
+                                        }
+                                        (true, false) => {
+                                            // was single line selection but expanded to multiline
+                                            let mut flag =
+                                                clear_single_line_selection_rows(old_second);
+                                            flag.merge(EditorRowFlags::range(
+                                                new_first.row,
+                                                new_second.row,
+                                            ));
+                                            flag
+                                        }
+                                        (false, true) => {
+                                            // was multi line selection but reduced to singleline
+                                            let mut flag =
+                                                clear_single_line_selection_rows(new_second);
+                                            flag.merge(EditorRowFlags::range(
+                                                old_first.row,
+                                                old_second.row,
+                                            ));
+                                            flag
+                                        }
+                                        (false, false) => {
+                                            let from = old_first.row.min(new_cursor_y);
+                                            let to = old_second.row.max(new_cursor_y);
+                                            EditorRowFlags::range(from, to)
+                                        }
                                     }
                                 }
-                            }
+                                (Some((old_first, old_second)), None) => {
+                                    // a selection was cancelled
+                                    let was_single_line_sel = old_first.row == old_second.row;
+                                    let mut flag = if was_single_line_sel {
+                                        clear_single_line_selection_rows(old_second)
+                                    } else {
+                                        // multiline selection was cancelled
+                                        EditorRowFlags::range(old_first.row, old_second.row)
+                                    };
+                                    flag.merge(EditorRowFlags::single_row(new_cursor_y));
+                                    flag
+                                }
+                                (None, Some((new_first, new_second))) => {
+                                    let is_single_line_sel = new_first.row == new_second.row;
+                                    let flag = if is_single_line_sel {
+                                        EditorRowFlags::single_row(new_cursor_y)
+                                    } else {
+                                        EditorRowFlags::range(new_first.row, new_second.row)
+                                    };
+                                    flag
+                                }
+                                (None, None) => {
+                                    EditorRowFlags::multiple(&[prev_cursor_pos.row, new_cursor_y])
+                                }
+                            };
+                            Some((flag, RedrawTarget::Both))
                         };
                         InputResult {
                             modif: None,
@@ -6972,6 +7029,118 @@ mod tests {
     }
 
     #[test]
+    fn test_tab_change_clears_variables() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.set_normalized_content(
+            "source: https://rippedbody.com/how-to-calculate-leangains-macros/
+
+weight = 80 kg
+height = 190 cm
+age = 30
+
+-- Step 1: Calculate your  (Basal Metabolic Rate) (BMR)
+men BMR = 66 + (13.7 * weight/1kg) + (5 * height/1cm) - (6.8 * age)
+
+'STEP 2. FIND YOUR TDEE BY ADJUSTING FOR ACTIVITY
+Activity 
+' Sedentary (little or no exercise) [BMR x 1.15]
+' Mostly sedentary (office work), plus 3–6 days of weight lifting [BMR x 1.35]
+' Lightly active, plus 3–6 days of weight lifting [BMR x 1.55]
+' Highly active, plus 3–6 days of weight lifting [BMR x 1.75]
+TDEE = (men BMR * 1.35)
+
+'STEP 3. ADJUST CALORIE INTAKE BASED ON YOUR GOAL
+Fat loss
+    target weekly fat loss rate = 0.5%
+    TDEE - ((weight/1kg) * target weekly fat loss rate * 1100)kcal
+Muscle gain
+    monthly rates of weight gain = 1%
+    TDEE + (weight/1kg * monthly rates of weight gain * 330)kcal
+
+Protein intake
+    1.6 g/kg
+    2.2 g/kg
+    weight * &[27] to g
+    weight * &[28] to g
+Fat intake
+    0.5g/kg or at least 30 %
+    1g/kg minimum
+    fat calory = 9
+    &[24]",
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+
+        app.set_normalized_content(
+            "Valaki elment Horvátba 12000 Ftért
+3 éjszakát töltött ott
+&[1]*&[2] 
+utána vacsorázott egyet 5000ért 
+
+
+999 + 1
+22222
+3
+4 + 2
+2
+&[10]
+722
+alma = 3
+alma * 2
+alma * &[13] + &[12] 
+&[13] km
+2222222222222222222722.22222222 km
+
+[1;0] * [1,2]
+1 + 2
+2
+
+
+2
+23
+human brain: 10^16 op/s
+so far000 humans lived
+avg. human lifespan is 50 years
+total human brain activity is &[27] * &[28] * (&[29]/1s)",
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+    }
+
+    #[test]
     fn no_memory_deallocation_bug_in_line_selection() {
         let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
             create_app(35);
@@ -10950,6 +11119,507 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             }
         }
         assert_eq!(vec!['a', 'b', 'c'], ok);
+    }
+
+    #[test]
+    fn moving_single_line_selection_rerenders_both_sum_and_line() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "first\nasdsad\n1+2+3".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        // select the expression in the last row
+        for _ in 0..5 {
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::shift(),
+                &arena,
+                &units,
+                &mut tokens,
+                &mut results,
+                &mut vars,
+                &mut editor_objects,
+            );
+        }
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        // end the selection, cursor stays in the same row
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Right,
+            InputModifiers::shift(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        // the cursor line + the line above which contains the SUM should be rerendered
+        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
+        assert!(!app.result_area_redraw.need(EditorY::new(0)));
+        assert!(app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        assert!(app.editor_area_redraw.need(EditorY::new(2)));
+        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+
+        // end the selection, cursor stays in the same row
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Left,
+            InputModifiers::shift(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        // the cursor line + the line above which contains the SUM should be rerendered
+        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
+        assert!(!app.result_area_redraw.need(EditorY::new(0)));
+        assert!(app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        assert!(app.editor_area_redraw.need(EditorY::new(2)));
+        assert!(app.result_area_redraw.need(EditorY::new(2)));
+    }
+
+    #[test]
+    fn single_line_selection_end_rerender() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "first\nasdsad\n1+2+3".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        // select the expression in the last row
+        for _ in 0..5 {
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::shift(),
+                &arena,
+                &units,
+                &mut tokens,
+                &mut results,
+                &mut vars,
+                &mut editor_objects,
+            );
+        }
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        // end the selection, cursor stays in the same row
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Right,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        // the cursor line + the line above which contains the SUM should be rerendered
+        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
+        assert!(!app.result_area_redraw.need(EditorY::new(0)));
+        assert!(app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        assert!(app.editor_area_redraw.need(EditorY::new(2)));
+        assert!(app.result_area_redraw.need(EditorY::new(2)));
+    }
+
+    #[test]
+    fn single_line_selection_end_rerender_in_the_first_row() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "1+2+3\nasdsad\nasdqweqwe".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 0));
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        // select the expression in the first row
+        for _ in 0..5 {
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Right,
+                InputModifiers::shift(),
+                &arena,
+                &units,
+                &mut tokens,
+                &mut results,
+                &mut vars,
+                &mut editor_objects,
+            );
+        }
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        // end the selection, cursor stays in the same row
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Right,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        // the cursor line + the line below which contains the SUM should be rerendered
+        assert!(app.editor_area_redraw.need(EditorY::new(0)));
+        assert!(app.result_area_redraw.need(EditorY::new(0)));
+        assert!(app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        assert!(!app.editor_area_redraw.need(EditorY::new(2)));
+        assert!(!app.result_area_redraw.need(EditorY::new(2)));
+    }
+
+    #[test]
+    fn test_single_to_multi_line_selection_clears() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "qweqwe\nasdsad\n1+2+3\n3\n4".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(2, 0));
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        // select the expression in the 2nd row
+        for _ in 0..5 {
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Right,
+                InputModifiers::shift(),
+                &arena,
+                &units,
+                &mut tokens,
+                &mut results,
+                &mut vars,
+                &mut editor_objects,
+            );
+        }
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        // expand selection
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Down,
+            InputModifiers::shift(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+
+        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
+        assert!(!app.result_area_redraw.need(EditorY::new(0)));
+        // clears the SUM
+        assert!(app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        // clears the selected rows
+        assert!(app.editor_area_redraw.need(EditorY::new(2)));
+        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        assert!(app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(app.result_area_redraw.need(EditorY::new(1)));
+    }
+
+    #[test]
+    fn test_multi_to_single_line_selection_clears() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "qweqwe\nasdsad\n1+2+3\n3\n4".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(2, 0));
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        // select the expression in the 2nd row
+        for _ in 0..5 {
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Right,
+                InputModifiers::shift(),
+                &arena,
+                &units,
+                &mut tokens,
+                &mut results,
+                &mut vars,
+                &mut editor_objects,
+            );
+        }
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        // expand selection
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Down,
+            InputModifiers::shift(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        // reduce selection
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::shift(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        // 1st row contains the SUM
+        // 2nd and 3rd rows contain the selection, all of them must be updated
+        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
+        assert!(!app.result_area_redraw.need(EditorY::new(0)));
+        assert!(app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        assert!(app.editor_area_redraw.need(EditorY::new(2)));
+        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        assert!(app.editor_area_redraw.need(EditorY::new(3)));
+        assert!(app.result_area_redraw.need(EditorY::new(3)));
+    }
+
+    #[test]
+    fn page_down_should_rerender_only_2_rows() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "first\nasdsad\n1+2+3".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 0));
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::PageDown,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+
+        assert!(app.editor_area_redraw.need(EditorY::new(0)));
+        assert!(app.result_area_redraw.need(EditorY::new(0)));
+        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(!app.result_area_redraw.need(EditorY::new(1)));
+        assert!(app.editor_area_redraw.need(EditorY::new(2)));
+        assert!(app.result_area_redraw.need(EditorY::new(2)));
+    }
+
+    #[test]
+    fn page_up_should_rerender_only_2_rows() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "first\nasdsad\n1+2+3".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::PageUp,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        // the cursor line + the line above which contains the SUM should be rerendered
+        assert!(app.editor_area_redraw.need(EditorY::new(0)));
+        assert!(app.result_area_redraw.need(EditorY::new(0)));
+        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(!app.result_area_redraw.need(EditorY::new(1)));
+        assert!(app.editor_area_redraw.need(EditorY::new(2)));
+        assert!(app.result_area_redraw.need(EditorY::new(2)));
     }
 
     #[test]
