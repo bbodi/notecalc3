@@ -1400,15 +1400,10 @@ impl NoteCalcApp {
                 editor_click_pos.row,
                 &self.editor_content,
             );
-            let new_row = self.editor.get_selection().get_cursor_pos().row;
-            let modif = if let Some((first, second)) = prev_selection.is_range() {
-                let mut m = EditorRowFlags::range(first.row, second.row);
-                m.merge(EditorRowFlags::single_row(new_row));
-                m
-            } else {
-                EditorRowFlags::multiple(&[prev_selection.start.row, new_row])
-            };
-            self.set_redraw_flag(modif, RedrawTarget::Both);
+
+            let flag = self.calc_rerender_for_cursor_movement(prev_selection, false);
+
+            self.set_redraw_flag(flag, RedrawTarget::Both);
             self.editor.blink_cursor();
         }
         if self.mouse_state.is_none() {
@@ -1653,6 +1648,83 @@ impl NoteCalcApp {
         };
     }
 
+    pub fn calc_rerender_for_cursor_movement<'b>(
+        &mut self,
+        prev_selection: Selection,
+        scrolled: bool,
+    ) -> EditorRowFlags {
+        fn clear_single_line_selection_rows(pos: Pos) -> EditorRowFlags {
+            // single line selection, clear the line above/below to redraw the SUM
+            if pos.row == 0 {
+                EditorRowFlags::range(0, 1)
+            } else {
+                EditorRowFlags::range(pos.row - 1, pos.row)
+            }
+        }
+        let cursor_pos = self.editor.get_selection().get_cursor_pos();
+        let new_cursor_y = cursor_pos.row;
+        let redraw = if scrolled {
+            EditorRowFlags::all_rows_starting_at(0)
+        } else {
+            let flag = match (
+                prev_selection.is_range(),
+                self.editor.get_selection().is_range(),
+            ) {
+                (Some((old_first, old_second)), Some((new_first, new_second))) => {
+                    let was_single_line_sel = old_first.row == old_second.row;
+                    let is_single_line_sel = new_first.row == new_second.row;
+                    match (was_single_line_sel, is_single_line_sel) {
+                        (true, true) => clear_single_line_selection_rows(new_second),
+                        (true, false) => {
+                            // was single line selection but expanded to multiline
+                            let mut flag = clear_single_line_selection_rows(old_second);
+                            flag.merge(EditorRowFlags::range(new_first.row, new_second.row));
+                            flag
+                        }
+                        (false, true) => {
+                            // was multi line selection but reduced to singleline
+                            let mut flag = clear_single_line_selection_rows(new_second);
+                            flag.merge(EditorRowFlags::range(old_first.row, old_second.row));
+                            flag
+                        }
+                        (false, false) => {
+                            let from = old_first.row.min(new_cursor_y);
+                            let to = old_second.row.max(new_cursor_y);
+                            EditorRowFlags::range(from, to)
+                        }
+                    }
+                }
+                (Some((old_first, old_second)), None) => {
+                    // a selection was cancelled
+                    let was_single_line_sel = old_first.row == old_second.row;
+                    let mut flag = if was_single_line_sel {
+                        clear_single_line_selection_rows(old_second)
+                    } else {
+                        // multiline selection was cancelled
+                        EditorRowFlags::range(old_first.row, old_second.row)
+                    };
+                    flag.merge(EditorRowFlags::single_row(new_cursor_y));
+                    flag
+                }
+                (None, Some((new_first, new_second))) => {
+                    let is_single_line_sel = new_first.row == new_second.row;
+                    let flag = if is_single_line_sel {
+                        EditorRowFlags::single_row(new_cursor_y)
+                    } else {
+                        EditorRowFlags::range(new_first.row, new_second.row)
+                    };
+                    flag
+                }
+                (None, None) => {
+                    let prev_cursor_pos = prev_selection.get_cursor_pos();
+                    EditorRowFlags::multiple(&[prev_cursor_pos.row, new_cursor_y])
+                }
+            };
+            flag
+        };
+        return redraw;
+    }
+
     pub fn handle_input_and_update_tokens_plus_redraw_requirements<'b>(
         &mut self,
         input: EditorInputEvent,
@@ -1848,7 +1920,6 @@ impl NoteCalcApp {
                 } else {
                     false
                 };
-
                 match modif_type {
                     Some(r) => InputResult {
                         modif: Some(r),
@@ -1859,86 +1930,10 @@ impl NoteCalcApp {
                         },
                     },
                     None => {
-                        fn clear_single_line_selection_rows(pos: Pos) -> EditorRowFlags {
-                            // single line selection, clear the line above/below to redraw the SUM
-                            if pos.row == 0 {
-                                EditorRowFlags::range(0, 1)
-                            } else {
-                                EditorRowFlags::range(pos.row - 1, pos.row)
-                            }
-                        }
-                        let new_cursor_y = cursor_pos.row;
-                        let redraw = if scrolled {
-                            Some((EditorRowFlags::all_rows_starting_at(0), RedrawTarget::Both))
-                        } else {
-                            let flag = match (
-                                prev_selection.is_range(),
-                                self.editor.get_selection().is_range(),
-                            ) {
-                                (Some((old_first, old_second)), Some((new_first, new_second))) => {
-                                    let was_single_line_sel = old_first.row == old_second.row;
-                                    let is_single_line_sel = new_first.row == new_second.row;
-                                    match (was_single_line_sel, is_single_line_sel) {
-                                        (true, true) => {
-                                            clear_single_line_selection_rows(new_second)
-                                        }
-                                        (true, false) => {
-                                            // was single line selection but expanded to multiline
-                                            let mut flag =
-                                                clear_single_line_selection_rows(old_second);
-                                            flag.merge(EditorRowFlags::range(
-                                                new_first.row,
-                                                new_second.row,
-                                            ));
-                                            flag
-                                        }
-                                        (false, true) => {
-                                            // was multi line selection but reduced to singleline
-                                            let mut flag =
-                                                clear_single_line_selection_rows(new_second);
-                                            flag.merge(EditorRowFlags::range(
-                                                old_first.row,
-                                                old_second.row,
-                                            ));
-                                            flag
-                                        }
-                                        (false, false) => {
-                                            let from = old_first.row.min(new_cursor_y);
-                                            let to = old_second.row.max(new_cursor_y);
-                                            EditorRowFlags::range(from, to)
-                                        }
-                                    }
-                                }
-                                (Some((old_first, old_second)), None) => {
-                                    // a selection was cancelled
-                                    let was_single_line_sel = old_first.row == old_second.row;
-                                    let mut flag = if was_single_line_sel {
-                                        clear_single_line_selection_rows(old_second)
-                                    } else {
-                                        // multiline selection was cancelled
-                                        EditorRowFlags::range(old_first.row, old_second.row)
-                                    };
-                                    flag.merge(EditorRowFlags::single_row(new_cursor_y));
-                                    flag
-                                }
-                                (None, Some((new_first, new_second))) => {
-                                    let is_single_line_sel = new_first.row == new_second.row;
-                                    let flag = if is_single_line_sel {
-                                        EditorRowFlags::single_row(new_cursor_y)
-                                    } else {
-                                        EditorRowFlags::range(new_first.row, new_second.row)
-                                    };
-                                    flag
-                                }
-                                (None, None) => {
-                                    EditorRowFlags::multiple(&[prev_cursor_pos.row, new_cursor_y])
-                                }
-                            };
-                            Some((flag, RedrawTarget::Both))
-                        };
+                        let flag = self.calc_rerender_for_cursor_movement(prev_selection, scrolled);
                         InputResult {
                             modif: None,
-                            redraw,
+                            redraw: Some((flag, RedrawTarget::Both)),
                         }
                     }
                 }
@@ -11210,6 +11205,75 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut results,
             &mut vars,
             &mut editor_objects,
+        );
+        // the cursor line + the line above which contains the SUM should be rerendered
+        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
+        assert!(!app.result_area_redraw.need(EditorY::new(0)));
+        assert!(app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        assert!(app.editor_area_redraw.need(EditorY::new(2)));
+        assert!(app.result_area_redraw.need(EditorY::new(2)));
+    }
+
+    #[test]
+    fn test_ending_selection_with_click_clears_sum_too() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "first\nasdsad\n1+2+3".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        // select the expression in the last row
+        for _ in 0..5 {
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Left,
+                InputModifiers::shift(),
+                &arena,
+                &units,
+                &mut tokens,
+                &mut results,
+                &mut vars,
+                &mut editor_objects,
+            );
+        }
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        // end the selection
+        app.handle_click(
+            30,
+            RenderPosY::new(2),
+            &editor_objects,
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
         );
         // the cursor line + the line above which contains the SUM should be rerendered
         assert!(!app.editor_area_redraw.need(EditorY::new(0)));
