@@ -1008,6 +1008,11 @@ impl NoteCalcApp {
             *r = Ok(None)
         }
         vars.clear();
+        vars.push(Variable {
+            name: Box::from(&['s', 'u', 'm'][..]),
+            value: Err(()),
+            defined_at_row: 0,
+        });
         self.render_data.clear();
         self.update_tokens_and_redraw_requirements(
             RowModificationType::AllLinesFrom(0),
@@ -1273,8 +1278,8 @@ impl NoteCalcApp {
             self.render_data.scroll_y -= 1;
             self.set_redraw_flag(EditorRowFlags::all_rows_starting_at(0), RedrawTarget::Both);
         } else if dir == 1
-            && (dbg!(self.render_data.scroll_y) + dbg!(self.render_data.client_height))
-                < dbg!(self.editor_content.line_count())
+            && (self.render_data.scroll_y + self.render_data.client_height)
+                < self.editor_content.line_count()
         {
             self.render_data.scroll_y += 1;
             self.set_redraw_flag(EditorRowFlags::all_rows_starting_at(0), RedrawTarget::Both);
@@ -4607,9 +4612,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -4628,9 +4633,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
     }
@@ -4670,9 +4675,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
     }
@@ -4699,9 +4704,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.editor
@@ -4723,9 +4728,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_eq!(
@@ -4786,9 +4791,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.editor
@@ -4810,9 +4815,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_eq!(
@@ -4844,9 +4849,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.editor
@@ -4878,9 +4883,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_eq!(
@@ -4910,9 +4915,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -4950,9 +4955,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -4971,9 +4976,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5020,9 +5025,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5041,9 +5046,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5090,9 +5095,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5111,9 +5116,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5163,9 +5168,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5184,9 +5189,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5236,9 +5241,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5257,9 +5262,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5278,9 +5283,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5299,9 +5304,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5339,9 +5344,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5379,9 +5384,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5400,9 +5405,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5451,9 +5456,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_eq!("abcd [1,9,3;4,5,6]", app.editor_content.get_content());
@@ -5480,9 +5485,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5501,9 +5506,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5552,9 +5557,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_eq!("abcd [1,2,9;4,5,6]", app.editor_content.get_content());
@@ -5581,9 +5586,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5602,9 +5607,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             // inside the matrix
@@ -5624,9 +5629,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5645,9 +5650,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5666,9 +5671,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_eq!(
@@ -5699,9 +5704,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5720,9 +5725,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             // inside the matrix
@@ -5752,9 +5757,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5773,9 +5778,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5794,9 +5799,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_eq!(
@@ -5826,9 +5831,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -5978,9 +5983,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_eq!("[1,7,8;9,0,9]4", app.editor_content.get_content());
@@ -6006,9 +6011,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -6027,9 +6032,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -6089,9 +6094,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_eq!("[1,2,3;4,5,6]7", app.editor_content.get_content());
@@ -6120,9 +6125,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -6141,9 +6146,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             // inside the matrix
@@ -6163,9 +6168,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -6184,9 +6189,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -6205,9 +6210,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_eq!(
@@ -6237,9 +6242,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -6269,9 +6274,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -6290,9 +6295,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -6311,9 +6316,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_eq!(
@@ -6344,9 +6349,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -6365,9 +6370,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             // inside the matrix
@@ -6387,9 +6392,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -6408,9 +6413,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -6429,9 +6434,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_eq!(
@@ -6458,9 +6463,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -6490,9 +6495,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -6511,9 +6516,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -6532,9 +6537,9 @@ mod tests {
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_eq!(
@@ -6566,9 +6571,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -6589,9 +6594,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_time(1000);
@@ -6635,9 +6640,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -6678,9 +6683,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -6780,9 +6785,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -6803,9 +6808,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -6834,9 +6839,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         // remove a line
@@ -6996,9 +7001,9 @@ mod tests {
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert!(!app.editor_area_redraw.need(EditorY::new(0)));
@@ -7078,9 +7083,9 @@ Fat intake
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -7128,11 +7133,174 @@ total human brain activity is &[27] * &[28] * (&[29]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+    }
+
+    #[test]
+    fn test_panic_on_pressing_enter() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.set_normalized_content(
+            "source: https://rippedbody.com/how-to-calculate-leangains-macros/
+
+weight = 80 kg
+height = 190 cm
+age = 30
+
+-- Step 1: Calculate your  (Basal Metabolic Rate) (BMR)
+men BMR = 66 + (13.7 * weight/1kg) + (5 * height/1cm) - (6.8 * age)
+
+'STEP 2. FIND YOUR TDEE BY ADJUSTING FOR ACTIVITY
+Activity 
+' Sedentary (little or no exercise) [BMR x 1.15]
+' Mostly sedentary (office work), plus 3–6 days of weight lifting [BMR x 1.35]
+' Lightly active, plus 3–6 days of weight lifting [BMR x 1.55]
+' Highly active, plus 3–6 days of weight lifting [BMR x 1.75]
+TDEE = (men BMR * 1.35)
+
+'STEP 3. ADJUST CALORIE INTAKE BASED ON YOUR GOAL
+Fat loss
+    target weekly fat loss rate = 0.5%
+    TDEE - ((weight/1kg) * target weekly fat loss rate * 1100)kcal
+Muscle gain
+    monthly rates of weight gain = 1%
+    TDEE + (weight/1kg * monthly rates of weight gain * 330)kcal
+
+Protein intake
+    1.6 g/kg
+    2.2 g/kg
+    weight * &[27] to g
+    weight * &[28] to g
+Fat intake
+    0.5g/kg or at least 30 %
+    1g/kg minimum
+    fat calory = 9
+    &[24]",
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+
+        assert_eq!(18, vars.len());
+        fn assert_var(vars: &[Variable], index: usize, name: &str, defined_at: usize) {
+            assert_eq!(defined_at, vars[index].defined_at_row, "{}", name);
+            assert!(vars[index].value.is_ok(), "{}", name);
+            assert_eq!(name.len(), vars[index].name.len(), "{}", name);
+            for (a, b) in name.chars().zip(vars[index].name.iter()) {
+                assert_eq!(a, *b, "{}", name);
+            }
+        }
+        assert_var(&vars, 1, "weight", 2);
+        assert_var(&vars, 2, "height", 3);
+        assert_var(&vars, 3, "age", 4);
+        assert_var(&vars, 4, "men BMR", 7);
+        assert_var(&vars, 5, "TDEE", 15);
+        assert_var(&vars, 6, "target weekly fat loss rate", 19);
+        assert_var(&vars, 7, "&[21]", 20);
+        assert_var(&vars, 8, "monthly rates of weight gain", 22);
+        assert_var(&vars, 9, "&[24]", 23);
+        assert_var(&vars, 10, "&[27]", 26);
+        assert_var(&vars, 11, "&[28]", 27);
+        assert_var(&vars, 12, "&[29]", 28);
+        assert_var(&vars, 13, "&[30]", 29);
+        assert_var(&vars, 14, "&[32]", 31);
+        assert_var(&vars, 15, "&[33]", 32);
+        assert_var(&vars, 16, "fat calory", 33);
+        assert_var(&vars, 17, "&[35]", 34);
+
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(6, 33));
+
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Enter,
+            InputModifiers::none(),
+            &arena,
+            &units,
             &mut tokens,
             &mut results,
             &mut vars,
             &mut editor_objects,
         );
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Backspace,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Enter,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_var(&vars, 1, "weight", 2);
+        assert_var(&vars, 2, "height", 3);
+        assert_var(&vars, 3, "age", 4);
+        assert_var(&vars, 4, "men BMR", 8);
+        assert_var(&vars, 5, "TDEE", 16);
+        assert_var(&vars, 6, "target weekly fat loss rate", 20);
+        assert_var(&vars, 7, "&[21]", 21);
+        assert_var(&vars, 8, "monthly rates of weight gain", 23);
+        assert_var(&vars, 9, "&[24]", 24);
+        assert_var(&vars, 10, "&[27]", 27);
+        assert_var(&vars, 11, "&[28]", 28);
+        assert_var(&vars, 12, "&[29]", 29);
+        assert_var(&vars, 13, "&[30]", 30);
+        assert_var(&vars, 14, "&[32]", 32);
+        assert_var(&vars, 15, "&[33]", 33);
+        assert_var(&vars, 16, "fat calory", 34);
+        assert_var(&vars, 17, "&[35]", 35);
     }
 
     #[test]
@@ -7157,9 +7325,9 @@ total human brain activity is &[27] * &[28] * (&[29]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -7178,9 +7346,9 @@ total human brain activity is &[27] * &[28] * (&[29]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
     }
@@ -7207,9 +7375,9 @@ total human brain activity is &[27] * &[28] * (&[29]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -7247,9 +7415,9 @@ total human brain activity is &[27] * &[28] * (&[29]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -7272,9 +7440,9 @@ total human brain activity is &[27] * &[28] * (&[29]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -7300,9 +7468,9 @@ total human brain activity is &[27] * &[28] * (&[29]/1s)",
             &mut render_buckets,
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -7343,9 +7511,9 @@ total human brain activity is &[27] * &[28] * (&[29]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -7392,9 +7560,9 @@ total human brain activity is &[27] * &[28] * (&[29]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.editor
@@ -7415,9 +7583,9 @@ total human brain activity is &[27] * &[28] * (&[29]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["Err"][..], &result_buffer);
@@ -7474,9 +7642,9 @@ sum"
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["6 m^2", "", "1", "2", "3"][..], &result_buffer);
@@ -7505,9 +7673,9 @@ sum"
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["6 m^2", "4", "Err"][..], &result_buffer);
@@ -7533,9 +7701,9 @@ sum"
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -7604,9 +7772,9 @@ sum"
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -7646,9 +7814,9 @@ sum"
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["10", "100", "101"][..], &result_buffer);
@@ -7674,9 +7842,9 @@ sum"
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         // both the first line and the 'sum' line renders a matrix, which leaves the result buffer empty
@@ -7708,9 +7876,9 @@ sum"
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             fn trimmed_compare(a: &str, b: &str) {
@@ -7875,9 +8043,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -7897,9 +8065,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -7946,9 +8114,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -7969,9 +8137,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8030,9 +8198,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -8053,9 +8221,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8102,9 +8270,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8123,9 +8291,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_eq!("[0]", app.editor_content.get_content());
@@ -8149,9 +8317,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8170,9 +8338,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_eq!("am  ", app.editor_content.get_content());
@@ -8196,9 +8364,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8217,9 +8385,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_eq!("a [0]", app.editor_content.get_content());
@@ -8293,9 +8461,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8314,9 +8482,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8360,9 +8528,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8381,9 +8549,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8447,9 +8615,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8468,9 +8636,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8518,9 +8686,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8539,9 +8707,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8585,9 +8753,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8606,9 +8774,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8652,9 +8820,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8673,9 +8841,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8729,9 +8897,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8750,9 +8918,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8800,9 +8968,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8821,9 +8989,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8867,9 +9035,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8888,9 +9056,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8954,9 +9122,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8975,9 +9143,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -8997,9 +9165,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -9040,9 +9208,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -9061,9 +9229,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -9103,9 +9271,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -9124,9 +9292,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -9170,9 +9338,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -9191,9 +9359,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -9237,9 +9405,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -9258,9 +9426,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -9314,9 +9482,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -9335,9 +9503,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -9384,9 +9552,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -9442,9 +9610,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -9513,9 +9681,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -9604,9 +9772,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -9702,9 +9870,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -9780,9 +9948,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -9866,9 +10034,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -9917,9 +10085,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         // click after the vector in 2nd row
@@ -9969,9 +10137,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         // click after the vector in 2nd row
@@ -10021,9 +10189,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_click(
@@ -10072,9 +10240,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_click(
@@ -10123,9 +10291,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -10152,9 +10320,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["12", "14"][..], &result_buffer);
@@ -10180,9 +10348,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -10230,9 +10398,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["2", "12"][..], &result_buffer);
@@ -10261,9 +10429,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -10292,9 +10460,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["", "2"][..], &result_buffer);
@@ -10316,9 +10484,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["3", "6"][..], &result_buffer);
@@ -10347,9 +10515,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["2", "6"][..], &result_buffer);
@@ -10374,9 +10542,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["2", "3"][..], &result_buffer);
@@ -10405,9 +10573,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["2", "3"][..], &result_buffer);
@@ -10430,9 +10598,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["2", "6"][..], &result_buffer);
@@ -10477,9 +10645,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["12", "36"][..], &result_buffer);
@@ -10508,9 +10676,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["2", "3"][..], &result_buffer);
@@ -10535,9 +10703,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["2", "6"][..], &result_buffer);
@@ -10566,9 +10734,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["2", "6"][..], &result_buffer);
@@ -10605,9 +10773,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["", "3"][..], &result_buffer);
@@ -10636,9 +10804,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["2", "6"][..], &result_buffer);
@@ -10663,9 +10831,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["24", "72"][..], &result_buffer);
@@ -10691,9 +10859,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -10756,9 +10924,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["12", "14", "0", "3"][..], &result_buffer);
@@ -10784,9 +10952,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -10822,9 +10990,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -10843,9 +11011,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
     }
@@ -10872,9 +11040,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -10911,9 +11079,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert!(!app.editor_area_redraw.need(EditorY::new(0)));
@@ -10955,9 +11123,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -10981,9 +11149,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert!(!app.editor_area_redraw.need(EditorY::new(0)));
@@ -11026,9 +11194,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -11066,9 +11234,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -11089,12 +11257,11 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut render_buckets,
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
-        dbg!(&render_buckets.custom_commands[Layer::AboveText as usize]);
         let mut ok = vec![];
         for command in &render_buckets.custom_commands[Layer::AboveText as usize] {
             match command {
@@ -11136,9 +11303,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         // select the expression in the last row
@@ -11160,9 +11327,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         // end the selection, cursor stays in the same row
@@ -11189,9 +11356,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -11235,9 +11402,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         // select the expression in the last row
@@ -11259,9 +11426,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         // end the selection
@@ -11304,9 +11471,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         // select the expression in the last row
@@ -11328,9 +11495,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         // end the selection, cursor stays in the same row
@@ -11375,9 +11542,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         // select the expression in the first row
@@ -11399,9 +11566,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         // end the selection, cursor stays in the same row
@@ -11446,9 +11613,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         // select the expression in the 2nd row
@@ -11470,9 +11637,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         // expand selection
@@ -11521,9 +11688,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         // select the expression in the 2nd row
@@ -11545,9 +11712,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         // expand selection
@@ -11567,9 +11734,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         // reduce selection
@@ -11617,9 +11784,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -11662,9 +11829,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -11706,9 +11873,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -11734,9 +11901,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -11799,9 +11966,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -11843,9 +12010,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -11874,9 +12041,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -11937,9 +12104,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert!(!app.editor_area_redraw.need(EditorY::new(0)));
@@ -11978,9 +12145,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -12009,9 +12176,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         // cancels selection
@@ -12054,9 +12221,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -12097,9 +12264,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -12128,9 +12295,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         // cancels selection
@@ -12170,9 +12337,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -12196,9 +12363,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -12222,9 +12389,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
@@ -12256,9 +12423,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -12284,9 +12451,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_input_and_update_tokens_plus_redraw_requirements(
@@ -12313,9 +12480,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
@@ -12348,9 +12515,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         app.handle_click(
@@ -12404,9 +12571,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_results(&["1", "2", "3", "6"][..], &result_buffer);
@@ -12440,55 +12607,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            assert_results(&["1", "2", "3", "6"][..], &result_buffer);
-        }
-        {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "1\n2\n3\nsum".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_results(&["1", "2", "3", "6"][..], &result_buffer);
@@ -12526,25 +12647,15 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut vars,
                 &mut editor_objects,
             );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Down,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
             let mut result_buffer = [0; 128];
             app.render(
                 &units,
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_results(&["1", "2", "3", "6"][..], &result_buffer);
@@ -12592,6 +12703,62 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut vars,
                 &mut editor_objects,
             );
+            let mut result_buffer = [0; 128];
+            app.render(
+                &units,
+                &mut RenderBuckets::new(),
+                &mut result_buffer,
+                &arena,
+                &tokens,
+                &results,
+                &vars,
+                &mut editor_objects,
+            );
+            assert_results(&["1", "2", "3", "6"][..], &result_buffer);
+        }
+        {
+            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+                create_app(35);
+            let arena = Arena::new();
+
+            app.handle_paste(
+                "1\n2\n3\nsum".to_owned(),
+                &units,
+                &arena,
+                &mut tokens,
+                &mut results,
+                &mut vars,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Up,
+                InputModifiers::none(),
+                &arena,
+                &units,
+                &mut tokens,
+                &mut results,
+                &mut vars,
+                &mut editor_objects,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Up,
+                InputModifiers::none(),
+                &arena,
+                &units,
+                &mut tokens,
+                &mut results,
+                &mut vars,
+                &mut editor_objects,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Down,
+                InputModifiers::none(),
+                &arena,
+                &units,
+                &mut tokens,
+                &mut results,
+                &mut vars,
+                &mut editor_objects,
+            );
             app.handle_input_and_update_tokens_plus_redraw_requirements(
                 EditorInputEvent::Down,
                 InputModifiers::none(),
@@ -12608,9 +12775,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_results(&["1", "2", "3", "6"][..], &result_buffer);
@@ -12638,9 +12805,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_results(&["1", "3", "4"][..], &result_buffer);
@@ -12673,9 +12840,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_results(&["1", "3", "4"][..], &result_buffer);
@@ -12718,54 +12885,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            assert_results(&["1", "3", "4"][..], &result_buffer);
-        }
-        {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-            app.handle_paste(
-                "1\n'2\n3\nsum".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Down,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_results(&["1", "3", "4"][..], &result_buffer);
@@ -12808,9 +12930,54 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
+                &tokens,
+                &results,
+                &vars,
+                &mut editor_objects,
+            );
+            assert_results(&["1", "3", "4"][..], &result_buffer);
+        }
+        {
+            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+                create_app(35);
+            let arena = Arena::new();
+            app.handle_paste(
+                "1\n'2\n3\nsum".to_owned(),
+                &units,
+                &arena,
                 &mut tokens,
                 &mut results,
                 &mut vars,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Up,
+                InputModifiers::none(),
+                &arena,
+                &units,
+                &mut tokens,
+                &mut results,
+                &mut vars,
+                &mut editor_objects,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Down,
+                InputModifiers::none(),
+                &arena,
+                &units,
+                &mut tokens,
+                &mut results,
+                &mut vars,
+                &mut editor_objects,
+            );
+            let mut result_buffer = [0; 128];
+            app.render(
+                &units,
+                &mut RenderBuckets::new(),
+                &mut result_buffer,
+                &arena,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_results(&["1", "3", "4"][..], &result_buffer);
@@ -12838,9 +13005,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_results(&["1", "3", "3"][..], &result_buffer);
@@ -12874,9 +13041,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_results(&["1", "3", "3"][..], &result_buffer);
@@ -12908,9 +13075,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(
@@ -12954,9 +13121,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut render_buckets,
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -13012,9 +13179,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -13073,9 +13240,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(
@@ -13105,9 +13272,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["12"][..], &result_buffer);
@@ -13128,9 +13295,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&[""][..], &result_buffer);
@@ -13150,9 +13317,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_results(&["12"][..], &result_buffer);
@@ -13199,9 +13366,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
     }
@@ -13229,9 +13396,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -13280,9 +13447,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_ne!(
@@ -13314,9 +13481,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -13347,9 +13514,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
         assert_ne!(
@@ -13391,9 +13558,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -13433,9 +13600,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -13456,9 +13623,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -13479,9 +13646,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
     }
@@ -13510,9 +13677,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -13554,9 +13721,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -13580,9 +13747,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -13647,9 +13814,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -13701,9 +13868,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -13724,9 +13891,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -13753,9 +13920,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut render_buckets,
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -13809,9 +13976,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -13838,9 +14005,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut RenderBuckets::new(),
             &mut result_buffer,
             &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+            &tokens,
+            &results,
+            &vars,
             &mut editor_objects,
         );
 
@@ -13880,9 +14047,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_results(&["1", "2", "3"][..], &result_buffer);
@@ -13929,9 +14096,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
 
@@ -13942,9 +14109,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_results(&["2", "3"][..], &result_buffer);
@@ -13991,9 +14158,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
 
@@ -14005,9 +14172,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_results(&["3"][..], &result_buffer);
@@ -14054,9 +14221,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
 
@@ -14069,9 +14236,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_results(&[""][..], &result_buffer);
@@ -14118,9 +14285,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
 
@@ -14134,9 +14301,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_results(&["3"][..], &result_buffer);
@@ -14183,9 +14350,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
 
@@ -14200,9 +14367,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_results(&["2", "3"][..], &result_buffer);
@@ -14249,9 +14416,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
 
@@ -14267,9 +14434,9 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut RenderBuckets::new(),
                 &mut result_buffer,
                 &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
+                &tokens,
+                &results,
+                &vars,
                 &mut editor_objects,
             );
             assert_results(&["1", "2", "3"][..], &result_buffer);
