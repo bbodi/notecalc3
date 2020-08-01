@@ -1,7 +1,7 @@
 use crate::calc::CalcResult;
 use crate::units::units::Units;
 use crate::{ResultFormat, ResultLengths};
-use bigdecimal::{BigDecimal, ToPrimitive};
+use bigdecimal::{BigDecimal, ToPrimitive, Zero};
 use byteorder::WriteBytesExt;
 use smallvec::SmallVec;
 use std::io::Cursor;
@@ -111,8 +111,19 @@ fn num_to_string(
     } else if let Some(decimal_count) = decimal_count {
         let (_, scale) = num.as_bigint_and_exponent();
         let digits = num.digits();
-        let a = (digits as i64 - (scale - decimal_count as i64)).max(0) as u64;
-        Some(strip_trailing_zeroes(&num.with_prec(a)))
+        let mut a = (digits as i64 - (scale - decimal_count as i64)).max(0) as u64;
+        // try to find the shortest meaningful representation
+        let max_count = decimal_count.max(10) as u64;
+        let result;
+        loop {
+            let r = strip_trailing_zeroes(&num.with_prec(a));
+            if a > max_count || !r.is_zero() {
+                result = Some(r);
+                break;
+            }
+            a += 1;
+        }
+        result
     } else {
         if num.is_integer() {
             Some(num.with_scale(0))

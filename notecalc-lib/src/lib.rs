@@ -1658,14 +1658,6 @@ impl NoteCalcApp {
         prev_selection: Selection,
         scrolled: bool,
     ) -> EditorRowFlags {
-        fn clear_single_line_selection_rows(pos: Pos) -> EditorRowFlags {
-            // single line selection, clear the line above/below to redraw the SUM
-            if pos.row == 0 {
-                EditorRowFlags::range(0, 1)
-            } else {
-                EditorRowFlags::range(pos.row - 1, pos.row)
-            }
-        }
         let cursor_pos = self.editor.get_selection().get_cursor_pos();
         let new_cursor_y = cursor_pos.row;
         let redraw = if scrolled {
@@ -1931,7 +1923,18 @@ impl NoteCalcApp {
                         redraw: if scrolled {
                             Some((EditorRowFlags::all_rows_starting_at(0), RedrawTarget::Both))
                         } else {
-                            None
+                            if let Some((start, end)) = prev_selection.is_range() {
+                                if start.row == end.row {
+                                    Some((
+                                        clear_single_line_selection_rows(start),
+                                        RedrawTarget::Both,
+                                    ))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
                         },
                     },
                     None => {
@@ -3092,8 +3095,14 @@ fn render_tokens<'text_ptr>(
         {
             let var = &vars[*var_index];
 
-            let (rendered_width, rendered_height) =
-                render_single_result(units, render_buckets, &var.value, r, gr, decimal_count);
+            let (rendered_width, rendered_height) = render_result_inside_editor(
+                units,
+                render_buckets,
+                &var.value,
+                r,
+                gr,
+                decimal_count,
+            );
 
             let var_name_len = var.name.len();
             editor_objects.push(EditorObject {
@@ -3289,6 +3298,15 @@ fn evaluate_tokens_and_save_result(
         }
     };
     result
+}
+
+fn clear_single_line_selection_rows(pos: Pos) -> EditorRowFlags {
+    // single line selection, clear the line above/below to redraw the SUM
+    if pos.row == 0 {
+        EditorRowFlags::range(0, 1)
+    } else {
+        EditorRowFlags::range(pos.row - 1, pos.row)
+    }
 }
 
 fn sum_result(sum_var: &mut Variable, result: &CalcResult, sum_is_null: &mut bool) {
@@ -3804,7 +3822,7 @@ fn render_matrix_result<'text_ptr>(
     return render_x - start_x;
 }
 
-fn render_single_result<'text_ptr>(
+fn render_result_inside_editor<'text_ptr>(
     units: &Units,
     render_buckets: &mut RenderBuckets<'text_ptr>,
     result: &Result<CalcResult, ()>,
@@ -11592,6 +11610,82 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
     }
 
     #[test]
+    fn test_removing_selected_text_clears_the_sum() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "qweqwe\nasdsad\n1+2+3\n3\n4".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(2, 0));
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        // select the expression in the 2nd row
+        for _ in 0..5 {
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Right,
+                InputModifiers::shift(),
+                &arena,
+                &units,
+                &mut tokens,
+                &mut results,
+                &mut vars,
+                &mut editor_objects,
+            );
+        }
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        // remove the selected text
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Del,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+
+        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
+        assert!(!app.result_area_redraw.need(EditorY::new(0)));
+        // clears the SUM
+        assert!(app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        // clears the modified row
+        assert!(app.editor_area_redraw.need(EditorY::new(2)));
+        assert!(app.result_area_redraw.need(EditorY::new(2)));
+
+        assert!(!app.editor_area_redraw.need(EditorY::new(3)));
+        assert!(!app.result_area_redraw.need(EditorY::new(3)));
+    }
+
+    #[test]
     fn test_single_to_multi_line_selection_clears() {
         let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
             create_app(35);
@@ -11662,8 +11756,8 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         // clears the selected rows
         assert!(app.editor_area_redraw.need(EditorY::new(2)));
         assert!(app.result_area_redraw.need(EditorY::new(2)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        assert!(app.editor_area_redraw.need(EditorY::new(3)));
+        assert!(app.result_area_redraw.need(EditorY::new(3)));
     }
 
     #[test]
