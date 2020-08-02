@@ -82,6 +82,7 @@ pub mod helper {
             self.0.push(d);
         }
     }
+
     impl Index<EditorY> for EditorObjects {
         type Output = Vec<EditorObject>;
 
@@ -110,6 +111,7 @@ pub mod helper {
             &mut self.0[..]
         }
     }
+
     impl Index<EditorY> for Results {
         type Output = LineResult;
 
@@ -135,6 +137,7 @@ pub mod helper {
             self.0.iter()
         }
     }
+
     impl<'a> Index<EditorY> for AppTokens<'a> {
         type Output = Option<Tokens<'a>>;
 
@@ -2917,7 +2920,7 @@ pub fn clear_bottom_due_to_line_shrinking(
             render_buckets
                 .clear_commands
                 .push(OutputMessage::RenderRectangle {
-                    x: LEFT_GUTTER_WIDTH,
+                    x: 0,
                     y,
                     w: gr.current_result_panel_width
                         + gr.current_editor_width
@@ -2926,19 +2929,6 @@ pub fn clear_bottom_due_to_line_shrinking(
                         + RIGHT_GUTTER_WIDTH,
                     h,
                 });
-            // TODO extract these into a methods, parameter: height
-            // line number background
-            render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
-            render_buckets.draw_rect(Layer::BehindText, 0, y, gr.left_gutter_width, h);
-            // result gutter
-            render_buckets.set_color(Layer::BehindText, 0xD2D2D2_FF);
-            render_buckets.draw_rect(
-                Layer::BehindText,
-                gr.result_gutter_x,
-                y,
-                RIGHT_GUTTER_WIDTH,
-                h,
-            );
         }
         gr.latest_bottom = current_bottom;
     }
@@ -2973,34 +2963,15 @@ pub fn clear_bottom_due_to_line_removal(
         render_buckets
             .clear_commands
             .push(OutputMessage::RenderRectangle {
-                x: LEFT_GUTTER_WIDTH,
+                x: 0,
                 y: clear_box_y,
-                w: gr.current_result_panel_width
+                w: gr.left_gutter_width
                     + gr.current_editor_width
-                    + gr.left_gutter_width
+                    + gr.current_result_panel_width
                     + SCROLL_BAR_WIDTH
                     + RIGHT_GUTTER_WIDTH,
                 h: clear_box_h,
             });
-        // TODO extrract these into a methods, parameter: height
-        // line number background
-        render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
-        render_buckets.draw_rect(
-            Layer::BehindText,
-            0,
-            clear_box_y,
-            gr.left_gutter_width,
-            clear_box_h,
-        );
-        // result gutter
-        render_buckets.set_color(Layer::BehindText, 0xD2D2D2_FF);
-        render_buckets.draw_rect(
-            Layer::BehindText,
-            gr.result_gutter_x,
-            clear_box_y,
-            RIGHT_GUTTER_WIDTH,
-            clear_box_h,
-        );
     }
 }
 
@@ -4479,6 +4450,7 @@ fn is_pos_inside_an_obj(editor_objects: &EditorObjects, pos: Pos) -> Option<&Edi
     }
     return None;
 }
+
 pub fn end_matrix_editing(
     matrix_editing: &mut Option<MatrixEditing>,
     editor: &mut Editor,
@@ -7497,7 +7469,7 @@ Fat intake
         for clear_command in &render_buckets.clear_commands {
             match clear_command {
                 OutputMessage::RenderRectangle { x, y, w, h } => {
-                    if *x == 4 && y.as_usize() == 3 && *h == 4 && *w == 121 {
+                    if *x == 0 && y.as_usize() == 3 && *h == 4 && *w == 121 {
                         ok = true;
                     }
                 }
@@ -14025,7 +13997,7 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         // [2] clears the first row
         match &render_buckets.clear_commands[2] {
             OutputMessage::RenderRectangle { x, y, w, h } => {
-                assert_eq!(*x, LEFT_GUTTER_WIDTH);
+                assert_eq!(*x, 4);
                 assert_eq!(y.as_usize(), 0);
                 assert_eq!(*w, 121);
                 assert_eq!(*h, 1);
@@ -14036,7 +14008,7 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         // [3] clears everything below it
         match &render_buckets.clear_commands[3] {
             OutputMessage::RenderRectangle { x, y, w, h } => {
-                assert_eq!(*x, LEFT_GUTTER_WIDTH);
+                assert_eq!(*x, 0);
                 assert_eq!(y.as_usize(), 0);
                 assert!(*w > app.render_data.current_editor_width);
                 assert_eq!(*h, client_height);
