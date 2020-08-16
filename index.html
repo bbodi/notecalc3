@@ -123,52 +123,6 @@
 
 </div>
 <script src="https://ajax.googleapis.com/ajax/libs/webfont/1.5.10/webfont.js"></script>
-<script>
-    let font_width;
-    WebFont.load({
-        custom: {
-            families: ['JetBrainsMono-Regular']
-        },
-        active: function () {
-            init_canvas(canvas);
-            font_width = ctx.measureText('a').width;
-            let max_h = 0;
-            const find_max_char_h = function(ch) {
-                let m = ctx.measureText(ch);
-                let font_height = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent;
-                console.log(ch, ' ', ch.charCodeAt(0), ' ', font_height);
-                if (font_height > max_h) {
-                    max_h = font_height;
-                }
-            };
-            find_max_char_h('▏');
-            find_max_char_h('⎡');
-            find_max_char_h('⎤');
-            find_max_char_h('⎫');
-            line_height = max_h + 2 * FONT_VERT_PADDING;
-            console.log('line_height', line_height);
-
-            canvas.addEventListener('mousedown', on_click);
-            canvas.addEventListener('mouseup', on_mouse_up);
-            canvas.addEventListener('mousemove', on_drag);
-            canvas.addEventListener('wheel', on_wheel);
-
-            overlay_canvas.addEventListener('mousedown', on_click);
-            overlay_canvas.addEventListener('mouseup', on_mouse_up);
-            overlay_canvas.addEventListener('mousemove', on_drag);
-            overlay_canvas.addEventListener('wheel', on_wheel);
-            run();
-        }
-    });
-</script>
-
-<style type="text/css">
-    @font-face {
-        font-family: "JetBrainsMono-Regular";
-        src: url("fonts/JetBrainsMono-Regular.woff") format("woff");
-    }
-</style>
-
 <script src="frontend-web/pkg/frontend_web.js"></script>
 <script>
     let canvas_dirty = 0;
@@ -781,6 +735,52 @@
 
 
 </script>
+<script>
+    let font_width;
+    WebFont.load({
+        custom: {
+            families: ['JetBrainsMono-Regular']
+        },
+        active: function () {
+            init_canvas(canvas);
+            font_width = ctx.measureText('a').width;
+            let max_h = 0;
+            const find_max_char_h = function(ch) {
+                let m = ctx.measureText(ch);
+                let font_height = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent;
+                console.log(ch, ' ', ch.charCodeAt(0), ' ', font_height);
+                if (font_height > max_h) {
+                    max_h = font_height;
+                }
+            };
+            find_max_char_h('▏');
+            find_max_char_h('⎡');
+            find_max_char_h('⎤');
+            find_max_char_h('⎫');
+            line_height = max_h + 2 * FONT_VERT_PADDING;
+            console.log('line_height', line_height);
+
+            canvas.addEventListener('mousedown', on_click);
+            canvas.addEventListener('mouseup', on_mouse_up);
+            canvas.addEventListener('mousemove', on_drag);
+            canvas.addEventListener('wheel', on_wheel);
+
+            overlay_canvas.addEventListener('mousedown', on_click);
+            overlay_canvas.addEventListener('mouseup', on_mouse_up);
+            overlay_canvas.addEventListener('mousemove', on_drag);
+            overlay_canvas.addEventListener('wheel', on_wheel);
+            run();
+        }
+    });
+</script>
+
+<style type="text/css">
+    @font-face {
+        font-family: "JetBrainsMono-Regular";
+        src: url("fonts/JetBrainsMono-Regular.woff") format("woff");
+    }
+</style>
+
 </body>
 
 </html>
