@@ -1,6 +1,6 @@
 use crate::functions::FnType;
 use crate::units::units::{UnitOutput, Units};
-use crate::Variable;
+use crate::{Variables, SUM_VARIABLE_INDEX};
 use bigdecimal::{BigDecimal, Num};
 use std::str::FromStr;
 use typed_arena::Arena;
@@ -130,7 +130,7 @@ pub struct TokenParser {}
 impl TokenParser {
     pub fn parse_line<'text_ptr>(
         line: &[char],
-        variable_names: &[Variable],
+        variable_names: &Variables,
         dst: &mut Vec<Token<'text_ptr>>,
         units: &Units,
         line_index: usize,
@@ -401,16 +401,26 @@ impl TokenParser {
 
     fn try_extract_variable_name<'text_ptr>(
         str: &[char],
-        vars: &[Variable],
+        vars: &Variables,
         row_index: usize,
         allocator: &'text_ptr Arena<char>,
     ) -> Option<Token<'text_ptr>> {
+        if str.starts_with(&['s', 'u', 'm']) && str.get(3).map(|it| *it == ' ').unwrap_or(true) {
+            return Some(Token {
+                typ: TokenType::Variable {
+                    var_index: SUM_VARIABLE_INDEX,
+                },
+                ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(3)),
+            });
+        }
         let mut longest_match_index = 0;
         let mut longest_match = 0;
-        'asd: for (var_index, var) in vars.iter().enumerate().rev() {
-            if var.defined_at_row > row_index {
+        dbg!(&vars);
+        'asd: for (var_index, var) in vars[0..=row_index].iter().enumerate().rev() {
+            if var.is_none() {
                 continue;
             }
+            let var = var.as_ref().unwrap();
             for (i, ch) in var.name.iter().enumerate() {
                 if i >= str.len() || str[i] != *ch {
                     continue 'asd;
@@ -562,8 +572,10 @@ impl TokenParser {
 mod tests {
     use super::*;
     use crate::calc::CalcResult;
+    use crate::helper::create_vars;
     use crate::shunting_yard::tests::*;
     use crate::units::units::Units;
+    use crate::{Variable, MAX_LINE_COUNT};
 
     #[test]
     fn test_number_parsing() {
@@ -572,7 +584,7 @@ mod tests {
             let temp = str.chars().collect::<Vec<_>>();
             let units = Units::new();
             let arena = Arena::new();
-            TokenParser::parse_line(&temp, &Vec::new(), &mut vec, &units, 0, &arena);
+            TokenParser::parse_line(&temp, &create_vars(), &mut vec, &units, 0, &arena);
             match vec.get(0) {
                 Some(Token {
                     ptr: _,
@@ -590,7 +602,7 @@ mod tests {
             let temp = str.chars().collect::<Vec<_>>();
             let units = Units::new();
             let arena = Arena::new();
-            TokenParser::parse_line(&temp, &Vec::new(), &mut vec, &units, 0, &arena);
+            TokenParser::parse_line(&temp, &create_vars(), &mut vec, &units, 0, &arena);
             match vec.get(0) {
                 Some(Token {
                     ptr: _,
@@ -626,12 +638,17 @@ mod tests {
 
     fn test_vars(var_names: &[&'static [char]], text: &str, expected_tokens: &[Token]) {
         use bigdecimal::Zero;
-        let var_names: Vec<Variable> = var_names
+        let var_names: Vec<Option<Variable>> = (0..MAX_LINE_COUNT + 1)
             .into_iter()
-            .map(|it| Variable {
-                name: Box::from(*it),
-                value: Ok(CalcResult::Number(BigDecimal::zero())),
-                defined_at_row: 0,
+            .map(|index| {
+                if let Some(var_name) = var_names.get(index) {
+                    Some(Variable {
+                        name: Box::from(*var_name),
+                        value: Ok(CalcResult::Number(BigDecimal::zero())),
+                    })
+                } else {
+                    None
+                }
             })
             .collect();
         println!("{}", text);
@@ -639,7 +656,8 @@ mod tests {
         let temp = text.chars().collect::<Vec<_>>();
         let units = Units::new();
         let arena = Arena::new();
-        TokenParser::parse_line(&temp, &var_names, &mut vec, &units, 0, &arena);
+        // line index is 10 so the search for the variable does not stop at 0
+        TokenParser::parse_line(&temp, &var_names, &mut vec, &units, 10, &arena);
         assert_eq!(
             expected_tokens.len(),
             vec.len(),

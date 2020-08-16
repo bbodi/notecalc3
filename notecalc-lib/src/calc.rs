@@ -7,7 +7,7 @@ use crate::matrix::MatrixData;
 use crate::token_parser::{OperatorTokenType, TokenType};
 use crate::units::consts::EMPTY_UNIT_DIMENSIONS;
 use crate::units::units::UnitOutput;
-use crate::Variable;
+use crate::Variables;
 
 // it is limited by bigdecimal crate :(
 // TODO: download and mofiy the crate
@@ -51,7 +51,7 @@ pub struct EvaluationResult {
 
 pub fn evaluate_tokens(
     tokens: &mut Vec<TokenType>,
-    variables: &[Variable],
+    variables: &Variables,
 ) -> Result<Option<EvaluationResult>, ()> {
     let mut stack = vec![];
     let mut there_was_unit_conversion = false;
@@ -92,20 +92,13 @@ pub fn evaluate_tokens(
                 }
             }
             TokenType::StringLiteral => panic!(),
-            TokenType::Variable { var_index } => {
+            TokenType::Variable { var_index } | TokenType::LineReference { var_index } => {
                 // TODO clone :(
-                match &variables[*var_index].value {
-                    Ok(value) => {
-                        stack.push(value.clone());
-                    }
-                    Err(_) => {
-                        return Err(());
-                    }
-                }
-            }
-            TokenType::LineReference { var_index } => {
-                // TODO clone :(
-                match &variables[*var_index].value {
+                match &variables[*var_index]
+                    .as_ref()
+                    .expect("var_index should be valid")
+                    .value
+                {
                     Ok(value) => {
                         stack.push(value.clone());
                     }
@@ -795,10 +788,11 @@ fn percentage_of(this: &BigDecimal, base: &BigDecimal) -> BigDecimal {
 mod tests {
     use crate::shunting_yard::tests::{num, op, str, unit};
     use crate::units::units::Units;
-    use crate::{ResultFormat, Variable};
+    use crate::{ResultFormat, Variable, Variables};
     use std::str::FromStr;
 
     use crate::calc::{CalcResult, EvaluationResult};
+    use crate::helper::create_vars;
     use crate::renderer::render_result;
     use crate::token_parser::{OperatorTokenType, Token};
     use bigdecimal::BigDecimal;
@@ -812,7 +806,7 @@ mod tests {
         let units = Units::new();
         let temp = text.chars().collect::<Vec<char>>();
         let mut tokens = vec![];
-        let vars = Vec::new();
+        let vars = create_vars();
         let arena = Arena::new();
         let mut shunting_output = crate::shunting_yard::tests::do_shunting_yard(
             &temp,
@@ -826,7 +820,7 @@ mod tests {
         crate::shunting_yard::tests::compare_tokens(expected_tokens, &tokens);
     }
 
-    fn test_vars(vars: &[Variable], text: &str, expected: &'static str, dec_count: usize) {
+    fn test_vars(vars: &Variables, text: &str, expected: &'static str, dec_count: usize) {
         dbg!("===========================================================");
         dbg!(text);
         let temp = text.chars().collect::<Vec<char>>();
@@ -883,11 +877,11 @@ mod tests {
     }
 
     fn test(text: &str, expected: &'static str) {
-        test_vars(&Vec::new(), text, expected, DECIMAL_COUNT);
+        test_vars(&create_vars(), text, expected, DECIMAL_COUNT);
     }
 
     fn test_with_dec_count(dec_count: usize, text: &str, expected: &'static str) {
-        test_vars(&Vec::new(), text, expected, dec_count);
+        test_vars(&create_vars(), text, expected, dec_count);
     }
 
     #[test]
@@ -1403,11 +1397,10 @@ mod tests {
 
     #[test]
     fn test_variables() {
-        let mut vars = Vec::new();
-        vars.push(Variable {
+        let mut vars = create_vars();
+        vars[0] = Some(Variable {
             name: Box::from(&['v', 'a', 'r'][..]),
             value: Ok(CalcResult::Number(BigDecimal::from_str("12").unwrap())),
-            defined_at_row: 0,
         });
         test_vars(&vars, "var * 2", "24", 0);
         test_vars(&vars, "var - var", "0", 0);

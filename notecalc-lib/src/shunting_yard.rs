@@ -751,9 +751,10 @@ impl ShuntingYard {
 pub mod tests {
     use super::*;
     use crate::calc::CalcResult;
+    use crate::helper::create_vars;
     use crate::token_parser::TokenParser;
     use crate::units::units::{UnitOutput, Units};
-    use crate::Variable;
+    use crate::{Variable, Variables, MAX_LINE_COUNT};
     use bigdecimal::BigDecimal;
     use typed_arena::Arena;
 
@@ -811,7 +812,7 @@ pub mod tests {
         assert_eq!(
             actual_tokens.len(),
             expected_tokens.len(),
-            "actual tokens: {:?}",
+            "Mismatched token count! actual tokens: {:?}",
             &actual_tokens
         );
         for (actual_token, expected_token) in actual_tokens.iter().zip(expected_tokens.iter()) {
@@ -884,22 +885,27 @@ pub mod tests {
         text: &[char],
         units: &'units Units,
         tokens: &mut Vec<Token<'text_ptr>>,
-        vars: &'b [Variable],
+        vars: &'b Variables,
         allocator: &'text_ptr Arena<char>,
     ) -> Vec<TokenType> {
         let mut output = vec![];
-        TokenParser::parse_line(&text, &vars, tokens, &units, 0, allocator);
+        TokenParser::parse_line(&text, vars, tokens, &units, 10, allocator);
         ShuntingYard::shunting_yard(tokens, &mut output);
         return output;
     }
 
     fn test_output_vars(var_names: &[&'static [char]], text: &str, expected_tokens: &[Token]) {
-        let var_names: Vec<Variable> = var_names
+        let var_names: Vec<Option<Variable>> = (0..MAX_LINE_COUNT + 1)
             .into_iter()
-            .map(|it| Variable {
-                name: Box::from(*it),
-                value: Err(()),
-                defined_at_row: 0,
+            .map(|index| {
+                if let Some(var_name) = var_names.get(index) {
+                    Some(Variable {
+                        name: Box::from(*var_name),
+                        value: Err(()),
+                    })
+                } else {
+                    None
+                }
             })
             .collect();
 
@@ -934,24 +940,16 @@ pub mod tests {
         let mut tokens = vec![];
         use bigdecimal::Zero;
         let arena = Arena::new();
-        let _ = do_shunting_yard(
-            &temp,
-            &units,
-            &mut tokens,
-            &vec![
-                Variable {
-                    name: Box::from(&['b', '0'][..]),
-                    value: Ok(CalcResult::Number(BigDecimal::zero())),
-                    defined_at_row: 0,
-                },
-                Variable {
-                    name: Box::from(&['&', '[', '1', ']'][..]),
-                    value: Ok(CalcResult::Number(BigDecimal::zero())),
-                    defined_at_row: 0,
-                },
-            ],
-            &arena,
-        );
+        let mut vars = create_vars();
+        vars[0] = Some(Variable {
+            name: Box::from(&['b', '0'][..]),
+            value: Ok(CalcResult::Number(BigDecimal::zero())),
+        });
+        vars[1] = Some(Variable {
+            name: Box::from(&['&', '[', '1', ']'][..]),
+            value: Ok(CalcResult::Number(BigDecimal::zero())),
+        });
+        let _ = do_shunting_yard(&temp, &units, &mut tokens, &vars, &arena);
         compare_tokens(expected_tokens, &tokens);
     }
 

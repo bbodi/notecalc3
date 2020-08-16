@@ -94,9 +94,11 @@ impl AppPointers {
         unsafe { &*(ptr_holder.editor_objects_ptr as *const EditorObjects) }
     }
 
-    fn mut_vars<'a>(ptr: u32) -> &'a mut Vec<Variable> {
+    fn mut_vars<'a>(ptr: u32) -> &'a mut [Option<Variable>] {
         let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
-        unsafe { &mut *(ptr_holder.vars_ptr as *mut Vec<Variable>) }
+        unsafe {
+            &mut (&mut *(ptr_holder.vars_ptr as *mut [Option<Variable>; MAX_LINE_COUNT + 1]))[..]
+        }
     }
 
     fn allocator<'a>(ptr: u32) -> &'a Arena<char> {
@@ -113,12 +115,7 @@ pub fn create_app(client_width: usize, client_height: usize) -> u32 {
     let editor_objects = EditorObjects::new();
     let tokens = AppTokens::new();
     let results = Results::new();
-    let mut vars = Vec::new();
-    vars.push(Variable {
-        name: Box::from(&['s', 'u', 'm'][..]),
-        value: Err(()),
-        defined_at_row: 0,
-    });
+    let vars = create_vars();
 
     let app = NoteCalcApp::new(client_width, client_height);
     to_box_ptr(AppPointers {
