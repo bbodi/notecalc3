@@ -138,6 +138,13 @@ impl TokenParser {
     ) {
         let mut index = 0;
         let mut can_be_unit = false;
+        if line.starts_with(&['-', '-']) {
+            dst.push(Token {
+                ptr: allocator.alloc_extend(line.iter().map(|it| *it)),
+                typ: TokenType::StringLiteral,
+            });
+            return;
+        }
         while index < line.len() {
             let parse_result = TokenParser::try_extract_variable_name(
                 &line[index..],

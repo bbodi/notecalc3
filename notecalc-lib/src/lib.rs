@@ -2001,8 +2001,13 @@ impl NoteCalcApp {
             let prev_var_name = vars[editor_y.as_usize()].as_ref().map(|it| it.name.clone());
 
             dbg!(&vars);
-            tokens_per_lines[editor_y] =
-                parse_tokens(line, editor_y.as_usize(), units, &*vars, allocator);
+            tokens_per_lines[editor_y] = Some(parse_tokens(
+                line,
+                editor_y.as_usize(),
+                units,
+                &*vars,
+                allocator,
+            ));
             if let Some(tokens) = &mut tokens_per_lines[editor_y] {
                 let result = evaluate_tokens_and_save_result(
                     &mut *vars,
@@ -2030,6 +2035,8 @@ impl NoteCalcApp {
                 tokens_per_lines,
                 editor_y.as_usize(),
             ));
+
+            rows_to_recalc.merge(find_sum(tokens_per_lines, editor_y.as_usize()));
             return rows_to_recalc;
         }
 
@@ -2047,6 +2054,32 @@ impl NoteCalcApp {
                         match token.typ {
                             TokenType::LineReference { .. } if token.ptr == *line_ref_name => {
                                 rows_to_recalc.merge(EditorRowFlags::single_row(editor_y + 1 + i));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            return rows_to_recalc;
+        }
+
+        fn find_sum(tokens_per_lines: &AppTokens, editor_y: usize) -> EditorRowFlags {
+            let mut rows_to_recalc = EditorRowFlags::empty();
+            'outer: for (line_index, tokens) in
+                tokens_per_lines.iter().skip(editor_y + 1).enumerate()
+            {
+                if let Some(tokens) = tokens {
+                    for token in &tokens.tokens {
+                        match token.typ {
+                            TokenType::StringLiteral if token.ptr.starts_with(&['-', '-']) => {
+                                break 'outer;
+                            }
+                            TokenType::Variable { var_index }
+                                if var_index == SUM_VARIABLE_INDEX =>
+                            {
+                                rows_to_recalc
+                                    .merge(EditorRowFlags::single_row(editor_y + 1 + line_index));
+                                break 'outer;
                             }
                             _ => {}
                         }
@@ -2989,23 +3022,19 @@ pub fn parse_tokens<'b>(
     units: &Units,
     vars: &Variables,
     allocator: &'b Arena<char>,
-) -> Option<Tokens<'b>> {
-    return if line.starts_with(&['-', '-']) || line.starts_with(&['\'']) {
-        None
-    } else {
-        // TODO optimize vec allocations
-        let mut tokens = Vec::with_capacity(128);
-        TokenParser::parse_line(line, &vars, &mut tokens, &units, editor_y, allocator);
+) -> Tokens<'b> {
+    // TODO optimize vec allocations
+    let mut tokens = Vec::with_capacity(128);
+    TokenParser::parse_line(line, &vars, &mut tokens, &units, editor_y, allocator);
 
-        // TODO: measure is 128 necessary?
-        // and remove allocation
-        let mut shunting_output_stack = Vec::with_capacity(128);
-        ShuntingYard::shunting_yard(&mut tokens, &mut shunting_output_stack);
-        Some(Tokens {
-            tokens,
-            shunting_output_stack,
-        })
-    };
+    // TODO: measure is 128 necessary?
+    // and remove allocation
+    let mut shunting_output_stack = Vec::with_capacity(128);
+    ShuntingYard::shunting_yard(&mut tokens, &mut shunting_output_stack);
+    Tokens {
+        tokens,
+        shunting_output_stack,
+    }
 }
 
 fn render_simple_text_line<'text_ptr>(
@@ -11052,6 +11081,413 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut editor_objects,
         );
         assert_results(&["24", "72"][..], &result_buffer);
+    }
+
+    #[test]
+    fn test_that_sum_is_recalculated_if_anything_changes_above() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "2\n3\nsum".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 1));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_results(&["2", "3", "5"][..], &result_buffer);
+
+        // change value from 2 to 21
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('1'),
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert!(app.editor_area_redraw.need(EditorY::new(0)));
+        assert!(app.result_area_redraw.need(EditorY::new(0)));
+        // sum
+        assert!(app.editor_area_redraw.need(EditorY::new(2)));
+        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        //
+        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(!app.result_area_redraw.need(EditorY::new(1)));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_results(&["21", "3", "24"][..], &result_buffer);
+    }
+
+    #[test]
+    fn test_that_sum_is_recalculated_if_anything_changes_above2() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "2\n3\n4 * sum".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 1));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_results(&["2", "3", "20"][..], &result_buffer);
+
+        // change value from 2 to 21
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('1'),
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert!(app.editor_area_redraw.need(EditorY::new(0)));
+        assert!(app.result_area_redraw.need(EditorY::new(0)));
+        // sum
+        assert!(app.editor_area_redraw.need(EditorY::new(2)));
+        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        //
+        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(!app.result_area_redraw.need(EditorY::new(1)));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_results(&["21", "3", "96"][..], &result_buffer);
+    }
+
+    #[test]
+    fn test_that_sum_is_not_recalculated_if_there_is_separator() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "2\n3\n--\n5\nsum".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 1));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_results(&["2", "3", "", "5", "5"][..], &result_buffer);
+
+        // change value from 2 to 12
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('1'),
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert!(app.editor_area_redraw.need(EditorY::new(0)));
+        assert!(app.result_area_redraw.need(EditorY::new(0)));
+        for i in 1..5 {
+            assert!(!app.editor_area_redraw.need(EditorY::new(i)), "{}", i);
+            assert!(!app.result_area_redraw.need(EditorY::new(i)), "{}", i);
+        }
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_results(&["21", "3", "", "5", "5"][..], &result_buffer);
+    }
+
+    #[test]
+    fn test_that_sum_is_not_recalculated_if_there_is_separator_with_comment() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "2\n3\n-- some comment\n5\nsum".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 1));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_results(&["2", "3", "", "5", "5"][..], &result_buffer);
+
+        // change value from 2 to 12
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('1'),
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert!(app.editor_area_redraw.need(EditorY::new(0)));
+        assert!(app.result_area_redraw.need(EditorY::new(0)));
+        for i in 1..5 {
+            assert!(!app.editor_area_redraw.need(EditorY::new(i)), "{}", i);
+            assert!(!app.result_area_redraw.need(EditorY::new(i)), "{}", i);
+        }
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_results(&["21", "3", "", "5", "5"][..], &result_buffer);
+    }
+
+    #[test]
+    fn test_adding_sum_updates_lower_sums() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "2\n3\n\n4\n5\nsum\n-- some comment\n24\n25\nsum".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(2, 0));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_results(
+            &["2", "3", "", "4", "5", "14", "", "24", "25", "49"][..],
+            &result_buffer,
+        );
+
+        app.handle_paste(
+            "sum".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        assert!(app.editor_area_redraw.need(EditorY::new(2)));
+        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        assert!(app.editor_area_redraw.need(EditorY::new(5)));
+        assert!(app.result_area_redraw.need(EditorY::new(5)));
+
+        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
+        assert!(!app.result_area_redraw.need(EditorY::new(0)));
+        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(!app.result_area_redraw.need(EditorY::new(1)));
+        for i in 3..=4 {
+            assert!(!app.editor_area_redraw.need(EditorY::new(i)), "{}", i);
+            assert!(!app.result_area_redraw.need(EditorY::new(i)), "{}", i);
+        }
+        for i in 6..=9 {
+            assert!(!app.editor_area_redraw.need(EditorY::new(i)), "{}", i);
+            assert!(!app.result_area_redraw.need(EditorY::new(i)), "{}", i);
+        }
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_results(
+            &["2", "3", "5", "4", "5", "19", "", "24", "25", "49"][..],
+            &result_buffer,
+        );
+    }
+
+    #[test]
+    fn test_updating_two_sums() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "2\n3\nsum\n4\n5\nsum\n-- some comment\n24\n25\nsum".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 1));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_results(
+            &["2", "3", "5", "4", "5", "19", "", "24", "25", "49"][..],
+            &result_buffer,
+        );
+
+        // change value from 2 to 21
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('1'),
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert!(app.editor_area_redraw.need(EditorY::new(0)));
+        assert!(app.result_area_redraw.need(EditorY::new(0)));
+        assert!(app.editor_area_redraw.need(EditorY::new(2)));
+        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        assert!(app.editor_area_redraw.need(EditorY::new(5)));
+        assert!(app.result_area_redraw.need(EditorY::new(5)));
+
+        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(!app.result_area_redraw.need(EditorY::new(1)));
+        for i in 3..=4 {
+            assert!(!app.editor_area_redraw.need(EditorY::new(i)), "{}", i);
+            assert!(!app.result_area_redraw.need(EditorY::new(i)), "{}", i);
+        }
+        for i in 6..=9 {
+            assert!(!app.editor_area_redraw.need(EditorY::new(i)), "{}", i);
+            assert!(!app.result_area_redraw.need(EditorY::new(i)), "{}", i);
+        }
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_results(
+            &["21", "3", "24", "4", "5", "57", "", "24", "25", "49"][..],
+            &result_buffer,
+        );
     }
 
     #[test]
