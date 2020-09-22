@@ -2935,9 +2935,9 @@ pub fn pulse_rerendered_lines(
                     y: *render_y,
                     w,
                     h: *render_height,
-                    start_color: 0xFF88FF_11,
+                    start_color: 0xFF88FF_DD,
                     end_color: 0xFFFFFF_00,
-                    animation_time: Duration::from_millis(500),
+                    animation_time: Duration::from_millis(1000),
                 },
             );
         }

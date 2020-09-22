@@ -175,7 +175,7 @@
 
     function calc_and_set_client_width() {
         canvas.width = ((window.innerWidth / font_width) | 0) * font_width - 4 * font_width;
-        canvas.height = ((window.innerHeight / line_height) | 0) * line_height - 100;
+        canvas.height = ((window.innerHeight / line_height) | 0) * line_height - (4*line_height);
         overlay_canvas.width = canvas.width;
         overlay_canvas.height = canvas.height;
         return [(canvas.width / font_width) | 0, (canvas.height / line_height) | 0];
@@ -237,17 +237,18 @@
         function interp(start, end, x) {
             return start + (end-start)*x;
         }
+
+        overlay_ctx.clearRect(
+            0,
+            0,
+            overlay_ctx.canvas.width,
+            overlay_ctx.canvas.height
+        );
         for (const pulsing_rect of pulsing_rects) {
             let delta = (now - pulsing_rect.start_time) / pulsing_rect.duration_ms;
             if (delta > 1) {
                 pulsing_rects.shift();
-                overlay_ctx.clearRect(
-                    pulsing_rect.x * font_width,
-                    pulsing_rect.y * line_height,
-                    pulsing_rect.w * font_width,
-                    pulsing_rect.h * line_height
-                );
-                break;
+                continue;
             }
             let r = interp((pulsing_rect.start_color & 0xFF000000) >>> 24, (pulsing_rect.end_color & 0xFF000000) >>> 24, delta);
             let g = interp((pulsing_rect.start_color & 0x00FF0000) >>> 16, (pulsing_rect.end_color & 0x00FF0000) >>> 16, delta);
