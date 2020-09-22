@@ -1610,14 +1610,24 @@ impl NoteCalcApp {
         {
             return;
         }
-        let line_id = {
-            let line_data = self.editor_content.get_data(line_ref_row.as_usize());
-            line_data.line_id
-        };
-        // TODO STATIC_LINE_IDS[line_id]
-        let inserting_text = format!("&[{}]", line_id);
-        self.editor
-            .insert_text(&inserting_text, &mut self.editor_content);
+        if let Some(var) = &vars[line_ref_row.as_usize()] {
+            for ch in var.name.iter() {
+                self.editor.handle_input(
+                    EditorInputEvent::Char(*ch),
+                    InputModifiers::none(),
+                    &mut self.editor_content,
+                );
+            }
+        } else {
+            let line_id = {
+                let line_data = self.editor_content.get_data(line_ref_row.as_usize());
+                line_data.line_id
+            };
+            // TODO STATIC_LINE_IDS[line_id]
+            let inserting_text = format!("&[{}]", line_id);
+            self.editor
+                .insert_text(&inserting_text, &mut self.editor_content);
+        }
 
         self.update_tokens_and_redraw_requirements(
             RowModificationType::SingleLine(cursor_row),
@@ -4734,6 +4744,53 @@ mod tests {
             &results,
             &vars,
             &mut editor_objects,
+        );
+    }
+
+    #[test]
+    fn test_that_variable_name_is_inserted_when_referenced_a_var_line() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "var_name = 1\n\
+                2+"
+            .to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(1, 2));
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::alt(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_eq!(
+            "var_name = 1\n\
+             2+var_name",
+            app.editor_content.get_content()
         );
     }
 
