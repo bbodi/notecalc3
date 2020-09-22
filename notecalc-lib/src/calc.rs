@@ -111,18 +111,17 @@ pub fn evaluate_tokens(
     }
     return match last_success_operation_result_index {
         Some(last_success_operation_index) => {
-            // TODO: after shunting yard validation logic, do we need it?
             // e.g. "1+2 some text 3"
             // in this case prefer the result of 1+2 and ignore the number 3
             Ok(Some(EvaluationResult {
                 there_was_unit_conversion,
-                there_was_operation: last_success_operation_result_index.is_some(),
+                there_was_operation: true,
                 assignment,
                 result: stack[last_success_operation_index].clone(),
             }))
         }
         None => Ok(stack.pop().map(|it| EvaluationResult {
-            there_was_operation: last_success_operation_result_index.is_some(),
+            there_was_operation: false,
             there_was_unit_conversion,
             assignment,
             result: it,
@@ -949,7 +948,6 @@ mod tests {
             "8.314 (kg m^2) / (s^2 K mol)",
         );
 
-        // TODO mindig a rövid formábanm kellene kiirni
         test("9.81 meters/second^2 * 1", "9.81 meter / second^2");
         test("10 decades to decade", "10 decade");
         test("10 centuries to century", "10 century");
@@ -1120,13 +1118,8 @@ mod tests {
             ],
         );
         test("1szer sem jött el + *megjegyzés 2 éve...", "1");
-        //
-        // // TODO these should be errors, because easily identifiable
-        // // there is a typo in lbg, so the "in..." part is not evaulated
-        // test("100 ft * lbf to (in*lbg)", " ");
-        // test("100 ft * lbf * 1 to (in*lbg)", "100 ft lbf");
-        // // wrong type
-        // test("100 Hz to s", "0");
+
+        // test("100 Hz to s", "Err");
 
         test("12m/h * 45s ^^", "0.15 m");
         test("12km/h * 45s ^^", "150 m");

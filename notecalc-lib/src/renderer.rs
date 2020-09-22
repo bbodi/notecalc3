@@ -55,7 +55,8 @@ pub fn render_result_into(
                     use_grouping,
                 );
                 f.write_u8(b' ').expect("");
-                // TODO to_string -> into(buf)
+                // TODO:mem to_string -> into(buf)
+                // implement a into(std::io:Write) method for UnitOutput
                 for ch in unit.to_string().as_bytes() {
                     f.write_u8(*ch).expect("");
                     lens.unit_part_len += 1;

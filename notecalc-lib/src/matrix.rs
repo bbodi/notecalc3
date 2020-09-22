@@ -47,7 +47,6 @@ impl MatrixData {
         cells.map(|it| CalcResult::Matrix(MatrixData::new(it, self.row_count, self.col_count)))
     }
 
-    // TODO inplace
     pub fn transposed(&self) -> MatrixData {
         let mut result = MatrixData::new(
             Vec::with_capacity(self.cells.len()),

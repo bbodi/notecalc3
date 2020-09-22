@@ -1052,9 +1052,6 @@ impl NoteCalcApp {
         redraw_result_area: EditorRowFlags,
         gr: &mut GlobalRenderData,
         allocator: &'a Arena<char>,
-        //  TODO csak az editor objectet add át mut-ként
-        // mivel azt itt egyszeröbb kitölteni (tudni kell hozzá
-        // a renderelt magasságot és szélességet)
         tokens: &AppTokens<'a>,
         results: &Results,
         vars: &Variables,
@@ -1089,10 +1086,6 @@ impl NoteCalcApp {
                     || editor_y.as_usize() >= gr.scroll_y + gr.client_height
                 {
                     gr.set_render_y(editor_y, None);
-                    // TODO ezt nem lehetne kódban kifejezni valahogy?
-                    // TILOS, ezt nem nullázhatod le, ez automatikusan változik
-                    // ha változik 1 sor tartalma és újraszámolódnak a tokenjei
-                    // gr.set_rendered_height(editor_y, 0);
                     r.inc_editor_y();
                     continue;
                 }
@@ -1138,21 +1131,7 @@ impl NoteCalcApp {
                             need_matrix_renderer,
                             Some(4),
                         );
-                        // TODO extract
-                        for editor_obj in editor_objs[editor_y].iter() {
-                            if matches!(editor_obj.typ, EditorObjectType::LineReference) {
-                                let vert_align_offset =
-                                    (r.rendered_row_height - editor_obj.rendered_h) / 2;
-                                render_buckets.set_color(Layer::BehindText, 0xFFCCCC_FF);
-                                render_buckets.draw_rect(
-                                    Layer::BehindText,
-                                    gr.left_gutter_width + editor_obj.rendered_x,
-                                    editor_obj.rendered_y.add(vert_align_offset),
-                                    editor_obj.rendered_w,
-                                    editor_obj.rendered_h,
-                                );
-                            }
-                        }
+                        highlight_line_refs(&editor_objs[editor_y], render_buckets, &r, gr)
                     } else {
                         r.rendered_row_height = 1;
                         render_simple_text_line(line, &mut r, gr, render_buckets, allocator);
@@ -1753,19 +1732,20 @@ impl NoteCalcApp {
             modif: Option<RowModificationType>,
             redraw: Option<(EditorRowFlags, RedrawTarget)>,
         };
-        let cur_row = self.editor.get_selection().get_cursor_pos().row;
-        // TODO EXTRACT alt_handling
-        let input_res: InputResult = if self.matrix_editing.is_none() && modifiers.alt {
+        fn handle_input_with_alt<'b>(
+            app: &mut NoteCalcApp,
+            input: EditorInputEvent,
+        ) -> InputResult {
             if input == EditorInputEvent::Left {
-                let selection = self.editor.get_selection();
+                let selection = app.editor.get_selection();
                 let (start, end) = selection.get_range();
                 for row_i in start.row..=end.row {
-                    let new_format = match &self.editor_content.get_data(row_i).result_format {
+                    let new_format = match &app.editor_content.get_data(row_i).result_format {
                         ResultFormat::Bin => ResultFormat::Hex,
                         ResultFormat::Dec => ResultFormat::Bin,
                         ResultFormat::Hex => ResultFormat::Dec,
                     };
-                    self.editor_content.mut_data(row_i).result_format = new_format;
+                    app.editor_content.mut_data(row_i).result_format = new_format;
                 }
                 InputResult {
                     modif: None,
@@ -1775,15 +1755,15 @@ impl NoteCalcApp {
                     )),
                 }
             } else if input == EditorInputEvent::Right {
-                let selection = self.editor.get_selection();
+                let selection = app.editor.get_selection();
                 let (start, end) = selection.get_range();
                 for row_i in start.row..=end.row {
-                    let new_format = match &self.editor_content.get_data(row_i).result_format {
+                    let new_format = match &app.editor_content.get_data(row_i).result_format {
                         ResultFormat::Bin => ResultFormat::Dec,
                         ResultFormat::Dec => ResultFormat::Hex,
                         ResultFormat::Hex => ResultFormat::Bin,
                     };
-                    self.editor_content.mut_data(row_i).result_format = new_format;
+                    app.editor_content.mut_data(row_i).result_format = new_format;
                 }
                 InputResult {
                     modif: None,
@@ -1793,8 +1773,8 @@ impl NoteCalcApp {
                     )),
                 }
             } else if input == EditorInputEvent::Up {
-                let cur_pos = self.editor.get_selection().get_cursor_pos();
-                let rows = if let Some(selector_row) = self.line_reference_chooser {
+                let cur_pos = app.editor.get_selection().get_cursor_pos();
+                let rows = if let Some(selector_row) = app.line_reference_chooser {
                     if selector_row.as_usize() > 0 {
                         Some((selector_row.as_usize(), selector_row.as_usize() - 1))
                     } else {
@@ -1806,7 +1786,7 @@ impl NoteCalcApp {
                     None
                 };
                 if let Some((prev_selected_row, new_selected_row)) = rows {
-                    self.line_reference_chooser = Some(EditorY::new(new_selected_row));
+                    app.line_reference_chooser = Some(EditorY::new(new_selected_row));
                     InputResult {
                         modif: None,
                         redraw: Some((
@@ -1821,8 +1801,8 @@ impl NoteCalcApp {
                     }
                 }
             } else if input == EditorInputEvent::Down {
-                let cur_pos = self.editor.get_selection().get_cursor_pos();
-                let rows = if let Some(selector_row) = self.line_reference_chooser {
+                let cur_pos = app.editor.get_selection().get_cursor_pos();
+                let rows = if let Some(selector_row) = app.line_reference_chooser {
                     if selector_row.as_usize() < cur_pos.row - 1 {
                         Some((selector_row.as_usize(), selector_row.as_usize() + 1))
                     } else {
@@ -1832,7 +1812,7 @@ impl NoteCalcApp {
                     None
                 };
                 if let Some((prev_selected_row, new_selected_row)) = rows {
-                    self.line_reference_chooser = Some(EditorY::new(new_selected_row));
+                    app.line_reference_chooser = Some(EditorY::new(new_selected_row));
                     InputResult {
                         modif: None,
                         redraw: Some((
@@ -1852,6 +1832,14 @@ impl NoteCalcApp {
                     redraw: None,
                 }
             }
+        }
+
+        ////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////
+        let cur_row = self.editor.get_selection().get_cursor_pos().row;
+        let input_res: InputResult = if self.matrix_editing.is_none() && modifiers.alt {
+            handle_input_with_alt(&mut *self, input)
         } else if self.matrix_editing.is_some() {
             let prev_row = cur_row;
             self.handle_matrix_editor_input(input, modifiers);
@@ -2418,7 +2406,6 @@ impl NoteCalcApp {
                 );
                 self.editor
                     .set_selection_save_col(Selection::single(cursor_pos.with_column(prev_col)));
-                // TODO asdd ujra kell renderelni a sortol kezdve mindent
                 editor_objects[EditorY::new(cursor_pos.row)].push(EditorObject {
                     typ: EditorObjectType::Matrix {
                         row_count: 1,
@@ -3056,6 +3043,28 @@ fn render_simple_text_line<'text_ptr>(
     });
 
     r.token_render_done(text_len, text_len, 0);
+}
+
+#[inline]
+fn highlight_line_refs<'text_ptr>(
+    editor_objs: &Vec<EditorObject>,
+    render_buckets: &mut RenderBuckets<'text_ptr>,
+    r: &PerLineRenderData,
+    gr: &GlobalRenderData,
+) {
+    for editor_obj in editor_objs.iter() {
+        if matches!(editor_obj.typ, EditorObjectType::LineReference) {
+            let vert_align_offset = (r.rendered_row_height - editor_obj.rendered_h) / 2;
+            render_buckets.set_color(Layer::BehindText, 0xFFCCCC_FF);
+            render_buckets.draw_rect(
+                Layer::BehindText,
+                gr.left_gutter_width + editor_obj.rendered_x,
+                editor_obj.rendered_y.add(vert_align_offset),
+                editor_obj.rendered_w,
+                editor_obj.rendered_h,
+            );
+        }
+    }
 }
 
 fn render_tokens<'text_ptr>(
@@ -3922,7 +3931,6 @@ fn render_results<'text_ptr>(
         };
         let mut prev_result_matrix_length = None;
         // calc max length and render results into buffer
-        // TODO: extract
         for (editor_y, result) in results.iter().enumerate() {
             let editor_y = EditorY::new(editor_y);
             let render_y = if let Some(render_y) = gr.get_render_y(editor_y) {
@@ -7236,7 +7244,6 @@ Fat intake
             &mut vars,
         );
 
-        assert_eq!(18, vars.len());
         fn assert_var(vars: &Variables, name: &str, defined_at: usize) {
             let var = vars[defined_at].as_ref().unwrap();
             assert!(var.value.is_ok(), "{}", name);

@@ -64,6 +64,8 @@ struct ValidationState {
     // output stack start and end index
     last_valid_input_token_range: Option<(usize, usize)>,
     last_valid_output_range: Option<(usize, usize)>,
+    // index of the last valid operator
+    last_valid_operator_index: Option<usize>,
     had_assign_op: bool,
     assign_op_input_token_pos: Option<usize>,
     had_non_ws_string_literal: bool,
@@ -72,13 +74,23 @@ struct ValidationState {
 }
 
 impl ValidationState {
-    fn close_valid_range(&mut self, output_stack_len: usize, token_index: isize) {
+    fn close_valid_range(
+        &mut self,
+        output_stack_len: usize,
+        token_index: isize,
+        operator_stack_len: usize,
+    ) {
         self.first_nonvalidated_token_index = token_index as usize + 1;
         self.last_valid_input_token_range =
             Some((self.valid_range_start_token_index, token_index as usize));
         self.last_valid_output_range =
             Some((self.tmp_output_stack_start_index, output_stack_len - 1));
         self.parenthesis_stack.clear();
+        self.last_valid_operator_index = if operator_stack_len > 0 {
+            Some(operator_stack_len - 1)
+        } else {
+            None
+        };
     }
 
     fn reset(&mut self, output_stack_index: usize, token_index: isize) {
@@ -109,6 +121,7 @@ impl ValidationState {
             had_assign_op: false,
             assign_op_input_token_pos: None,
             parenthesis_stack: Vec::with_capacity(0),
+            last_valid_operator_index: None,
         }
     }
 
@@ -217,7 +230,7 @@ impl ShuntingYard {
         output_stack: &mut Vec<TokenType>,
     ) {
         // TODO: into iter!!!
-        // TODO extract out so no alloc SmallVec?
+        // TODO:mem extract out so no alloc SmallVec?
         let mut operator_stack: Vec<OperatorTokenType> = vec![];
 
         let mut v = ValidationState::new();
@@ -269,8 +282,13 @@ impl ShuntingYard {
                     output_stack.push(input_token.typ.clone());
                     v.prev_token_type = ValidationTokenType::Expr;
                     if v.can_be_valid_closing_token() {
-                        ShuntingYard::send_everything_to_output(&mut operator_stack, output_stack);
-                        v.close_valid_range(output_stack.len(), input_index);
+                        ShuntingYard::send_everything_to_output(
+                            &mut operator_stack,
+                            output_stack,
+                            &mut v.last_valid_operator_index,
+                            &mut v.last_valid_output_range,
+                        );
+                        v.close_valid_range(output_stack.len(), input_index, operator_stack.len());
                     }
                 }
                 TokenType::Operator(op) => match op {
@@ -291,8 +309,12 @@ impl ShuntingYard {
                             );
 
                         if !prev_token_is_open_paren && (v.expect_expression || is_error) {
-                            operator_stack.clear();
-                            v.reset(output_stack.len(), input_index + 1);
+                            ShuntingYard::rollback(
+                                &mut operator_stack,
+                                output_stack,
+                                input_index + 1,
+                                &mut v,
+                            );
                             continue;
                         } else {
                             v.expect_expression = false;
@@ -318,14 +340,24 @@ impl ShuntingYard {
                             ShuntingYard::send_everything_to_output(
                                 &mut operator_stack,
                                 output_stack,
+                                &mut v.last_valid_operator_index,
+                                &mut v.last_valid_output_range,
                             );
-                            v.close_valid_range(output_stack.len(), input_index);
+                            v.close_valid_range(
+                                output_stack.len(),
+                                input_index,
+                                operator_stack.len(),
+                            );
                         }
                     }
                     OperatorTokenType::BracketOpen => {
                         if v.open_brackets > 0 || !v.expect_expression {
-                            operator_stack.clear();
-                            v.reset(output_stack.len(), input_index);
+                            ShuntingYard::rollback(
+                                &mut operator_stack,
+                                output_stack,
+                                input_index,
+                                &mut v,
+                            );
                         }
                         v.open_brackets += 1;
                         v.prev_token_type = ValidationTokenType::Nothing;
@@ -336,8 +368,12 @@ impl ShuntingYard {
                     OperatorTokenType::BracketClose => {
                         if v.expect_expression || v.open_brackets == 0 || v.is_matrix_row_len_err()
                         {
-                            operator_stack.clear();
-                            v.reset(output_stack.len(), input_index + 1);
+                            ShuntingYard::rollback(
+                                &mut operator_stack,
+                                output_stack,
+                                input_index + 1,
+                                &mut v,
+                            );
                             continue;
                         } else {
                             v.expect_expression = false;
@@ -369,8 +405,14 @@ impl ShuntingYard {
                             ShuntingYard::send_everything_to_output(
                                 &mut operator_stack,
                                 output_stack,
+                                &mut v.last_valid_operator_index,
+                                &mut v.last_valid_output_range,
                             );
-                            v.close_valid_range(output_stack.len(), input_index);
+                            v.close_valid_range(
+                                output_stack.len(),
+                                input_index,
+                                operator_stack.len(),
+                            );
                         }
                     }
                     OperatorTokenType::Sub
@@ -383,8 +425,12 @@ impl ShuntingYard {
                     {
                         // it is a unary op
                         if !v.expect_expression {
-                            operator_stack.clear();
-                            v.reset(output_stack.len(), input_index + 1);
+                            ShuntingYard::rollback(
+                                &mut operator_stack,
+                                output_stack,
+                                input_index + 1,
+                                &mut v,
+                            );
                             continue;
                         } else if ShuntingYard::get_next_nonstring_token(
                             tokens,
@@ -409,8 +455,12 @@ impl ShuntingYard {
                     {
                         // it is a unary op
                         if !v.expect_expression {
-                            operator_stack.clear();
-                            v.reset(output_stack.len(), input_index + 1);
+                            ShuntingYard::rollback(
+                                &mut operator_stack,
+                                output_stack,
+                                input_index + 1,
+                                &mut v,
+                            );
                             continue;
                         } else if ShuntingYard::get_next_nonstring_token(
                             tokens,
@@ -443,25 +493,45 @@ impl ShuntingYard {
                     }
                     OperatorTokenType::Comma => {
                         if v.is_comma_not_allowed() {
-                            operator_stack.clear();
-                            v.reset(output_stack.len(), input_index + 1);
+                            ShuntingYard::rollback(
+                                &mut operator_stack,
+                                output_stack,
+                                input_index + 1,
+                                &mut v,
+                            );
                             continue;
                         }
                         v.prev_token_type = ValidationTokenType::Nothing;
                         v.expect_expression = true;
                         v.do_comma();
-                        ShuntingYard::operator_rule(op, &mut operator_stack, output_stack);
+                        ShuntingYard::operator_rule(
+                            op,
+                            &mut operator_stack,
+                            output_stack,
+                            &mut v.last_valid_operator_index,
+                            &mut v.last_valid_output_range,
+                        );
                     }
                     OperatorTokenType::Semicolon => {
                         if v.open_brackets == 0 || v.is_matrix_row_len_err() {
-                            operator_stack.clear();
-                            v.reset(output_stack.len(), input_index + 1);
+                            ShuntingYard::rollback(
+                                &mut operator_stack,
+                                output_stack,
+                                input_index + 1,
+                                &mut v,
+                            );
                             continue;
                         }
                         v.prev_token_type = ValidationTokenType::Nothing;
                         v.expect_expression = true;
                         v.matrix_new_row();
-                        ShuntingYard::operator_rule(op, &mut operator_stack, output_stack);
+                        ShuntingYard::operator_rule(
+                            op,
+                            &mut operator_stack,
+                            output_stack,
+                            &mut v.last_valid_operator_index,
+                            &mut v.last_valid_output_range,
+                        );
                     }
                     OperatorTokenType::Perc => {
                         ShuntingYard::send_to_output(op.clone(), output_stack);
@@ -470,8 +540,14 @@ impl ShuntingYard {
                             ShuntingYard::send_everything_to_output(
                                 &mut operator_stack,
                                 output_stack,
+                                &mut v.last_valid_operator_index,
+                                &mut v.last_valid_output_range,
                             );
-                            v.close_valid_range(output_stack.len(), input_index);
+                            v.close_valid_range(
+                                output_stack.len(),
+                                input_index,
+                                operator_stack.len(),
+                            );
                         }
                     }
                     OperatorTokenType::UnitConverter => {
@@ -505,10 +581,16 @@ impl ShuntingYard {
                                 ShuntingYard::send_everything_to_output(
                                     &mut operator_stack,
                                     output_stack,
+                                    &mut v.last_valid_operator_index,
+                                    &mut v.last_valid_output_range,
                                 );
                                 output_stack.push(TokenType::Unit(unit.clone()));
                                 ShuntingYard::send_to_output(op.clone(), output_stack);
-                                v.close_valid_range(output_stack.len(), input_index);
+                                v.close_valid_range(
+                                    output_stack.len(),
+                                    input_index,
+                                    operator_stack.len(),
+                                );
                             }
                         } else {
                             // it is not an "in" operator but a string literal
@@ -519,22 +601,36 @@ impl ShuntingYard {
                     }
                     _ => {
                         if v.expect_expression {
-                            operator_stack.clear();
-                            v.reset(output_stack.len(), input_index + 1);
+                            ShuntingYard::rollback(
+                                &mut operator_stack,
+                                output_stack,
+                                input_index + 1,
+                                &mut v,
+                            );
                             continue;
                         }
                         v.had_operator = true;
                         v.expect_expression = true;
                         v.prev_token_type = ValidationTokenType::Op;
-                        ShuntingYard::operator_rule(op, &mut operator_stack, output_stack);
+                        ShuntingYard::operator_rule(
+                            op,
+                            &mut operator_stack,
+                            output_stack,
+                            &mut v.last_valid_operator_index,
+                            &mut v.last_valid_output_range,
+                        );
                         operator_stack.push(op.clone());
                     }
                 },
                 TokenType::NumberLiteral(num) => {
                     let num = num.clone();
                     if !v.expect_expression {
-                        operator_stack.clear();
-                        v.reset(output_stack.len(), input_index);
+                        ShuntingYard::rollback(
+                            &mut operator_stack,
+                            output_stack,
+                            input_index,
+                            &mut v,
+                        );
                     }
                     // TODO nézd meg muszáj e klnozni, ne me tudja ez a fv átvenni az ownershipet
                     // a input_tokens felett, vagy az outputban nem e lehetnek pointerek
@@ -564,12 +660,12 @@ impl ShuntingYard {
                         }
 
                         if v.last_valid_output_range.is_none() || v.had_operator {
-                            ShuntingYard::send_everything_to_output(
-                                &mut operator_stack,
-                                output_stack,
+                            // // set everything to string which is in front of this expr
+                            v.close_valid_range(
+                                output_stack.len(),
+                                input_index,
+                                operator_stack.len(),
                             );
-                            // set everything to string which is in front of this expr
-                            v.close_valid_range(output_stack.len(), input_index);
                         }
                     }
                     v.prev_token_type = ValidationTokenType::Expr;
@@ -577,8 +673,12 @@ impl ShuntingYard {
                 }
                 TokenType::Variable { .. } | TokenType::LineReference { .. } => {
                     if !v.expect_expression {
-                        operator_stack.clear();
-                        v.reset(output_stack.len(), input_index + 1);
+                        ShuntingYard::rollback(
+                            &mut operator_stack,
+                            output_stack,
+                            input_index + 1,
+                            &mut v,
+                        );
                         continue;
                     }
                     // so variables can be reassigned
@@ -587,9 +687,14 @@ impl ShuntingYard {
                     if (v.last_valid_output_range.is_none() || v.had_operator)
                         && v.parenthesis_stack.is_empty()
                     {
-                        ShuntingYard::send_everything_to_output(&mut operator_stack, output_stack);
+                        ShuntingYard::send_everything_to_output(
+                            &mut operator_stack,
+                            output_stack,
+                            &mut v.last_valid_operator_index,
+                            &mut v.last_valid_output_range,
+                        );
                         // set everything to string which is in front of this expr
-                        v.close_valid_range(output_stack.len(), input_index);
+                        v.close_valid_range(output_stack.len(), input_index, operator_stack.len());
                     }
                     v.prev_token_type = ValidationTokenType::Expr;
                     v.expect_expression = false;
@@ -597,10 +702,19 @@ impl ShuntingYard {
             }
         }
 
+        if v.last_valid_output_range.is_some() {
+            ShuntingYard::send_everything_to_output(
+                &mut operator_stack,
+                output_stack,
+                &mut v.last_valid_operator_index,
+                &mut v.last_valid_output_range,
+            );
+        }
+
         if v.is_valid_assignment_expression() {
             // close it
             // set everything to string which is in front of this expr
-            v.close_valid_range(output_stack.len(), input_index);
+            v.close_valid_range(output_stack.len(), input_index, operator_stack.len());
             ShuntingYard::set_tokens_to_string(tokens, 0, v.valid_range_start_token_index - 1);
         }
 
@@ -667,6 +781,8 @@ impl ShuntingYard {
         incoming_op: &OperatorTokenType,
         operator_stack: &mut Vec<OperatorTokenType>,
         output: &mut Vec<TokenType>,
+        maybe_last_valid_operator_index: &mut Option<usize>,
+        last_valid_output_range: &mut Option<(usize, usize)>,
     ) {
         if operator_stack.is_empty() {
             return;
@@ -686,26 +802,54 @@ impl ShuntingYard {
         let incoming_prec_left_assoc_and_equal =
             assoc == Assoc::Left && incoming_op_precedence == top_of_stack_precedence;
         if incoming_op_precedence < top_of_stack_precedence || incoming_prec_left_assoc_and_equal {
+            if let Some(last_valid_operator_index) = maybe_last_valid_operator_index.as_mut() {
+                if *last_valid_operator_index == (operator_stack.len() - 1) {
+                    *maybe_last_valid_operator_index = None;
+                    last_valid_output_range.as_mut().expect("ok").1 += 1;
+                }
+            }
             operator_stack.pop();
             ShuntingYard::send_to_output(top_of_stack, output);
-            ShuntingYard::operator_rule(incoming_op, operator_stack, output);
-        // } else if matches!(top_of_stack.typ, OperatorTokenType::In) {
-        //     // 'in' has a lowest precedence to avoid writing a lot of parenthesis,
-        //     // but because of that it would be put at the very end of the output stack.
-        //     // This code puts it into the output
-        //     ShuntingYard::put_operator_on_the_stack(top_of_stack, output);
-        //     operator_stack.pop();
+            ShuntingYard::operator_rule(
+                incoming_op,
+                operator_stack,
+                output,
+                maybe_last_valid_operator_index,
+                last_valid_output_range,
+            );
         } else {
             // do nothing
         }
     }
 
+    fn rollback(
+        operator_stack: &mut Vec<OperatorTokenType>,
+        output_stack: &mut Vec<TokenType>,
+        token_index: isize,
+        v: &mut ValidationState,
+    ) {
+        ShuntingYard::send_everything_to_output(
+            operator_stack,
+            output_stack,
+            &mut v.last_valid_operator_index,
+            &mut v.last_valid_output_range,
+        );
+        operator_stack.clear();
+        v.reset(output_stack.len(), token_index);
+    }
+
     fn send_everything_to_output(
         operator_stack: &mut Vec<OperatorTokenType>,
         output_stack: &mut Vec<TokenType>,
+        maybe_last_valid_operator_index: &mut Option<usize>,
+        last_valid_output_range: &mut Option<(usize, usize)>,
     ) {
-        for op in operator_stack.drain(..).rev() {
-            ShuntingYard::send_to_output(op, output_stack);
+        if let Some(last_valid_operator_index) = *maybe_last_valid_operator_index {
+            for op in operator_stack.drain(0..=last_valid_operator_index).rev() {
+                ShuntingYard::send_to_output(op, output_stack);
+                last_valid_output_range.as_mut().expect("ok").1 += 1;
+            }
+            *maybe_last_valid_operator_index = None;
         }
     }
 
@@ -1030,6 +1174,32 @@ pub mod tests {
     }
 
     #[test]
+    fn test_precedence() {
+        test_output(
+            "1+2*3",
+            &[
+                num(1),
+                num(2),
+                num(3),
+                op(OperatorTokenType::Mult),
+                op(OperatorTokenType::Add),
+            ],
+        );
+        test_output(
+            "1+2*3^4",
+            &[
+                num(1),
+                num(2),
+                num(3),
+                num(4),
+                op(OperatorTokenType::Pow),
+                op(OperatorTokenType::Mult),
+                op(OperatorTokenType::Add),
+            ],
+        );
+    }
+
+    #[test]
     fn test_shunting_matrices() {
         test_output(
             "[2] + 1",
@@ -1331,12 +1501,6 @@ pub mod tests {
 
     #[test]
     fn test2() {
-        // TODO
-        // test(
-        //     "var1 = var0 + 100",
-        //     &[var("var0"), num(100), op(OperatorTokenType::Add)],
-        // );
-
         test_output("", &[]);
         test_output("2", &[num(2)]);
 
@@ -1451,6 +1615,17 @@ pub mod tests {
         );
 
         test_output(
+            "12km/h*45s ^^",
+            &[
+                num(12),
+                unit("km / h"),
+                num(45),
+                unit("s"),
+                op(OperatorTokenType::Mult),
+            ],
+        );
+
+        test_output(
             "12km/h * 45s ^^",
             &[
                 num(12),
@@ -1505,7 +1680,7 @@ pub mod tests {
             &[num(1), num(4), op(OperatorTokenType::Add)],
         );
         test_output(
-            "75-15 euróból kell adózni mert 15 EUR adómentes",
+            "75 - 15 euróból kell adózni mert 15 EUR adómentes",
             &[num(75), num(15), op(OperatorTokenType::Sub)],
         );
         test_output(

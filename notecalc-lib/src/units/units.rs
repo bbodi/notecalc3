@@ -342,10 +342,6 @@ impl Display for UnitOutput {
         let mut str_num: SmallVec<[char; 32]> = SmallVec::with_capacity(32);
         let mut str_den: SmallVec<[char; 32]> = SmallVec::with_capacity(32);
 
-        // find prefix here
-        // eltárolni nem hülyeség a prefixet mert lehet h abban akarja
-        // látni alapból amivel számol, csak ne használjuk számolásra
-
         for unit in self.units.iter() {
             if unit.power > 0 {
                 nnum += 1;
