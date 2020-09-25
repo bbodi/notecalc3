@@ -19,7 +19,7 @@ use crate::Variables;
 // az 50 precision miatt, mivel azok "mögötte" lesznek (tehát az 50. tizedesjegy után)
 pub const MAX_PRECISION: u64 = 50;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum CalcResult {
     Number(BigDecimal),
     Percentage(BigDecimal),

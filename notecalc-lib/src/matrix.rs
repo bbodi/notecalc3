@@ -1,6 +1,6 @@
 use crate::calc::{divide_op, multiply_op, CalcResult};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct MatrixData {
     // column major storing
     pub cells: Vec<CalcResult>,

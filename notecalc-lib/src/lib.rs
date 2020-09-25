@@ -217,6 +217,10 @@ pub mod helper {
         pub fn need(&self, line_index: EditorY) -> bool {
             ((1 << line_index.0) & self.bitset) != 0
         }
+
+        pub fn is_true(&self, line_index: usize) -> bool {
+            self.need(EditorY::new(line_index))
+        }
     }
 
     pub struct GlobalRenderData {
@@ -967,6 +971,7 @@ pub struct NoteCalcApp {
     pub mouse_state: Option<MouseState>,
     pub result_area_redraw: EditorRowFlags,
     pub editor_area_redraw: EditorRowFlags,
+    pub result_has_changed: EditorRowFlags,
     pub render_data: GlobalRenderData,
 }
 
@@ -990,6 +995,7 @@ impl NoteCalcApp {
             mouse_state: None,
             result_area_redraw: EditorRowFlags::all_rows_starting_at(0),
             editor_area_redraw: EditorRowFlags::all_rows_starting_at(0),
+            result_has_changed: EditorRowFlags::empty(),
             render_data: GlobalRenderData::new(
                 client_width,
                 client_height,
@@ -1050,6 +1056,7 @@ impl NoteCalcApp {
         result_buffer: &'a mut [u8],
         redraw_editor_area: EditorRowFlags,
         redraw_result_area: EditorRowFlags,
+        result_has_changed: EditorRowFlags,
         gr: &mut GlobalRenderData,
         allocator: &'a Arena<char>,
         tokens: &AppTokens<'a>,
@@ -1242,7 +1249,7 @@ impl NoteCalcApp {
             allocator,
         );
 
-        render_results(
+        let longest_rendered_result_len = render_results(
             &units,
             render_buckets,
             results.as_slice(),
@@ -1256,7 +1263,13 @@ impl NoteCalcApp {
 
         clear_rerendered_lines(render_buckets, gr, &rerendered_lines);
 
-        pulse_rerendered_lines(render_buckets, gr, &rerendered_lines);
+        pulse_rerendered_lines(
+            render_buckets,
+            gr,
+            longest_rendered_result_len,
+            &rerendered_lines,
+            &result_has_changed,
+        );
 
         // CLEAR area below the editor
         let last_row_i = editor_content.line_count();
@@ -1993,12 +2006,12 @@ impl NoteCalcApp {
             results: &mut Results,
             vars: &mut Variables,
             editor_y: EditorY,
+            result_has_updated: &mut EditorRowFlags,
         ) -> EditorRowFlags {
             dbg!(&vars);
             // TODO avoid clone
             let prev_var_name = vars[editor_y.as_usize()].as_ref().map(|it| it.name.clone());
 
-            dbg!(&vars);
             tokens_per_lines[editor_y] = Some(parse_tokens(
                 line,
                 editor_y.as_usize(),
@@ -2006,7 +2019,7 @@ impl NoteCalcApp {
                 &*vars,
                 allocator,
             ));
-            if let Some(tokens) = &mut tokens_per_lines[editor_y] {
+            let new_result = if let Some(tokens) = &mut tokens_per_lines[editor_y] {
                 let result = evaluate_tokens_and_save_result(
                     &mut *vars,
                     editor_y.as_usize(),
@@ -2015,26 +2028,52 @@ impl NoteCalcApp {
                     editor_content.get_line_valid_chars(editor_y.as_usize()),
                 );
                 let result = result.map(|it| it.map(|it| it.result));
-                results[editor_y] = result;
+                result
             } else {
-                results[editor_y] = Ok(None);
-            }
+                Ok(None)
+            };
+            let vars: &Variables = vars;
 
-            let mut rows_to_recalc = find_line_ref_dependant_lines(
-                editor_content,
-                tokens_per_lines,
-                editor_y.as_usize(),
-            );
+            let prev_result = std::mem::replace(&mut results[editor_y], new_result);
+            let needs_dependency_check = {
+                let new_result = &results[editor_y];
+                match (&prev_result, new_result) {
+                    (Ok(Some(_)), Err(_)) => true,
+                    (Ok(Some(_)), Ok(None)) => true,
+                    (Ok(Some(prev_r)), Ok(Some(new_r))) => prev_r != new_r,
+                    (Err(_), Err(_)) => false,
+                    (Err(_), Ok(None)) => true,
+                    (Err(_), Ok(Some(_))) => true,
+                    (Ok(None), Ok(Some(_))) => true,
+                    (Ok(None), Ok(None)) => false,
+                    (Ok(None), Err(_)) => true,
+                }
+            };
+
+            let mut rows_to_recalc = EditorRowFlags::empty();
+            if needs_dependency_check {
+                result_has_updated.merge(EditorRowFlags::single_row(editor_y.as_usize()));
+
+                rows_to_recalc.merge(find_line_ref_dependant_lines(
+                    editor_content,
+                    tokens_per_lines,
+                    editor_y.as_usize(),
+                ));
+            }
 
             let curr_var_name = vars[editor_y.as_usize()].as_ref().map(|it| &it.name);
             rows_to_recalc.merge(find_variable_dependant_lines(
+                needs_dependency_check,
                 curr_var_name,
                 prev_var_name,
                 tokens_per_lines,
                 editor_y.as_usize(),
             ));
 
-            rows_to_recalc.merge(find_sum(tokens_per_lines, editor_y.as_usize()));
+            rows_to_recalc.merge(find_sum_variable_name(
+                tokens_per_lines,
+                editor_y.as_usize(),
+            ));
             return rows_to_recalc;
         }
 
@@ -2061,7 +2100,7 @@ impl NoteCalcApp {
             return rows_to_recalc;
         }
 
-        fn find_sum(tokens_per_lines: &AppTokens, editor_y: usize) -> EditorRowFlags {
+        fn find_sum_variable_name(tokens_per_lines: &AppTokens, editor_y: usize) -> EditorRowFlags {
             let mut rows_to_recalc = EditorRowFlags::empty();
             'outer: for (line_index, tokens) in
                 tokens_per_lines.iter().skip(editor_y + 1).enumerate()
@@ -2088,6 +2127,7 @@ impl NoteCalcApp {
         }
 
         fn find_variable_dependant_lines<'b>(
+            needs_dependency_check: bool,
             curr_var_name: Option<&Box<[char]>>,
             prev_var_name: Option<Box<[char]>>,
             tokens_per_lines: &AppTokens<'b>,
@@ -2150,7 +2190,10 @@ impl NoteCalcApp {
                     }
                 }
                 (Some(_old_var_name), Some(var_name)) => {
-                    // volt is, van is, a neve is ugyanaz, ugyanaz a neve
+                    if !needs_dependency_check {
+                        return EditorRowFlags::empty();
+                    }
+                    // volt is, van is, a neve is ugyanaz
                     for (i, tokens) in tokens_per_lines.iter().skip(editor_y + 1).enumerate() {
                         if let Some(tokens) = tokens {
                             for token in &tokens.tokens {
@@ -2191,6 +2234,7 @@ impl NoteCalcApp {
                     self.line_id_generator += 1;
                 }
                 let y = EditorY::new(editor_y);
+
                 let rows_to_recalc = eval_line(
                     &self.editor_content,
                     self.editor_content.get_line_valid_chars(editor_y),
@@ -2200,6 +2244,7 @@ impl NoteCalcApp {
                     results,
                     &mut *vars,
                     y,
+                    &mut self.result_has_changed,
                 );
                 dependant_rows.merge(rows_to_recalc);
                 self.set_redraw_flag(rows_to_recalc, RedrawTarget::Both);
@@ -2802,6 +2847,7 @@ impl NoteCalcApp {
             result_buffer,
             self.editor_area_redraw,
             self.result_area_redraw,
+            self.result_has_changed,
             &mut self.render_data,
             allocator,
             tokens,
@@ -2811,6 +2857,7 @@ impl NoteCalcApp {
         );
         self.editor_area_redraw.clear();
         self.result_area_redraw.clear();
+        self.result_has_changed.clear();
     }
 }
 
@@ -2898,50 +2945,76 @@ pub fn clear_rerendered_lines(
 
 pub fn pulse_rerendered_lines(
     render_buckets: &mut RenderBuckets,
-    gr: &mut GlobalRenderData,
-    rerendered_lines: &[((RenderPosY, usize), RedrawTarget)],
+    gr: &GlobalRenderData,
+    longest_rendered_result_len: usize,
+    _rerendered_lines: &[((RenderPosY, usize), RedrawTarget)],
+    result_has_updated: &EditorRowFlags,
 ) {
-    for ((render_y, render_height), target) in rerendered_lines {
-        // for DEBUG, pulses the whole line
-        // let x_w_coords = match *target {
-        //     RedrawTarget::Both => Some((
-        //         LEFT_GUTTER_WIDTH,
-        //         gr.current_result_panel_width
-        //             + gr.current_editor_width
-        //             + gr.left_gutter_width
-        //             + SCROLL_BAR_WIDTH
-        //             + RIGHT_GUTTER_WIDTH,
-        //     )),
-        //     RedrawTarget::EditorArea => Some((LEFT_GUTTER_WIDTH, gr.current_editor_width)),
-        //
-        //     RedrawTarget::ResultArea => Some((
-        //         gr.result_gutter_x,
-        //         gr.current_result_panel_width + RIGHT_GUTTER_WIDTH,
-        //     )),
-        // };
-        // pulses only the result
-        let x_w_coords = match *target {
-            RedrawTarget::Both | RedrawTarget::ResultArea => Some((
-                gr.result_gutter_x,
-                gr.current_result_panel_width + RIGHT_GUTTER_WIDTH,
-            )),
-            _ => None,
-        };
-
-        if let Some((x, w)) = x_w_coords {
-            render_buckets.custom_commands[Layer::AboveText as usize].push(
-                OutputMessage::PulsingRectangle {
-                    x,
-                    y: *render_y,
-                    w,
-                    h: *render_height,
-                    start_color: 0xFF88FF_DD,
-                    end_color: 0xFFFFFF_00,
-                    animation_time: Duration::from_millis(1000),
-                },
-            );
+    if gr.get_render_y(EditorY::new(0)).is_none() {
+        // there were no render yet
+        return;
+    }
+    // Pulsing changed results
+    for i in 0..MAX_LINE_COUNT {
+        if result_has_updated.is_true(i) {
+            if let Some(render_y) = gr.get_render_y(EditorY::new(i)) {
+                render_buckets.custom_commands[Layer::AboveText as usize].push(
+                    OutputMessage::PulsingRectangle {
+                        x: gr.result_gutter_x + RIGHT_GUTTER_WIDTH,
+                        y: render_y,
+                        w: longest_rendered_result_len,
+                        h: gr.get_rendered_height(EditorY::new(i)),
+                        start_color: 0xFF88FF_DD,
+                        end_color: 0xFFFFFF_00,
+                        animation_time: Duration::from_millis(1000),
+                    },
+                );
+            }
         }
     }
+
+    // for DEBUG, pulses the whole line
+    // for ((render_y, render_height), target) in rerendered_lines {
+    // let x_w_coords = match *target {
+    //     RedrawTarget::Both => Some((
+    //         LEFT_GUTTER_WIDTH,
+    //         gr.current_result_panel_width
+    //             + gr.current_editor_width
+    //             + gr.left_gutter_width
+    //             + SCROLL_BAR_WIDTH
+    //             + RIGHT_GUTTER_WIDTH,
+    //     )),
+    //     RedrawTarget::EditorArea => Some((LEFT_GUTTER_WIDTH, gr.current_editor_width)),
+    //
+    //     RedrawTarget::ResultArea => Some((
+    //         gr.result_gutter_x,
+    //         gr.current_result_panel_width + RIGHT_GUTTER_WIDTH,
+    //     )),
+    // };
+
+    // pulses only the result
+    // let x_w_coords = match *target {
+    //     RedrawTarget::Both | RedrawTarget::ResultArea => Some((
+    //         gr.result_gutter_x,
+    //         gr.current_result_panel_width + RIGHT_GUTTER_WIDTH,
+    //     )),
+    //     _ => None,
+    // };
+    //
+    // if let Some((x, w)) = x_w_coords {
+    //     render_buckets.custom_commands[Layer::AboveText as usize].push(
+    //         OutputMessage::PulsingRectangle {
+    //             x,
+    //             y: *render_y,
+    //             w,
+    //             h: *render_height,
+    //             start_color: 0xFF88FF_DD,
+    //             end_color: 0xFFFFFF_00,
+    //             animation_time: Duration::from_millis(1000),
+    //         },
+    //     );
+    // }
+    // }
 }
 
 pub fn clear_bottom_due_to_line_shrinking(
@@ -3924,12 +3997,13 @@ fn render_results<'text_ptr>(
     result_gutter_x: usize,
     modif_type: EditorRowFlags,
     decimal_count: Option<usize>,
-) {
+) -> usize {
     struct ResultTmp {
         buffer_ptr: Option<Range<usize>>,
         editor_y: EditorY,
         lengths: ResultLengths,
     }
+    let mut longest_result_len = 0;
     let (max_lengths, result_ranges) = {
         let mut result_ranges: SmallVec<[ResultTmp; MAX_LINE_COUNT]> =
             SmallVec::with_capacity(MAX_LINE_COUNT);
@@ -3942,6 +4016,7 @@ fn render_results<'text_ptr>(
         let mut prev_result_matrix_length = None;
         // calc max length and render results into buffer
         for (editor_y, result) in results.iter().enumerate() {
+            let mut result_len = 0;
             let editor_y = EditorY::new(editor_y);
             let render_y = if let Some(render_y) = gr.get_render_y(editor_y) {
                 render_y
@@ -3966,11 +4041,13 @@ fn render_results<'text_ptr>(
                         unit_part_len: 0,
                     },
                 });
+                result_len = 3;
                 result_buffer_index += 3;
                 prev_result_matrix_length = None;
             } else if let Ok(Some(result)) = result {
                 match &result {
                     CalcResult::Matrix(mat) => {
+                        // TODO: why it is called "prev.."?
                         if prev_result_matrix_length.is_none() {
                             prev_result_matrix_length = calc_consecutive_matrices_max_lengths(
                                 units,
@@ -3978,7 +4055,7 @@ fn render_results<'text_ptr>(
                             );
                         }
                         if modif_type.need(editor_y) {
-                            render_matrix_result(
+                            let width = render_matrix_result(
                                 units,
                                 result_gutter_x + RIGHT_GUTTER_WIDTH,
                                 render_y,
@@ -3988,6 +4065,7 @@ fn render_results<'text_ptr>(
                                 gr.get_rendered_height(editor_y),
                                 decimal_count,
                             );
+                            result_len = width;
                         }
                         result_ranges.push(ResultTmp {
                             buffer_ptr: None,
@@ -4021,6 +4099,7 @@ fn render_results<'text_ptr>(
                             lengths: lens,
                         });
                         result_buffer_index += len;
+                        result_len = len;
                     }
                 };
             } else {
@@ -4034,6 +4113,9 @@ fn render_results<'text_ptr>(
                         unit_part_len: 0,
                     },
                 });
+            }
+            if result_len > longest_result_len {
+                longest_result_len = result_len;
             }
         }
         (max_lengths, result_ranges)
@@ -4143,6 +4225,7 @@ fn render_results<'text_ptr>(
             );
         }
     }
+    return longest_result_len;
 }
 
 fn calc_consecutive_matrices_max_lengths(
@@ -10959,6 +11042,125 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut editor_objects,
         );
         assert_results(&["12", "36"][..], &result_buffer);
+    }
+
+    #[test]
+    fn test_modifying_a_lineref_recalcs_its_dependants_only_if_its_value_has_changed() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "2\n * 3".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(1, 0));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_results(&["2", "3"][..], &result_buffer);
+
+        // insert linref of 1st line
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::alt(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_results(&["2", "6"][..], &result_buffer);
+
+        // now modify the first row
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::End,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        // inserting a '.' does not modify the result of the line
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Char('.'),
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert!(app.editor_area_redraw.need(EditorY::new(0)));
+        assert!(app.result_area_redraw.need(EditorY::new(0)));
+
+        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(!app.result_area_redraw.need(EditorY::new(1)));
+        assert!(!app.result_has_changed.need(EditorY::new(0)));
+        assert!(!app.result_has_changed.need(EditorY::new(1)));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_results(&["2", "6"][..], &result_buffer);
     }
 
     #[test]
