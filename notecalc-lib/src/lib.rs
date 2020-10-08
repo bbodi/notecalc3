@@ -1,4 +1,4 @@
-#![feature(ptr_offset_from, const_fn, const_panic, drain_filter)]
+#![feature(const_fn, const_panic, drain_filter)]
 #![feature(type_alias_impl_trait)]
 #![feature(const_in_array_repeat_expressions)]
 #![deny(
@@ -272,6 +272,21 @@ pub mod helper {
             self.latest_bottom = RenderPosY::new(0);
         }
 
+        pub fn is_visible(&self, y: EditorY) -> bool {
+            let top = match self.get_render_y(EditorY::new(self.scroll_y)) {
+                Some(y) => y.as_isize(),
+                None => {
+                    return false;
+                }
+            };
+            return if let Some(y) = self.get_render_y(y) {
+                let y = y.as_isize();
+                y >= top && y < (top + self.client_height as isize)
+            } else {
+                false
+            };
+        }
+
         pub fn get_render_y(&self, y: EditorY) -> Option<RenderPosY> {
             self.editor_y_to_render_y[y.0]
         }
@@ -329,7 +344,7 @@ pub mod helper {
         }
 
         pub fn line_render_ended(&mut self, row_height: usize) {
-            self.render_y.0 += row_height;
+            self.render_y.0 += row_height as isize;
             self.editor_y.0 += 1;
         }
 
@@ -428,23 +443,27 @@ pub mod helper {
     }
 
     #[derive(Clone, Copy, Eq, PartialEq, Debug, Ord, PartialOrd)]
-    pub struct RenderPosY(usize);
+    pub struct RenderPosY(isize);
 
     impl RenderPosY {
-        pub fn new(n: usize) -> RenderPosY {
+        pub fn new(n: isize) -> RenderPosY {
             RenderPosY(n)
         }
 
         pub fn as_usize(self) -> usize {
+            self.0 as usize
+        }
+
+        pub fn as_isize(self) -> isize {
             self.0
         }
 
         pub fn add(&self, n: usize) -> RenderPosY {
-            RenderPosY(self.0 + n)
+            RenderPosY(self.0 + n as isize)
         }
 
         pub fn sub(&self, n: usize) -> RenderPosY {
-            RenderPosY(self.0 - n)
+            RenderPosY(self.0 - n as isize)
         }
     }
 }
@@ -1046,6 +1065,20 @@ impl NoteCalcApp {
         );
     }
 
+    pub fn calc_full_content_height(gr: &GlobalRenderData) -> usize {
+        // TODO csak az utolsó sorig iterálj, gr.be asszem letárolom
+        let mut h = 0;
+        for i in 0..MAX_LINE_COUNT {
+            let editor_y = EditorY::new(i);
+            if gr.is_visible(editor_y) {
+                h += gr.get_rendered_height(editor_y);
+            } else if gr.get_render_y(editor_y).is_some() {
+                h += 1;
+            }
+        }
+        h
+    }
+
     pub fn renderr<'a, 'b>(
         editor: &mut Editor,
         editor_content: &EditorContent<LineData>,
@@ -1068,33 +1101,57 @@ impl NoteCalcApp {
         let mut rerendered_lines: SmallVec<[((RenderPosY, usize), RedrawTarget); MAX_LINE_COUNT]> =
             SmallVec::with_capacity(MAX_LINE_COUNT);
 
-        let scroll_coeff = gr.client_height as f64 / editor_content.line_count() as f64;
-        if scroll_coeff < 1.0 {
-            let scroll_bar_h = gr.client_height
-                - (editor_content.line_count() - gr.client_height).min(gr.client_height - 1);
+        let content_height = NoteCalcApp::calc_full_content_height(gr);
+        // TODO calc it once on content change (scroll_bar_h as well
+        let max_scroll_y = content_height as isize - gr.client_height as isize;
+        if max_scroll_y > 0 {
+            let max_scroll_y = max_scroll_y as usize;
+            let scroll_bar_h = (gr.client_height as isize - max_scroll_y as isize).max(1) as usize;
+            let scroll_bar_y = if scroll_bar_h > 1 {
+                gr.scroll_y
+            } else {
+                ((gr.scroll_y as f64 / (max_scroll_y + 1) as f64) * gr.client_height as f64)
+                    as usize
+            };
             render_buckets.set_color(Layer::BehindText, 0xFFCCCC_FF);
             render_buckets.draw_rect(
                 Layer::BehindText,
                 gr.result_gutter_x - SCROLL_BAR_WIDTH,
-                RenderPosY::new(gr.scroll_y),
+                RenderPosY::new(scroll_bar_y as isize),
                 SCROLL_BAR_WIDTH,
                 scroll_bar_h,
             );
         }
 
-        // TODO: kell ez?
         {
             let mut r = PerLineRenderData::new();
+            r.render_y = RenderPosY::new(-(gr.scroll_y as isize));
             for line in editor_content.lines().take(MAX_LINE_COUNT) {
                 r.new_line_started();
                 let editor_y = r.editor_y;
 
-                if gr.scroll_y > editor_y.as_usize()
-                    || editor_y.as_usize() >= gr.scroll_y + gr.client_height
                 {
-                    gr.set_render_y(editor_y, None);
-                    r.inc_editor_y();
-                    continue;
+                    if gr.scroll_y > editor_y.as_usize()
+                        || editor_y.as_usize() >= gr.scroll_y + gr.client_height
+                    {
+                        gr.set_render_y(editor_y, Some(r.render_y));
+                        r.line_render_ended(1);
+                        continue;
+                    } else if editor_y.as_usize() > 0 {
+                        let prev_editor_y = editor_y.sub(1);
+
+                        if let Some(r_y) = gr.get_render_y(prev_editor_y) {
+                            if r_y.as_isize() + (gr.get_rendered_height(prev_editor_y) as isize)
+                                >= gr.client_height as isize
+                            {
+                                for i in editor_y.as_usize()..MAX_LINE_COUNT {
+                                    gr.set_render_y(EditorY::new(i), Some(r.render_y));
+                                    r.line_render_ended(1);
+                                }
+                                break;
+                            }
+                        }
+                    }
                 }
 
                 let render_y = r.render_y;
@@ -1249,6 +1306,14 @@ impl NoteCalcApp {
             allocator,
         );
 
+        // CLEAR area below the editor
+        // Clear the editor_y_to_render_y first so it won't mess up the result rendering
+        let last_row_i = editor_content.line_count().min(MAX_LINE_COUNT - 1);
+        clear_bottom_due_to_line_removal(last_row_i, render_buckets, gr);
+        // TODO this method clears the screen twice unnecessarily
+        // in test 'test_that_removed_lines_are_cleared'
+        clear_bottom_due_to_line_shrinking(last_row_i, render_buckets, gr);
+
         let longest_rendered_result_len = render_results(
             &units,
             render_buckets,
@@ -1270,27 +1335,18 @@ impl NoteCalcApp {
             &rerendered_lines,
             &result_has_changed,
         );
-
-        // CLEAR area below the editor
-        let last_row_i = editor_content.line_count();
-        clear_bottom_due_to_line_removal(last_row_i, render_buckets, gr);
-        clear_bottom_due_to_line_shrinking(last_row_i, render_buckets, gr);
-    }
-
-    pub fn handle_mouse_up(&mut self, _x: usize, _y: usize) {
-        self.mouse_state = None;
     }
 
     pub fn handle_wheel(&mut self, dir: usize) {
         if dir == 0 && self.render_data.scroll_y > 0 {
             self.render_data.scroll_y -= 1;
             self.set_redraw_flag(EditorRowFlags::all_rows_starting_at(0), RedrawTarget::Both);
-        } else if dir == 1
-            && (self.render_data.scroll_y + self.render_data.client_height)
-                < self.editor_content.line_count()
-        {
-            self.render_data.scroll_y += 1;
-            self.set_redraw_flag(EditorRowFlags::all_rows_starting_at(0), RedrawTarget::Both);
+        } else if dir == 1 {
+            let content_height = NoteCalcApp::calc_full_content_height(&self.render_data);
+            if (self.render_data.scroll_y + self.render_data.client_height) < content_height {
+                self.render_data.scroll_y += 1;
+                self.set_redraw_flag(EditorRowFlags::all_rows_starting_at(0), RedrawTarget::Both);
+            }
         }
     }
 
@@ -1341,6 +1397,10 @@ impl NoteCalcApp {
                 None
             };
         }
+    }
+
+    pub fn handle_mouse_up(&mut self, _x: usize, _y: usize) {
+        self.mouse_state = None;
     }
 
     fn handle_editor_area_click(
@@ -1476,13 +1536,15 @@ impl NoteCalcApp {
                 original_scroll_y,
             }) => {
                 let gr = &mut self.render_data;
-                let scroll_coeff =
-                    gr.client_height as f64 / self.editor_content.line_count() as f64;
+                let content_height = NoteCalcApp::calc_full_content_height(gr);
+                let scroll_coeff = gr.client_height as f64 / content_height as f64;
                 if scroll_coeff < 1.0 {
-                    let delta_y = y.as_usize() as isize - original_click_y.as_usize() as isize;
-
-                    // gr.scroll_y = y / scroll_bar_step;
+                    let delta_y = y.as_isize() - original_click_y.as_isize();
                     gr.scroll_y = (original_scroll_y as isize + delta_y).max(0) as usize;
+                    self.set_redraw_flag(
+                        EditorRowFlags::all_rows_starting_at(0),
+                        RedrawTarget::Both,
+                    );
                 }
             }
             None => {}
@@ -1773,7 +1835,8 @@ impl NoteCalcApp {
                 InputResult {
                     modif: None,
                     redraw: Some((
-                        EditorRowFlags::range(start.row, end.row),
+                        // so all other results are aligned with the new length of the new representation
+                        EditorRowFlags::all_rows_starting_at(0),
                         RedrawTarget::ResultArea,
                     )),
                 }
@@ -1791,7 +1854,8 @@ impl NoteCalcApp {
                 InputResult {
                     modif: None,
                     redraw: Some((
-                        EditorRowFlags::range(start.row, end.row),
+                        // so all other results are aligned with the new length of the new representation
+                        EditorRowFlags::all_rows_starting_at(0),
                         RedrawTarget::ResultArea,
                     )),
                 }
@@ -1929,11 +1993,21 @@ impl NoteCalcApp {
                         // scroll up
                         self.render_data.scroll_y = cursor_pos.row;
                         true
-                    } else if (cursor_pos.row - self.render_data.scroll_y)
-                        >= self.render_data.client_height
+                    } else if self
+                        .render_data
+                        .get_render_y(EditorY::new(cursor_pos.row))
+                        .map(|render_y| {
+                            render_y.as_isize() >= (self.render_data.client_height as isize)
+                        })
+                        .unwrap_or(false)
                     {
                         // scroll down
-                        self.render_data.scroll_y = (cursor_pos.row
+                        self.render_data.scroll_y = (self
+                            .render_data
+                            .get_render_y(EditorY::new(cursor_pos.row))
+                            .expect("must")
+                            .as_usize()
+                            + self.render_data.scroll_y
                             - (self.render_data.client_height - 1))
                             .min(self.render_data.client_height - 1);
                         true
@@ -2006,9 +2080,8 @@ impl NoteCalcApp {
             results: &mut Results,
             vars: &mut Variables,
             editor_y: EditorY,
-            result_has_updated: &mut EditorRowFlags,
+            result_has_changed: &mut EditorRowFlags,
         ) -> EditorRowFlags {
-            dbg!(&vars);
             // TODO avoid clone
             let prev_var_name = vars[editor_y.as_usize()].as_ref().map(|it| it.name.clone());
 
@@ -2052,7 +2125,7 @@ impl NoteCalcApp {
 
             let mut rows_to_recalc = EditorRowFlags::empty();
             if needs_dependency_check {
-                result_has_updated.merge(EditorRowFlags::single_row(editor_y.as_usize()));
+                result_has_changed.merge(EditorRowFlags::single_row(editor_y.as_usize()));
 
                 rows_to_recalc.merge(find_line_ref_dependant_lines(
                     editor_content,
@@ -2406,7 +2479,12 @@ impl NoteCalcApp {
             None,
         );
         for i in 0..render_height {
-            render_buckets.draw_char(Layer::AboveText, result_gutter_x, RenderPosY::new(i), '█');
+            render_buckets.draw_char(
+                Layer::AboveText,
+                result_gutter_x,
+                RenderPosY::new(i as isize),
+                '█',
+            );
         }
         render_buckets_into(&render_buckets, &mut tmp_canvas);
         let mut result_str = String::with_capacity(row_nums * 64);
@@ -3025,21 +3103,23 @@ pub fn clear_bottom_due_to_line_shrinking(
     let last_editor_y = EditorY::new(last_row_i - 1);
     if let Some(current_bottom) = gr.get_render_y(last_editor_y) {
         if current_bottom < gr.latest_bottom {
-            let h = gr.latest_bottom.as_usize() - current_bottom.as_usize();
-            // something, e.g. a matrix has shrinked, clear the below area
-            let y = current_bottom.add(1);
-            render_buckets
-                .clear_commands
-                .push(OutputMessage::RenderRectangle {
-                    x: 0,
-                    y,
-                    w: gr.current_result_panel_width
-                        + gr.current_editor_width
-                        + gr.left_gutter_width
-                        + SCROLL_BAR_WIDTH
-                        + RIGHT_GUTTER_WIDTH,
-                    h,
-                });
+            let h = gr.latest_bottom.as_isize() - current_bottom.as_isize();
+            if h > 0 {
+                // something, e.g. a matrix has shrinked, clear the below area
+                let y = current_bottom.add(1);
+                render_buckets
+                    .clear_commands
+                    .push(OutputMessage::RenderRectangle {
+                        x: 0,
+                        y,
+                        w: gr.current_result_panel_width
+                            + gr.current_editor_width
+                            + gr.left_gutter_width
+                            + SCROLL_BAR_WIDTH
+                            + RIGHT_GUTTER_WIDTH,
+                        h: h as usize,
+                    });
+            }
         }
         gr.latest_bottom = current_bottom;
     }
@@ -3050,24 +3130,24 @@ pub fn clear_bottom_due_to_line_removal(
     render_buckets: &mut RenderBuckets,
     gr: &mut GlobalRenderData,
 ) {
-    let mut clear_box_h = 0;
     let mut clear_box_y = None;
+
     for i in last_row_i..MAX_LINE_COUNT {
         let editor_y = EditorY::new(i);
 
-        if let Some(render_y) = gr.get_render_y(editor_y) {
-            if clear_box_y.is_none() {
-                clear_box_y = Some(render_y);
-                clear_box_h = gr.get_rendered_height(editor_y);
-                gr.set_render_y(editor_y, None);
-            } else {
-                clear_box_h += gr.get_rendered_height(editor_y);
-                gr.set_render_y(editor_y, None);
+        if let Some(_) = gr.get_render_y(editor_y) {
+            let y = gr
+                .get_render_y(EditorY::new(last_row_i - 1))
+                .expect("must")
+                .as_usize();
+            let h = gr.get_rendered_height(EditorY::new(last_row_i - 1));
+            clear_box_y = Some(y + h);
+            for remaining_i in i..MAX_LINE_COUNT {
+                gr.set_render_y(EditorY::new(remaining_i), None);
             }
+            break;
         } else {
-            if clear_box_y.is_some() {
-                break;
-            }
+            break;
         }
     }
     if let Some(clear_box_y) = clear_box_y {
@@ -3075,13 +3155,13 @@ pub fn clear_bottom_due_to_line_removal(
             .clear_commands
             .push(OutputMessage::RenderRectangle {
                 x: 0,
-                y: clear_box_y,
+                y: RenderPosY::new(clear_box_y as isize),
                 w: gr.left_gutter_width
                     + gr.current_editor_width
                     + gr.current_result_panel_width
                     + SCROLL_BAR_WIDTH
                     + RIGHT_GUTTER_WIDTH,
-                h: clear_box_h,
+                h: gr.client_height,
             });
     }
 }
@@ -3342,8 +3422,9 @@ fn highlight_current_line(
             0,
             r.render_y,
             gr.result_gutter_x
+                + RIGHT_GUTTER_WIDTH
                 + if redraw_result_area.need(r.editor_y) {
-                    RIGHT_GUTTER_WIDTH + gr.current_result_panel_width
+                    gr.current_result_panel_width
                 } else {
                     0
                 },
@@ -4023,9 +4104,8 @@ fn render_results<'text_ptr>(
             } else {
                 continue;
             };
-            if editor_y.as_usize() >= editor_content.line_count() {
-                // TODO what is it?
-                break;
+            if !gr.is_visible(editor_y) {
+                continue;
             }
 
             if let Err(..) = result {
@@ -7362,10 +7442,10 @@ TDEE = (men BMR * 1.35)
 'STEP 3. ADJUST CALORIE INTAKE BASED ON YOUR GOAL
 Fat loss
     target weekly fat loss rate = 0.5%
-    TDEE - ((weight/1kg) * target weekly fat loss rate * 1100)kcal
+    (TDEE - ((weight/1kg) * target weekly fat loss rate * 1100))kcal
 Muscle gain
     monthly rates of weight gain = 1%
-    TDEE + (weight/1kg * monthly rates of weight gain * 330)kcal
+    (TDEE + (weight/1kg * monthly rates of weight gain * 330))kcal
 
 Protein intake
     1.6 g/kg
@@ -7392,6 +7472,7 @@ Fat intake
                 assert_eq!(a, *b, "{}", name);
             }
         }
+        dbg!(&vars);
         assert_var(&vars[..], "weight", 2);
         assert_var(&vars[..], "height", 3);
         assert_var(&vars[..], "age", 4);
@@ -13543,8 +13624,216 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
     }
 
     #[test]
+    fn dragging_scrollbar_rerenders_everyhting() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "firs 1t\nasdsad\n[1;2;3;4]".repeat(5).to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        app.handle_click(
+            app.render_data.result_gutter_x - SCROLL_BAR_WIDTH,
+            RenderPosY::new(0),
+            &editor_objects,
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
+        assert!(!app.result_area_redraw.need(EditorY::new(0)));
+        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(!app.result_area_redraw.need(EditorY::new(1)));
+        assert!(!app.editor_area_redraw.need(EditorY::new(2)));
+        assert!(!app.result_area_redraw.need(EditorY::new(2)));
+
+        assert_eq!(app.render_data.scroll_y, 0);
+        app.handle_drag(
+            app.render_data.result_gutter_x - SCROLL_BAR_WIDTH,
+            RenderPosY::new(1),
+        );
+        assert_eq!(app.render_data.scroll_y, 1);
+
+        assert!(app.editor_area_redraw.need(EditorY::new(0)));
+        assert!(app.result_area_redraw.need(EditorY::new(0)));
+        assert!(app.editor_area_redraw.need(EditorY::new(1)));
+        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        assert!(app.editor_area_redraw.need(EditorY::new(2)));
+        assert!(app.result_area_redraw.need(EditorY::new(2)));
+    }
+
+    #[test]
+    fn test_scrolling_by_keyboard() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "0
+1
+2
+[4;5;6;7]
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+--
+1
+2
+3
+4
+5
+6
+7
+8
+10"
+            .to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(34, 0));
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::PageUp,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert_eq!(app.render_data.scroll_y, 0);
+        // in this setup (35 canvas height) only 30 line is visible, so the client
+        // has to press DOWN 29 times
+        let matrix_height = 6;
+        for _ in 0..(35 - matrix_height) {
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Down,
+                InputModifiers::none(),
+                &arena,
+                &units,
+                &mut tokens,
+                &mut results,
+                &mut vars,
+                &mut editor_objects,
+            );
+        }
+        assert_eq!(app.render_data.scroll_y, 0);
+        for i in 0..3 {
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Down,
+                InputModifiers::none(),
+                &arena,
+                &units,
+                &mut tokens,
+                &mut results,
+                &mut vars,
+                &mut editor_objects,
+            );
+            let mut result_buffer = [0; 128];
+            app.render(
+                &units,
+                &mut RenderBuckets::new(),
+                &mut result_buffer,
+                &arena,
+                &tokens,
+                &results,
+                &vars,
+                &mut editor_objects,
+            );
+            assert_eq!(app.render_data.scroll_y, 1 + i);
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(30 + i)),
+                Some(RenderPosY::new(34)),
+            );
+        }
+        // This step moves the matrix out of vision, so 6 line will appear instead of it at the bottom
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Down,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_eq!(app.render_data.scroll_y, 4);
+        assert_eq!(
+            app.render_data.get_render_y(EditorY::new(33)),
+            Some(RenderPosY::new(29)),
+        );
+    }
+
+    #[test]
     fn test_sum_rerender() {
-        // rust's shitty borrow checker forces me to do this
+        // rust's borrow checker forces me to do this
         {
             let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
                 create_app(35);
@@ -14531,6 +14820,128 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
     }
 
     #[test]
+    fn test_that_multiline_matrix_is_considered_when_scrolling() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        // editor height is 36 in tests, so create a 35 line text
+        app.handle_paste(
+            "a\n".repeat(40),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single(Pos::from_row_column(3, 0)));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_eq!(
+            app.render_data.get_render_y(EditorY::new(34)),
+            Some(RenderPosY::new(34))
+        );
+        assert_eq!(
+            app.render_data.get_render_y(EditorY::new(35)),
+            Some(RenderPosY::new(35))
+        );
+        assert_eq!(
+            app.render_data.get_render_y(EditorY::new(39)),
+            Some(RenderPosY::new(39))
+        );
+        assert!(app.render_data.is_visible(EditorY::new(30)));
+        assert!(app.render_data.is_visible(EditorY::new(31)));
+        assert!(!app.render_data.is_visible(EditorY::new(39)));
+
+        app.handle_paste(
+            "[1;2;3;4]".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_eq!(
+            app.render_data.get_render_y(EditorY::new(29)),
+            Some(RenderPosY::new(34))
+        );
+        assert_eq!(
+            app.render_data.get_render_y(EditorY::new(30)),
+            Some(RenderPosY::new(35))
+        );
+        assert_eq!(
+            app.render_data.get_render_y(EditorY::new(31)),
+            Some(RenderPosY::new(36))
+        );
+        assert_eq!(
+            app.render_data.get_render_y(EditorY::new(39)),
+            Some(RenderPosY::new(44))
+        );
+        assert!(!app.render_data.is_visible(EditorY::new(30)));
+        assert!(!app.render_data.is_visible(EditorY::new(31)));
+        assert!(!app.render_data.is_visible(EditorY::new(39)));
+
+        assert_eq!(
+            app.render_data.get_render_y(EditorY::new(1)),
+            Some(RenderPosY::new(1))
+        );
+        assert_eq!(app.render_data.scroll_y, 0);
+
+        // move to the last visible line
+        app.editor
+            .set_selection_save_col(Selection::single(Pos::from_row_column(29, 0)));
+        // Since the matrix takes up 6 lines, a scroll should occur when pressing down
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Down,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert_eq!(app.render_data.scroll_y, 1);
+
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_eq!(
+            app.render_data.get_render_y(EditorY::new(1)),
+            Some(RenderPosY::new(0))
+        );
+    }
+
+    #[test]
     fn navigating_to_bottom_no_panic() {
         let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
             create_app(35);
@@ -14557,7 +14968,6 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut editor_objects,
         );
 
-        // removing a line
         app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::PageDown,
             InputModifiers::none(),
@@ -14746,7 +15156,7 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut editor_objects,
         );
 
-        // step into last line
+        // step into last visible line
         app.handle_input_and_update_tokens_plus_redraw_requirements(
             EditorInputEvent::Down,
             InputModifiers::none(),
@@ -14921,24 +15331,26 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
 
         // [0] SetColor
         // [1] clears the scrollbar
-        // [2] clears the first row
+        // [2] clears everything below it
+        dbg!(&render_buckets.clear_commands);
         match &render_buckets.clear_commands[2] {
+            OutputMessage::RenderRectangle { x, y, w, h } => {
+                assert_eq!(*x, 0);
+                assert_eq!(y.as_usize(), 1);
+                assert!(*w > app.render_data.current_editor_width);
+                assert_eq!(*h, client_height);
+            }
+            _ => assert!(false),
+        }
+
+        // [3] is a clear added by clear_bottom_due_to_line_shrinking
+        // [4] clears the first row
+        match &render_buckets.clear_commands[4] {
             OutputMessage::RenderRectangle { x, y, w, h } => {
                 assert_eq!(*x, 4);
                 assert_eq!(y.as_usize(), 0);
                 assert_eq!(*w, 121);
                 assert_eq!(*h, 1);
-            }
-            _ => assert!(false),
-        }
-
-        // [3] clears everything below it
-        match &render_buckets.clear_commands[3] {
-            OutputMessage::RenderRectangle { x, y, w, h } => {
-                assert_eq!(*x, 0);
-                assert_eq!(y.as_usize(), 0);
-                assert!(*w > app.render_data.current_editor_width);
-                assert_eq!(*h, client_height);
             }
             _ => assert!(false),
         }
@@ -14976,6 +15388,286 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         );
 
         app.handle_wheel(1);
+        assert_eq!(0, app.render_data.scroll_y);
+    }
+
+    #[test]
+    fn test_that_unvisible_rows_have_height_1() {
+        let arena = Arena::new();
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(25);
+        app.handle_paste(
+            "1\n2\n\n[1;2;3;4]".repeat(10).to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+
+        for _ in 0..3 {
+            app.handle_wheel(1);
+        }
+        app.handle_wheel(1);
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_eq!(
+            app.render_data.get_render_y(EditorY::new(3)),
+            Some(RenderPosY::new(-1))
+        );
+        assert_eq!(app.render_data.get_rendered_height(EditorY::new(3)), 6);
+        assert_eq!(
+            app.render_data.get_render_y(EditorY::new(4)),
+            Some(RenderPosY::new(0))
+        );
+        assert_eq!(app.render_data.get_rendered_height(EditorY::new(4)), 1);
+    }
+
+    #[test]
+    fn test_that_unvisible_rows_contribute_with_only_1_height_to_calc_content_height() {
+        let arena = Arena::new();
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(25);
+        app.handle_paste(
+            "1\n2\n\n[1;2;3;4]".repeat(10).to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+
+        for _ in 0..4 {
+            app.handle_wheel(1);
+        }
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_eq!(46, NoteCalcApp::calc_full_content_height(&app.render_data));
+    }
+
+    #[test]
+    fn test_stepping_into_scrolled_matrix_panic() {
+        let arena = Arena::new();
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(25);
+        app.handle_paste(
+            "1\n2\n\n[1;2;3;4]".repeat(10).to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+
+        app.editor
+            .set_selection_save_col(Selection::single(Pos::from_row_column(0, 0)));
+
+        for _ in 0..2 {
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Down,
+                InputModifiers::none(),
+                &arena,
+                &units,
+                &mut tokens,
+                &mut results,
+                &mut vars,
+                &mut editor_objects,
+            );
+            let mut result_buffer = [0; 128];
+            app.render(
+                &units,
+                &mut RenderBuckets::new(),
+                &mut result_buffer,
+                &arena,
+                &tokens,
+                &results,
+                &vars,
+                &mut editor_objects,
+            );
+        }
+        app.handle_wheel(1);
+        app.handle_wheel(1);
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Down,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+    }
+
+    #[test]
+    fn tall_rows_are_considered_in_scrollbar_height_calc() {
+        let arena = Arena::new();
+        const CANVAS_HEIGHT: usize = 25;
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(CANVAS_HEIGHT);
+        app.handle_paste(
+            "1\n2\n\n[1;2;3;4]".repeat(5).to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+
+        let mut result_buffer = [0; 128];
+        let mut render_buckets = RenderBuckets::new();
+        app.render(
+            &units,
+            &mut render_buckets,
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+
+        match &render_buckets.custom_commands[Layer::BehindText as usize][1] {
+            OutputMessage::RenderRectangle { x, y, w, h } => {
+                assert_eq!(*x, 87);
+                assert_eq!(y.as_usize(), 0);
+                assert_eq!(*w, 1);
+                assert_eq!(*h, 19);
+            }
+            _ => assert!(false),
+        }
+    }
+
+    #[test]
+    fn test_no_scrolling_in_empty_document() {
+        let arena = Arena::new();
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(25);
+        app.handle_paste(
+            "1".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+
+        app.handle_wheel(1);
+
+        let mut result_buffer = [0; 128];
+        let mut render_buckets = RenderBuckets::new();
+        app.render(
+            &units,
+            &mut render_buckets,
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+
         assert_eq!(0, app.render_data.scroll_y);
     }
 
@@ -15058,10 +15750,23 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 app.render_data.get_render_y(EditorY::new(2)),
                 Some(RenderPosY::new(2))
             );
-            assert_eq!(app.render_data.get_render_y(EditorY::new(35)), None);
-            assert_eq!(app.render_data.get_render_y(EditorY::new(36)), None);
-            assert_eq!(app.render_data.get_render_y(EditorY::new(37)), None);
-            assert_eq!(app.render_data.get_render_y(EditorY::new(38)), None);
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(35)),
+                Some(RenderPosY::new(35))
+            );
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(36)),
+                Some(RenderPosY::new(36))
+            );
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(37)),
+                Some(RenderPosY::new(37))
+            );
+            assert_eq!(app.render_data.get_render_y(EditorY::new(38)), None,);
+            assert_eq!(app.render_data.is_visible(EditorY::new(35)), false);
+            assert_eq!(app.render_data.is_visible(EditorY::new(36)), false);
+            assert_eq!(app.render_data.is_visible(EditorY::new(37)), false);
+            assert_eq!(app.render_data.is_visible(EditorY::new(38)), false);
         }
 
         {
@@ -15107,8 +15812,11 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &vars,
                 &mut editor_objects,
             );
-            assert_results(&["2", "3"][..], &result_buffer);
-            assert_eq!(app.render_data.get_render_y(EditorY::new(0)), None);
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(0)),
+                Some(RenderPosY::new(-1))
+            );
+            assert!(!app.render_data.is_visible(EditorY::new(0)));
             assert_eq!(
                 app.render_data.get_render_y(EditorY::new(1)),
                 Some(RenderPosY::new(0))
@@ -15121,9 +15829,16 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 app.render_data.get_render_y(EditorY::new(35)),
                 Some(RenderPosY::new(34))
             );
-            assert_eq!(app.render_data.get_render_y(EditorY::new(36)), None);
-            assert_eq!(app.render_data.get_render_y(EditorY::new(37)), None);
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(36)),
+                Some(RenderPosY::new(35))
+            );
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(37)),
+                Some(RenderPosY::new(36))
+            );
             assert_eq!(app.render_data.get_render_y(EditorY::new(38)), None);
+            assert_results(&["2", "3"][..], &result_buffer);
         }
 
         {
@@ -15171,8 +15886,14 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut editor_objects,
             );
             assert_results(&["3"][..], &result_buffer);
-            assert_eq!(app.render_data.get_render_y(EditorY::new(0)), None);
-            assert_eq!(app.render_data.get_render_y(EditorY::new(1)), None);
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(0)),
+                Some(RenderPosY::new(-2))
+            );
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(1)),
+                Some(RenderPosY::new(-1))
+            );
             assert_eq!(
                 app.render_data.get_render_y(EditorY::new(2)),
                 Some(RenderPosY::new(0))
@@ -15185,7 +15906,10 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 app.render_data.get_render_y(EditorY::new(36)),
                 Some(RenderPosY::new(34))
             );
-            assert_eq!(app.render_data.get_render_y(EditorY::new(37)), None);
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(37)),
+                Some(RenderPosY::new(35))
+            );
             assert_eq!(app.render_data.get_render_y(EditorY::new(38)), None);
         }
 
@@ -15235,9 +15959,18 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut editor_objects,
             );
             assert_results(&[""][..], &result_buffer);
-            assert_eq!(app.render_data.get_render_y(EditorY::new(0)), None);
-            assert_eq!(app.render_data.get_render_y(EditorY::new(1)), None);
-            assert_eq!(app.render_data.get_render_y(EditorY::new(2)), None);
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(0)),
+                Some(RenderPosY::new(-3))
+            );
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(1)),
+                Some(RenderPosY::new(-2))
+            );
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(2)),
+                Some(RenderPosY::new(-1))
+            );
             assert_eq!(
                 app.render_data.get_render_y(EditorY::new(35)),
                 Some(RenderPosY::new(32))
@@ -15300,8 +16033,14 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut editor_objects,
             );
             assert_results(&["3"][..], &result_buffer);
-            assert_eq!(app.render_data.get_render_y(EditorY::new(0)), None);
-            assert_eq!(app.render_data.get_render_y(EditorY::new(1)), None);
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(0)),
+                Some(RenderPosY::new(-2))
+            );
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(1)),
+                Some(RenderPosY::new(-1))
+            );
             assert_eq!(
                 app.render_data.get_render_y(EditorY::new(2)),
                 Some(RenderPosY::new(0))
@@ -15314,7 +16053,10 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 app.render_data.get_render_y(EditorY::new(36)),
                 Some(RenderPosY::new(34))
             );
-            assert_eq!(app.render_data.get_render_y(EditorY::new(37)), None);
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(37)),
+                Some(RenderPosY::new(35))
+            );
             assert_eq!(app.render_data.get_render_y(EditorY::new(38)), None);
         }
 
@@ -15366,7 +16108,10 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 &mut editor_objects,
             );
             assert_results(&["2", "3"][..], &result_buffer);
-            assert_eq!(app.render_data.get_render_y(EditorY::new(0)), None);
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(0)),
+                Some(RenderPosY::new(-1))
+            );
             assert_eq!(
                 app.render_data.get_render_y(EditorY::new(1)),
                 Some(RenderPosY::new(0))
@@ -15379,8 +16124,14 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 app.render_data.get_render_y(EditorY::new(35)),
                 Some(RenderPosY::new(34))
             );
-            assert_eq!(app.render_data.get_render_y(EditorY::new(36)), None);
-            assert_eq!(app.render_data.get_render_y(EditorY::new(37)), None);
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(36)),
+                Some(RenderPosY::new(35))
+            );
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(37)),
+                Some(RenderPosY::new(36))
+            );
             assert_eq!(app.render_data.get_render_y(EditorY::new(38)), None);
         }
 
@@ -15445,9 +16196,18 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 app.render_data.get_render_y(EditorY::new(2)),
                 Some(RenderPosY::new(2))
             );
-            assert_eq!(app.render_data.get_render_y(EditorY::new(35)), None);
-            assert_eq!(app.render_data.get_render_y(EditorY::new(36)), None);
-            assert_eq!(app.render_data.get_render_y(EditorY::new(37)), None);
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(35)),
+                Some(RenderPosY::new(35))
+            );
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(36)),
+                Some(RenderPosY::new(36))
+            );
+            assert_eq!(
+                app.render_data.get_render_y(EditorY::new(37)),
+                Some(RenderPosY::new(37))
+            );
             assert_eq!(app.render_data.get_render_y(EditorY::new(38)), None);
         }
     }

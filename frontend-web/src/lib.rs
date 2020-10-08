@@ -212,14 +212,14 @@ pub fn handle_time(app_ptr: u32, now: u32) -> bool {
 
 #[wasm_bindgen]
 pub fn handle_drag(app_ptr: u32, x: usize, y: usize) {
-    AppPointers::mut_app(app_ptr).handle_drag(x, RenderPosY::new(y));
+    AppPointers::mut_app(app_ptr).handle_drag(x, RenderPosY::new(y as isize));
 }
 
 #[wasm_bindgen]
 pub fn handle_click(app_ptr: u32, x: usize, y: usize) {
     AppPointers::mut_app(app_ptr).handle_click(
         x,
-        RenderPosY::new(y),
+        RenderPosY::new(y as isize),
         AppPointers::editor_objects(app_ptr),
         AppPointers::units(app_ptr),
         AppPointers::allocator(app_ptr),

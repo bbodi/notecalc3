@@ -422,7 +422,6 @@ impl TokenParser {
         }
         let mut longest_match_index = 0;
         let mut longest_match = 0;
-        dbg!(&vars);
         'asd: for (var_index, var) in vars[0..=row_index].iter().enumerate().rev() {
             if var.is_none() {
                 continue;
