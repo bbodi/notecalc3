@@ -123,7 +123,7 @@
 
 </div>
 <script src="https://ajax.googleapis.com/ajax/libs/webfont/1.5.10/webfont.js"></script>
-<script src="frontend-web/pkg/frontend_web.js?3"></script>
+<script src="frontend-web/pkg/frontend_web.js?4"></script>
 <script>
     let canvas_dirty = 0;
     let last_drag_event = null;
@@ -282,9 +282,7 @@
     }
 
     function on_mouse_up(e) {
-        const char_x = (e.offsetX) / font_width;
-        const char_y = (e.offsetY) / line_height;
-        wasm_bindgen.handle_mouse_up(app_ptr, char_x | 0, char_y | 0);
+        wasm_bindgen.handle_mouse_up(app_ptr);
     }
 
     function on_wheel(e) {
@@ -680,7 +678,7 @@
 
     // http://localhost:5000/eJytU81u2zAMvuspeGwzF42dpH_BsMO6nXYasGGAkQJ0otqKZKuVlLTxW_QRcsx5QA9Db0bfa5-dZetQDFiBCo4iSuRH8iOZfpvQ--DMwS1pNZemuTfNxlPVbIxuHky0fTwXKU2gUMpKBrq0rmzWdbP2fEaFvI0oU1VEsnbSU-DcGjxF5KdKVkFdqmlEV7YK1vtmnXdITBXnq7LZOBmaB8raXZO3WrMhuPYyy6SmpTWsIwYIG8VeVfm7zvyrdEFNoYrrvKKSg1O3VpP0ANpUgNfNfZ3Jyj_eUbAaUWt8HzrjwJnVW5wlGy4VFaoKERU2X5HErw0LMBpn32xyGFKpzEoCF-HMmYwswALUctrywiEAAknj8gGuZ6BQEte0mCMpV3LOXe5dfp0J-Gtjzhi5g_CrlvO5BZlm5SS5zg3s5UwF68JTk7_KtOcLdRnoDemFq63b7xS_fP6UPd4ZKFqzZF8p8BHYBTYgii4uOqWPxkL4TViN3AIiyDKHkNg45tZK1XIm_RxMSI2Ul83aBFsHZMPUj5PBcHR0fHL6_yfxcpPXOb2K45t2CZlfv2CJ7b4dn23hQLuRJcRdn5muXX4VBv1iNYpQqCUHbdsp2z1NMYp1t5MvFm3hayEyp7wmuzA06Pf7dEijfmme3-611_sCTTRjoMdDOj7F_aAv4sO9RJeHxb4QFVNpfUBP5uhJRKkpX1nnueoGo7Bt3Wfsib2s26Y5Oych0CpvadT-9Sju94XA2069bn7suqb5DrV48O_XHg3Fkl2rlYiDOI2jJBpM_pyod0OtMKZkDImZPXfrmsUTlXQYj58rwGsp893Ew_P9EmI6SDrDcVvg05M4GkVHAKG0gxgPJ4xsZ55nQqRpEtEA3ySidBTRUUTHkwlGLxZiL056w2QfwvAEXHd0igQ4SOcnZB_IjQ
     async function run() {
-        wasm = await wasm_bindgen('frontend-web/pkg/frontend_web_bg.wasm?3');
+        wasm = await wasm_bindgen('frontend-web/pkg/frontend_web_bg.wasm?4');
 
         const t = calc_and_set_client_width();
         CLIENT_WIDTH_IN_CHARS = t[0];

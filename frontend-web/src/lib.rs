@@ -235,8 +235,8 @@ pub fn handle_wheel(app_ptr: u32, dir: usize) {
 }
 
 #[wasm_bindgen]
-pub fn handle_mouse_up(app_ptr: u32, x: usize, y: usize) {
-    AppPointers::mut_app(app_ptr).handle_mouse_up(x, y);
+pub fn handle_mouse_up(app_ptr: u32) {
+    AppPointers::mut_app(app_ptr).handle_mouse_up();
 }
 
 #[wasm_bindgen]

@@ -181,6 +181,9 @@ pub mod helper {
         }
 
         pub fn all_rows_starting_at(row_index: usize) -> EditorRowFlags {
+            if row_index >= MAX_LINE_COUNT {
+                return EditorRowFlags { bitset: 0 };
+            }
             let s = 1u64 << row_index;
             let right_to_s_bits = s - 1;
             let left_to_s_and_s_bits = !right_to_s_bits;
@@ -201,6 +204,11 @@ pub mod helper {
 
         pub fn range(from: usize, to: usize) -> EditorRowFlags {
             debug_assert!(to >= from);
+            if from >= MAX_LINE_COUNT {
+                return EditorRowFlags { bitset: 0 };
+            } else if to >= MAX_LINE_COUNT {
+                return EditorRowFlags::range(from, MAX_LINE_COUNT - 1);
+            }
             let top = 1 << to;
             let right_to_top_bits = top - 1;
             let bottom = 1 << from;
@@ -466,6 +474,12 @@ pub mod helper {
             RenderPosY(self.0 - n as isize)
         }
     }
+}
+
+struct ScrollBarRenderInfo {
+    scroll_bar_render_y: usize,
+    scroll_bar_render_h: usize,
+    max_scroll_y: usize,
 }
 
 use helper::*;
@@ -1101,25 +1115,15 @@ impl NoteCalcApp {
         let mut rerendered_lines: SmallVec<[((RenderPosY, usize), RedrawTarget); MAX_LINE_COUNT]> =
             SmallVec::with_capacity(MAX_LINE_COUNT);
 
-        let content_height = NoteCalcApp::calc_full_content_height(gr);
-        // TODO calc it once on content change (scroll_bar_h as well
-        let max_scroll_y = content_height as isize - gr.client_height as isize;
-        if max_scroll_y > 0 {
-            let max_scroll_y = max_scroll_y as usize;
-            let scroll_bar_h = (gr.client_height as isize - max_scroll_y as isize).max(1) as usize;
-            let scroll_bar_y = if scroll_bar_h > 1 {
-                gr.scroll_y
-            } else {
-                ((gr.scroll_y as f64 / (max_scroll_y + 1) as f64) * gr.client_height as f64)
-                    as usize
-            };
+        // TODO calc it once on content change (scroll_bar_h as well) (it is used in handle_drag)
+        if let Some(scrollbar_info) = NoteCalcApp::get_scrollbar_info(gr) {
             render_buckets.set_color(Layer::BehindText, 0xFFCCCC_FF);
             render_buckets.draw_rect(
                 Layer::BehindText,
                 gr.result_gutter_x - SCROLL_BAR_WIDTH,
-                RenderPosY::new(scroll_bar_y as isize),
+                RenderPosY::new(scrollbar_info.scroll_bar_render_y as isize),
                 SCROLL_BAR_WIDTH,
-                scroll_bar_h,
+                scrollbar_info.scroll_bar_render_h,
             );
         }
 
@@ -1308,7 +1312,7 @@ impl NoteCalcApp {
 
         // CLEAR area below the editor
         // Clear the editor_y_to_render_y first so it won't mess up the result rendering
-        let last_row_i = editor_content.line_count().min(MAX_LINE_COUNT - 1);
+        let last_row_i = editor_content.line_count().min(MAX_LINE_COUNT);
         clear_bottom_due_to_line_removal(last_row_i, render_buckets, gr);
         // TODO this method clears the screen twice unnecessarily
         // in test 'test_that_removed_lines_are_cleared'
@@ -1399,7 +1403,37 @@ impl NoteCalcApp {
         }
     }
 
-    pub fn handle_mouse_up(&mut self, _x: usize, _y: usize) {
+    pub fn handle_mouse_up(&mut self) {
+        match self.mouse_state {
+            Some(MouseState::RightGutterIsDragged) => {}
+            Some(MouseState::ClickedInEditor) => {}
+            Some(MouseState::ClickedInScrollBar {
+                original_click_y, ..
+            }) => {
+                let gr = &mut self.render_data;
+                if let Some(scrollbar_render_info) = NoteCalcApp::get_scrollbar_info(gr) {
+                    if original_click_y.as_usize() < scrollbar_render_info.scroll_bar_render_y {
+                        // scroll up
+                        gr.scroll_y -= 1;
+                        self.set_redraw_flag(
+                            EditorRowFlags::all_rows_starting_at(0),
+                            RedrawTarget::Both,
+                        );
+                    } else if original_click_y.as_usize()
+                        > scrollbar_render_info.scroll_bar_render_y
+                            + scrollbar_render_info.scroll_bar_render_h
+                    {
+                        // scroll down
+                        gr.scroll_y += 1;
+                        self.set_redraw_flag(
+                            EditorRowFlags::all_rows_starting_at(0),
+                            RedrawTarget::Both,
+                        );
+                    }
+                }
+            }
+            None => {}
+        }
         self.mouse_state = None;
     }
 
@@ -1411,8 +1445,10 @@ impl NoteCalcApp {
     ) {
         let clicked_x = x - LEFT_GUTTER_WIDTH;
         let prev_selection = self.editor.get_selection();
+        let clicked_row = self.get_clicked_row_clamped(clicked_y);
+
         let editor_click_pos = if let Some(editor_obj) =
-            self.get_obj_at_rendered_pos(clicked_x, clicked_y, editor_objs)
+            self.get_obj_at(clicked_x, clicked_row, clicked_y, editor_objs)
         {
             match editor_obj.typ {
                 EditorObjectType::LineReference => Some(Pos::from_row_column(
@@ -1455,8 +1491,7 @@ impl NoteCalcApp {
                 }
             }
         } else {
-            self.rendered_y_to_editor_y(clicked_y)
-                .map(|it| Pos::from_row_column(it.as_usize(), clicked_x))
+            Some(Pos::from_row_column(clicked_row.as_usize(), x))
         };
 
         if let Some(editor_click_pos) = editor_click_pos {
@@ -1485,7 +1520,8 @@ impl NoteCalcApp {
     }
 
     pub fn rendered_y_to_editor_y(&self, clicked_y: RenderPosY) -> Option<EditorY> {
-        for (ed_y, r_y) in self.render_data.editor_y_to_render_y().iter().enumerate() {
+        let editor_y_to_render_y = self.render_data.editor_y_to_render_y();
+        for (ed_y, r_y) in editor_y_to_render_y.iter().enumerate() {
             if r_y.map(|it| it == clicked_y).unwrap_or(false) {
                 return Some(EditorY::new(ed_y));
             } else if r_y.map(|it| it > clicked_y).unwrap_or(false) {
@@ -1495,22 +1531,50 @@ impl NoteCalcApp {
         return None;
     }
 
+    pub fn get_clicked_row_clamped<'a>(&self, render_y: RenderPosY) -> EditorY {
+        return if render_y >= self.render_data.latest_bottom {
+            EditorY::new(self.editor_content.line_count() - 1)
+        } else if let Some(editor_y) = self.rendered_y_to_editor_y(render_y) {
+            editor_y
+        } else {
+            panic!();
+        };
+    }
+
     pub fn get_obj_at_rendered_pos<'a>(
         &self,
         x: usize,
         render_y: RenderPosY,
         editor_objects: &'a EditorObjects,
     ) -> Option<&'a EditorObject> {
-        if let Some(editor_y) = self.rendered_y_to_editor_y(render_y) {
-            editor_objects[editor_y].iter().find(|editor_obj| {
-                (editor_obj.rendered_x..editor_obj.rendered_x + editor_obj.rendered_w).contains(&x)
-                    && (editor_obj.rendered_y.as_usize()
-                        ..editor_obj.rendered_y.as_usize() + editor_obj.rendered_h)
-                        .contains(&render_y.as_usize())
-            })
+        let editor_y = if render_y >= self.render_data.latest_bottom {
+            EditorY::new(self.editor_content.line_count() - 1)
+        } else if let Some(editor_y) = self.rendered_y_to_editor_y(render_y) {
+            editor_y
         } else {
-            None
-        }
+            return None;
+        };
+        return editor_objects[editor_y].iter().find(|editor_obj| {
+            (editor_obj.rendered_x..editor_obj.rendered_x + editor_obj.rendered_w).contains(&x)
+                && (editor_obj.rendered_y.as_usize()
+                    ..editor_obj.rendered_y.as_usize() + editor_obj.rendered_h)
+                    .contains(&render_y.as_usize())
+        });
+    }
+
+    pub fn get_obj_at<'a>(
+        &self,
+        x: usize,
+        editor_y: EditorY,
+        render_y: RenderPosY,
+        editor_objects: &'a EditorObjects,
+    ) -> Option<&'a EditorObject> {
+        return editor_objects[editor_y].iter().find(|editor_obj| {
+            (editor_obj.rendered_x..editor_obj.rendered_x + editor_obj.rendered_w).contains(&x)
+                && (editor_obj.rendered_y.as_usize()
+                    ..editor_obj.rendered_y.as_usize() + editor_obj.rendered_h)
+                    .contains(&render_y.as_usize())
+        });
     }
 
     pub fn handle_drag(&mut self, x: usize, y: RenderPosY) {
@@ -1536,11 +1600,10 @@ impl NoteCalcApp {
                 original_scroll_y,
             }) => {
                 let gr = &mut self.render_data;
-                let content_height = NoteCalcApp::calc_full_content_height(gr);
-                let scroll_coeff = gr.client_height as f64 / content_height as f64;
-                if scroll_coeff < 1.0 {
+                if let Some(scrollbar_info) = NoteCalcApp::get_scrollbar_info(gr) {
                     let delta_y = y.as_isize() - original_click_y.as_isize();
-                    gr.scroll_y = (original_scroll_y as isize + delta_y).max(0) as usize;
+                    gr.scroll_y = ((original_scroll_y as isize + delta_y).max(0) as usize)
+                        .min(scrollbar_info.max_scroll_y);
                     self.set_redraw_flag(
                         EditorRowFlags::all_rows_starting_at(0),
                         RedrawTarget::Both,
@@ -1548,6 +1611,28 @@ impl NoteCalcApp {
                 }
             }
             None => {}
+        }
+    }
+
+    fn get_scrollbar_info(gr: &GlobalRenderData) -> Option<ScrollBarRenderInfo> {
+        let content_height = NoteCalcApp::calc_full_content_height(gr);
+        let max_scroll_y = content_height as isize - gr.client_height as isize;
+        if max_scroll_y > 0 {
+            let max_scroll_y = max_scroll_y as usize;
+            let scroll_bar_h = (gr.client_height as isize - max_scroll_y as isize).max(1) as usize;
+            let scroll_bar_y = if scroll_bar_h > 1 {
+                gr.scroll_y
+            } else {
+                ((gr.scroll_y as f64 / (max_scroll_y + 1) as f64) * gr.client_height as f64)
+                    as usize
+            };
+            Some(ScrollBarRenderInfo {
+                scroll_bar_render_y: scroll_bar_y,
+                scroll_bar_render_h: scroll_bar_h,
+                max_scroll_y,
+            })
+        } else {
+            None
         }
     }
 
@@ -1982,6 +2067,11 @@ impl NoteCalcApp {
                     self.editor
                         .handle_input(input, modifiers, &mut self.editor_content);
 
+                if self.editor.get_selection().get_cursor_pos().row >= MAX_LINE_COUNT {
+                    self.editor
+                        .set_selection_save_col(Selection::single_r_c(MAX_LINE_COUNT - 1, 0));
+                }
+
                 if modif_type.is_none() {
                     // it is possible to step into a matrix only through navigation
                     self.check_stepping_into_matrix(prev_cursor_pos, editor_objs);
@@ -2002,14 +2092,13 @@ impl NoteCalcApp {
                         .unwrap_or(false)
                     {
                         // scroll down
-                        self.render_data.scroll_y = (self
+                        self.render_data.scroll_y = self
                             .render_data
                             .get_render_y(EditorY::new(cursor_pos.row))
                             .expect("must")
                             .as_usize()
                             + self.render_data.scroll_y
-                            - (self.render_data.client_height - 1))
-                            .min(self.render_data.client_height - 1);
+                            - (self.render_data.client_height - 1);
                         true
                     } else {
                         false
@@ -2289,7 +2378,7 @@ impl NoteCalcApp {
 
         let mut sum_is_null = true;
         let mut dependant_rows = EditorRowFlags::empty();
-        for editor_y in 0..self.editor_content.line_count() {
+        for editor_y in 0..self.editor_content.line_count().min(MAX_LINE_COUNT) {
             let recalc = match input_effect {
                 RowModificationType::SingleLine(to_change_index) if to_change_index == editor_y => {
                     true
@@ -3549,7 +3638,7 @@ fn render_matrix<'text_ptr>(
     end_token_index += 1;
 
     let cursor_pos = editor.get_selection().get_cursor_pos();
-    let cursor_isnide_matrix: bool = if editor.get_selection().is_range().is_none()
+    let cursor_inside_matrix: bool = if editor.get_selection().is_range().is_none()
         && cursor_pos.row == r.editor_y.as_usize()
         && cursor_pos.column > r.editor_x
         && cursor_pos.column < r.editor_x + text_width
@@ -3560,7 +3649,7 @@ fn render_matrix<'text_ptr>(
         false
     };
 
-    let new_render_x = if let (true, Some(mat_editor)) = (cursor_isnide_matrix, matrix_editing) {
+    let new_render_x = if let (true, Some(mat_editor)) = (cursor_inside_matrix, matrix_editing) {
         mat_editor.render(
             r.render_x,
             r.render_y,
@@ -13624,6 +13713,176 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
     }
 
     #[test]
+    fn scroll_dragging_limit() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "1\n".repeat(39).to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        app.handle_click(
+            app.render_data.result_gutter_x - SCROLL_BAR_WIDTH,
+            RenderPosY::new(0),
+            &editor_objects,
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+
+        assert_eq!(app.render_data.scroll_y, 0);
+
+        for i in 0..5 {
+            app.handle_drag(
+                app.render_data.result_gutter_x - SCROLL_BAR_WIDTH,
+                RenderPosY::new(1 + i),
+            );
+            assert_eq!(app.render_data.scroll_y, 1 + i as usize);
+        }
+        app.handle_drag(
+            app.render_data.result_gutter_x - SCROLL_BAR_WIDTH,
+            RenderPosY::new(6),
+        );
+        // the scrollbar reached its bottom position, it won't go further down
+        assert_eq!(app.render_data.scroll_y, 5);
+    }
+
+    #[test]
+    fn scroll_dragging_upwards() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "1\n".repeat(39).to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        app.handle_click(
+            app.render_data.result_gutter_x - SCROLL_BAR_WIDTH,
+            RenderPosY::new(0),
+            &editor_objects,
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+
+        assert_eq!(app.render_data.scroll_y, 0);
+
+        for i in 0..5 {
+            app.handle_drag(
+                app.render_data.result_gutter_x - SCROLL_BAR_WIDTH,
+                RenderPosY::new(1 + i),
+            );
+            assert_eq!(app.render_data.scroll_y, 1 + i as usize);
+        }
+        for i in 0..5 {
+            app.handle_drag(
+                app.render_data.result_gutter_x - SCROLL_BAR_WIDTH,
+                RenderPosY::new(4 - i),
+            );
+            assert_eq!(app.render_data.scroll_y, 4 - i as usize);
+        }
+    }
+
+    #[test]
+    fn test_scrolling_by_single_click_in_scrollbar() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(30);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "1\n".repeat(60).to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_eq!(app.render_data.scroll_y, 0);
+
+        for i in 0..4 {
+            let mouse_x = app.render_data.result_gutter_x - SCROLL_BAR_WIDTH;
+            let mouse_y = RenderPosY::new(20 + i);
+            app.handle_click(
+                mouse_x,
+                mouse_y,
+                &editor_objects,
+                &units,
+                &arena,
+                &mut tokens,
+                &mut results,
+                &mut vars,
+            );
+            assert_eq!(app.render_data.scroll_y, i as usize);
+            app.handle_mouse_up();
+            assert_eq!(app.render_data.scroll_y, 1 + i as usize);
+        }
+        for i in 0..3 {
+            let mouse_x = app.render_data.result_gutter_x - SCROLL_BAR_WIDTH;
+            let mouse_y = RenderPosY::new(0);
+            app.handle_click(
+                mouse_x,
+                mouse_y,
+                &editor_objects,
+                &units,
+                &arena,
+                &mut tokens,
+                &mut results,
+                &mut vars,
+            );
+            assert_eq!(app.render_data.scroll_y, 4 - i as usize);
+            app.handle_mouse_up();
+            assert_eq!(app.render_data.scroll_y, 3 - i as usize);
+        }
+    }
+
+    #[test]
     fn dragging_scrollbar_rerenders_everyhting() {
         let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
             create_app(35);
@@ -13678,6 +13937,210 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         assert!(app.result_area_redraw.need(EditorY::new(1)));
         assert!(app.editor_area_redraw.need(EditorY::new(2)));
         assert!(app.result_area_redraw.need(EditorY::new(2)));
+    }
+
+    #[test]
+    fn clicking_behind_matrix_should_move_the_cursor_there() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "firs 1t\nasdsad\n[1;2;3;4]\nfirs 1t\nasdsad\n[1;2;3;4]".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 0));
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        assert_eq!(app.editor.get_selection().get_cursor_pos().row, 0);
+        app.handle_click(
+            LEFT_GUTTER_WIDTH + 50,
+            RenderPosY::new(13),
+            &editor_objects,
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        assert_eq!(app.editor.get_selection().get_cursor_pos().row, 5);
+    }
+
+    #[test]
+    fn test_handling_too_much_rows_no_panic() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "1\n".repeat(MAX_LINE_COUNT - 1).to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(MAX_LINE_COUNT - 2, 1));
+
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Enter,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+    }
+
+    #[test]
+    fn inserting_too_many_rows_no_panic() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "".to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 0));
+
+        for _ in 0..20 {
+            app.handle_paste(
+                "1\n2\n3\n4\n5\n6\n7\n8\n9\n0".to_owned(),
+                &units,
+                &arena,
+                &mut tokens,
+                &mut results,
+                &mut vars,
+            );
+            let mut result_buffer = [0; 128];
+            app.render(
+                &units,
+                &mut RenderBuckets::new(),
+                &mut result_buffer,
+                &arena,
+                &tokens,
+                &results,
+                &vars,
+                &mut editor_objects,
+            );
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                EditorInputEvent::Enter,
+                InputModifiers::none(),
+                &arena,
+                &units,
+                &mut tokens,
+                &mut results,
+                &mut vars,
+                &mut editor_objects,
+            );
+            let mut result_buffer = [0; 128];
+            app.render(
+                &units,
+                &mut RenderBuckets::new(),
+                &mut result_buffer,
+                &arena,
+                &tokens,
+                &results,
+                &vars,
+                &mut editor_objects,
+            );
+        }
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::Up,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::PageDown,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+    }
+
+    #[test]
+    fn stepping_down_to_unrendered_line_scrolls_down_the_screen() {
+        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
+            create_app(35);
+        let arena = Arena::new();
+
+        app.handle_paste(
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n0".repeat(6).to_owned(),
+            &units,
+            &arena,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+        );
+        app.editor
+            .set_selection_save_col(Selection::single_r_c(0, 0));
+        let mut result_buffer = [0; 128];
+        app.render(
+            &units,
+            &mut RenderBuckets::new(),
+            &mut result_buffer,
+            &arena,
+            &tokens,
+            &results,
+            &vars,
+            &mut editor_objects,
+        );
+
+        assert_eq!(app.render_data.scroll_y, 0);
+        app.handle_input_and_update_tokens_plus_redraw_requirements(
+            EditorInputEvent::PageDown,
+            InputModifiers::none(),
+            &arena,
+            &units,
+            &mut tokens,
+            &mut results,
+            &mut vars,
+            &mut editor_objects,
+        );
+        assert_ne!(app.render_data.scroll_y, 0);
     }
 
     #[test]
@@ -15097,7 +15560,7 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
             &mut editor_objects,
         );
 
-        assert_eq!(app.render_data.scroll_y, client_height - 1);
+        assert_eq!(app.render_data.scroll_y, 26);
     }
 
     #[test]

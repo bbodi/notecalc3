@@ -195,11 +195,9 @@ __exports.handle_wheel = function(app_ptr, dir) {
 
 /**
 * @param {number} app_ptr
-* @param {number} x
-* @param {number} y
 */
-__exports.handle_mouse_up = function(app_ptr, x, y) {
-    wasm.handle_mouse_up(app_ptr, x, y);
+__exports.handle_mouse_up = function(app_ptr) {
+    wasm.handle_mouse_up(app_ptr);
 };
 
 /**
