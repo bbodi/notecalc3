@@ -465,7 +465,6 @@ impl TokenParser {
             };
             Some(Token {
                 typ,
-                // ptr: &str[0..longest_match],
                 ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(longest_match)),
             })
         } else {

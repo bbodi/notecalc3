@@ -564,7 +564,7 @@ impl UnitOutput {
             // ki, ami derived, viszont a /h*h miatt eltünik a m/sbol fakadó
             // pontatlanság és visszakap 120at
             //     ez az ág akkor hivodik, amikor a 120 000.0006.. m-t akarja megkapni mben,
-            // mivel a méter már alapban pontatlanul van téárolva, vissza is pontatlant kap
+            // mivel a méter már alapban pontatlanul van tárolva, vissza is pontatlant kap
             let borrow = self.units[0].unit.borrow();
             let base_value = &borrow.value;
             let offset = &borrow.offset;

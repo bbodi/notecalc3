@@ -13,8 +13,19 @@
     clippy::all
 )]
 
+use std::io::Cursor;
+use std::mem::MaybeUninit;
+use std::ops::Range;
+use std::time::Duration;
+
+use smallvec::SmallVec;
+use strum_macros::EnumDiscriminants;
+use typed_arena::Arena;
+
+use helper::*;
+
 use crate::calc::{add_op, evaluate_tokens, CalcResult, EvaluationResult};
-use crate::consts::{LINE_NUM_CONSTS, STATIC_LINE_IDS};
+use crate::consts::LINE_NUM_CONSTS;
 use crate::editor::editor::{
     Editor, EditorInputEvent, InputModifiers, Pos, RowModificationType, Selection,
 };
@@ -24,13 +35,6 @@ use crate::renderer::{get_int_frac_part_len, render_result, render_result_into};
 use crate::shunting_yard::ShuntingYard;
 use crate::token_parser::{OperatorTokenType, Token, TokenParser, TokenType};
 use crate::units::units::Units;
-use smallvec::SmallVec;
-use std::io::Cursor;
-use std::mem::MaybeUninit;
-use std::ops::Range;
-use std::time::Duration;
-use strum_macros::EnumDiscriminants;
-use typed_arena::Arena;
 
 mod functions;
 mod matrix;
@@ -60,8 +64,9 @@ pub enum Click {
 pub mod helper {
     // so code from the lib module can't access the private parts
 
-    use crate::{MAX_LINE_COUNT, *};
     use std::ops::{Index, IndexMut};
+
+    use crate::{MAX_LINE_COUNT, *};
 
     pub fn create_vars() -> [Option<Variable>; MAX_LINE_COUNT + 1] {
         let mut vars = [None; MAX_LINE_COUNT + 1];
@@ -92,16 +97,16 @@ pub mod helper {
         }
     }
 
-    impl Index<EditorY> for EditorObjects {
+    impl Index<ContentIndex> for EditorObjects {
         type Output = Vec<EditorObject>;
 
-        fn index(&self, index: EditorY) -> &Self::Output {
+        fn index(&self, index: ContentIndex) -> &Self::Output {
             &self.0[index.0]
         }
     }
 
-    impl IndexMut<EditorY> for EditorObjects {
-        fn index_mut(&mut self, index: EditorY) -> &mut Self::Output {
+    impl IndexMut<ContentIndex> for EditorObjects {
+        fn index_mut(&mut self, index: ContentIndex) -> &mut Self::Output {
             &mut self.0[index.0]
         }
     }
@@ -121,16 +126,16 @@ pub mod helper {
         }
     }
 
-    impl Index<EditorY> for Results {
+    impl Index<ContentIndex> for Results {
         type Output = LineResult;
 
-        fn index(&self, index: EditorY) -> &Self::Output {
+        fn index(&self, index: ContentIndex) -> &Self::Output {
             &self.0[index.0]
         }
     }
 
-    impl IndexMut<EditorY> for Results {
-        fn index_mut(&mut self, index: EditorY) -> &mut Self::Output {
+    impl IndexMut<ContentIndex> for Results {
+        fn index_mut(&mut self, index: ContentIndex) -> &mut Self::Output {
             &mut self.0[index.0]
         }
     }
@@ -147,16 +152,16 @@ pub mod helper {
         }
     }
 
-    impl<'a> Index<EditorY> for AppTokens<'a> {
+    impl<'a> Index<ContentIndex> for AppTokens<'a> {
         type Output = Option<Tokens<'a>>;
 
-        fn index(&self, index: EditorY) -> &Self::Output {
+        fn index(&self, index: ContentIndex) -> &Self::Output {
             &self.0[index.0]
         }
     }
 
-    impl<'a> IndexMut<EditorY> for AppTokens<'a> {
-        fn index_mut(&mut self, index: EditorY) -> &mut Self::Output {
+    impl<'a> IndexMut<ContentIndex> for AppTokens<'a> {
+        fn index_mut(&mut self, index: ContentIndex) -> &mut Self::Output {
             &mut self.0[index.0]
         }
     }
@@ -191,7 +196,7 @@ pub mod helper {
 
             EditorRowFlags { bitset }
         }
-
+        // TODO multiple2(a, b), multiple3(a,b,c) etc, faster
         pub fn multiple(indices: &[usize]) -> EditorRowFlags {
             let mut b = 0;
             for i in indices {
@@ -222,25 +227,27 @@ pub mod helper {
             self.bitset |= other.bitset;
         }
 
-        pub fn need(&self, line_index: EditorY) -> bool {
+        pub fn need(&self, line_index: ContentIndex) -> bool {
             ((1 << line_index.0) & self.bitset) != 0
         }
 
         pub fn is_true(&self, line_index: usize) -> bool {
-            self.need(EditorY::new(line_index))
+            self.need(content_y(line_index))
         }
     }
 
+    #[derive(Clone)]
     pub struct GlobalRenderData {
         pub client_height: usize,
         pub scroll_y: usize,
         pub result_gutter_x: usize,
         pub left_gutter_width: usize,
-        pub latest_bottom: RenderPosY,
+        pub latest_bottom_i: CanvasY,
+        pub latest_bottom_h: usize,
 
         pub current_editor_width: usize,
         pub current_result_panel_width: usize,
-        editor_y_to_render_y: [Option<RenderPosY>; MAX_LINE_COUNT],
+        editor_y_to_render_y: [Option<CanvasY>; MAX_LINE_COUNT],
         editor_y_to_rendered_height: [usize; MAX_LINE_COUNT],
     }
 
@@ -256,7 +263,8 @@ pub mod helper {
                 scroll_y: 0,
                 result_gutter_x,
                 left_gutter_width,
-                latest_bottom: RenderPosY::new(0),
+                latest_bottom_i: canvas_y(0),
+                latest_bottom_h: 0,
                 current_editor_width: 0,
                 current_result_panel_width: 0,
                 editor_y_to_render_y: [None; MAX_LINE_COUNT],
@@ -277,11 +285,12 @@ pub mod helper {
                 *e = 0;
             }
             self.scroll_y = 0;
-            self.latest_bottom = RenderPosY::new(0);
+            self.latest_bottom_i = canvas_y(0);
+            self.latest_bottom_h = 0;
         }
 
-        pub fn is_visible(&self, y: EditorY) -> bool {
-            let top = match self.get_render_y(EditorY::new(self.scroll_y)) {
+        pub fn is_visible(&self, y: ContentIndex) -> bool {
+            let top = match self.get_render_y(content_y(self.scroll_y)) {
                 Some(y) => y.as_isize(),
                 None => {
                     return false;
@@ -295,32 +304,32 @@ pub mod helper {
             };
         }
 
-        pub fn get_render_y(&self, y: EditorY) -> Option<RenderPosY> {
+        pub fn get_render_y(&self, y: ContentIndex) -> Option<CanvasY> {
             self.editor_y_to_render_y[y.0]
         }
 
-        pub fn set_render_y(&mut self, y: EditorY, newy: Option<RenderPosY>) {
+        pub fn set_render_y(&mut self, y: ContentIndex, newy: Option<CanvasY>) {
             self.editor_y_to_render_y[y.0] = newy;
         }
 
-        pub fn editor_y_to_render_y(&self) -> &[Option<RenderPosY>] {
+        pub fn editor_y_to_render_y(&self) -> &[Option<CanvasY>] {
             &self.editor_y_to_render_y
         }
 
-        pub fn get_rendered_height(&self, y: EditorY) -> usize {
+        pub fn get_rendered_height(&self, y: ContentIndex) -> usize {
             self.editor_y_to_rendered_height[y.0]
         }
 
-        pub fn set_rendered_height(&mut self, y: EditorY, h: usize) {
+        pub fn set_rendered_height(&mut self, y: ContentIndex, h: usize) {
             self.editor_y_to_rendered_height[y.0] = h;
         }
     }
 
     pub struct PerLineRenderData {
         pub editor_x: usize,
-        pub editor_y: EditorY,
+        pub editor_y: ContentIndex,
         pub render_x: usize,
-        pub render_y: RenderPosY,
+        pub render_y: CanvasY,
         // contains the y position for each editor line
         pub rendered_row_height: usize,
         pub vert_align_offset: usize,
@@ -331,9 +340,9 @@ pub mod helper {
         pub fn new() -> PerLineRenderData {
             let r = PerLineRenderData {
                 editor_x: 0,
-                editor_y: EditorY::new(0),
+                editor_y: content_y(0),
                 render_x: 0,
-                render_y: RenderPosY::new(0),
+                render_y: canvas_y(0),
                 rendered_row_height: 0,
                 vert_align_offset: 0,
                 cursor_render_x_offset: 0,
@@ -429,11 +438,15 @@ pub mod helper {
     }
 
     #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
-    pub struct EditorY(usize);
+    pub struct ContentIndex(usize);
 
-    impl EditorY {
-        pub fn new(n: usize) -> EditorY {
-            EditorY(n)
+    pub fn content_y(y: usize) -> ContentIndex {
+        ContentIndex(y)
+    }
+
+    impl ContentIndex {
+        pub fn new(n: usize) -> ContentIndex {
+            ContentIndex(n)
         }
 
         #[inline]
@@ -441,21 +454,25 @@ pub mod helper {
             self.0
         }
 
-        pub fn add(&self, n: usize) -> EditorY {
-            EditorY(self.0 + n)
+        pub fn add(&self, n: usize) -> ContentIndex {
+            ContentIndex(self.0 + n)
         }
 
-        pub fn sub(&self, n: usize) -> EditorY {
-            EditorY(self.0 - n)
+        pub fn sub(&self, n: usize) -> ContentIndex {
+            ContentIndex(self.0 - n)
         }
     }
 
     #[derive(Clone, Copy, Eq, PartialEq, Debug, Ord, PartialOrd)]
-    pub struct RenderPosY(isize);
+    pub struct CanvasY(isize);
 
-    impl RenderPosY {
-        pub fn new(n: isize) -> RenderPosY {
-            RenderPosY(n)
+    pub fn canvas_y(y: isize) -> CanvasY {
+        CanvasY(y)
+    }
+
+    impl CanvasY {
+        pub fn new(n: isize) -> CanvasY {
+            CanvasY(n)
         }
 
         pub fn as_usize(self) -> usize {
@@ -466,12 +483,12 @@ pub mod helper {
             self.0
         }
 
-        pub fn add(&self, n: usize) -> RenderPosY {
-            RenderPosY(self.0 + n as isize)
+        pub fn add(&self, n: usize) -> CanvasY {
+            CanvasY(self.0 + n as isize)
         }
 
-        pub fn sub(&self, n: usize) -> RenderPosY {
-            RenderPosY(self.0 - n as isize)
+        pub fn sub(&self, n: usize) -> CanvasY {
+            CanvasY(self.0 - n as isize)
         }
     }
 }
@@ -481,8 +498,6 @@ struct ScrollBarRenderInfo {
     scroll_bar_render_h: usize,
     max_scroll_y: usize,
 }
-
-use helper::*;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -496,21 +511,21 @@ pub enum TextStyle {
 #[derive(Debug)]
 pub struct RenderUtf8TextMsg<'a> {
     pub text: &'a [char],
-    pub row: RenderPosY,
+    pub row: CanvasY,
     pub column: usize,
 }
 
 #[derive(Debug)]
 pub struct RenderAsciiTextMsg<'a> {
     pub text: &'a [u8],
-    pub row: RenderPosY,
+    pub row: CanvasY,
     pub column: usize,
 }
 
 #[derive(Debug)]
 pub struct RenderStringMsg {
     pub text: String,
-    pub row: RenderPosY,
+    pub row: CanvasY,
     pub column: usize,
 }
 
@@ -526,13 +541,13 @@ pub enum OutputMessage<'a> {
     RenderString(RenderStringMsg),
     RenderRectangle {
         x: usize,
-        y: RenderPosY,
+        y: CanvasY,
         w: usize,
         h: usize,
     },
     PulsingRectangle {
         x: usize,
-        y: RenderPosY,
+        y: CanvasY,
         w: usize,
         h: usize,
         start_color: u32,
@@ -580,6 +595,10 @@ impl<'a> RenderBuckets<'a> {
         }
     }
 
+    pub fn custom_commands<'b>(&'b self, layer: Layer) -> &'b Vec<OutputMessage<'a>> {
+        &self.custom_commands[layer as usize]
+    }
+
     pub fn clear(&mut self) {
         self.ascii_texts.clear();
         self.utf8_texts.clear();
@@ -598,15 +617,15 @@ impl<'a> RenderBuckets<'a> {
         self.custom_commands[layer as usize].push(OutputMessage::SetColor(color));
     }
 
-    pub fn draw_rect(&mut self, layer: Layer, x: usize, y: RenderPosY, w: usize, h: usize) {
+    pub fn draw_rect(&mut self, layer: Layer, x: usize, y: CanvasY, w: usize, h: usize) {
         self.custom_commands[layer as usize].push(OutputMessage::RenderRectangle { x, y, w, h });
     }
 
-    pub fn draw_char(&mut self, layer: Layer, x: usize, y: RenderPosY, ch: char) {
+    pub fn draw_char(&mut self, layer: Layer, x: usize, y: CanvasY, ch: char) {
         self.custom_commands[layer as usize].push(OutputMessage::RenderChar(x, y.as_usize(), ch));
     }
 
-    pub fn draw_text(&mut self, layer: Layer, x: usize, y: RenderPosY, text: &'static [char]) {
+    pub fn draw_text(&mut self, layer: Layer, x: usize, y: CanvasY, text: &'static [char]) {
         self.custom_commands[layer as usize].push(OutputMessage::RenderUtf8Text(
             RenderUtf8TextMsg {
                 text,
@@ -616,7 +635,7 @@ impl<'a> RenderBuckets<'a> {
         ));
     }
 
-    pub fn draw_ascii_text(&mut self, layer: Layer, x: usize, y: RenderPosY, text: &'static [u8]) {
+    pub fn draw_ascii_text(&mut self, layer: Layer, x: usize, y: CanvasY, text: &'static [u8]) {
         self.custom_commands[layer as usize].push(OutputMessage::RenderAsciiText(
             RenderAsciiTextMsg {
                 text,
@@ -626,7 +645,7 @@ impl<'a> RenderBuckets<'a> {
         ));
     }
 
-    pub fn draw_string(&mut self, layer: Layer, x: usize, y: RenderPosY, text: String) {
+    pub fn draw_string(&mut self, layer: Layer, x: usize, y: CanvasY, text: String) {
         self.custom_commands[layer as usize].push(OutputMessage::RenderString(RenderStringMsg {
             text: text.clone(),
             row: y,
@@ -665,7 +684,7 @@ pub struct MatrixEditing {
     current_cell: Pos,
     start_text_index: usize,
     end_text_index: usize,
-    row_index: EditorY,
+    row_index: ContentIndex,
     cell_strings: Vec<String>,
 }
 
@@ -674,7 +693,7 @@ impl MatrixEditing {
         row_count: usize,
         col_count: usize,
         src_canvas: &[char],
-        row_index: EditorY,
+        row_index: ContentIndex,
         start_text_index: usize,
         end_text_index: usize,
         step_in_pos: Pos,
@@ -709,6 +728,7 @@ impl MatrixEditing {
         };
         let mut str: String = String::with_capacity(8);
         let mut can_ignore_ws = true;
+        dbg!(src_canvas);
         for ch in src_canvas {
             match ch {
                 '[' => {
@@ -783,7 +803,7 @@ impl MatrixEditing {
     fn remove_column(&mut self) {
         self.col_count -= 1;
         if self.current_cell.column >= self.col_count {
-            self.change_cell(self.current_cell.with_column(self.col_count - 1));
+            self.move_to_cell(self.current_cell.with_column(self.col_count - 1));
         }
         for row_i in (0..self.row_count).rev() {
             let index = row_i * (self.col_count + 1) + self.col_count;
@@ -794,14 +814,14 @@ impl MatrixEditing {
     fn remove_row(&mut self) {
         self.row_count -= 1;
         if self.current_cell.row >= self.row_count {
-            self.change_cell(self.current_cell.with_row(self.row_count - 1));
+            self.move_to_cell(self.current_cell.with_row(self.row_count - 1));
         }
         for _ in 0..self.col_count {
             self.cell_strings.pop();
         }
     }
 
-    fn change_cell(&mut self, new_pos: Pos) {
+    fn move_to_cell(&mut self, new_pos: Pos) {
         self.save_editor_content();
 
         let new_content = &self.cell_strings[new_pos.row * self.col_count + new_pos.column];
@@ -825,7 +845,7 @@ impl MatrixEditing {
     fn render<'b>(
         &self,
         mut render_x: usize,
-        render_y: RenderPosY,
+        render_y: CanvasY,
         current_editor_width: usize,
         left_gutter_width: usize,
         render_buckets: &mut RenderBuckets<'b>,
@@ -962,11 +982,11 @@ pub enum EditorObjectType {
 #[derive(Clone)]
 pub struct EditorObject {
     typ: EditorObjectType,
-    row: EditorY,
+    row: ContentIndex,
     start_x: usize,
     end_x: usize,
     rendered_x: usize,
-    rendered_y: RenderPosY,
+    rendered_y: CanvasY,
     rendered_w: usize,
     rendered_h: usize,
 }
@@ -988,7 +1008,7 @@ pub struct Tokens<'a> {
 pub enum MouseState {
     ClickedInEditor,
     ClickedInScrollBar {
-        original_click_y: RenderPosY,
+        original_click_y: CanvasY,
         original_scroll_y: usize,
     },
     RightGutterIsDragged,
@@ -999,7 +1019,7 @@ pub struct NoteCalcApp {
     pub editor: Editor,
     pub editor_content: EditorContent<LineData>,
     pub matrix_editing: Option<MatrixEditing>,
-    pub line_reference_chooser: Option<EditorY>,
+    pub line_reference_chooser: Option<ContentIndex>,
     pub line_id_generator: usize,
     pub mouse_state: Option<MouseState>,
     pub result_area_redraw: EditorRowFlags,
@@ -1083,7 +1103,7 @@ impl NoteCalcApp {
         // TODO csak az utolsó sorig iterálj, gr.be asszem letárolom
         let mut h = 0;
         for i in 0..MAX_LINE_COUNT {
-            let editor_y = EditorY::new(i);
+            let editor_y = content_y(i);
             if gr.is_visible(editor_y) {
                 h += gr.get_rendered_height(editor_y);
             } else if gr.get_render_y(editor_y).is_some() {
@@ -1098,7 +1118,7 @@ impl NoteCalcApp {
         editor_content: &EditorContent<LineData>,
         units: &Units,
         matrix_editing: &mut Option<MatrixEditing>,
-        line_reference_chooser: &mut Option<EditorY>,
+        line_reference_chooser: &mut Option<ContentIndex>,
         render_buckets: &mut RenderBuckets<'a>,
         result_buffer: &'a mut [u8],
         redraw_editor_area: EditorRowFlags,
@@ -1112,7 +1132,7 @@ impl NoteCalcApp {
         editor_objs: &mut EditorObjects,
     ) {
         // x, h
-        let mut rerendered_lines: SmallVec<[((RenderPosY, usize), RedrawTarget); MAX_LINE_COUNT]> =
+        let mut rerendered_lines: SmallVec<[((CanvasY, usize), RedrawTarget); MAX_LINE_COUNT]> =
             SmallVec::with_capacity(MAX_LINE_COUNT);
 
         // TODO calc it once on content change (scroll_bar_h as well) (it is used in handle_drag)
@@ -1121,7 +1141,7 @@ impl NoteCalcApp {
             render_buckets.draw_rect(
                 Layer::BehindText,
                 gr.result_gutter_x - SCROLL_BAR_WIDTH,
-                RenderPosY::new(scrollbar_info.scroll_bar_render_y as isize),
+                canvas_y(scrollbar_info.scroll_bar_render_y as isize),
                 SCROLL_BAR_WIDTH,
                 scrollbar_info.scroll_bar_render_h,
             );
@@ -1129,7 +1149,7 @@ impl NoteCalcApp {
 
         {
             let mut r = PerLineRenderData::new();
-            r.render_y = RenderPosY::new(-(gr.scroll_y as isize));
+            r.render_y = canvas_y(-(gr.scroll_y as isize));
             for line in editor_content.lines().take(MAX_LINE_COUNT) {
                 r.new_line_started();
                 let editor_y = r.editor_y;
@@ -1149,7 +1169,7 @@ impl NoteCalcApp {
                                 >= gr.client_height as isize
                             {
                                 for i in editor_y.as_usize()..MAX_LINE_COUNT {
-                                    gr.set_render_y(EditorY::new(i), Some(r.render_y));
+                                    gr.set_render_y(content_y(i), Some(r.render_y));
                                     r.line_render_ended(1);
                                 }
                                 break;
@@ -1164,14 +1184,20 @@ impl NoteCalcApp {
                 // "- 1" so if it is even, it always appear higher
                 r.vert_align_offset = (r.rendered_row_height - 1) / 2;
 
-                if redraw_editor_area.need(editor_y) && redraw_result_area.need(editor_y) {
-                    rerendered_lines.push(((render_y, r.rendered_row_height), RedrawTarget::Both));
-                } else if redraw_result_area.need(editor_y) {
-                    rerendered_lines
-                        .push(((render_y, r.rendered_row_height), RedrawTarget::ResultArea));
-                } else if redraw_editor_area.need(editor_y) {
-                    rerendered_lines
-                        .push(((render_y, r.rendered_row_height), RedrawTarget::EditorArea));
+                {
+                    let target =
+                        if redraw_editor_area.need(editor_y) && redraw_result_area.need(editor_y) {
+                            Some(RedrawTarget::Both)
+                        } else if redraw_result_area.need(editor_y) {
+                            Some(RedrawTarget::ResultArea)
+                        } else if redraw_editor_area.need(editor_y) {
+                            Some(RedrawTarget::EditorArea)
+                        } else {
+                            None
+                        };
+                    if let Some(target) = target {
+                        rerendered_lines.push(((render_y, r.rendered_row_height), target));
+                    }
                 }
 
                 if redraw_editor_area.need(editor_y) {
@@ -1294,7 +1320,7 @@ impl NoteCalcApp {
             .clear_commands
             .push(OutputMessage::RenderRectangle {
                 x: gr.result_gutter_x - SCROLL_BAR_WIDTH,
-                y: RenderPosY::new(0),
+                y: canvas_y(0),
                 w: SCROLL_BAR_WIDTH,
                 h: gr.client_height,
             });
@@ -1341,17 +1367,23 @@ impl NoteCalcApp {
         );
     }
 
-    pub fn handle_wheel(&mut self, dir: usize) {
-        if dir == 0 && self.render_data.scroll_y > 0 {
+    pub fn handle_wheel(&mut self, dir: usize) -> bool {
+        return if dir == 0 && self.render_data.scroll_y > 0 {
             self.render_data.scroll_y -= 1;
             self.set_redraw_flag(EditorRowFlags::all_rows_starting_at(0), RedrawTarget::Both);
+            true
         } else if dir == 1 {
             let content_height = NoteCalcApp::calc_full_content_height(&self.render_data);
             if (self.render_data.scroll_y + self.render_data.client_height) < content_height {
                 self.render_data.scroll_y += 1;
                 self.set_redraw_flag(EditorRowFlags::all_rows_starting_at(0), RedrawTarget::Both);
+                true
+            } else {
+                false
             }
-        }
+        } else {
+            false
+        };
     }
 
     pub fn set_redraw_flag<'b>(&mut self, flags: EditorRowFlags, target: RedrawTarget) {
@@ -1372,7 +1404,7 @@ impl NoteCalcApp {
     pub fn handle_click<'b>(
         &mut self,
         x: usize,
-        clicked_y: RenderPosY,
+        clicked_y: CanvasY,
         editor_objs: &EditorObjects,
         units: &Units,
         allocator: &'b Arena<char>,
@@ -1384,7 +1416,16 @@ impl NoteCalcApp {
         if x < LEFT_GUTTER_WIDTH {
             // clicked on left gutter
         } else if x < scroll_bar_x {
-            self.handle_editor_area_click(x, clicked_y, editor_objs);
+            self.handle_editor_area_click(
+                x,
+                clicked_y,
+                editor_objs,
+                units,
+                allocator,
+                tokens,
+                results,
+                vars,
+            );
         } else if self.mouse_state.is_none() {
             self.mouse_state = if x - scroll_bar_x < SCROLL_BAR_WIDTH {
                 Some(MouseState::ClickedInScrollBar {
@@ -1437,103 +1478,107 @@ impl NoteCalcApp {
         self.mouse_state = None;
     }
 
-    fn handle_editor_area_click(
+    fn handle_editor_area_click<'b>(
         &mut self,
         x: usize,
-        clicked_y: RenderPosY,
+        clicked_y: CanvasY,
         editor_objs: &EditorObjects,
+        units: &Units,
+        allocator: &'b Arena<char>,
+        tokens: &mut AppTokens<'b>,
+        results: &mut Results,
+        vars: &mut Variables,
     ) {
         let clicked_x = x - LEFT_GUTTER_WIDTH;
         let prev_selection = self.editor.get_selection();
         let clicked_row = self.get_clicked_row_clamped(clicked_y);
 
+        if self.matrix_editing.is_some() {
+            let matrix_row_index = self.matrix_editing.as_ref().unwrap().row_index;
+            end_matrix_editing(
+                &mut self.matrix_editing,
+                &mut self.editor,
+                &mut self.editor_content,
+                None,
+            );
+            self.update_tokens_and_redraw_requirements(
+                RowModificationType::SingleLine(matrix_row_index.as_usize()),
+                units,
+                allocator,
+                tokens,
+                results,
+                vars,
+            );
+        }
+
         let editor_click_pos = if let Some(editor_obj) =
             self.get_obj_at(clicked_x, clicked_row, clicked_y, editor_objs)
         {
             match editor_obj.typ {
-                EditorObjectType::LineReference => Some(Pos::from_row_column(
-                    editor_obj.row.as_usize(),
-                    editor_obj.end_x,
-                )),
+                EditorObjectType::LineReference => {
+                    Pos::from_row_column(editor_obj.row.as_usize(), editor_obj.end_x)
+                }
                 EditorObjectType::Matrix {
                     row_count,
                     col_count,
                 } => {
-                    if self.matrix_editing.is_some() {
-                        end_matrix_editing(
-                            &mut self.matrix_editing,
-                            &mut self.editor,
-                            &mut self.editor_content,
-                            None,
-                        );
-                    } else {
-                        self.matrix_editing = Some(MatrixEditing::new(
-                            row_count,
-                            col_count,
-                            &self
-                                .editor_content
-                                .get_line_valid_chars(editor_obj.row.as_usize())
-                                [editor_obj.start_x..editor_obj.end_x],
-                            editor_obj.row,
-                            editor_obj.start_x,
-                            editor_obj.end_x,
-                            Pos::from_row_column(0, 0),
-                        ))
-                    }
-                    None
+                    self.matrix_editing = Some(MatrixEditing::new(
+                        row_count,
+                        col_count,
+                        &self
+                            .editor_content
+                            .get_line_valid_chars(editor_obj.row.as_usize())
+                            [editor_obj.start_x..editor_obj.end_x],
+                        editor_obj.row,
+                        editor_obj.start_x,
+                        editor_obj.end_x,
+                        Pos::from_row_column(0, 0),
+                    ));
+                    Pos::from_row_column(editor_obj.row.as_usize(), editor_obj.start_x + 1)
                 }
                 EditorObjectType::SimpleTokens => {
                     let x_pos_within = clicked_x - editor_obj.rendered_x;
-                    Some(Pos::from_row_column(
+                    Pos::from_row_column(
                         editor_obj.row.as_usize(),
                         editor_obj.start_x + x_pos_within,
-                    ))
+                    )
                 }
             }
         } else {
-            Some(Pos::from_row_column(clicked_row.as_usize(), x))
+            let eol = self.editor_content.line_len(clicked_row.as_usize());
+            Pos::from_row_column(clicked_row.as_usize(), eol)
         };
 
-        if let Some(editor_click_pos) = editor_click_pos {
-            if self.matrix_editing.is_some() {
-                end_matrix_editing(
-                    &mut self.matrix_editing,
-                    &mut self.editor,
-                    &mut self.editor_content,
-                    None,
-                );
-            }
-            self.editor.handle_click(
-                editor_click_pos.column,
-                editor_click_pos.row,
-                &self.editor_content,
-            );
+        self.editor.handle_click(
+            editor_click_pos.column,
+            editor_click_pos.row,
+            &self.editor_content,
+        );
 
-            let flag = self.calc_rerender_for_cursor_movement(prev_selection, false);
+        let flag = self.calc_rerender_for_cursor_movement(prev_selection, false);
+        self.set_redraw_flag(flag, RedrawTarget::Both);
+        self.editor.blink_cursor();
 
-            self.set_redraw_flag(flag, RedrawTarget::Both);
-            self.editor.blink_cursor();
-        }
         if self.mouse_state.is_none() {
             self.mouse_state = Some(MouseState::ClickedInEditor);
         }
     }
 
-    pub fn rendered_y_to_editor_y(&self, clicked_y: RenderPosY) -> Option<EditorY> {
+    pub fn rendered_y_to_editor_y(&self, clicked_y: CanvasY) -> Option<ContentIndex> {
         let editor_y_to_render_y = self.render_data.editor_y_to_render_y();
         for (ed_y, r_y) in editor_y_to_render_y.iter().enumerate() {
             if r_y.map(|it| it == clicked_y).unwrap_or(false) {
-                return Some(EditorY::new(ed_y));
+                return Some(content_y(ed_y));
             } else if r_y.map(|it| it > clicked_y).unwrap_or(false) {
-                return Some(EditorY::new(ed_y - 1));
+                return Some(content_y(ed_y - 1));
             }
         }
         return None;
     }
 
-    pub fn get_clicked_row_clamped<'a>(&self, render_y: RenderPosY) -> EditorY {
-        return if render_y >= self.render_data.latest_bottom {
-            EditorY::new(self.editor_content.line_count() - 1)
+    pub fn get_clicked_row_clamped<'a>(&self, render_y: CanvasY) -> ContentIndex {
+        return if render_y >= self.render_data.latest_bottom_i {
+            content_y(self.editor_content.line_count() - 1)
         } else if let Some(editor_y) = self.rendered_y_to_editor_y(render_y) {
             editor_y
         } else {
@@ -1544,11 +1589,11 @@ impl NoteCalcApp {
     pub fn get_obj_at_rendered_pos<'a>(
         &self,
         x: usize,
-        render_y: RenderPosY,
+        render_y: CanvasY,
         editor_objects: &'a EditorObjects,
     ) -> Option<&'a EditorObject> {
-        let editor_y = if render_y >= self.render_data.latest_bottom {
-            EditorY::new(self.editor_content.line_count() - 1)
+        let editor_y = if render_y >= self.render_data.latest_bottom_i {
+            content_y(self.editor_content.line_count() - 1)
         } else if let Some(editor_y) = self.rendered_y_to_editor_y(render_y) {
             editor_y
         } else {
@@ -1565,8 +1610,8 @@ impl NoteCalcApp {
     pub fn get_obj_at<'a>(
         &self,
         x: usize,
-        editor_y: EditorY,
-        render_y: RenderPosY,
+        editor_y: ContentIndex,
+        render_y: CanvasY,
         editor_objects: &'a EditorObjects,
     ) -> Option<&'a EditorObject> {
         return editor_objects[editor_y].iter().find(|editor_obj| {
@@ -1577,22 +1622,32 @@ impl NoteCalcApp {
         });
     }
 
-    pub fn handle_drag(&mut self, x: usize, y: RenderPosY) {
-        match self.mouse_state {
+    pub fn handle_drag(&mut self, x: usize, y: CanvasY) -> bool {
+        return match self.mouse_state {
             Some(MouseState::RightGutterIsDragged) => {
                 self.set_result_gutter_x(
                     self.client_width,
                     calc_result_gutter_x(Some(x), self.client_width),
                 );
+                true
             }
             Some(MouseState::ClickedInEditor) => {
                 if let Some(y) = self.rendered_y_to_editor_y(y) {
+                    let (old_from, old_to) = self.editor.get_selection().get_range();
                     self.editor.handle_drag(
-                        x - LEFT_GUTTER_WIDTH,
+                        (x as isize - LEFT_GUTTER_WIDTH as isize).max(0) as usize,
                         y.as_usize(),
                         &self.editor_content,
                     );
                     self.editor.blink_cursor();
+                    let (from, to) = self.editor.get_selection().get_range();
+                    self.set_redraw_flag(
+                        EditorRowFlags::range(from.row.min(old_from.row), to.row.max(old_to.row)),
+                        RedrawTarget::EditorArea,
+                    );
+                    true
+                } else {
+                    false
                 }
             }
             Some(MouseState::ClickedInScrollBar {
@@ -1608,10 +1663,13 @@ impl NoteCalcApp {
                         EditorRowFlags::all_rows_starting_at(0),
                         RedrawTarget::Both,
                     );
+                    true
+                } else {
+                    false
                 }
             }
-            None => {}
-        }
+            None => false,
+        };
     }
 
     fn get_scrollbar_info(gr: &GlobalRenderData) -> Option<ScrollBarRenderInfo> {
@@ -1762,7 +1820,7 @@ impl NoteCalcApp {
         tokens: &mut AppTokens<'b>,
         results: &mut Results,
         vars: &mut Variables,
-        line_ref_row: EditorY,
+        line_ref_row: ContentIndex,
     ) {
         let cursor_row = self.editor.get_selection().get_cursor_pos().row;
         if cursor_row == line_ref_row.as_usize()
@@ -1783,7 +1841,7 @@ impl NoteCalcApp {
                 let line_data = self.editor_content.get_data(line_ref_row.as_usize());
                 line_data.line_id
             };
-            // TODO STATIC_LINE_IDS[line_id]
+
             let inserting_text = format!("&[{}]", line_id);
             self.editor
                 .insert_text(&inserting_text, &mut self.editor_content);
@@ -1799,12 +1857,12 @@ impl NoteCalcApp {
         );
     }
 
-    pub fn handle_paste<'b>(
+    pub fn handle_paste<'a>(
         &mut self,
         text: String,
         units: &Units,
-        allocator: &'b Arena<char>,
-        tokens: &mut AppTokens<'b>,
+        allocator: &'a Arena<char>,
+        tokens: &mut AppTokens<'a>,
         results: &mut Results,
         vars: &mut Variables,
     ) {
@@ -1958,7 +2016,7 @@ impl NoteCalcApp {
                     None
                 };
                 if let Some((prev_selected_row, new_selected_row)) = rows {
-                    app.line_reference_chooser = Some(EditorY::new(new_selected_row));
+                    app.line_reference_chooser = Some(content_y(new_selected_row));
                     InputResult {
                         modif: None,
                         redraw: Some((
@@ -1984,7 +2042,7 @@ impl NoteCalcApp {
                     None
                 };
                 if let Some((prev_selected_row, new_selected_row)) = rows {
-                    app.line_reference_chooser = Some(EditorY::new(new_selected_row));
+                    app.line_reference_chooser = Some(content_y(new_selected_row));
                     InputResult {
                         modif: None,
                         redraw: Some((
@@ -2026,7 +2084,7 @@ impl NoteCalcApp {
             } else {
                 let mut redraw_flags = EditorRowFlags::single_row(cur_row);
                 if modifiers.alt {
-                    let y = EditorY::new(cur_row);
+                    let y = content_y(cur_row);
                     let old_h = self.render_data.get_rendered_height(y);
                     let new_h =
                         calc_rendered_height(y, &self.matrix_editing, tokens, results, vars);
@@ -2068,8 +2126,15 @@ impl NoteCalcApp {
                         .handle_input(input, modifiers, &mut self.editor_content);
 
                 if self.editor.get_selection().get_cursor_pos().row >= MAX_LINE_COUNT {
-                    self.editor
-                        .set_selection_save_col(Selection::single_r_c(MAX_LINE_COUNT - 1, 0));
+                    if let Some((start, _end)) = self.editor.get_selection().is_range() {
+                        self.editor.set_selection_save_col(Selection::range(
+                            start,
+                            Pos::from_row_column(MAX_LINE_COUNT - 1, 0),
+                        ));
+                    } else {
+                        self.editor
+                            .set_selection_save_col(Selection::single_r_c(MAX_LINE_COUNT - 1, 0));
+                    }
                 }
 
                 if modif_type.is_none() {
@@ -2085,7 +2150,7 @@ impl NoteCalcApp {
                         true
                     } else if self
                         .render_data
-                        .get_render_y(EditorY::new(cursor_pos.row))
+                        .get_render_y(content_y(cursor_pos.row))
                         .map(|render_y| {
                             render_y.as_isize() >= (self.render_data.client_height as isize)
                         })
@@ -2094,7 +2159,7 @@ impl NoteCalcApp {
                         // scroll down
                         self.render_data.scroll_y = self
                             .render_data
-                            .get_render_y(EditorY::new(cursor_pos.row))
+                            .get_render_y(content_y(cursor_pos.row))
                             .expect("must")
                             .as_usize()
                             + self.render_data.scroll_y
@@ -2168,7 +2233,7 @@ impl NoteCalcApp {
             tokens_per_lines: &mut AppTokens<'b>,
             results: &mut Results,
             vars: &mut Variables,
-            editor_y: EditorY,
+            editor_y: ContentIndex,
             result_has_changed: &mut EditorRowFlags,
         ) -> EditorRowFlags {
             // TODO avoid clone
@@ -2246,12 +2311,13 @@ impl NoteCalcApp {
         ) -> EditorRowFlags {
             let mut rows_to_recalc = EditorRowFlags::empty();
             let line_data = editor_content.get_data(editor_y);
-            let line_ref_name = &STATIC_LINE_IDS[line_data.line_id];
+            // TODO opt
+            let line_ref_name: Vec<char> = format!("&[{}]", line_data.line_id).chars().collect();
             for (i, tokens) in tokens_per_lines.iter().skip(editor_y + 1).enumerate() {
                 if let Some(tokens) = tokens {
                     for token in &tokens.tokens {
                         match token.typ {
-                            TokenType::LineReference { .. } if token.ptr == *line_ref_name => {
+                            TokenType::LineReference { .. } if token.ptr == line_ref_name => {
                                 rows_to_recalc.merge(EditorRowFlags::single_row(editor_y + 1 + i));
                             }
                             _ => {}
@@ -2388,14 +2454,14 @@ impl NoteCalcApp {
                 {
                     true
                 }
-                _ => dependant_rows.need(EditorY::new(editor_y)),
+                _ => dependant_rows.need(content_y(editor_y)),
             };
             if recalc {
                 if self.editor_content.get_data(editor_y).line_id == 0 {
                     self.editor_content.mut_data(editor_y).line_id = self.line_id_generator;
                     self.line_id_generator += 1;
                 }
-                let y = EditorY::new(editor_y);
+                let y = content_y(editor_y);
 
                 let rows_to_recalc = eval_line(
                     &self.editor_content,
@@ -2429,7 +2495,7 @@ impl NoteCalcApp {
                 sum_is_null = true;
             }
 
-            match &results[EditorY::new(editor_y)] {
+            match &results[content_y(editor_y)] {
                 Ok(Some(result)) => {
                     sum_result(
                         vars[SUM_VARIABLE_INDEX]
@@ -2481,7 +2547,7 @@ impl NoteCalcApp {
         {
             let mut r = PerLineRenderData::new();
             for (i, line) in self.editor_content.lines().enumerate() {
-                let i = EditorY::new(i);
+                let i = content_y(i);
                 // TODO "--"
                 tokens.clear();
                 TokenParser::parse_line(
@@ -2568,12 +2634,7 @@ impl NoteCalcApp {
             None,
         );
         for i in 0..render_height {
-            render_buckets.draw_char(
-                Layer::AboveText,
-                result_gutter_x,
-                RenderPosY::new(i as isize),
-                '█',
-            );
+            render_buckets.draw_char(Layer::AboveText, result_gutter_x, canvas_y(i as isize), '█');
         }
         render_buckets_into(&render_buckets, &mut tmp_canvas);
         let mut result_str = String::with_capacity(row_nums * 64);
@@ -2628,16 +2689,16 @@ impl NoteCalcApp {
                 );
                 self.editor
                     .set_selection_save_col(Selection::single(cursor_pos.with_column(prev_col)));
-                editor_objects[EditorY::new(cursor_pos.row)].push(EditorObject {
+                editor_objects[content_y(cursor_pos.row)].push(EditorObject {
                     typ: EditorObjectType::Matrix {
                         row_count: 1,
                         col_count: 1,
                     },
-                    row: EditorY::new(cursor_pos.row),
+                    row: content_y(cursor_pos.row),
                     start_x: prev_col - 1,
                     end_x: prev_col + 2,
-                    rendered_x: 0,                  // dummy
-                    rendered_y: RenderPosY::new(0), // dummy
+                    rendered_x: 0,           // dummy
+                    rendered_y: canvas_y(0), // dummy
                     rendered_w: 3,
                     rendered_h: 1,
                 });
@@ -2723,7 +2784,7 @@ impl NoteCalcApp {
                 self.index_of_matrix_or_lineref_at(cursor_pos.with_prev_col(), editor_objects)
             {
                 // remove it
-                let obj = editor_objects[EditorY::new(cursor_pos.row)].remove(index);
+                let obj = editor_objects[content_y(cursor_pos.row)].remove(index);
                 let sel = Selection::range(
                     Pos::from_row_column(obj.row.as_usize(), obj.start_x),
                     Pos::from_row_column(obj.row.as_usize(), obj.end_x),
@@ -2743,7 +2804,7 @@ impl NoteCalcApp {
         } else if *input == EditorInputEvent::Del && selection.is_range().is_none() {
             if let Some(index) = self.index_of_matrix_or_lineref_at(cursor_pos, editor_objects) {
                 // remove it
-                let obj = editor_objects[EditorY::new(cursor_pos.row)].remove(index);
+                let obj = editor_objects[content_y(cursor_pos.row)].remove(index);
                 let sel = Selection::range(
                     Pos::from_row_column(obj.row.as_usize(), obj.start_x),
                     Pos::from_row_column(obj.row.as_usize(), obj.end_x),
@@ -2846,7 +2907,7 @@ impl NoteCalcApp {
         pos: Pos,
         editor_objects: &'b EditorObjects,
     ) -> Option<&'b EditorObject> {
-        for obj in &editor_objects[EditorY::new(pos.row)] {
+        for obj in &editor_objects[content_y(pos.row)] {
             if (obj.start_x..obj.end_x).contains(&pos.column) {
                 return Some(obj);
             }
@@ -2859,12 +2920,10 @@ impl NoteCalcApp {
         pos: Pos,
         editor_objects: &EditorObjects,
     ) -> Option<usize> {
-        return editor_objects[EditorY::new(pos.row)]
-            .iter()
-            .position(|obj| {
-                matches!(obj.typ, EditorObjectType::LineReference | EditorObjectType::Matrix {..})
-                    && (obj.start_x..obj.end_x).contains(&pos.column)
-            });
+        return editor_objects[content_y(pos.row)].iter().position(|obj| {
+            matches!(obj.typ, EditorObjectType::LineReference | EditorObjectType::Matrix {..})
+                && (obj.start_x..obj.end_x).contains(&pos.column)
+        });
     }
 
     fn handle_matrix_editor_input(&mut self, input: EditorInputEvent, modifiers: InputModifiers) {
@@ -2882,9 +2941,9 @@ impl NoteCalcApp {
             );
         } else if input == EditorInputEvent::Tab {
             if mat_edit.current_cell.column + 1 < mat_edit.col_count {
-                mat_edit.change_cell(mat_edit.current_cell.with_next_col());
+                mat_edit.move_to_cell(mat_edit.current_cell.with_next_col());
             } else if mat_edit.current_cell.row + 1 < mat_edit.row_count {
-                mat_edit.change_cell(mat_edit.current_cell.with_next_row().with_column(0));
+                mat_edit.move_to_cell(mat_edit.current_cell.with_next_row().with_column(0));
             } else {
                 let end_text_index = mat_edit.end_text_index;
                 end_matrix_editing(
@@ -2907,7 +2966,7 @@ impl NoteCalcApp {
             && mat_edit.editor.is_cursor_at_beginning()
         {
             if mat_edit.current_cell.column > 0 {
-                mat_edit.change_cell(mat_edit.current_cell.with_prev_col());
+                mat_edit.move_to_cell(mat_edit.current_cell.with_prev_col());
             } else {
                 let start_text_index = mat_edit.start_text_index;
                 end_matrix_editing(
@@ -2922,7 +2981,7 @@ impl NoteCalcApp {
             && mat_edit.editor.is_cursor_at_eol(&mat_edit.editor_content)
         {
             if mat_edit.current_cell.column + 1 < mat_edit.col_count {
-                mat_edit.change_cell(mat_edit.current_cell.with_next_col());
+                mat_edit.move_to_cell(mat_edit.current_cell.with_next_col());
             } else {
                 let end_text_index = mat_edit.end_text_index;
                 end_matrix_editing(
@@ -2934,7 +2993,7 @@ impl NoteCalcApp {
             }
         } else if simple && input == EditorInputEvent::Up {
             if mat_edit.current_cell.row > 0 {
-                mat_edit.change_cell(mat_edit.current_cell.with_prev_row());
+                mat_edit.move_to_cell(mat_edit.current_cell.with_prev_row());
             } else {
                 end_matrix_editing(
                     &mut self.matrix_editing,
@@ -2947,7 +3006,7 @@ impl NoteCalcApp {
             }
         } else if simple && input == EditorInputEvent::Down {
             if mat_edit.current_cell.row + 1 < mat_edit.row_count {
-                mat_edit.change_cell(mat_edit.current_cell.with_next_row());
+                mat_edit.move_to_cell(mat_edit.current_cell.with_next_row());
             } else {
                 end_matrix_editing(
                     &mut self.matrix_editing,
@@ -2960,7 +3019,7 @@ impl NoteCalcApp {
             }
         } else if simple && input == EditorInputEvent::End {
             if mat_edit.current_cell.column != mat_edit.col_count - 1 {
-                mat_edit.change_cell(mat_edit.current_cell.with_column(mat_edit.col_count - 1));
+                mat_edit.move_to_cell(mat_edit.current_cell.with_column(mat_edit.col_count - 1));
             } else {
                 let end_text_index = mat_edit.end_text_index;
                 end_matrix_editing(
@@ -2974,7 +3033,7 @@ impl NoteCalcApp {
             }
         } else if simple && input == EditorInputEvent::Home {
             if mat_edit.current_cell.column != 0 {
-                mat_edit.change_cell(mat_edit.current_cell.with_column(0));
+                mat_edit.move_to_cell(mat_edit.current_cell.with_column(0));
             } else {
                 let start_index = mat_edit.start_text_index;
                 end_matrix_editing(
@@ -3077,7 +3136,7 @@ fn draw_cursor(
 pub fn clear_rerendered_lines(
     render_buckets: &mut RenderBuckets,
     gr: &mut GlobalRenderData,
-    rerendered_lines: &[((RenderPosY, usize), RedrawTarget)],
+    rerendered_lines: &[((CanvasY, usize), RedrawTarget)],
 ) {
     for ((render_y, render_height), target) in rerendered_lines {
         let x_w_coords = match *target {
@@ -3114,23 +3173,23 @@ pub fn pulse_rerendered_lines(
     render_buckets: &mut RenderBuckets,
     gr: &GlobalRenderData,
     longest_rendered_result_len: usize,
-    _rerendered_lines: &[((RenderPosY, usize), RedrawTarget)],
+    _rerendered_lines: &[((CanvasY, usize), RedrawTarget)],
     result_has_updated: &EditorRowFlags,
 ) {
-    if gr.get_render_y(EditorY::new(0)).is_none() {
+    if gr.get_render_y(content_y(0)).is_none() {
         // there were no render yet
         return;
     }
     // Pulsing changed results
     for i in 0..MAX_LINE_COUNT {
         if result_has_updated.is_true(i) {
-            if let Some(render_y) = gr.get_render_y(EditorY::new(i)) {
+            if let Some(render_y) = gr.get_render_y(content_y(i)) {
                 render_buckets.custom_commands[Layer::AboveText as usize].push(
                     OutputMessage::PulsingRectangle {
                         x: gr.result_gutter_x + RIGHT_GUTTER_WIDTH,
                         y: render_y,
                         w: longest_rendered_result_len,
-                        h: gr.get_rendered_height(EditorY::new(i)),
+                        h: gr.get_rendered_height(content_y(i)),
                         start_color: 0xFF88FF_DD,
                         end_color: 0xFFFFFF_00,
                         animation_time: Duration::from_millis(1000),
@@ -3189,28 +3248,36 @@ pub fn clear_bottom_due_to_line_shrinking(
     render_buckets: &mut RenderBuckets,
     gr: &mut GlobalRenderData,
 ) {
-    let last_editor_y = EditorY::new(last_row_i - 1);
+    let last_editor_y = content_y(last_row_i - 1);
     if let Some(current_bottom) = gr.get_render_y(last_editor_y) {
-        if current_bottom < gr.latest_bottom {
-            let h = gr.latest_bottom.as_isize() - current_bottom.as_isize();
-            if h > 0 {
-                // something, e.g. a matrix has shrinked, clear the below area
-                let y = current_bottom.add(1);
-                render_buckets
-                    .clear_commands
-                    .push(OutputMessage::RenderRectangle {
-                        x: 0,
-                        y,
-                        w: gr.current_result_panel_width
-                            + gr.current_editor_width
-                            + gr.left_gutter_width
-                            + SCROLL_BAR_WIDTH
-                            + RIGHT_GUTTER_WIDTH,
-                        h: h as usize,
-                    });
-            }
+        let current_bottom_h = gr.get_rendered_height(last_editor_y);
+        let h = if current_bottom < gr.latest_bottom_i {
+            gr.latest_bottom_i.as_isize() - current_bottom.as_isize()
+        } else if current_bottom_h < gr.latest_bottom_h {
+            gr.latest_bottom_h as isize - current_bottom_h as isize
+        } else {
+            0
+        };
+
+        if h > 0 {
+            // something, e.g. a matrix has shrinked, clear the below area
+            let y = current_bottom.add(1);
+            render_buckets
+                .clear_commands
+                .push(OutputMessage::RenderRectangle {
+                    x: 0,
+                    y,
+                    w: gr.current_result_panel_width
+                        + gr.current_editor_width
+                        + gr.left_gutter_width
+                        + SCROLL_BAR_WIDTH
+                        + RIGHT_GUTTER_WIDTH,
+                    h: h as usize,
+                });
         }
-        gr.latest_bottom = current_bottom;
+
+        gr.latest_bottom_i = current_bottom;
+        gr.latest_bottom_h = current_bottom_h;
     }
 }
 
@@ -3222,17 +3289,17 @@ pub fn clear_bottom_due_to_line_removal(
     let mut clear_box_y = None;
 
     for i in last_row_i..MAX_LINE_COUNT {
-        let editor_y = EditorY::new(i);
+        let editor_y = content_y(i);
 
         if let Some(_) = gr.get_render_y(editor_y) {
             let y = gr
-                .get_render_y(EditorY::new(last_row_i - 1))
+                .get_render_y(content_y(last_row_i - 1))
                 .expect("must")
                 .as_usize();
-            let h = gr.get_rendered_height(EditorY::new(last_row_i - 1));
+            let h = gr.get_rendered_height(content_y(last_row_i - 1));
             clear_box_y = Some(y + h);
             for remaining_i in i..MAX_LINE_COUNT {
-                gr.set_render_y(EditorY::new(remaining_i), None);
+                gr.set_render_y(content_y(remaining_i), None);
             }
             break;
         } else {
@@ -3244,7 +3311,7 @@ pub fn clear_bottom_due_to_line_removal(
             .clear_commands
             .push(OutputMessage::RenderRectangle {
                 x: 0,
-                y: RenderPosY::new(clear_box_y as isize),
+                y: canvas_y(clear_box_y as isize),
                 w: gr.left_gutter_width
                     + gr.current_editor_width
                     + gr.current_result_panel_width
@@ -3454,7 +3521,7 @@ fn draw_line_ref_chooser(
     render_buckets: &mut RenderBuckets,
     r: &PerLineRenderData,
     gr: &GlobalRenderData,
-    line_reference_chooser: &Option<EditorY>,
+    line_reference_chooser: &Option<ContentIndex>,
     result_gutter_x: usize,
 ) {
     if let Some(selection_row) = line_reference_chooser {
@@ -3573,15 +3640,22 @@ fn evaluate_tokens_and_save_result(
             let line_data = editor_content.get_data(editor_y);
             debug_assert!(line_data.line_id > 0);
             let line_id = line_data.line_id;
-            replace_or_insert_var(
-                vars,
-                STATIC_LINE_IDS[line_id],
-                result.result.clone(),
-                editor_y,
-            );
+            // TODO opt
+            let var_name: Vec<char> = format!("&[{}]", line_id).chars().collect();
+            replace_or_insert_var(vars, &var_name, result.result.clone(), editor_y);
         }
     } else {
-        vars[editor_y] = None;
+        if let Some(var) = &mut vars[editor_y] {
+            let line_data = editor_content.get_data(editor_y);
+            debug_assert!(line_data.line_id > 0);
+            let line_id = line_data.line_id;
+            // TODO opt
+            let var_name: Vec<char> = format!("&[{}]", line_id).chars().collect();
+            var.name = Box::from(var_name);
+            var.value = Err(());
+        } else {
+            vars[editor_y] = None;
+        }
     }
     result
 }
@@ -3787,7 +3861,7 @@ fn evaluate_text<'text_ptr>(
 
 fn render_matrix_obj<'text_ptr>(
     mut render_x: usize,
-    render_y: RenderPosY,
+    render_y: CanvasY,
     current_editor_width: usize,
     left_gutter_width: usize,
     row_count: usize,
@@ -3905,7 +3979,7 @@ fn render_matrix_obj<'text_ptr>(
 
 fn render_matrix_left_brackets(
     x: usize,
-    render_y: RenderPosY,
+    render_y: CanvasY,
     row_count: usize,
     render_buckets: &mut RenderBuckets,
     vert_align_offset: usize,
@@ -3939,7 +4013,7 @@ fn render_matrix_left_brackets(
 
 fn render_matrix_right_brackets(
     x: usize,
-    render_y: RenderPosY,
+    render_y: CanvasY,
     row_count: usize,
     render_buckets: &mut RenderBuckets,
     vert_align_offset: usize,
@@ -3974,7 +4048,7 @@ fn render_matrix_right_brackets(
 fn render_matrix_result<'text_ptr>(
     units: &Units,
     mut render_x: usize,
-    render_y: RenderPosY,
+    render_y: CanvasY,
     mat: &MatrixData,
     render_buckets: &mut RenderBuckets<'text_ptr>,
     prev_mat_result_lengths: Option<&ResultLengths>,
@@ -4170,7 +4244,7 @@ fn render_results<'text_ptr>(
 ) -> usize {
     struct ResultTmp {
         buffer_ptr: Option<Range<usize>>,
-        editor_y: EditorY,
+        editor_y: ContentIndex,
         lengths: ResultLengths,
     }
     let mut longest_result_len = 0;
@@ -4187,7 +4261,7 @@ fn render_results<'text_ptr>(
         // calc max length and render results into buffer
         for (editor_y, result) in results.iter().enumerate() {
             let mut result_len = 0;
-            let editor_y = EditorY::new(editor_y);
+            let editor_y = content_y(editor_y);
             let render_y = if let Some(render_y) = gr.get_render_y(editor_y) {
                 render_y
             } else {
@@ -4448,7 +4522,7 @@ fn calc_matrix_max_lengths(units: &Units, mat: &MatrixData) -> ResultLengths {
 fn draw_token<'text_ptr>(
     token: &Token<'text_ptr>,
     render_x: usize,
-    render_y: RenderPosY,
+    render_y: CanvasY,
     current_editor_width: usize,
     left_gutter_width: usize,
     render_buckets: &mut RenderBuckets<'text_ptr>,
@@ -4475,21 +4549,21 @@ fn draw_token<'text_ptr>(
 }
 
 fn render_buckets_into(buckets: &RenderBuckets, canvas: &mut [[char; 256]]) {
-    fn write_char_slice(canvas: &mut [[char; 256]], row: RenderPosY, col: usize, src: &[char]) {
+    fn write_char_slice(canvas: &mut [[char; 256]], row: CanvasY, col: usize, src: &[char]) {
         let str = &mut canvas[row.as_usize()];
         for (dst_char, src_char) in str[col..].iter_mut().zip(src.iter()) {
             *dst_char = *src_char;
         }
     }
 
-    fn write_str(canvas: &mut [[char; 256]], row: RenderPosY, col: usize, src: &str) {
+    fn write_str(canvas: &mut [[char; 256]], row: CanvasY, col: usize, src: &str) {
         let str = &mut canvas[row.as_usize()];
         for (dst_char, src_char) in str[col..].iter_mut().zip(src.chars()) {
             *dst_char = src_char;
         }
     }
 
-    fn write_ascii(canvas: &mut [[char; 256]], row: RenderPosY, col: usize, src: &[u8]) {
+    fn write_ascii(canvas: &mut [[char; 256]], row: CanvasY, col: usize, src: &[u8]) {
         let str = &mut canvas[row.as_usize()];
         for (dst_char, src_char) in str[col..].iter_mut().zip(src.iter()) {
             *dst_char = *src_char as char;
@@ -4571,22 +4645,21 @@ fn render_selection_and_its_sum<'text_ptr>(
     if let Some((start, end)) = editor.get_selection().is_range() {
         if end.row > start.row {
             // first line
-            if let Some(start_render_y) = gr.get_render_y(EditorY::new(start.row)) {
-                let height = gr.get_rendered_height(EditorY::new(start.row));
+            if let Some(start_render_y) = gr.get_render_y(content_y(start.row)) {
+                let height = gr.get_rendered_height(content_y(start.row));
                 render_buckets.draw_rect(
                     Layer::BehindText,
                     start.column + gr.left_gutter_width,
                     start_render_y,
-                    editor_content
-                        .line_len(start.row)
+                    (editor_content.line_len(start.row) - start.column)
                         .min(gr.current_editor_width),
                     height,
                 );
             }
             // full lines
             for i in start.row + 1..end.row {
-                if let Some(render_y) = gr.get_render_y(EditorY::new(i)) {
-                    let height = gr.get_rendered_height(EditorY::new(i));
+                if let Some(render_y) = gr.get_render_y(content_y(i)) {
+                    let height = gr.get_rendered_height(content_y(i));
                     render_buckets.draw_rect(
                         Layer::BehindText,
                         gr.left_gutter_width,
@@ -4597,8 +4670,8 @@ fn render_selection_and_its_sum<'text_ptr>(
                 }
             }
             // last line
-            if let Some(end_render_y) = gr.get_render_y(EditorY::new(end.row)) {
-                let height = gr.get_rendered_height(EditorY::new(end.row));
+            if let Some(end_render_y) = gr.get_render_y(content_y(end.row)) {
+                let height = gr.get_rendered_height(content_y(end.row));
                 render_buckets.draw_rect(
                     Layer::BehindText,
                     gr.left_gutter_width,
@@ -4607,8 +4680,8 @@ fn render_selection_and_its_sum<'text_ptr>(
                     height,
                 );
             }
-        } else if let Some(start_render_y) = gr.get_render_y(EditorY::new(start.row)) {
-            let height = gr.get_rendered_height(EditorY::new(start.row));
+        } else if let Some(start_render_y) = gr.get_render_y(content_y(start.row)) {
+            let height = gr.get_rendered_height(content_y(start.row));
             render_buckets.draw_rect(
                 Layer::BehindText,
                 start.column + gr.left_gutter_width,
@@ -4627,7 +4700,7 @@ fn render_selection_and_its_sum<'text_ptr>(
             allocator,
         ) {
             if start.row == end.row {
-                if let Some(start_render_y) = gr.get_render_y(EditorY::new(start.row)) {
+                if let Some(start_render_y) = gr.get_render_y(content_y(start.row)) {
                     let selection_center = start.column + ((end.column - start.column) / 2);
                     partial_result.insert_str(0, "= ");
                     let result_w = partial_result.chars().count();
@@ -4662,9 +4735,9 @@ fn render_selection_and_its_sum<'text_ptr>(
                     .max_by(|a, b| a.cmp(b))
                     .unwrap()
                     + 3;
-                let frist_visible_row_index = EditorY::new(start.row.max(gr.scroll_y));
+                let frist_visible_row_index = content_y(start.row.max(gr.scroll_y));
                 let last_visible_row_index =
-                    EditorY::new(end.row.min(gr.scroll_y + gr.client_height - 1));
+                    content_y(end.row.min(gr.scroll_y + gr.client_height - 1));
                 let inner_height = gr
                     .get_render_y(last_visible_row_index)
                     .expect("")
@@ -4737,7 +4810,7 @@ fn calc_result_gutter_x(current_x: Option<usize>, client_width: usize) -> usize 
 }
 
 fn calc_rendered_height<'b>(
-    editor_y: EditorY,
+    editor_y: ContentIndex,
     matrix_editing: &Option<MatrixEditing>,
     tokens: &AppTokens,
     results: &Results,
@@ -4766,7 +4839,7 @@ fn calc_rendered_height<'b>(
 }
 
 fn is_pos_inside_an_obj(editor_objects: &EditorObjects, pos: Pos) -> Option<&EditorObject> {
-    for obj in &editor_objects[EditorY::new(pos.row)] {
+    for obj in &editor_objects[content_y(pos.row)] {
         if (obj.start_x + 1..obj.end_x).contains(&pos.column) {
             return Some(obj);
         }
@@ -4823,1871 +4896,654 @@ pub fn end_matrix_editing(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::editor::editor::Selection;
     use std::ops::RangeInclusive;
 
-    fn create_holder<'b>() -> (
-        AppTokens<'b>,
-        Results,
-        [Option<Variable>; MAX_LINE_COUNT + 1],
-        EditorObjects,
-    ) {
+    use crate::editor::editor::Selection;
+
+    use super::*;
+    use std::cell::RefCell;
+
+    struct TestApp<'a> {
+        editor_objects: RefCell<EditorObjects>,
+        app: RefCell<NoteCalcApp>,
+        units: RefCell<Units>,
+        tokens: RefCell<AppTokens<'a>>,
+        results: RefCell<Results>,
+        vars: RefCell<[Option<Variable>; MAX_LINE_COUNT + 1]>,
+        arena: Arena<char>,
+    }
+
+    impl<'a> TestApp<'a> {
+        fn render(&self) {
+            let mut result_buffer = [0; 128];
+            let mut render_buckets = RenderBuckets::new();
+            let app = &mut self.app.borrow_mut();
+            let units = &self.units.borrow();
+            let arena = &self.arena;
+            let tokens = &self.tokens.borrow();
+            let results = &self.results.borrow();
+            let vars = &self.vars.borrow();
+            let editor_objects = &mut self.editor_objects.borrow_mut();
+
+            app.render(
+                units,
+                &mut render_buckets,
+                &mut result_buffer[..],
+                arena,
+                tokens,
+                results,
+                &vars[..],
+                editor_objects,
+            );
+        }
+
+        fn render_get_result_buf(&self, result_buffer: &mut [u8]) {
+            let mut render_buckets = RenderBuckets::new();
+            let app = &mut self.app.borrow_mut();
+            let units = &self.units.borrow();
+            let arena = &self.arena;
+            let tokens = &self.tokens.borrow();
+            let results = &self.results.borrow();
+            let vars = &self.vars.borrow();
+            let editor_objects = &mut self.editor_objects.borrow_mut();
+
+            app.render(
+                units,
+                &mut render_buckets,
+                result_buffer,
+                arena,
+                tokens,
+                results,
+                &vars[..],
+                editor_objects,
+            );
+        }
+
+        fn render_get_result_commands<'b>(
+            &'b self,
+            render_buckets: &mut RenderBuckets<'b>,
+            result_buffer: &'b mut [u8],
+        ) {
+            let app = &mut self.app.borrow_mut();
+            let units = &self.units.borrow();
+            let arena = &self.arena;
+            let tokens = &self.tokens.borrow();
+            let results = &self.results.borrow();
+            let vars = &self.vars.borrow();
+            let editor_objects = &mut self.editor_objects.borrow_mut();
+
+            app.render(
+                units,
+                render_buckets,
+                result_buffer,
+                arena,
+                tokens,
+                results,
+                &vars[..],
+                editor_objects,
+            );
+        }
+
+        fn paste(&'a self, str: &str) {
+            let units = &self.units.borrow();
+            let app = &mut self.app.borrow_mut();
+            let results = &mut self.results.borrow_mut();
+            let vars = &mut self.vars.borrow_mut();
+            let arena = &self.arena;
+            let tokens = &mut self.tokens.borrow_mut();
+            app.handle_paste(
+                str.to_owned(),
+                &units,
+                arena,
+                tokens,
+                results,
+                &mut vars[..],
+            );
+        }
+
+        fn set_normalized_content(&'a self, str: &str) {
+            let units = &self.units.borrow();
+            let app = &mut self.app.borrow_mut();
+            let results = &mut self.results.borrow_mut();
+            let vars = &mut self.vars.borrow_mut();
+            let arena = &self.arena;
+            let tokens = &mut self.tokens.borrow_mut();
+            app.set_normalized_content(str, &units, arena, tokens, results, &mut vars[..]);
+        }
+
+        fn repeated_paste(&'a self, str: &str, times: usize) {
+            let units = &self.units.borrow();
+            let app = &mut self.app.borrow_mut();
+            let results = &mut self.results.borrow_mut();
+            let vars = &mut self.vars.borrow_mut();
+            let arena = &self.arena;
+            let tokens = &mut self.tokens.borrow_mut();
+            app.handle_paste(
+                str.repeat(times),
+                &units,
+                arena,
+                tokens,
+                results,
+                &mut vars[..],
+            );
+        }
+
+        fn click(&'a self, x: usize, y: isize) {
+            let units = &self.units.borrow();
+            let app = &mut self.app.borrow_mut();
+            let results = &mut self.results.borrow_mut();
+            let vars = &mut self.vars.borrow_mut();
+            let arena = &self.arena;
+            let tokens = &mut self.tokens.borrow_mut();
+            let editor_objects = &self.editor_objects.borrow();
+            app.handle_click(
+                x,
+                canvas_y(y),
+                editor_objects,
+                &units,
+                arena,
+                tokens,
+                results,
+                &mut vars[..],
+            );
+        }
+
+        fn handle_drag(&'a self, x: usize, y: isize) {
+            let app = &mut self.app.borrow_mut();
+            app.handle_drag(x, canvas_y(y));
+        }
+
+        fn alt_key_released(&'a self) {
+            let units = &self.units.borrow();
+            let app = &mut self.app.borrow_mut();
+            let results = &mut self.results.borrow_mut();
+            let vars = &mut self.vars.borrow_mut();
+            let arena = &self.arena;
+            let tokens = &mut self.tokens.borrow_mut();
+            app.alt_key_released(units, arena, tokens, results, &mut vars[..]);
+        }
+
+        fn assert_redraw_editor(&'a self, y: usize) {
+            let app = &self.app.borrow();
+            assert!(
+                app.editor_area_redraw.need(content_y(y)),
+                "editor y = {} was not rerendered",
+                y
+            );
+        }
+
+        fn assert_redraw_result(&'a self, y: usize) {
+            let app = &self.app.borrow();
+            assert!(
+                app.result_area_redraw.need(content_y(y)),
+                "result y = {} was not rerendered",
+                y
+            );
+        }
+
+        #[allow(dead_code)]
+        fn assert_redraw_editor_and_result(&'a self, y: usize) {
+            self.assert_redraw_editor(y);
+            self.assert_redraw_result(y);
+        }
+
+        fn assert_not_redraw_editor(&'a self, y: usize) {
+            let app = &self.app.borrow();
+            assert!(
+                !app.editor_area_redraw.need(content_y(y)),
+                "editor y = {} was rerendered",
+                y
+            );
+        }
+
+        fn assert_not_redraw_result(&'a self, y: usize) {
+            let app = &self.app.borrow();
+            assert!(
+                !app.result_area_redraw.need(content_y(y)),
+                "result y = {} was rerendered",
+                y
+            );
+        }
+
+        fn handle_time(&'a self, tick: u32) {
+            self.app.borrow_mut().handle_time(tick);
+        }
+
+        fn input(&'a self, event: EditorInputEvent, modif: InputModifiers) {
+            let units = &self.units.borrow();
+            let app = &mut self.app.borrow_mut();
+            let results = &mut self.results.borrow_mut();
+            let vars = &mut self.vars.borrow_mut();
+            let arena = &self.arena;
+            let tokens = &mut self.tokens.borrow_mut();
+            let editor_objects = &mut self.editor_objects.borrow_mut();
+            app.handle_input_and_update_tokens_plus_redraw_requirements(
+                event,
+                modif,
+                &arena,
+                &units,
+                tokens,
+                results,
+                &mut vars[..],
+                editor_objects,
+            );
+        }
+
+        fn handle_mouse_up(&self) {
+            self.app.borrow_mut().handle_mouse_up();
+        }
+
+        fn get_render_data(&self) -> GlobalRenderData {
+            return self.app.borrow().render_data.clone();
+        }
+
+        fn get_editor_content(&self) -> String {
+            return self.app.borrow().editor_content.get_content();
+        }
+
+        fn get_cursor_pos(&self) -> Pos {
+            return self.app.borrow().editor.get_selection().get_cursor_pos();
+        }
+
+        fn get_selection(&self) -> Selection {
+            return self.app.borrow().editor.get_selection();
+        }
+
+        fn set_selection(&self, selection: Selection) {
+            let app = &mut self.app.borrow_mut();
+            app.editor.set_selection_save_col(selection);
+        }
+
+        fn set_cursor_row_col(&self, row: usize, col: usize) {
+            self.set_selection(Selection::single_r_c(row, col));
+        }
+    }
+
+    fn create_app2<'a>(client_height: usize) -> TestApp<'a> {
+        let app = NoteCalcApp::new(120, client_height);
+        let units = Units::new();
         let editor_objects = EditorObjects::new();
         let tokens = AppTokens::new();
         let results = Results::new();
-        (tokens, results, create_vars(), editor_objects)
-    }
-
-    fn create_app<'a>(
-        client_height: usize,
-    ) -> (
-        NoteCalcApp,
-        Units,
-        (
-            AppTokens<'a>,
-            Results,
-            [Option<Variable>; MAX_LINE_COUNT + 1],
-            EditorObjects,
-        ),
-    ) {
-        let app = NoteCalcApp::new(120, client_height);
-        let units = Units::new();
-        return (app, units, create_holder());
+        let vars = create_vars();
+        return TestApp {
+            app: RefCell::new(app),
+            units: RefCell::new(units),
+            tokens: RefCell::new(tokens),
+            results: RefCell::new(results),
+            vars: RefCell::new(vars),
+            arena: Arena::new(),
+            editor_objects: RefCell::new(editor_objects),
+        };
     }
 
     #[test]
     fn bug1() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]");
 
-        app.handle_paste(
-            "[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 33));
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Right,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.set_cursor_row_col(0, 33);
+        test.input(EditorInputEvent::Right, InputModifiers::alt());
+        test.render();
     }
 
     #[test]
     fn bug2() {
-        let arena = Arena::new();
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        app.handle_paste(
-            "[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 1));
+        let test = create_app2(35);
+        test.paste("[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]");
+        test.set_cursor_row_col(0, 1);
 
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Right,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let arena = Arena::new();
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Down,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Right, InputModifiers::alt());
+        test.render();
+        test.input(EditorInputEvent::Down, InputModifiers::none());
+        test.render();
     }
 
     #[test]
     fn bug3() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
+        let test = create_app2(35);
+        test.paste(
             "1\n\
-                2+"
-            .to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+                2+",
         );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(1, 2));
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.set_cursor_row_col(1, 2);
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        test.render();
     }
 
     #[test]
     fn test_that_variable_name_is_inserted_when_referenced_a_var_line() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
+        let test = create_app2(35);
+        test.paste(
             "var_name = 1\n\
-                2+"
-            .to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+                2+",
         );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(1, 2));
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.set_cursor_row_col(1, 2);
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        test.render();
         assert_eq!(
             "var_name = 1\n\
              2+var_name",
-            app.editor_content.get_content()
+            test.get_editor_content()
         );
     }
 
     #[test]
     fn bug4() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
+        let test = create_app2(35);
+        test.paste(
             "1\n\
-                "
-            .to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+                ",
         );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(1, 0));
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
+        test.set_cursor_row_col(1, 0);
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        test.render();
         assert_eq!(
             "1\n\
              &[1]",
-            app.editor_content.get_content()
+            test.get_editor_content()
         );
     }
 
     #[test]
     fn bug5() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("123\na ");
 
-        app.handle_paste(
-            "123\na ".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        assert_eq!(
+            3,
+            test.tokens.borrow()[content_y(1)]
+                .as_ref()
+                .unwrap()
+                .tokens
+                .len()
         );
-
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
-        assert_eq!(3, tokens[EditorY::new(1)].as_ref().unwrap().tokens.len());
     }
 
     #[test]
     fn it_is_not_allowed_to_ref_lines_below() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
+        let test = create_app2(35);
+        test.paste(
             "1\n\
-                2+\n3\n4"
-                .to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+                2+\n3\n4",
         );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(1, 2));
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Down,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
+        test.set_cursor_row_col(1, 2);
+        test.input(EditorInputEvent::Down, InputModifiers::alt());
+        test.alt_key_released();
+        test.render();
         assert_eq!(
             "1\n\
                 2+\n3\n4",
-            app.editor_content.get_content()
+            test.get_editor_content()
         );
     }
 
     #[test]
     fn it_is_not_allowed_to_ref_lines_below2() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
+        let test = create_app2(35);
+        test.paste(
             "1\n\
-                2+\n3\n4"
-                .to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+                2+\n3\n4",
         );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(1, 2));
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Down,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
+        test.set_cursor_row_col(1, 2);
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.input(EditorInputEvent::Down, InputModifiers::alt());
+        test.alt_key_released();
+        test.render();
         assert_eq!(
             "1\n\
                 2+&[1]\n3\n4",
-            app.editor_content.get_content()
+            test.get_editor_content()
         );
     }
 
     #[test]
     fn remove_matrix_backspace() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "abcd [1,2,3;4,5,6]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Backspace,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!("abcd ", app.editor_content.get_content());
+        let test = create_app2(35);
+        test.paste("abcd [1,2,3;4,5,6]");
+        test.render();
+        test.input(EditorInputEvent::Backspace, InputModifiers::none());
+        assert_eq!("abcd ", test.get_editor_content());
     }
 
     #[test]
     fn matrix_step_in_dir() {
         // from right
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "abcd [1,2,3;4,5,6]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Char('1'),
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            assert_eq!("abcd [1,2,1;4,5,6]", app.editor_content.get_content());
+            let test = create_app2(35);
+            test.paste("abcd [1,2,3;4,5,6]");
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!("abcd [1,2,1;4,5,6]", test.get_editor_content());
         }
         // from left
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "abcd [1,2,3;4,5,6]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.editor
-                .set_selection_save_col(Selection::single_r_c(0, 5));
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Right,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Char('9'),
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            assert_eq!("abcd [9,2,3;4,5,6]", app.editor_content.get_content());
+            let test = create_app2(35);
+            test.paste("abcd [1,2,3;4,5,6]");
+            test.set_cursor_row_col(0, 5);
+            test.render();
+            test.input(EditorInputEvent::Right, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Char('9'), InputModifiers::none());
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!("abcd [9,2,3;4,5,6]", test.get_editor_content());
         }
         // from below
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "abcd [1,2,3;4,5,6]\naaaaaaaaaaaaaaaaaa".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.editor
-                .set_selection_save_col(Selection::single_r_c(1, 7));
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Char('9'),
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("abcd [1,2,3;4,5,6]\naaaaaaaaaaaaaaaaaa");
+            test.set_cursor_row_col(1, 7);
+            test.render();
+            test.input(EditorInputEvent::Up, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Char('9'), InputModifiers::none());
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!(
                 "abcd [1,2,3;9,5,6]\naaaaaaaaaaaaaaaaaa",
-                app.editor_content.get_content()
+                test.get_editor_content()
             );
         }
         // from above
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "aaaaaaaaaaaaaaaaaa\nabcd [1,2,3;4,5,6]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.editor
-                .set_selection_save_col(Selection::single_r_c(0, 7));
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Down,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Char('9'),
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("aaaaaaaaaaaaaaaaaa\nabcd [1,2,3;4,5,6]");
+            test.set_cursor_row_col(0, 7);
+            test.render();
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Char('9'), InputModifiers::none());
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
             assert_eq!(
                 "aaaaaaaaaaaaaaaaaa\nabcd [9,2,3;4,5,6]",
-                app.editor_content.get_content()
+                test.get_editor_content()
             );
         }
     }
 
     #[test]
     fn cursor_is_put_after_the_matrix_after_finished_editing() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "abcd [1,2,3;4,5,6]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Left,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('6'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Enter,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('9'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!(app.editor_content.get_content(), "abcd [1,2,6;4,5,6]9");
+        let test = create_app2(35);
+        test.paste("abcd [1,2,3;4,5,6]");
+        test.render();
+        test.input(EditorInputEvent::Left, InputModifiers::none());
+        test.render();
+        test.input(EditorInputEvent::Char('6'), InputModifiers::none());
+        test.render();
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.render();
+        test.input(EditorInputEvent::Char('9'), InputModifiers::none());
+        assert_eq!(test.get_editor_content(), "abcd [1,2,6;4,5,6]9");
     }
 
     #[test]
     fn remove_matrix_del() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "abcd [1,2,3;4,5,6]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 5));
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Del,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!("abcd ", app.editor_content.get_content());
+        let test = create_app2(35);
+        test.paste("abcd [1,2,3;4,5,6]");
+        test.set_cursor_row_col(0, 5);
+        test.render();
+        test.input(EditorInputEvent::Del, InputModifiers::none());
+        assert_eq!("abcd ", test.get_editor_content());
     }
 
     #[test]
     fn test_moving_inside_a_matrix() {
         // right to left, cursor at end
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "abcd [1,2,3;4,5,6]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Char('9'),
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            assert_eq!("abcd [1,9,3;4,5,6]", app.editor_content.get_content());
+            let test = create_app2(35);
+            test.paste("abcd [1,2,3;4,5,6]");
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+            test.input(EditorInputEvent::Char('9'), InputModifiers::none());
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            test.render();
+            assert_eq!("abcd [1,9,3;4,5,6]", test.get_editor_content());
         }
         // left to right, cursor at start
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "abcd [1,2,3;4,5,6]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.editor
-                .set_selection_save_col(Selection::single_r_c(0, 5));
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Right,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Right,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Right,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Char('9'),
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            assert_eq!("abcd [1,2,9;4,5,6]", app.editor_content.get_content());
+            let test = create_app2(35);
+            test.paste("abcd [1,2,3;4,5,6]");
+            test.set_cursor_row_col(0, 5);
+            test.render();
+            test.input(EditorInputEvent::Right, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Right, InputModifiers::none());
+            test.input(EditorInputEvent::Right, InputModifiers::none());
+            test.input(EditorInputEvent::Char('9'), InputModifiers::none());
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            test.render();
+            assert_eq!("abcd [1,2,9;4,5,6]", test.get_editor_content());
         }
         // vertical movement down, cursor tries to keep its position
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "abcd [1111,22,3;44,55555,666]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.editor
-                .set_selection_save_col(Selection::single_r_c(0, 5));
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Right,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("abcd [1111,22,3;44,55555,666]");
+            test.set_cursor_row_col(0, 5);
+            test.render();
+            test.input(EditorInputEvent::Right, InputModifiers::none());
+            test.render();
             // inside the matrix
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Down,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Char('9'),
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            assert_eq!(
-                "abcd [1111,22,3;9,55555,666]",
-                app.editor_content.get_content()
-            );
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Char('9'), InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            test.render();
+            assert_eq!("abcd [1111,22,3;9,55555,666]", test.get_editor_content());
         }
 
         // vertical movement up, cursor tries to keep its position
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "abcd [1111,22,3;44,55555,666]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.editor
-                .set_selection_save_col(Selection::single_r_c(0, 5));
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Right,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("abcd [1111,22,3;44,55555,666]");
+            test.set_cursor_row_col(0, 5);
+            test.render();
+            test.input(EditorInputEvent::Right, InputModifiers::none());
+            test.render();
             // inside the matrix
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Down,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Char('9'),
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            assert_eq!(
-                "abcd [9,22,3;44,55555,666]",
-                app.editor_content.get_content()
-            );
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            test.input(EditorInputEvent::Up, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Char('9'), InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            test.render();
+            assert_eq!("abcd [9,22,3;44,55555,666]", test.get_editor_content());
         }
     }
 
     #[test]
     fn test_moving_inside_a_matrix_with_tab() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("[1,2,3;4,5,6]");
+        test.render();
+        test.input(EditorInputEvent::Home, InputModifiers::none());
+        test.input(EditorInputEvent::Right, InputModifiers::none());
 
-        app.handle_paste(
-            "[1,2,3;4,5,6]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Home,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Right,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Tab,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('7'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Tab,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('8'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Tab,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('9'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Tab,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('0'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Tab,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('9'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Tab,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('4'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        assert_eq!("[1,7,8;9,0,9]4", app.editor_content.get_content());
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
+        test.input(EditorInputEvent::Char('7'), InputModifiers::none());
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
+        test.input(EditorInputEvent::Char('8'), InputModifiers::none());
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
+        test.input(EditorInputEvent::Char('9'), InputModifiers::none());
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
+        test.input(EditorInputEvent::Char('0'), InputModifiers::none());
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
+        test.input(EditorInputEvent::Char('9'), InputModifiers::none());
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
+        test.input(EditorInputEvent::Char('4'), InputModifiers::none());
+        test.render();
+        assert_eq!("[1,7,8;9,0,9]4", test.get_editor_content());
     }
 
     #[test]
     fn test_leaving_a_matrix_with_tab() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "[1,2,3;4,5,6]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Left,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Tab,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Tab,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Tab,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        let test = create_app2(35);
+        test.paste("[1,2,3;4,5,6]");
+        test.render();
+        test.input(EditorInputEvent::Left, InputModifiers::none());
+        test.render();
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
         // the next tab should leave the matrix
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Tab,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('7'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        assert_eq!("[1,2,3;4,5,6]7", app.editor_content.get_content());
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
+        test.input(EditorInputEvent::Char('7'), InputModifiers::none());
+        test.render();
+        assert_eq!("[1,2,3;4,5,6]7", test.get_editor_content());
     }
 
     #[test]
     fn end_btn_matrix() {
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "abcd [1111,22,3;44,55555,666] qq".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.editor
-                .set_selection_save_col(Selection::single_r_c(0, 5));
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Right,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("abcd [1111,22,3;44,55555,666] qq");
+            test.set_cursor_row_col(0, 5);
+            test.render();
+            test.input(EditorInputEvent::Right, InputModifiers::none());
+            test.render();
             // inside the matrix
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::End,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Char('9'),
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.input(EditorInputEvent::End, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Char('9'), InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            test.render();
             assert_eq!(
                 "abcd [1111,22,9;44,55555,666] qq",
-                app.editor_content.get_content()
+                test.get_editor_content()
             );
         }
         // pressing twice, exits the matrix
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "abcd [1111,22,3;44,55555,666] qq".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.editor
-                .set_selection_save_col(Selection::single_r_c(0, 5));
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Right,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("abcd [1111,22,3;44,55555,666] qq");
+            test.set_cursor_row_col(0, 5);
+            test.render();
+            test.input(EditorInputEvent::Right, InputModifiers::none());
             // inside the matrix
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::End,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::End,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Char('9'),
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.input(EditorInputEvent::End, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::End, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Char('9'), InputModifiers::none());
+            test.render();
             assert_eq!(
                 "abcd [1111,22,3;44,55555,666] qq9",
-                app.editor_content.get_content()
+                test.get_editor_content()
             );
         }
     }
@@ -6695,710 +5551,171 @@ mod tests {
     #[test]
     fn home_btn_matrix() {
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "abcd [1111,22,3;44,55555,666]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("abcd [1111,22,3;44,55555,666]");
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+            test.render();
             // inside the matrix
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Home,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Char('9'),
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            assert_eq!(
-                "abcd [9,22,3;44,55555,666]",
-                app.editor_content.get_content()
-            );
+            test.input(EditorInputEvent::Home, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Char('9'), InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            test.render();
+            assert_eq!("abcd [9,22,3;44,55555,666]", test.get_editor_content());
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "abcd [1111,22,3;44,55555,666]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("abcd [1111,22,3;44,55555,666]");
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::none());
             // inside the matrix
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Home,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Home,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Char('6'),
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            assert_eq!(
-                "6abcd [1111,22,3;44,55555,666]",
-                app.editor_content.get_content()
-            );
+            test.input(EditorInputEvent::Home, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Home, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Char('6'), InputModifiers::none());
+            test.render();
+            assert_eq!("6abcd [1111,22,3;44,55555,666]", test.get_editor_content());
         }
     }
 
     #[test]
     fn bug8() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("16892313\n14 * ");
+        test.set_cursor_row_col(1, 5);
+        test.render();
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        assert_eq!("16892313\n14 * &[1]", test.get_editor_content());
+        test.render();
+        test.handle_time(1000);
+        test.input(EditorInputEvent::Backspace, InputModifiers::none());
+        assert_eq!("16892313\n14 * ", test.get_editor_content());
 
-        app.handle_paste(
-            "16892313\n14 * ".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(1, 5));
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
-        assert_eq!("16892313\n14 * &[1]", app.editor_content.get_content());
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_time(1000);
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Backspace,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!("16892313\n14 * ", app.editor_content.get_content());
+        test.input(EditorInputEvent::Char('z'), InputModifiers::ctrl());
+        assert_eq!("16892313\n14 * &[1]", test.get_editor_content());
 
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('z'),
-            InputModifiers::ctrl(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!("16892313\n14 * &[1]", app.editor_content.get_content());
+        let _input_eff = test.input(EditorInputEvent::Right, InputModifiers::none()); // end selection
+        test.render();
+        test.input(EditorInputEvent::Left, InputModifiers::none());
+        test.input(EditorInputEvent::Char('a'), InputModifiers::none());
+        assert_eq!("16892313\n14 * a&[1]", test.get_editor_content());
 
-        let _input_eff = app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Right,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        ); // end selection
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Left,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('a'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!("16892313\n14 * a&[1]", app.editor_content.get_content());
+        test.input(EditorInputEvent::Char(' '), InputModifiers::none());
+        test.render();
+        test.input(EditorInputEvent::Right, InputModifiers::none());
+        test.input(EditorInputEvent::Char('b'), InputModifiers::none());
+        assert_eq!("16892313\n14 * a &[1]b", test.get_editor_content());
 
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char(' '),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Right,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('b'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!("16892313\n14 * a &[1]b", app.editor_content.get_content());
-
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Left,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Left,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Left,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Right,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('c'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!("16892313\n14 * a c&[1]b", app.editor_content.get_content());
+        test.input(EditorInputEvent::Left, InputModifiers::none());
+        test.input(EditorInputEvent::Left, InputModifiers::none());
+        test.input(EditorInputEvent::Left, InputModifiers::none());
+        test.input(EditorInputEvent::Right, InputModifiers::none());
+        test.input(EditorInputEvent::Char('c'), InputModifiers::none());
+        assert_eq!("16892313\n14 * a c&[1]b", test.get_editor_content());
     }
 
     #[test]
     fn test_referenced_line_calc() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "2\n3 * ".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(1, 4));
+        let test = create_app2(35);
+        test.paste("2\n3 * ");
+        test.set_cursor_row_col(1, 4);
+        test.render();
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        assert_eq!("2\n3 * &[1]", test.get_editor_content());
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
-        assert_eq!("2\n3 * &[1]", app.editor_content.get_content());
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
 
         assert_results(&["2", "6"][..], &result_buffer);
     }
 
     #[test]
     fn test_line_ref_normalization() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(12, 2));
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let test = create_app2(35);
+        test.paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n");
+        test.set_cursor_row_col(12, 2);
+        test.render();
         // remove a line
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('x'),
-            InputModifiers::ctrl(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
 
         // Move to end
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::PageDown,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::End,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::PageDown, InputModifiers::none());
+        test.input(EditorInputEvent::End, InputModifiers::none());
         // ALT
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
         assert_eq!(
             "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n12\n13\n&[13]&[13]&[13]",
-            &app.editor_content.get_content()
+            &test.get_editor_content()
         );
         assert_eq!(
             "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n12\n13\n&[12]&[12]&[12]\n",
-            &app.get_normalized_content()
+            &test.app.borrow().get_normalized_content()
         );
     }
 
     #[test]
     fn test_line_ref_denormalization() {
-        let (mut app, units, (mut tokens, mut results, mut vars, _)) = create_app(35);
-        let arena = Arena::new();
-        app.set_normalized_content(
-            "1111\n2222\n14 * &[2]&[2]&[2]\n",
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        assert_eq!(1, app.editor_content.get_data(0).line_id);
-        assert_eq!(2, app.editor_content.get_data(1).line_id);
-        assert_eq!(3, app.editor_content.get_data(2).line_id);
+        let test = create_app2(35);
+        test.set_normalized_content("1111\n2222\n14 * &[2]&[2]&[2]\n");
+        let content = &test.app.borrow().editor_content;
+        assert_eq!(1, content.get_data(0).line_id);
+        assert_eq!(2, content.get_data(1).line_id);
+        assert_eq!(3, content.get_data(2).line_id);
     }
 
     #[test]
     fn test_scroll_y_reset() {
-        let (mut app, units, (mut tokens, mut results, mut vars, _)) = create_app(35);
-        let arena = Arena::new();
-        app.render_data.scroll_y = 1;
-        app.set_normalized_content(
-            "1111\n2222\n14 * &[2]&[2]&[2]\n",
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        assert_eq!(0, app.render_data.scroll_y);
+        let test = create_app2(35);
+        test.app.borrow_mut().render_data.scroll_y = 1;
+        test.set_normalized_content("1111\n2222\n14 * &[2]&[2]&[2]\n");
+        assert_eq!(0, test.get_render_data().scroll_y);
     }
 
     #[test]
     fn test_that_set_content_rerenders_everything() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.set_normalized_content("1\n2\n3");
 
-        app.set_normalized_content(
-            "1\n2\n3",
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
+        test.render();
+        test.assert_not_redraw_editor(0);
+        test.assert_not_redraw_result(0);
 
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(!app.result_area_redraw.need(EditorY::new(0)));
-        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(!app.result_area_redraw.need(EditorY::new(1)));
-        assert!(!app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(!app.result_area_redraw.need(EditorY::new(2)));
-        app.set_normalized_content(
-            "1111\n2222\n14 * &[2]&[2]&[2]\n",
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        test.assert_not_redraw_editor(1);
+        test.assert_not_redraw_result(1);
+
+        test.assert_not_redraw_editor(2);
+        test.assert_not_redraw_result(2);
+
+        test.set_normalized_content("1111\n2222\n14 * &[2]&[2]&[2]\n");
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
     }
 
     #[test]
     fn test_tab_change_clears_variables() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.set_normalized_content(
+        let test = create_app2(35);
+        test.set_normalized_content(
             "source: https://rippedbody.com/how-to-calculate-leangains-macros/
 
 weight = 80 kg
@@ -7409,7 +5726,7 @@ age = 30
 men BMR = 66 + (13.7 * weight/1kg) + (5 * height/1cm) - (6.8 * age)
 
 'STEP 2. FIND YOUR TDEE BY ADJUSTING FOR ACTIVITY
-Activity 
+Activity
 ' Sedentary (little or no exercise) [BMR x 1.15]
 ' Mostly sedentary (office work), plus 3–6 days of weight lifting [BMR x 1.35]
 ' Lightly active, plus 3–6 days of weight lifting [BMR x 1.55]
@@ -7434,30 +5751,15 @@ Fat intake
     1g/kg minimum
     fat calory = 9
     &[24]",
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
         );
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
 
-        app.set_normalized_content(
+        test.set_normalized_content(
             "Valaki elment Horvátba 12000 Ftért
 3 éjszakát töltött ott
-&[1]*&[2] 
-utána vacsorázott egyet 5000ért 
+&[1]*&[2]
+utána vacsorázott egyet 5000ért
 
 
 999 + 1
@@ -7469,7 +5771,7 @@ utána vacsorázott egyet 5000ért
 722
 alma = 3
 alma * 2
-alma * &[13] + &[12] 
+alma * &[13] + &[12]
 &[13] km
 2222222222222222222722.22222222 km
 
@@ -7484,33 +5786,15 @@ human brain: 10^16 op/s
 so far000 humans lived
 avg. human lifespan is 50 years
 total human brain activity is &[27] * &[28] * (&[29]/1s)",
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
         );
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
     }
 
     #[test]
     fn test_panic_on_pressing_enter() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.set_normalized_content(
+        let test = create_app2(35);
+        test.set_normalized_content(
             "source: https://rippedbody.com/how-to-calculate-leangains-macros/
 
 weight = 80 kg
@@ -7521,7 +5805,7 @@ age = 30
 men BMR = 66 + (13.7 * weight/1kg) + (5 * height/1cm) - (6.8 * age)
 
 'STEP 2. FIND YOUR TDEE BY ADJUSTING FOR ACTIVITY
-Activity 
+Activity
 ' Sedentary (little or no exercise) [BMR x 1.15]
 ' Mostly sedentary (office work), plus 3–6 days of weight lifting [BMR x 1.35]
 ' Lightly active, plus 3–6 days of weight lifting [BMR x 1.55]
@@ -7546,11 +5830,6 @@ Fat intake
     1g/kg minimum
     fat calory = 9
     &[24]",
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
         );
 
         fn assert_var(vars: &Variables, name: &str, defined_at: usize) {
@@ -7561,93 +5840,38 @@ Fat intake
                 assert_eq!(a, *b, "{}", name);
             }
         }
-        dbg!(&vars);
-        assert_var(&vars[..], "weight", 2);
-        assert_var(&vars[..], "height", 3);
-        assert_var(&vars[..], "age", 4);
-        assert_var(&vars[..], "men BMR", 7);
-        assert_var(&vars[..], "TDEE", 15);
-        assert_var(&vars[..], "target weekly fat loss rate", 19);
-        assert_var(&vars[..], "&[21]", 20);
-        assert_var(&vars[..], "monthly rates of weight gain", 22);
-        assert_var(&vars[..], "&[24]", 23);
-        assert_var(&vars[..], "&[27]", 26);
-        assert_var(&vars[..], "&[28]", 27);
-        assert_var(&vars[..], "&[29]", 28);
-        assert_var(&vars[..], "&[30]", 29);
-        assert_var(&vars[..], "&[32]", 31);
-        assert_var(&vars[..], "&[33]", 32);
-        assert_var(&vars[..], "fat calory", 33);
-        assert_var(&vars[..], "&[35]", 34);
+        {
+            let vars = &test.vars.borrow();
+            assert_var(&vars[..], "weight", 2);
+            assert_var(&vars[..], "height", 3);
+            assert_var(&vars[..], "age", 4);
+            assert_var(&vars[..], "men BMR", 7);
+            assert_var(&vars[..], "TDEE", 15);
+            assert_var(&vars[..], "target weekly fat loss rate", 19);
+            assert_var(&vars[..], "&[21]", 20);
+            assert_var(&vars[..], "monthly rates of weight gain", 22);
+            assert_var(&vars[..], "&[24]", 23);
+            assert_var(&vars[..], "&[27]", 26);
+            assert_var(&vars[..], "&[28]", 27);
+            assert_var(&vars[..], "&[29]", 28);
+            assert_var(&vars[..], "&[30]", 29);
+            assert_var(&vars[..], "&[32]", 31);
+            assert_var(&vars[..], "&[33]", 32);
+            assert_var(&vars[..], "fat calory", 33);
+            assert_var(&vars[..], "&[35]", 34);
+        }
 
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(6, 33));
+        test.set_cursor_row_col(6, 33);
 
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Enter,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.render();
 
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Backspace,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Backspace, InputModifiers::none());
+        test.render();
 
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Enter,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.render();
+        let vars = &test.vars.borrow();
         assert_var(&vars[..], "weight", 2);
         assert_var(&vars[..], "height", 3);
         assert_var(&vars[..], "age", 4);
@@ -7669,174 +5893,47 @@ Fat intake
 
     #[test]
     fn no_memory_deallocation_bug_in_line_selection() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(12, 2));
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let test = create_app2(35);
+        test.paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n");
+        test.set_cursor_row_col(12, 2);
+        test.render();
+        test.input(EditorInputEvent::Up, InputModifiers::shift());
+        test.render();
     }
 
     #[test]
     fn matrix_deletion() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            " [1,2,3]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 0));
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Del,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!("[1,2,3]", app.editor_content.get_content());
+        let test = create_app2(35);
+        test.paste(" [1,2,3]");
+        test.set_cursor_row_col(0, 0);
+        test.render();
+        test.input(EditorInputEvent::Del, InputModifiers::none());
+        assert_eq!("[1,2,3]", test.get_editor_content());
     }
 
     #[test]
     fn removing_a_tall_matrix_rerenders_below_lines() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("[1;2;3\n4\n5");
+        test.set_cursor_row_col(0, 6);
+        test.render();
+        test.input(EditorInputEvent::Char(']'), InputModifiers::none());
+        test.assert_redraw_result(1);
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(2);
+        test.assert_redraw_editor(2);
+        test.render();
 
-        app.handle_paste(
-            "[1;2;3\n4\n5".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 6));
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char(']'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Backspace, InputModifiers::none());
+        test.assert_redraw_result(1);
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(2);
+        test.assert_redraw_editor(2);
 
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Backspace,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-
-        let mut result_buffer = [0; 128];
         let mut render_buckets = RenderBuckets::new();
-        app.render(
-            &units,
-            &mut render_buckets,
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let mut result_buffer = [0; 128];
+
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
 
         // the 3., and 4. rows must be cleared, since the matrix shrinked back from being 3 rows height to 1
         let mut ok = false;
@@ -7855,103 +5952,25 @@ Fat intake
 
     #[test]
     fn matrix_insertion_bug() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "[1,2,3]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 0));
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('a'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!("a[1,2,3]", app.editor_content.get_content());
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Enter,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!("a\n[1,2,3]", app.editor_content.get_content());
+        let test = create_app2(35);
+        test.paste("[1,2,3]");
+        test.set_cursor_row_col(0, 0);
+        test.render();
+        test.input(EditorInputEvent::Char('a'), InputModifiers::none());
+        assert_eq!("a[1,2,3]", test.get_editor_content());
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        assert_eq!("a\n[1,2,3]", test.get_editor_content());
     }
 
     #[test]
     fn matrix_insertion_bug2() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "'[X] nth, sum fv".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
+        let test = create_app2(35);
+        test.paste("'[X] nth, sum fv");
+        test.render();
+        test.set_cursor_row_col(0, 0);
+        test.input(EditorInputEvent::Del, InputModifiers::none());
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 0));
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Del,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["Err"][..], &result_buffer);
     }
 
@@ -7978,239 +5997,77 @@ Fat intake
             ok_chars.push(',' as u8);
             ok_chars.push(' ' as u8);
         }
-        assert_eq!(result_buffer[i], 0, "more results than expected",);
+        assert_eq!(
+            result_buffer[i], 0,
+            "more results than expected at char {}.",
+            i
+        );
     }
 
     #[test]
     fn sum_can_be_nullified() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
+        let test = create_app2(35);
+        test.paste(
             "3m * 2m
 --
 1
 2
-sum"
-            .to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+sum",
         );
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["6 m^2", "", "1", "2", "3"][..], &result_buffer);
     }
 
     #[test]
     fn no_sum_value_in_case_of_error() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
+        let test = create_app2(35);
+        test.paste(
             "3m * 2m\n\
                 4\n\
-                sum"
-            .to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+                sum",
         );
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["6 m^2", "4", "Err"][..], &result_buffer);
     }
 
     #[test]
     fn test_ctrl_c() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "aaaaaaaaa".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Left,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Left,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Left,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('c'),
-            InputModifiers::ctrl(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!("aaa", &app.editor.clipboard);
+        let test = create_app2(35);
+        test.paste("aaaaaaaaa");
+        test.render();
+        test.input(EditorInputEvent::Left, InputModifiers::shift());
+        test.input(EditorInputEvent::Left, InputModifiers::shift());
+        test.input(EditorInputEvent::Left, InputModifiers::shift());
+        test.input(EditorInputEvent::Char('c'), InputModifiers::ctrl());
+        assert_eq!("aaa", &test.app.borrow().editor.clipboard);
     }
 
     #[test]
     fn test_changing_output_style_for_selected_rows() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
+        let test = create_app2(35);
+        test.paste(
             "2\n\
                     4\n\
-                    5"
-            .to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+                    5",
         );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Left,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.render();
+        test.input(EditorInputEvent::Up, InputModifiers::shift());
+        test.input(EditorInputEvent::Up, InputModifiers::shift());
+        test.input(EditorInputEvent::Left, InputModifiers::alt());
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["10", "100", "101"][..], &result_buffer);
     }
 
     #[test]
     fn test_matrix_sum() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "[1,2,3]\nsum".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
+        let test = create_app2(35);
+        test.paste("[1,2,3]\nsum");
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         // both the first line and the 'sum' line renders a matrix, which leaves the result buffer empty
         assert_results(&["\u{0}"][..], &result_buffer);
     }
@@ -8218,33 +6075,14 @@ sum"
     #[test]
     fn test_rich_copy() {
         fn t(content: &str, expected: &str, selected_range: RangeInclusive<usize>) {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                content.to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.editor.set_selection_save_col(Selection::range(
+            let test = create_app2(35);
+            test.paste(content);
+            test.set_selection(Selection::range(
                 Pos::from_row_column(*selected_range.start(), 0),
                 Pos::from_row_column(*selected_range.end(), 0),
             ));
             let mut result_buffer = [0; 256];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.render_get_result_buf(&mut result_buffer[..]);
             fn trimmed_compare(a: &str, b: &str) {
                 assert_eq!(a.lines().count(), b.lines().count(), "{} != {}", a, b);
 
@@ -8254,15 +6092,19 @@ sum"
                     assert_eq!(a_line.trim_start(), b_line.trim_start());
                 }
             }
+            let mut result_buffer = [0; 256];
             trimmed_compare(
                 expected,
-                &app.copy_selected_rows_with_result_to_clipboard(
-                    &units,
-                    &mut RenderBuckets::new(),
-                    &mut result_buffer,
-                    &arena,
-                    &results,
-                ),
+                &test
+                    .app
+                    .borrow_mut()
+                    .copy_selected_rows_with_result_to_clipboard(
+                        &test.units.borrow(),
+                        &mut RenderBuckets::new(),
+                        &mut result_buffer,
+                        &test.arena,
+                        &test.results.borrow(),
+                    ),
             );
         }
         t("1", "1  █ 1\n", 0..=0);
@@ -8370,7 +6212,7 @@ sum"
 722
 alma = 3
 alma * 2
-alma * &[7] + &[6] 
+alma * &[7] + &[6]
 &[7]
 2222222222222222222722.22222
 ^
@@ -8387,2661 +6229,517 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
     fn test_line_ref_selection() {
         // left
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "16892313\n14 * ".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.editor
-                .set_selection_save_col(Selection::single_r_c(1, 5));
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::shift(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Backspace,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            assert_eq!("16892313\n14 * &[1", app.editor_content.get_content());
+            let test = create_app2(35);
+            test.paste("16892313\n14 * ");
+            test.set_cursor_row_col(1, 5);
+            test.render();
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+            test.alt_key_released();
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::shift());
+            test.input(EditorInputEvent::Backspace, InputModifiers::none());
+            assert_eq!("16892313\n14 * &[1", test.get_editor_content());
         }
         // right
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
+            let test = create_app2(35);
+            test.paste("16892313\n14 * ");
+            test.set_cursor_row_col(1, 5);
+            test.render();
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+            test.alt_key_released();
 
-            app.handle_paste(
-                "16892313\n14 * ".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.editor
-                .set_selection_save_col(Selection::single_r_c(1, 5));
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
-
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Right,
-                InputModifiers::shift(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Del,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            assert_eq!("16892313\n14 * [1]", app.editor_content.get_content());
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+            test.input(EditorInputEvent::Right, InputModifiers::shift());
+            test.input(EditorInputEvent::Del, InputModifiers::none());
+            assert_eq!("16892313\n14 * [1]", test.get_editor_content());
         }
     }
 
     #[test]
     fn test_line_ref_selection_with_mouse() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("16892313\n3\n14 * ");
+        test.set_cursor_row_col(2, 5);
+        test.render();
+        test.click(125, 0);
 
-        app.handle_paste(
-            "16892313\n3\n14 * ".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(2, 5));
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-
-        app.handle_click(
-            125,
-            RenderPosY::new(0),
-            &editor_objects,
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Left,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Backspace,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!("16892313\n3\n14 * &[1", app.editor_content.get_content());
+        test.render();
+        test.input(EditorInputEvent::Left, InputModifiers::shift());
+        test.input(EditorInputEvent::Backspace, InputModifiers::none());
+        assert_eq!("16892313\n3\n14 * &[1", test.get_editor_content());
     }
 
     #[test]
     fn test_pressing_tab_on_m_char() {
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "m".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Tab,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            assert_eq!("[0]", app.editor_content.get_content());
+            let test = create_app2(35);
+            test.paste("m");
+            test.render();
+            test.input(EditorInputEvent::Tab, InputModifiers::none());
+            test.render();
+            assert_eq!("[0]", test.get_editor_content());
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "am".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Tab,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            assert_eq!("am  ", app.editor_content.get_content());
+            let test = create_app2(35);
+            test.paste("am");
+            test.render();
+            test.input(EditorInputEvent::Tab, InputModifiers::none());
+            test.render();
+            assert_eq!("am  ", test.get_editor_content());
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "a m".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Tab,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            assert_eq!("a [0]", app.editor_content.get_content());
+            let test = create_app2(35);
+            test.paste("a m");
+            test.render();
+            test.input(EditorInputEvent::Tab, InputModifiers::none());
+            test.render();
+            assert_eq!("a [0]", test.get_editor_content());
         }
     }
 
     #[test]
     fn test_that_cursor_is_inside_matrix_on_creation() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-        app.handle_paste(
-            "m".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Tab,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('1'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Enter,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!("[1]", app.editor_content.get_content());
+        let test = create_app2(35);
+        test.paste("m");
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
+        test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        assert_eq!("[1]", test.get_editor_content());
     }
 
     #[test]
     fn test_matrix_alt_plus_right() {
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "[1]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Right,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            assert_eq!("[1,0]", app.editor_content.get_content());
+            let test = create_app2(35);
+            test.paste("[1]");
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Right, InputModifiers::alt());
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!("[1,0]", test.get_editor_content());
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "[1]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Right,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Right,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Right,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            assert_eq!("[1,0,0,0]", app.editor_content.get_content());
+            let test = create_app2(35);
+            test.paste("[1]");
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Right, InputModifiers::alt());
+            test.input(EditorInputEvent::Right, InputModifiers::alt());
+            test.input(EditorInputEvent::Right, InputModifiers::alt());
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!("[1,0,0,0]", test.get_editor_content());
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "[1;2]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Right,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            assert_eq!("[1,0;2,0]", app.editor_content.get_content());
+            let test = create_app2(35);
+            test.paste("[1;2]");
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Right, InputModifiers::alt());
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!("[1,0;2,0]", test.get_editor_content());
         }
     }
 
     #[test]
     fn test_matrix_alt_plus_left() {
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "[1]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            assert_eq!("[1]", app.editor_content.get_content());
+            let test = create_app2(35);
+            test.paste("[1]");
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::alt());
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!("[1]", test.get_editor_content());
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "[1, 2, 3]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            assert_eq!("[1,2]", app.editor_content.get_content());
+            let test = create_app2(35);
+            test.paste("[1, 2, 3]");
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::alt());
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!("[1,2]", test.get_editor_content());
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "[1, 2, 3]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            assert_eq!("[1]", app.editor_content.get_content());
+            let test = create_app2(35);
+            test.paste("[1, 2, 3]");
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::alt());
+            test.input(EditorInputEvent::Left, InputModifiers::alt());
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!("[1]", test.get_editor_content());
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "[1, 2, 3; 4,5,6]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            assert_eq!("[1,2;4,5]", app.editor_content.get_content());
+            let test = create_app2(35);
+            test.paste("[1, 2, 3; 4,5,6]");
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::alt());
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!("[1,2;4,5]", test.get_editor_content());
         }
     }
 
     #[test]
     fn test_matrix_alt_plus_down() {
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "[1]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Down,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            assert_eq!("[1;0]", app.editor_content.get_content());
+            let test = create_app2(35);
+            test.paste("[1]");
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Down, InputModifiers::alt());
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!("[1;0]", test.get_editor_content());
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "[1]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Down,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Down,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Down,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            assert_eq!("[1;0;0;0]", app.editor_content.get_content());
+            let test = create_app2(35);
+            test.paste("[1]");
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Down, InputModifiers::alt());
+            test.input(EditorInputEvent::Down, InputModifiers::alt());
+            test.input(EditorInputEvent::Down, InputModifiers::alt());
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!("[1;0;0;0]", test.get_editor_content());
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "[1,2]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Down,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("[1,2]");
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Down, InputModifiers::alt());
             // this render is important, it tests a bug!
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            assert_eq!("[1,2;0,0]", app.editor_content.get_content());
+            test.render();
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!("[1,2;0,0]", test.get_editor_content());
         }
     }
 
     #[test]
     fn test_that_enlarging_matrix_rerenders_everything_below_it() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "[1]\n1\n2\n3".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
+        let test = create_app2(35);
+        test.paste("[1]\n1\n2\n3");
         // move behind the matrix
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 3));
+        test.set_cursor_row_col(0, 3);
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Left,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Down,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.render();
+        test.input(EditorInputEvent::Left, InputModifiers::none());
+        test.render();
+        test.input(EditorInputEvent::Down, InputModifiers::alt());
         for i in 0..3 {
-            assert!(app.result_area_redraw.need(EditorY::new(i)));
-            assert!(app.editor_area_redraw.need(EditorY::new(i)));
+            test.assert_redraw_result(i);
+            test.assert_redraw_editor(i);
         }
     }
 
     #[test]
     fn test_matrix_alt_plus_up() {
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "[1]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            assert_eq!("[1]", app.editor_content.get_content());
+            let test = create_app2(35);
+            test.paste("[1]");
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!("[1]", test.get_editor_content());
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "[1; 2; 3]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            assert_eq!("[1;2]", app.editor_content.get_content());
+            let test = create_app2(35);
+            test.paste("[1; 2; 3]");
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!("[1;2]", test.get_editor_content());
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "[1; 2; 3]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            assert_eq!("[1]", app.editor_content.get_content());
+            let test = create_app2(35);
+            test.paste("[1; 2; 3]");
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!("[1]", test.get_editor_content());
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "[1, 2, 3; 4,5,6]".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            assert_eq!("[1,2,3]", app.editor_content.get_content());
+            let test = create_app2(35);
+            test.paste("[1, 2, 3; 4,5,6]");
+            test.render();
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!("[1,2,3]", test.get_editor_content());
         }
     }
 
     #[test]
     fn test_autocompletion_single() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "apple = 12$".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Enter,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('a'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Tab,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!("apple = 12$\napple", app.editor_content.get_content());
+        let test = create_app2(35);
+        test.paste("apple = 12$");
+        test.render();
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Char('a'), InputModifiers::none());
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
+        assert_eq!("apple = 12$\napple", test.get_editor_content());
     }
 
     #[test]
     fn test_autocompletion_var_name_with_space() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "some apples = 12$".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Enter,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('s'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('o'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Tab,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!(
-            "some apples = 12$\nsome apples",
-            app.editor_content.get_content()
-        );
+        let test = create_app2(35);
+        test.paste("some apples = 12$");
+        test.render();
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Char('s'), InputModifiers::none());
+        test.input(EditorInputEvent::Char('o'), InputModifiers::none());
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
+        assert_eq!("some apples = 12$\nsome apples", test.get_editor_content());
     }
 
     #[test]
     fn test_autocompletion_var_name_with_space2() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "some apples = 12$".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Enter,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('s'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('o'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('m'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('e'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Tab,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!(
-            "some apples = 12$\nsome apples",
-            app.editor_content.get_content()
-        );
+        let test = create_app2(35);
+        test.paste("some apples = 12$");
+        test.render();
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Char('s'), InputModifiers::none());
+        test.input(EditorInputEvent::Char('o'), InputModifiers::none());
+        test.input(EditorInputEvent::Char('m'), InputModifiers::none());
+        test.input(EditorInputEvent::Char('e'), InputModifiers::none());
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
+        assert_eq!("some apples = 12$\nsome apples", test.get_editor_content());
     }
 
     #[test]
     fn test_autocompletion_var_name_with_space3() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "men BMR = 12".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Enter,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('m'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('e'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('n'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char(' '),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Left,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Tab,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!("men BMR = 12\nmen BMR ", app.editor_content.get_content());
+        let test = create_app2(35);
+        test.paste("men BMR = 12");
+        test.render();
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Char('m'), InputModifiers::none());
+        test.input(EditorInputEvent::Char('e'), InputModifiers::none());
+        test.input(EditorInputEvent::Char('n'), InputModifiers::none());
+        test.input(EditorInputEvent::Char(' '), InputModifiers::none());
+        test.input(EditorInputEvent::Left, InputModifiers::none());
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
+        assert_eq!("men BMR = 12\nmen BMR ", test.get_editor_content());
     }
 
     #[test]
     fn test_autocompletion_only_above_vars() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "apple = 12$".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Home,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Enter,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('a'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Tab,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!("a   \napple = 12$", app.editor_content.get_content());
+        let test = create_app2(35);
+        test.paste("apple = 12$");
+        test.render();
+        test.input(EditorInputEvent::Home, InputModifiers::none());
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.input(EditorInputEvent::Char('a'), InputModifiers::none());
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
+        assert_eq!("a   \napple = 12$", test.get_editor_content());
     }
 
     #[test]
     fn test_autocompletion_two_vars() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("apple = 12$\nbanana = 7$\n");
+        test.render();
+        test.input(EditorInputEvent::Char('a'), InputModifiers::none());
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
+        assert_eq!("apple = 12$\nbanana = 7$\napple", test.get_editor_content());
 
-        app.handle_paste(
-            "apple = 12$\nbanana = 7$\n".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('a'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Tab,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!(
-            "apple = 12$\nbanana = 7$\napple",
-            app.editor_content.get_content()
-        );
-
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char(' '),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('b'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Tab,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Char(' '), InputModifiers::none());
+        test.input(EditorInputEvent::Char('b'), InputModifiers::none());
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
         assert_eq!(
             "apple = 12$\nbanana = 7$\napple banana",
-            app.editor_content.get_content()
+            test.get_editor_content()
         );
     }
 
     #[test]
     fn test_that_no_autocompletion_for_multiple_results() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "apple = 12$\nananas = 7$\n".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('a'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Tab,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!(
-            "apple = 12$\nananas = 7$\na   ",
-            app.editor_content.get_content()
-        );
+        let test = create_app2(35);
+        test.paste("apple = 12$\nananas = 7$\n");
+        test.render();
+        test.input(EditorInputEvent::Char('a'), InputModifiers::none());
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
+        assert_eq!("apple = 12$\nananas = 7$\na   ", test.get_editor_content());
     }
 
     #[test]
     fn test_click_1() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "'1st row\n[1;2;3] some text\n'3rd row".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let test = create_app2(35);
+        test.paste("'1st row\n[1;2;3] some text\n'3rd row");
+        test.render();
         // click after the vector in 2nd row
-        app.handle_click(
-            LEFT_GUTTER_WIDTH + 4,
-            RenderPosY::new(2),
-            &editor_objects,
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('X'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.click(LEFT_GUTTER_WIDTH + 4, 2);
+        test.input(EditorInputEvent::Char('X'), InputModifiers::none());
         assert_eq!(
             "'1st row\n[1;2;3] Xsome text\n'3rd row",
-            app.editor_content.get_content()
+            test.get_editor_content()
         );
     }
 
     #[test]
     fn test_click() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "'1st row\nsome text [1;2;3]\n'3rd row".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let test = create_app2(35);
+        test.paste("'1st row\nsome text [1;2;3]\n'3rd row");
+        test.render();
         // click after the vector in 2nd row
-        app.handle_click(
-            LEFT_GUTTER_WIDTH + 4,
-            RenderPosY::new(2),
-            &editor_objects,
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('X'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.click(LEFT_GUTTER_WIDTH + 4, 2);
+        test.input(EditorInputEvent::Char('X'), InputModifiers::none());
         assert_eq!(
             "'1st row\nsomeX text [1;2;3]\n'3rd row",
-            app.editor_content.get_content()
+            test.get_editor_content()
         );
     }
 
     #[test]
     fn test_click_after_eof() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "'1st row\n[1;2;3] some text\n'3rd row".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_click(
-            LEFT_GUTTER_WIDTH + 40,
-            RenderPosY::new(2),
-            &editor_objects,
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('X'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        let test = create_app2(35);
+        test.paste("'1st row\n[1;2;3] some text\n'3rd row");
+        test.render();
+        test.click(LEFT_GUTTER_WIDTH + 40, 2);
+        test.input(EditorInputEvent::Char('X'), InputModifiers::none());
         assert_eq!(
             "'1st row\n[1;2;3] some textX\n'3rd row",
-            app.editor_content.get_content()
+            test.get_editor_content()
         );
     }
 
     #[test]
     fn test_click_after_eof2() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "'1st row\n[1;2;3] some text\n'3rd row".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_click(
-            LEFT_GUTTER_WIDTH + 40,
-            RenderPosY::new(40),
-            &editor_objects,
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('X'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        let test = create_app2(35);
+        test.paste("'1st row\n[1;2;3] some text\n'3rd row");
+        test.render();
+        test.click(LEFT_GUTTER_WIDTH + 40, 40);
+        test.input(EditorInputEvent::Char('X'), InputModifiers::none());
         assert_eq!(
             "'1st row\n[1;2;3] some text\n'3rd rowX",
-            app.editor_content.get_content()
+            test.get_editor_content()
         );
     }
 
     #[test]
     fn test_variable() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "apple = 12".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
+        let test = create_app2(35);
+        test.paste("apple = 12");
+        test.render();
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.paste("apple + 2");
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Enter,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_paste(
-            "apple + 2".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["12", "14"][..], &result_buffer);
     }
 
     #[test]
     fn test_variable_must_be_defined() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "apple = 12".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Home,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Enter,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_paste(
-            "apple + 2".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
+        let test = create_app2(35);
+        test.paste("apple = 12");
+        test.render();
+        test.input(EditorInputEvent::Home, InputModifiers::none());
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.paste("apple + 2");
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["2", "12"][..], &result_buffer);
     }
 
     #[test]
     fn test_variables_can_be_defined_afterwards_of_their_usage() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("apple * 2");
+        test.set_cursor_row_col(0, 0);
 
-        app.handle_paste(
-            "apple * 2".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 0));
-
+        test.render();
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Up, InputModifiers::none());
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Enter,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["", "2"][..], &result_buffer);
         // now define the variable 'apple'
-        app.handle_paste(
-            "apple = 3".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        test.paste("apple = 3");
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["3", "6"][..], &result_buffer);
     }
 
     #[test]
     fn test_renaming_variable_declaration() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "apple = 2\napple * 3".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 0));
+        let test = create_app2(35);
+        test.paste("apple = 2\napple * 3");
+        test.set_cursor_row_col(0, 0);
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["2", "6"][..], &result_buffer);
 
         // rename apple to aapple
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('a'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        test.input(EditorInputEvent::Char('a'), InputModifiers::none());
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["2", "3"][..], &result_buffer);
     }
 
     #[test]
     fn test_moving_line_does_not_change_its_lineref() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "1\n2\n3\n\n\n50year".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
+        let test = create_app2(35);
+        test.paste("1\n2\n3\n\n\n50year");
         // cursor is in 4th row
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(3, 0));
+        test.set_cursor_row_col(3, 0);
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["1", "2", "3", "", "", "50 year"][..], &result_buffer);
 
         // insert linref of 1st line
         for _ in 0..3 {
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
         }
-        app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('+'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.alt_key_released();
+        test.render();
+        test.input(EditorInputEvent::Char('+'), InputModifiers::none());
 
         // insert linref of 2st line
         for _ in 0..2 {
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::alt(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
         }
-        app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('+'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.alt_key_released();
+        test.render();
+        test.input(EditorInputEvent::Char('+'), InputModifiers::none());
 
         // insert linref of 3rd line
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
 
-        match &tokens[EditorY::new(3)] {
+        match &test.tokens.borrow()[content_y(3)] {
             Some(Tokens {
                 tokens,
                 shunting_output_stack: _,
@@ -11064,32 +6762,14 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
 
         // insert a newline between the 1st and 2nd row
         for _ in 0..3 {
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            test.input(EditorInputEvent::Up, InputModifiers::none());
         }
 
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Enter,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
 
         assert_results(&["1", "", "2", "3", "6", "", "50 year"][..], &result_buffer);
 
-        match &tokens[EditorY::new(4)] {
+        match &test.tokens.borrow()[content_y(4)] {
             Some(Tokens {
                 tokens,
                 shunting_output_stack: _,
@@ -11113,734 +6793,310 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
 
     #[test]
     fn test_modifying_a_lineref_recalcs_its_dependants() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "2\n * 3".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(1, 0));
+        let test = create_app2(35);
+        test.paste("2\n * 3");
+        test.set_cursor_row_col(1, 0);
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["2", "3"][..], &result_buffer);
 
         // insert linref of 1st line
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["2", "6"][..], &result_buffer);
 
         // now modify the first row
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Home,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('1'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.input(EditorInputEvent::Home, InputModifiers::none());
+        test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["12", "36"][..], &result_buffer);
     }
 
     #[test]
-    fn test_modifying_a_lineref_recalcs_its_dependants_only_if_its_value_has_changed() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+    fn test_modifying_a_lineref_does_not_change_the_line_id() {
+        let test = create_app2(35);
+        test.paste("2\n3\n");
+        test.set_cursor_row_col(2, 0);
+        test.render();
+        // insert linref of 1st line
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        test.render();
 
-        app.handle_paste(
-            "2\n * 3".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(1, 0));
+        test.input(EditorInputEvent::Char(' '), InputModifiers::none());
+        test.render();
+        test.input(EditorInputEvent::Char('*'), InputModifiers::none());
+        test.render();
+        test.input(EditorInputEvent::Char(' '), InputModifiers::none());
+        test.render();
+
+        // insert linref of 2st line
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        let mut result_buffer = [0; 128];
+        test.render_get_result_buf(&mut result_buffer[..]);
+        assert_results(&["2", "3", "6"][..], &result_buffer);
+
+        // now modify the 2nd row
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.input(EditorInputEvent::Home, InputModifiers::none());
+        test.input(EditorInputEvent::Del, InputModifiers::none());
+        let mut result_buffer = [0; 128];
+        test.render_get_result_buf(&mut result_buffer[..]);
+        assert_results(&["2", "Err", ""][..], &result_buffer);
+
+        test.input(EditorInputEvent::Char('4'), InputModifiers::none());
+        let mut result_buffer = [0; 128];
+        test.render_get_result_buf(&mut result_buffer[..]);
+        assert_results(&["2", "4", "8"][..], &result_buffer);
+    }
+
+    #[test]
+    fn test_modifying_a_lineref_recalcs_its_dependants_only_if_its_value_has_changed() {
+        let test = create_app2(35);
+        test.paste("2\n * 3");
+        test.set_cursor_row_col(1, 0);
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["2", "3"][..], &result_buffer);
 
         // insert linref of 1st line
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["2", "6"][..], &result_buffer);
 
         // now modify the first row
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::End,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.input(EditorInputEvent::End, InputModifiers::none());
+        test.render();
         // inserting a '.' does not modify the result of the line
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('.'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
+        test.input(EditorInputEvent::Char('.'), InputModifiers::none());
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
 
-        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(!app.result_area_redraw.need(EditorY::new(1)));
-        assert!(!app.result_has_changed.need(EditorY::new(0)));
-        assert!(!app.result_has_changed.need(EditorY::new(1)));
+        test.assert_not_redraw_editor(1);
+        test.assert_not_redraw_result(1);
+
+        assert!(!test.app.borrow().result_has_changed.need(content_y(0)));
+        assert!(!test.app.borrow().result_has_changed.need(content_y(1)));
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["2", "6"][..], &result_buffer);
     }
 
     #[test]
     fn test_renaming_variable_declaration2() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "apple = 2\naapple * 3".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 0));
+        let test = create_app2(35);
+        test.paste("apple = 2\naapple * 3");
+        test.set_cursor_row_col(0, 0);
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["2", "3"][..], &result_buffer);
 
         // rename apple to aapple
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('a'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        test.input(EditorInputEvent::Char('a'), InputModifiers::none());
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["2", "6"][..], &result_buffer);
     }
 
     #[test]
     fn test_removing_variable_declaration() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "apple = 2\napple * 3".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 0));
+        let test = create_app2(35);
+        test.paste("apple = 2\napple * 3");
+        test.set_cursor_row_col(0, 0);
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["2", "6"][..], &result_buffer);
 
         // remove the content of the first line
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::End,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(!app.result_area_redraw.need(EditorY::new(1)));
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Del,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        test.input(EditorInputEvent::End, InputModifiers::shift());
+        test.assert_not_redraw_editor(1);
+        test.assert_not_redraw_result(1);
+
+        test.input(EditorInputEvent::Del, InputModifiers::none());
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["", "3"][..], &result_buffer);
     }
 
     #[test]
     fn test_that_variable_dependent_rows_are_recalculated() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "apple = 2\napple * 3".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 9));
+        let test = create_app2(35);
+        test.paste("apple = 2\napple * 3");
+        test.set_cursor_row_col(0, 9);
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["2", "6"][..], &result_buffer);
 
         // change value of 'apple' from 2 to 24
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('4'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        test.input(EditorInputEvent::Char('4'), InputModifiers::none());
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["24", "72"][..], &result_buffer);
     }
 
     #[test]
     fn test_that_sum_is_recalculated_if_anything_changes_above() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "2\n3\nsum".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 1));
+        let test = create_app2(35);
+        test.paste("2\n3\nsum");
+        test.set_cursor_row_col(0, 1);
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["2", "3", "5"][..], &result_buffer);
 
         // change value from 2 to 21
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('1'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
+        test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
         // sum
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
         //
-        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(!app.result_area_redraw.need(EditorY::new(1)));
+        test.assert_not_redraw_editor(1);
+        test.assert_not_redraw_result(1);
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["21", "3", "24"][..], &result_buffer);
     }
 
     #[test]
     fn test_that_sum_is_recalculated_if_anything_changes_above2() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "2\n3\n4 * sum".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 1));
+        let test = create_app2(35);
+        test.paste("2\n3\n4 * sum");
+        test.set_cursor_row_col(0, 1);
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["2", "3", "20"][..], &result_buffer);
 
         // change value from 2 to 21
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('1'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
+        test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
         // sum
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
         //
-        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(!app.result_area_redraw.need(EditorY::new(1)));
+        test.assert_not_redraw_editor(1);
+        test.assert_not_redraw_result(1);
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["21", "3", "96"][..], &result_buffer);
     }
 
     #[test]
     fn test_that_sum_is_not_recalculated_if_there_is_separator() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "2\n3\n--\n5\nsum".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 1));
+        let test = create_app2(35);
+        test.paste("2\n3\n--\n5\nsum");
+        test.set_cursor_row_col(0, 1);
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["2", "3", "", "5", "5"][..], &result_buffer);
 
         // change value from 2 to 12
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('1'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
+        test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
         for i in 1..5 {
-            assert!(!app.editor_area_redraw.need(EditorY::new(i)), "{}", i);
-            assert!(!app.result_area_redraw.need(EditorY::new(i)), "{}", i);
+            test.assert_not_redraw_editor(i);
+            test.assert_not_redraw_result(i);
         }
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["21", "3", "", "5", "5"][..], &result_buffer);
     }
 
     #[test]
     fn test_that_sum_is_not_recalculated_if_there_is_separator_with_comment() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "2\n3\n-- some comment\n5\nsum".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 1));
+        let test = create_app2(35);
+        test.paste("2\n3\n-- some comment\n5\nsum");
+        test.set_cursor_row_col(0, 1);
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["2", "3", "", "5", "5"][..], &result_buffer);
 
         // change value from 2 to 12
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('1'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
+        test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
         for i in 1..5 {
-            assert!(!app.editor_area_redraw.need(EditorY::new(i)), "{}", i);
-            assert!(!app.result_area_redraw.need(EditorY::new(i)), "{}", i);
+            test.assert_not_redraw_editor(i);
+            test.assert_not_redraw_result(i);
         }
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["21", "3", "", "5", "5"][..], &result_buffer);
     }
 
     #[test]
     fn test_adding_sum_updates_lower_sums() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "2\n3\n\n4\n5\nsum\n-- some comment\n24\n25\nsum".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(2, 0));
+        let test = create_app2(35);
+        test.paste("2\n3\n\n4\n5\nsum\n-- some comment\n24\n25\nsum");
+        test.set_cursor_row_col(2, 0);
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(
             &["2", "3", "", "4", "5", "14", "", "24", "25", "49"][..],
             &result_buffer,
         );
 
-        app.handle_paste(
-            "sum".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
-        assert!(app.editor_area_redraw.need(EditorY::new(5)));
-        assert!(app.result_area_redraw.need(EditorY::new(5)));
+        test.paste("sum");
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
+        test.assert_redraw_editor(5);
+        test.assert_redraw_result(5);
 
-        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(!app.result_area_redraw.need(EditorY::new(0)));
-        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(!app.result_area_redraw.need(EditorY::new(1)));
+        test.assert_not_redraw_editor(0);
+        test.assert_not_redraw_result(0);
+
+        test.assert_not_redraw_editor(1);
+        test.assert_not_redraw_result(1);
+
         for i in 3..=4 {
-            assert!(!app.editor_area_redraw.need(EditorY::new(i)), "{}", i);
-            assert!(!app.result_area_redraw.need(EditorY::new(i)), "{}", i);
+            test.assert_not_redraw_editor(i);
+            test.assert_not_redraw_result(i);
         }
         for i in 6..=9 {
-            assert!(!app.editor_area_redraw.need(EditorY::new(i)), "{}", i);
-            assert!(!app.result_area_redraw.need(EditorY::new(i)), "{}", i);
+            test.assert_not_redraw_editor(i);
+            test.assert_not_redraw_result(i);
         }
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(
             &["2", "3", "5", "4", "5", "19", "", "24", "25", "49"][..],
             &result_buffer,
@@ -11849,77 +7105,40 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
 
     #[test]
     fn test_updating_two_sums() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "2\n3\nsum\n4\n5\nsum\n-- some comment\n24\n25\nsum".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 1));
+        let test = create_app2(35);
+        test.paste("2\n3\nsum\n4\n5\nsum\n-- some comment\n24\n25\nsum");
+        test.set_cursor_row_col(0, 1);
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(
             &["2", "3", "5", "4", "5", "19", "", "24", "25", "49"][..],
             &result_buffer,
         );
 
         // change value from 2 to 21
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('1'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
-        assert!(app.editor_area_redraw.need(EditorY::new(5)));
-        assert!(app.result_area_redraw.need(EditorY::new(5)));
+        test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
+        test.assert_redraw_editor(5);
+        test.assert_redraw_result(5);
 
-        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(!app.result_area_redraw.need(EditorY::new(1)));
+        test.assert_not_redraw_editor(1);
+        test.assert_not_redraw_result(1);
+
         for i in 3..=4 {
-            assert!(!app.editor_area_redraw.need(EditorY::new(i)), "{}", i);
-            assert!(!app.result_area_redraw.need(EditorY::new(i)), "{}", i);
+            test.assert_not_redraw_editor(i);
+            test.assert_not_redraw_result(i);
         }
         for i in 6..=9 {
-            assert!(!app.editor_area_redraw.need(EditorY::new(i)), "{}", i);
-            assert!(!app.result_area_redraw.need(EditorY::new(i)), "{}", i);
+            test.assert_not_redraw_editor(i);
+            test.assert_not_redraw_result(i);
         }
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(
             &["21", "3", "24", "4", "5", "57", "", "24", "25", "49"][..],
             &result_buffer,
@@ -11928,427 +7147,156 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
 
     #[test]
     fn test_variable_redefine() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "apple = 12".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
+        let test = create_app2(35);
+        test.paste("apple = 12");
+        test.render();
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.paste("apple + 2");
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.paste("apple = 0");
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.paste("apple + 3");
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Enter,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_paste(
-            "apple + 2".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Enter,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_paste(
-            "apple = 0".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Enter,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_paste(
-            "apple + 3".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["12", "14", "0", "3"][..], &result_buffer);
     }
 
     #[test]
     fn test_backspace_bug_editor_obj_deletion_for_simple_tokens() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "asd sad asd asd sX".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Backspace,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!("asd sad asd asd s", app.editor_content.get_content());
+        let test = create_app2(35);
+        test.paste("asd sad asd asd sX");
+        test.render();
+        test.input(EditorInputEvent::Backspace, InputModifiers::none());
+        assert_eq!("asd sad asd asd s", test.get_editor_content());
     }
 
     #[test]
     fn test_rendering_while_cursor_move() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "apple = 12$\nasd q".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let test = create_app2(35);
+        test.paste("apple = 12$\nasd q");
+        test.render();
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.render();
     }
 
     #[test]
     fn stepping_into_a_matrix_renders_it_some_lines_below() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("asdsad\n[1;2;3;4]");
+        test.set_cursor_row_col(0, 2);
+        test.render();
 
-        app.handle_paste(
-            "asdsad\n[1;2;3;4]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 2));
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Down, InputModifiers::none());
+        test.assert_redraw_editor(0);
+        test.assert_redraw_editor(1);
 
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Down,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
+        {
+            let editor_objects = test.editor_objects.borrow();
+            assert_eq!(editor_objects[content_y(0)].len(), 1);
+            assert_eq!(editor_objects[content_y(1)].len(), 1);
 
-        assert_eq!(editor_objects[EditorY::new(0)].len(), 1);
-        assert_eq!(editor_objects[EditorY::new(1)].len(), 1);
+            assert_eq!(
+                test.app
+                    .borrow()
+                    .render_data
+                    .get_rendered_height(content_y(0)),
+                1
+            );
+            assert_eq!(
+                test.app
+                    .borrow()
+                    .render_data
+                    .get_rendered_height(content_y(1)),
+                6
+            );
+            assert_eq!(
+                test.get_render_data().get_render_y(content_y(0)),
+                Some(canvas_y(0))
+            );
+            assert_eq!(
+                test.get_render_data().get_render_y(content_y(1)),
+                Some(canvas_y(1))
+            );
+        }
 
-        assert_eq!(app.render_data.get_rendered_height(EditorY::new(0)), 1);
-        assert_eq!(app.render_data.get_rendered_height(EditorY::new(1)), 6);
+        test.render();
+        test.assert_not_redraw_editor(0);
+        test.assert_not_redraw_editor(1);
+
+        let editor_objects = test.editor_objects.borrow();
+        assert_eq!(editor_objects[content_y(0)].len(), 1);
+        assert_eq!(editor_objects[content_y(1)].len(), 1);
         assert_eq!(
-            app.render_data.get_render_y(EditorY::new(0)),
-            Some(RenderPosY::new(0))
-        );
-        assert_eq!(
-            app.render_data.get_render_y(EditorY::new(1)),
-            Some(RenderPosY::new(1))
-        );
-
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
-
-        assert_eq!(editor_objects[EditorY::new(0)].len(), 1);
-        assert_eq!(editor_objects[EditorY::new(1)].len(), 1);
-        assert_eq!(app.render_data.get_rendered_height(EditorY::new(0)), 1);
-        assert_eq!(app.render_data.get_rendered_height(EditorY::new(1)), 6);
-        assert_eq!(
-            app.render_data.get_render_y(EditorY::new(0)),
-            Some(RenderPosY::new(0))
+            test.app
+                .borrow()
+                .render_data
+                .get_rendered_height(content_y(0)),
+            1
         );
         assert_eq!(
-            app.render_data.get_render_y(EditorY::new(1)),
-            Some(RenderPosY::new(1))
+            test.app
+                .borrow()
+                .render_data
+                .get_rendered_height(content_y(1)),
+            6
+        );
+        assert_eq!(
+            test.get_render_data().get_render_y(content_y(0)),
+            Some(canvas_y(0))
+        );
+        assert_eq!(
+            test.get_render_data().get_render_y(content_y(1)),
+            Some(canvas_y(1))
         );
     }
 
     #[test]
     fn end_matrix_editing_should_rerender_matrix_row_too() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "asdsad\n[1;2;3;4]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 2));
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let test = create_app2(35);
+        test.paste("asdsad\n[1;2;3;4]");
+        test.set_cursor_row_col(0, 2);
+        test.render();
 
         // step into matrix
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Down,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
+        test.input(EditorInputEvent::Down, InputModifiers::none());
+        test.assert_redraw_editor(0);
+        test.assert_redraw_editor(1);
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
+        test.render();
+        test.assert_not_redraw_editor(0);
+        test.assert_not_redraw_editor(1);
 
         // leave matrix
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(!app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.assert_not_redraw_editor(0);
+        test.assert_not_redraw_result(0);
+
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
     }
 
     #[test]
     fn clicks_rerender_prev_row_too() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("asdsad\n[1;2;3;4]");
+        test.render();
 
-        app.handle_paste(
-            "asdsad\n[1;2;3;4]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-
-        app.handle_click(
-            4,
-            RenderPosY::new(0),
-            &editor_objects,
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
+        test.click(4, 0);
+        test.assert_redraw_editor(0);
+        test.assert_redraw_editor(1);
     }
 
     #[test]
     fn select_only_2_lines_render_bug() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("1\n2\n3");
+        test.render();
+        test.input(EditorInputEvent::Up, InputModifiers::shift());
 
-        app.handle_paste(
-            "1\n2\n3".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-
-        let mut result_buffer = [0; 128];
         let mut render_buckets = RenderBuckets::new();
-        app.render(
-            &units,
-            &mut render_buckets,
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let mut result_buffer = [0; 128];
+
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
         let mut ok = vec![];
         for command in &render_buckets.custom_commands[Layer::AboveText as usize] {
             match command {
@@ -12372,1784 +7320,878 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
 
     #[test]
     fn moving_single_line_selection_rerenders_both_sum_and_line() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "first\nasdsad\n1+2+3".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let test = create_app2(35);
+        test.paste("first\nasdsad\n1+2+3");
+        test.render();
         // select the expression in the last row
         for _ in 0..5 {
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::shift(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            test.input(EditorInputEvent::Left, InputModifiers::shift());
         }
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
         // end the selection, cursor stays in the same row
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Right,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Right, InputModifiers::shift());
         // the cursor line + the line above which contains the SUM should be rerendered
-        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(!app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.assert_not_redraw_editor(0);
+        test.assert_not_redraw_result(0);
+
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
+        test.render();
 
         // end the selection, cursor stays in the same row
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Left,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Left, InputModifiers::shift());
         // the cursor line + the line above which contains the SUM should be rerendered
-        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(!app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        test.assert_not_redraw_editor(0);
+        test.assert_not_redraw_result(0);
+
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
     }
 
     #[test]
     fn test_ending_selection_with_click_clears_sum_too() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "first\nasdsad\n1+2+3".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let test = create_app2(35);
+        test.paste("first\nasdsad\n1+2+3");
+        test.render();
         // select the expression in the last row
         for _ in 0..5 {
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::shift(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            test.input(EditorInputEvent::Left, InputModifiers::shift());
         }
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
         // end the selection
-        app.handle_click(
-            30,
-            RenderPosY::new(2),
-            &editor_objects,
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
+        test.click(30, 2);
         // the cursor line + the line above which contains the SUM should be rerendered
-        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(!app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        test.assert_not_redraw_editor(0);
+        test.assert_not_redraw_result(0);
+
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
     }
 
     #[test]
     fn single_line_selection_end_rerender() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "first\nasdsad\n1+2+3".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let test = create_app2(35);
+        test.paste("first\nasdsad\n1+2+3");
+        test.render();
         // select the expression in the last row
         for _ in 0..5 {
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Left,
-                InputModifiers::shift(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            test.input(EditorInputEvent::Left, InputModifiers::shift());
         }
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
         // end the selection, cursor stays in the same row
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Right,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Right, InputModifiers::none());
         // the cursor line + the line above which contains the SUM should be rerendered
-        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(!app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        test.assert_not_redraw_editor(0);
+        test.assert_not_redraw_result(0);
+
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
     }
 
     #[test]
     fn single_line_selection_end_rerender_in_the_first_row() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "1+2+3\nasdsad\nasdqweqwe".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 0));
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let test = create_app2(35);
+        test.paste("1+2+3\nasdsad\nasdqweqwe");
+        test.set_cursor_row_col(0, 0);
+        test.render();
         // select the expression in the first row
         for _ in 0..5 {
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Right,
-                InputModifiers::shift(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            test.input(EditorInputEvent::Right, InputModifiers::shift());
         }
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
         // end the selection, cursor stays in the same row
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Right,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Right, InputModifiers::none());
         // the cursor line + the line below which contains the SUM should be rerendered
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
-        assert!(!app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(!app.result_area_redraw.need(EditorY::new(2)));
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
+        test.assert_not_redraw_editor(2);
+        test.assert_not_redraw_result(2);
     }
 
     #[test]
     fn test_removing_selected_text_clears_the_sum() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "qweqwe\nasdsad\n1+2+3\n3\n4".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(2, 0));
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let test = create_app2(35);
+        test.paste("qweqwe\nasdsad\n1+2+3\n3\n4");
+        test.set_cursor_row_col(2, 0);
+        test.render();
         // select the expression in the 2nd row
         for _ in 0..5 {
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Right,
-                InputModifiers::shift(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            test.input(EditorInputEvent::Right, InputModifiers::shift());
         }
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
         // remove the selected text
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Del,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Del, InputModifiers::none());
 
-        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(!app.result_area_redraw.need(EditorY::new(0)));
+        test.assert_not_redraw_editor(0);
+        test.assert_not_redraw_result(0);
+
         // clears the SUM
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
         // clears the modified row
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
 
-        assert!(!app.editor_area_redraw.need(EditorY::new(3)));
-        assert!(!app.result_area_redraw.need(EditorY::new(3)));
+        test.assert_not_redraw_editor(3);
+        test.assert_not_redraw_result(3);
     }
 
     #[test]
     fn test_single_to_multi_line_selection_clears() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "qweqwe\nasdsad\n1+2+3\n3\n4".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(2, 0));
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let test = create_app2(35);
+        test.paste("qweqwe\nasdsad\n1+2+3\n3\n4");
+        test.set_cursor_row_col(2, 0);
+        test.render();
         // select the expression in the 2nd row
         for _ in 0..5 {
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Right,
-                InputModifiers::shift(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            test.input(EditorInputEvent::Right, InputModifiers::shift());
         }
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
         // expand selection
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Down,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Down, InputModifiers::shift());
 
-        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(!app.result_area_redraw.need(EditorY::new(0)));
+        test.assert_not_redraw_editor(0);
+        test.assert_not_redraw_result(0);
+
         // clears the SUM
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
         // clears the selected rows
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
-        assert!(app.editor_area_redraw.need(EditorY::new(3)));
-        assert!(app.result_area_redraw.need(EditorY::new(3)));
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
+        test.assert_redraw_editor(3);
+        test.assert_redraw_result(3);
     }
 
     #[test]
     fn test_multi_to_single_line_selection_clears() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "qweqwe\nasdsad\n1+2+3\n3\n4".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(2, 0));
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let test = create_app2(35);
+        test.paste("qweqwe\nasdsad\n1+2+3\n3\n4");
+        test.set_cursor_row_col(2, 0);
+        test.render();
         // select the expression in the 2nd row
         for _ in 0..5 {
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Right,
-                InputModifiers::shift(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            test.input(EditorInputEvent::Right, InputModifiers::shift());
         }
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
         // expand selection
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Down,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Down, InputModifiers::shift());
+        test.render();
         // reduce selection
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Up, InputModifiers::shift());
         // 1st row contains the SUM
         // 2nd and 3rd rows contain the selection, all of them must be updated
-        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(!app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
-        assert!(app.editor_area_redraw.need(EditorY::new(3)));
-        assert!(app.result_area_redraw.need(EditorY::new(3)));
+        test.assert_not_redraw_editor(0);
+        test.assert_not_redraw_result(0);
+
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
+        test.assert_redraw_editor(3);
+        test.assert_redraw_result(3);
     }
 
     #[test]
     fn page_down_should_rerender_only_2_rows() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("first\nasdsad\n1+2+3");
+        test.set_cursor_row_col(0, 0);
+        test.render();
+        test.input(EditorInputEvent::PageDown, InputModifiers::none());
 
-        app.handle_paste(
-            "first\nasdsad\n1+2+3".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 0));
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::PageDown,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
+        test.assert_not_redraw_editor(1);
+        test.assert_not_redraw_result(1);
 
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
-        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(!app.result_area_redraw.need(EditorY::new(1)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
     }
 
     #[test]
     fn page_up_should_rerender_only_2_rows() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("first\nasdsad\n1+2+3");
 
-        app.handle_paste(
-            "first\nasdsad\n1+2+3".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::PageUp,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.render();
+        test.input(EditorInputEvent::PageUp, InputModifiers::none());
         // the cursor line + the line above which contains the SUM should be rerendered
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
-        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(!app.result_area_redraw.need(EditorY::new(1)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
+        test.assert_not_redraw_editor(1);
+        test.assert_not_redraw_result(1);
+
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
     }
 
     #[test]
     fn all_the_selected_rows_are_rerendered() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("first\nasdsad\n[1;2;3;4]");
+        test.render();
+        test.input(EditorInputEvent::Up, InputModifiers::shift());
+        test.assert_not_redraw_editor(0);
+        test.assert_not_redraw_result(0);
 
-        app.handle_paste(
-            "first\nasdsad\n[1;2;3;4]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(!app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        test.render();
+        test.input(EditorInputEvent::Up, InputModifiers::shift());
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
     }
 
     #[test]
     fn when_selection_shrinks_upward_rerender_prev_row() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("first\nasdsad\n[1;2;3;4]");
+        test.set_cursor_row_col(0, 0);
+        test.input(EditorInputEvent::Down, InputModifiers::shift());
+        test.input(EditorInputEvent::Down, InputModifiers::shift());
+        test.render();
 
-        app.handle_paste(
-            "first\nasdsad\n[1;2;3;4]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 0));
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Down,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Down,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        test.input(EditorInputEvent::Up, InputModifiers::shift());
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
     }
 
     #[test]
     fn when_selection_shrinks_downward_rerender_prev_row() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "first\nasdsad\n[1;2;3;4]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Down,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        let test = create_app2(35);
+        test.paste("first\nasdsad\n[1;2;3;4]");
+        test.render();
+        test.input(EditorInputEvent::Up, InputModifiers::shift());
+        test.input(EditorInputEvent::Up, InputModifiers::shift());
+        test.render();
+        test.input(EditorInputEvent::Down, InputModifiers::shift());
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
     }
 
     #[test]
     fn all_the_selected_rows_are_rerendered_on_ticking() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("first\nasdsad\n[1;2;3;4]");
+        test.input(EditorInputEvent::Up, InputModifiers::shift());
+        test.input(EditorInputEvent::Up, InputModifiers::shift());
+        test.render();
+        test.assert_not_redraw_editor(0);
+        test.assert_not_redraw_result(0);
 
-        app.handle_paste(
-            "first\nasdsad\n[1;2;3;4]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(!app.result_area_redraw.need(EditorY::new(0)));
-        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(!app.result_area_redraw.need(EditorY::new(1)));
-        assert!(!app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(!app.result_area_redraw.need(EditorY::new(2)));
+        test.assert_not_redraw_editor(1);
+        test.assert_not_redraw_result(1);
 
-        app.handle_time(1000);
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(!app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(!app.result_area_redraw.need(EditorY::new(1)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(!app.result_area_redraw.need(EditorY::new(2)));
+        test.assert_not_redraw_editor(2);
+        test.assert_not_redraw_result(2);
+
+        test.handle_time(1000);
+        test.assert_redraw_editor(0);
+        test.assert_not_redraw_result(0);
+
+        test.assert_redraw_editor(1);
+        test.assert_not_redraw_result(1);
+
+        test.assert_redraw_editor(2);
+        test.assert_not_redraw_result(2);
     }
 
     #[test]
     fn all_the_selected_rows_are_rerendered_on_cancellation() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "r1\nr2 asdsad\nr3 [1;2;3;4]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let test = create_app2(35);
+        test.paste("r1\nr2 asdsad\nr3 [1;2;3;4]");
+        test.render();
+        test.input(EditorInputEvent::Up, InputModifiers::shift());
+        test.input(EditorInputEvent::Up, InputModifiers::shift());
+        test.render();
         // cancels selection
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Left,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Left, InputModifiers::none());
 
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
     }
 
     #[test]
     fn navigating_up_renders() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("r1\nr2 asdsad\nr3 [1;2;3;4]");
+        test.render();
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.assert_not_redraw_editor(0);
+        test.assert_not_redraw_result(0);
 
-        app.handle_paste(
-            "r1\nr2 asdsad\nr3 [1;2;3;4]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(!app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
     }
 
     #[test]
     fn all_the_selected_rows_are_rerendered_on_cancellation2() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "asdsad\n[1;2;3;4]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let test = create_app2(35);
+        test.paste("asdsad\n[1;2;3;4]");
+        test.render();
+        test.input(EditorInputEvent::Up, InputModifiers::shift());
+        test.input(EditorInputEvent::Up, InputModifiers::shift());
+        test.render();
         // cancels selection
-        app.handle_click(
-            4,
-            RenderPosY::new(0),
-            &editor_objects,
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        test.click(4, 0);
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
     }
 
     #[test]
     fn line_ref_movement_render() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("first\nasdsad\n[1;2;3;4]");
+        test.render();
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.assert_not_redraw_editor(0);
+        test.assert_not_redraw_result(0);
 
-        app.handle_paste(
-            "first\nasdsad\n[1;2;3;4]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(!app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
+        test.render();
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
-        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(!app.result_area_redraw.need(EditorY::new(1)));
-        assert!(!app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(!app.result_area_redraw.need(EditorY::new(2)));
+        test.render();
+        test.alt_key_released();
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
+        test.assert_not_redraw_editor(1);
+        test.assert_not_redraw_result(1);
+
+        test.assert_not_redraw_editor(2);
+        test.assert_not_redraw_result(2);
     }
 
     #[test]
     fn line_ref_movement_render_with_actual_insertion() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("firs 1t\nasdsad\n[1;2;3;4]");
+        test.render();
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.assert_not_redraw_editor(0);
+        test.assert_not_redraw_result(0);
 
-        app.handle_paste(
-            "firs 1t\nasdsad\n[1;2;3;4]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(!app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
-        assert!(!app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(!app.result_area_redraw.need(EditorY::new(2)));
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
+        test.assert_not_redraw_editor(2);
+        test.assert_not_redraw_result(2);
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.render();
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
 
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
-        assert!(!app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(!app.result_area_redraw.need(EditorY::new(2)));
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
+        test.assert_not_redraw_editor(2);
+        test.assert_not_redraw_result(2);
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.alt_key_released(&units, &arena, &mut tokens, &mut results, &mut vars);
+        test.render();
+        test.alt_key_released();
 
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
-        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(!app.result_area_redraw.need(EditorY::new(1)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
+        test.assert_not_redraw_editor(1);
+        test.assert_not_redraw_result(1);
+
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
     }
 
     #[test]
     fn dragging_right_gutter_rerenders_everyhting() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("firs 1t\nasdsad\n[1;2;3;4]");
+        test.render();
+        let result_gutter_x = test.get_render_data().result_gutter_x;
+        test.click(result_gutter_x, 0);
+        test.assert_not_redraw_editor(0);
+        test.assert_not_redraw_result(0);
 
-        app.handle_paste(
-            "firs 1t\nasdsad\n[1;2;3;4]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_click(
-            app.render_data.result_gutter_x,
-            RenderPosY::new(0),
-            &editor_objects,
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(!app.result_area_redraw.need(EditorY::new(0)));
-        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(!app.result_area_redraw.need(EditorY::new(1)));
-        assert!(!app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(!app.result_area_redraw.need(EditorY::new(2)));
+        test.assert_not_redraw_editor(1);
+        test.assert_not_redraw_result(1);
 
-        assert_eq!(app.render_data.current_result_panel_width, 30);
-        app.handle_drag(app.render_data.result_gutter_x - 1, RenderPosY::new(0));
-        assert_eq!(app.render_data.current_result_panel_width, 31);
+        test.assert_not_redraw_editor(2);
+        test.assert_not_redraw_result(2);
 
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        assert_eq!(test.get_render_data().current_result_panel_width, 30);
+        test.handle_drag(result_gutter_x - 1, 0);
+        assert_eq!(test.get_render_data().current_result_panel_width, 31);
+
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
     }
 
     #[test]
     fn scroll_dragging_limit() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.repeated_paste("1\n", 39);
+        test.render();
+        test.click(test.get_render_data().result_gutter_x - SCROLL_BAR_WIDTH, 0);
 
-        app.handle_paste(
-            "1\n".repeat(39).to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_click(
-            app.render_data.result_gutter_x - SCROLL_BAR_WIDTH,
-            RenderPosY::new(0),
-            &editor_objects,
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-
-        assert_eq!(app.render_data.scroll_y, 0);
+        assert_eq!(test.get_render_data().scroll_y, 0);
 
         for i in 0..5 {
-            app.handle_drag(
-                app.render_data.result_gutter_x - SCROLL_BAR_WIDTH,
-                RenderPosY::new(1 + i),
+            test.handle_drag(
+                test.get_render_data().result_gutter_x - SCROLL_BAR_WIDTH,
+                1 + i,
             );
-            assert_eq!(app.render_data.scroll_y, 1 + i as usize);
+            assert_eq!(test.get_render_data().scroll_y, 1 + i as usize);
         }
-        app.handle_drag(
-            app.render_data.result_gutter_x - SCROLL_BAR_WIDTH,
-            RenderPosY::new(6),
-        );
+        test.handle_drag(test.get_render_data().result_gutter_x - SCROLL_BAR_WIDTH, 6);
         // the scrollbar reached its bottom position, it won't go further down
-        assert_eq!(app.render_data.scroll_y, 5);
+        assert_eq!(test.get_render_data().scroll_y, 5);
     }
 
     #[test]
     fn scroll_dragging_upwards() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.repeated_paste("1\n", 39);
 
-        app.handle_paste(
-            "1\n".repeat(39).to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_click(
-            app.render_data.result_gutter_x - SCROLL_BAR_WIDTH,
-            RenderPosY::new(0),
-            &editor_objects,
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
+        test.render();
+        test.click(test.get_render_data().result_gutter_x - SCROLL_BAR_WIDTH, 0);
 
-        assert_eq!(app.render_data.scroll_y, 0);
+        assert_eq!(test.get_render_data().scroll_y, 0);
 
         for i in 0..5 {
-            app.handle_drag(
-                app.render_data.result_gutter_x - SCROLL_BAR_WIDTH,
-                RenderPosY::new(1 + i),
+            test.handle_drag(
+                test.get_render_data().result_gutter_x - SCROLL_BAR_WIDTH,
+                1 + i,
             );
-            assert_eq!(app.render_data.scroll_y, 1 + i as usize);
+            assert_eq!(test.get_render_data().scroll_y, 1 + i as usize);
         }
         for i in 0..5 {
-            app.handle_drag(
-                app.render_data.result_gutter_x - SCROLL_BAR_WIDTH,
-                RenderPosY::new(4 - i),
+            test.handle_drag(
+                test.get_render_data().result_gutter_x - SCROLL_BAR_WIDTH,
+                4 - i,
             );
-            assert_eq!(app.render_data.scroll_y, 4 - i as usize);
+            assert_eq!(test.get_render_data().scroll_y, 4 - i as usize);
         }
     }
 
     #[test]
     fn test_scrolling_by_single_click_in_scrollbar() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(30);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "1\n".repeat(60).to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        assert_eq!(app.render_data.scroll_y, 0);
+        let test = create_app2(30);
+        test.repeated_paste("1\n", 60);
+        test.render();
+        assert_eq!(test.get_render_data().scroll_y, 0);
 
         for i in 0..4 {
-            let mouse_x = app.render_data.result_gutter_x - SCROLL_BAR_WIDTH;
-            let mouse_y = RenderPosY::new(20 + i);
-            app.handle_click(
-                mouse_x,
-                mouse_y,
-                &editor_objects,
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            assert_eq!(app.render_data.scroll_y, i as usize);
-            app.handle_mouse_up();
-            assert_eq!(app.render_data.scroll_y, 1 + i as usize);
+            let mouse_x = test.get_render_data().result_gutter_x - SCROLL_BAR_WIDTH;
+            test.click(mouse_x, 20 + i);
+            assert_eq!(test.get_render_data().scroll_y, i as usize);
+            test.handle_mouse_up();
+            assert_eq!(test.get_render_data().scroll_y, 1 + i as usize);
         }
         for i in 0..3 {
-            let mouse_x = app.render_data.result_gutter_x - SCROLL_BAR_WIDTH;
-            let mouse_y = RenderPosY::new(0);
-            app.handle_click(
-                mouse_x,
-                mouse_y,
-                &editor_objects,
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            assert_eq!(app.render_data.scroll_y, 4 - i as usize);
-            app.handle_mouse_up();
-            assert_eq!(app.render_data.scroll_y, 3 - i as usize);
+            let mouse_x = test.get_render_data().result_gutter_x - SCROLL_BAR_WIDTH;
+            test.click(mouse_x, 0);
+            assert_eq!(test.get_render_data().scroll_y, 4 - i as usize);
+            test.handle_mouse_up();
+            assert_eq!(test.get_render_data().scroll_y, 3 - i as usize);
         }
     }
 
     #[test]
     fn dragging_scrollbar_rerenders_everyhting() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.repeated_paste("firs 1t\nasdsad\n[1;2;3;4]", 5);
+        test.render();
+        test.click(test.get_render_data().result_gutter_x - SCROLL_BAR_WIDTH, 0);
+        test.assert_not_redraw_editor(0);
+        test.assert_not_redraw_result(0);
 
-        app.handle_paste(
-            "firs 1t\nasdsad\n[1;2;3;4]".repeat(5).to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_click(
-            app.render_data.result_gutter_x - SCROLL_BAR_WIDTH,
-            RenderPosY::new(0),
-            &editor_objects,
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        assert!(!app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(!app.result_area_redraw.need(EditorY::new(0)));
-        assert!(!app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(!app.result_area_redraw.need(EditorY::new(1)));
-        assert!(!app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(!app.result_area_redraw.need(EditorY::new(2)));
+        test.assert_not_redraw_editor(1);
+        test.assert_not_redraw_result(1);
 
-        assert_eq!(app.render_data.scroll_y, 0);
-        app.handle_drag(
-            app.render_data.result_gutter_x - SCROLL_BAR_WIDTH,
-            RenderPosY::new(1),
-        );
-        assert_eq!(app.render_data.scroll_y, 1);
+        test.assert_not_redraw_editor(2);
+        test.assert_not_redraw_result(2);
 
-        assert!(app.editor_area_redraw.need(EditorY::new(0)));
-        assert!(app.result_area_redraw.need(EditorY::new(0)));
-        assert!(app.editor_area_redraw.need(EditorY::new(1)));
-        assert!(app.result_area_redraw.need(EditorY::new(1)));
-        assert!(app.editor_area_redraw.need(EditorY::new(2)));
-        assert!(app.result_area_redraw.need(EditorY::new(2)));
+        assert_eq!(test.get_render_data().scroll_y, 0);
+        test.handle_drag(test.get_render_data().result_gutter_x - SCROLL_BAR_WIDTH, 1);
+        assert_eq!(test.get_render_data().scroll_y, 1);
+
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
+        test.assert_redraw_editor(1);
+        test.assert_redraw_result(1);
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
     }
 
     #[test]
     fn clicking_behind_matrix_should_move_the_cursor_there() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
 
-        app.handle_paste(
-            "firs 1t\nasdsad\n[1;2;3;4]\nfirs 1t\nasdsad\n[1;2;3;4]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+        test.paste("firs 1t\nasdsad\n[1;2;3;4]\nfirs 1t\nasdsad\n[1;2;3;4]");
+        test.set_cursor_row_col(0, 0);
+        test.render();
+        assert_eq!(test.get_cursor_pos().row, 0);
+        test.click(LEFT_GUTTER_WIDTH + 50, 13);
+        assert_eq!(test.get_cursor_pos().row, 5);
+    }
+
+    #[test]
+    fn shrinking_selection_by_mouse_should_rerender_previously_selected_rows_too() {
+        let test = create_app2(35);
+        test.paste("firs 1t\nasdsad\n[1;2;3;4]\nfirs 1t\nasdsad\n[1;2;3;4]");
+        test.set_cursor_row_col(0, 0);
+        test.render();
+        test.click(LEFT_GUTTER_WIDTH, 0);
+        test.render();
+        test.handle_drag(LEFT_GUTTER_WIDTH + 3, 3);
+        test.render();
+        test.handle_drag(LEFT_GUTTER_WIDTH + 3, 0);
+        for i in 0..3 {
+            test.assert_redraw_editor(i);
+        }
+    }
+
+    // Task: [Kijelölés után mátrix mögé kattintva + gépelve]
+    #[test]
+    fn clicking_inside_matrix_while_selected_should_put_cursor_after_matrix() {
+        let test = create_app2(35);
+        test.paste("firs 1t\nasdsad\n[1;2;3;4]\nfirs 1t\nasdsad\n[1;2;3;4]");
+        test.set_cursor_row_col(0, 0);
+        test.render();
+        // select all
+        test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
+        test.render();
+
+        // click inside the real matrix repr
+        test.click(LEFT_GUTTER_WIDTH + 7, 2);
+        // the cursor should be at eol
+        assert_eq!(test.get_cursor_pos().column, 9);
+
+        // typing should append after the matrix
+        test.input(EditorInputEvent::Char('X'), InputModifiers::none());
+        assert_eq!(
+            "firs 1t\nasdsad\n[1;2;3;4]X\nfirs 1t\nasdsad\n[1;2;3;4]",
+            test.get_editor_content()
         );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 0));
+    }
+
+    #[test]
+    fn limiting_cursor_does_not_kill_selection() {
+        let test = create_app2(35);
+
+        test.repeated_paste("1\n", 65);
+        test.set_cursor_row_col(0, 0);
+        test.render();
+        test.input(EditorInputEvent::PageDown, InputModifiers::shift());
+        test.render();
+        assert_eq!(
+            test.get_selection().is_range(),
+            Some((
+                Pos::from_row_column(0, 0),
+                Pos::from_row_column(MAX_LINE_COUNT - 1, 0)
+            ))
+        );
+    }
+
+    #[test]
+    fn deleting_all_selected_lines_no_panic() {
+        let test = create_app2(35);
+        test.repeated_paste("1\n", 80);
+        test.set_cursor_row_col(0, 0);
+        test.render();
+        test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
+        test.render();
+        test.input(EditorInputEvent::Del, InputModifiers::ctrl());
+    }
+
+    #[test]
+    fn click_into_a_row_with_matrix_put_the_cursor_after_the_rendered_matrix() {
+        let test = create_app2(35);
+        test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
+        test.set_cursor_row_col(0, 0);
+        test.render();
+        assert_eq!(test.get_cursor_pos().column, 0);
+
+        for i in 0..5 {
+            test.click(LEFT_GUTTER_WIDTH + 13 + i, 5);
+            assert_eq!(test.get_cursor_pos().column, 25);
+        }
+    }
+
+    #[test]
+    fn clicking_into_matrices_panic() {
+        let test = create_app2(35);
+        test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
+        test.set_cursor_row_col(0, 0);
+        test.render();
+        // click into 1st matrix to edit it
+        test.click(LEFT_GUTTER_WIDTH + 1, 5);
+        test.render();
+        // write 333 into the first cell
+        for _ in 0..3 {
+            test.input(EditorInputEvent::Char('3'), InputModifiers::none());
+        }
+        test.render();
+        // click into 2nd matrix
+        test.click(LEFT_GUTTER_WIDTH + 1, 15);
+        test.render();
+        // click back into 1nd matrix
+        test.click(LEFT_GUTTER_WIDTH + 1, 5);
+        test.render();
+    }
+
+    #[test]
+    fn leaving_matrix_by_clicking_should_trigger_reevaluation() {
+        let test = create_app2(35);
+        test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
+        test.set_cursor_row_col(0, 0);
+        test.render();
+        // click into 1st matrix to edit it
+        test.click(LEFT_GUTTER_WIDTH + 1, 5);
+        test.render();
+        // write 333 into the first cell
+        for _ in 0..3 {
+            test.input(EditorInputEvent::Char('3'), InputModifiers::none());
+        }
+        test.render();
+        // click into 2nd matrix
+        test.click(LEFT_GUTTER_WIDTH + 1, 15);
+        test.render();
+        assert_eq!(test.editor_objects.borrow()[content_y(2)][0].rendered_w, 8);
+    }
+
+    #[test]
+    fn removing_matrix_from_last_line_should_clear_bottom_area() {
+        let test = create_app2(35);
+        test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
+        test.set_cursor_row_col(5, 9);
+        test.render();
+        test.input(EditorInputEvent::Backspace, InputModifiers::none());
+        let mut render_buckets = RenderBuckets::new();
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
+
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
+        // [0] SetColor
+        // [1] Clear scrollbar
+        // [2] Clear bottom
+        // [3] Clear row
+        match &render_buckets.clear_commands[2] {
+            OutputMessage::RenderRectangle { x, y, w, h } => {
+                assert_eq!(*x, 0);
+                assert_eq!(y.as_usize(), 13);
+                assert_eq!(*w, 121);
+                assert_eq!(*h, 5 /* 6 - 1*/);
+            }
+            _ => assert!(false),
+        }
+    }
+
+    #[test]
+    fn click_into_a_matrix_start_mat_editing() {
+        let test = create_app2(35);
+        test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
+        test.set_cursor_row_col(0, 0);
+        test.render();
+
+        test.click(LEFT_GUTTER_WIDTH + 1, 5);
+        assert!(test.app.borrow().matrix_editing.is_some());
+
+        // the source line is rerendered as well
+        test.assert_redraw_editor(0);
+        test.assert_redraw_result(0);
+
+        // middle lines are not
+        test.assert_not_redraw_editor(1);
+        test.assert_not_redraw_result(1);
+
+        // the matrix line
+        test.assert_redraw_editor(2);
+        test.assert_redraw_result(2);
+    }
+
+    #[test]
+    fn mouse_selecting_moving_mouse_out_of_editor() {
+        let test = create_app2(35);
+        test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
+        test.set_cursor_row_col(0, 0);
+        test.render();
+
+        test.click(LEFT_GUTTER_WIDTH + 7, 0);
+        test.handle_drag(0, 0);
+        assert_eq!(
+            test.get_selection().is_range(),
+            Some((Pos::from_row_column(0, 0), Pos::from_row_column(0, 7)))
         );
-        assert_eq!(app.editor.get_selection().get_cursor_pos().row, 0);
-        app.handle_click(
-            LEFT_GUTTER_WIDTH + 50,
-            RenderPosY::new(13),
-            &editor_objects,
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        assert_eq!(app.editor.get_selection().get_cursor_pos().row, 5);
+    }
+
+    #[test]
+    fn mouse_selecting_rerenders_the_selected_rows() {
+        let test = create_app2(35);
+        test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
+        test.set_cursor_row_col(0, 0);
+        test.render();
+
+        test.click(LEFT_GUTTER_WIDTH + 7, 0);
+        test.render();
+        test.handle_drag(1, 0);
+        test.assert_redraw_editor(0);
+        test.assert_not_redraw_result(0);
+
+        test.assert_not_redraw_editor(1);
+        test.assert_not_redraw_result(1);
+
+        test.assert_not_redraw_editor(2);
+        test.assert_not_redraw_result(2);
+    }
+
+    #[test]
+    fn bug_selection_rectangle_is_longer_than_the_selected_row() {
+        let test = create_app2(35);
+        test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
+        test.set_cursor_row_col(0, 0);
+        test.render();
+        test.click(LEFT_GUTTER_WIDTH + 4, 0);
+        test.render();
+
+        test.handle_drag(3, 1);
+
+        let mut render_buckets = RenderBuckets::new();
+        let mut result_buffer = [0; 128];
+
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
+
+        let pos = render_buckets
+            .custom_commands(Layer::BehindText)
+            .iter()
+            .position(|it| matches!(it, OutputMessage::SetColor(0xA6D2FF_FF)))
+            .expect("there is no selection box drawing");
+        match render_buckets.custom_commands(Layer::BehindText)[pos + 1] {
+            OutputMessage::RenderRectangle { x, y, w, h } => {
+                assert_eq!(x, 8);
+                assert_eq!(y.as_usize(), 0);
+                assert_eq!(w, 3);
+                assert_eq!(h, 1);
+            }
+            _ => panic!(),
+        }
+        match render_buckets.custom_commands(Layer::BehindText)[pos + 2] {
+            OutputMessage::RenderRectangle { x, y, w, h } => {
+                assert_eq!(x, 4);
+                assert_eq!(y.as_usize(), 1);
+                assert_eq!(w, 0);
+                assert_eq!(h, 1);
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn mouse_multiline_selecting_rerenders_the_selected_rows() {
+        let test = create_app2(35);
+        test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
+        test.set_cursor_row_col(0, 0);
+        test.render();
+        test.click(LEFT_GUTTER_WIDTH + 7, 0);
+        test.render();
+        test.handle_drag(3, 3);
+        test.assert_redraw_editor(0);
+        test.assert_not_redraw_result(0);
+
+        test.assert_redraw_editor(1);
+        test.assert_not_redraw_result(1);
+
+        test.assert_redraw_editor(2);
+        test.assert_not_redraw_result(2);
+
+        test.assert_not_redraw_editor(3);
+        test.assert_not_redraw_result(3);
+
+        test.assert_not_redraw_editor(4);
+        test.assert_not_redraw_result(4);
     }
 
     #[test]
     fn test_handling_too_much_rows_no_panic() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste(&("1\n".repeat(MAX_LINE_COUNT - 1).to_owned()));
+        test.set_cursor_row_col(MAX_LINE_COUNT - 2, 1);
 
-        app.handle_paste(
-            "1\n".repeat(MAX_LINE_COUNT - 1).to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(MAX_LINE_COUNT - 2, 1));
-
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Enter,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.render();
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
     }
 
     #[test]
     fn inserting_too_many_rows_no_panic() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 0));
+        let test = create_app2(35);
+        test.paste("");
+        test.set_cursor_row_col(0, 0);
 
         for _ in 0..20 {
-            app.handle_paste(
-                "1\n2\n3\n4\n5\n6\n7\n8\n9\n0".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Enter,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n0");
+            test.render();
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            test.render();
         }
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::PageDown,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.input(EditorInputEvent::PageDown, InputModifiers::none());
     }
 
     #[test]
     fn stepping_down_to_unrendered_line_scrolls_down_the_screen() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.repeated_paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n0", 6);
+        test.set_cursor_row_col(0, 0);
+        test.render();
 
-        app.handle_paste(
-            "1\n2\n3\n4\n5\n6\n7\n8\n9\n0".repeat(6).to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(0, 0));
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-
-        assert_eq!(app.render_data.scroll_y, 0);
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::PageDown,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_ne!(app.render_data.scroll_y, 0);
+        assert_eq!(test.get_render_data().scroll_y, 0);
+        test.input(EditorInputEvent::PageDown, InputModifiers::none());
+        assert_ne!(test.get_render_data().scroll_y, 0);
     }
 
     #[test]
     fn test_scrolling_by_keyboard() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
+        let test = create_app2(35);
+        test.paste(
             "0
 1
 2
@@ -14189,108 +8231,38 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
 6
 7
 8
-10"
-            .to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
+10",
         );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(34, 0));
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::PageUp,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!(app.render_data.scroll_y, 0);
+        test.set_cursor_row_col(34, 0);
+        test.render();
+        test.input(EditorInputEvent::PageUp, InputModifiers::none());
+        assert_eq!(test.get_render_data().scroll_y, 0);
         // in this setup (35 canvas height) only 30 line is visible, so the client
         // has to press DOWN 29 times
         let matrix_height = 6;
         for _ in 0..(35 - matrix_height) {
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Down,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            test.input(EditorInputEvent::Down, InputModifiers::none());
         }
-        assert_eq!(app.render_data.scroll_y, 0);
+        assert_eq!(test.get_render_data().scroll_y, 0);
         for i in 0..3 {
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Down,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
-            assert_eq!(app.render_data.scroll_y, 1 + i);
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            test.render();
+            assert_eq!(test.get_render_data().scroll_y, 1 + i);
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(30 + i)),
-                Some(RenderPosY::new(34)),
+                test.app
+                    .borrow()
+                    .render_data
+                    .get_render_y(content_y(30 + i)),
+                Some(canvas_y(34)),
             );
         }
         // This step moves the matrix out of vision, so 6 line will appear instead of it at the bottom
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Down,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-        assert_eq!(app.render_data.scroll_y, 4);
+        test.input(EditorInputEvent::Down, InputModifiers::none());
+        test.render();
+        assert_eq!(test.get_render_data().scroll_y, 4);
         assert_eq!(
-            app.render_data.get_render_y(EditorY::new(33)),
-            Some(RenderPosY::new(29)),
+            test.get_render_data().get_render_y(content_y(33)),
+            Some(canvas_y(29)),
         );
     }
 
@@ -14298,233 +8270,48 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
     fn test_sum_rerender() {
         // rust's borrow checker forces me to do this
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "1\n2\n3\nsum".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
+            let test = create_app2(35);
+            test.paste("1\n2\n3\nsum");
             let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&["1", "2", "3", "6"][..], &result_buffer);
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "1\n2\n3\nsum".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("1\n2\n3\nsum");
+            test.input(EditorInputEvent::Up, InputModifiers::none());
             let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&["1", "2", "3", "6"][..], &result_buffer);
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "1\n2\n3\nsum".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("1\n2\n3\nsum");
+            test.input(EditorInputEvent::Up, InputModifiers::none());
+            test.input(EditorInputEvent::Up, InputModifiers::none());
             let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&["1", "2", "3", "6"][..], &result_buffer);
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "1\n2\n3\nsum".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Down,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("1\n2\n3\nsum");
+            test.input(EditorInputEvent::Up, InputModifiers::none());
+            test.input(EditorInputEvent::Up, InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
             let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&["1", "2", "3", "6"][..], &result_buffer);
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "1\n2\n3\nsum".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Down,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Down,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("1\n2\n3\nsum");
+            test.input(EditorInputEvent::Up, InputModifiers::none());
+            test.input(EditorInputEvent::Up, InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
             let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&["1", "2", "3", "6"][..], &result_buffer);
         }
     }
@@ -14532,199 +8319,45 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
     #[test]
     fn test_sum_rerender_with_ignored_lines() {
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "1\n'2\n3\nsum".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
+            let test = create_app2(35);
+            test.paste("1\n'2\n3\nsum");
             let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&["1", "3", "4"][..], &result_buffer);
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-            app.handle_paste(
-                "1\n'2\n3\nsum".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("1\n'2\n3\nsum");
+            test.input(EditorInputEvent::Up, InputModifiers::none());
             let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&["1", "3", "4"][..], &result_buffer);
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-            app.handle_paste(
-                "1\n'2\n3\nsum".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("1\n'2\n3\nsum");
+            test.input(EditorInputEvent::Up, InputModifiers::none());
+            test.input(EditorInputEvent::Up, InputModifiers::none());
             let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&["1", "3", "4"][..], &result_buffer);
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-            app.handle_paste(
-                "1\n'2\n3\nsum".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Down,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("1\n'2\n3\nsum");
+            test.input(EditorInputEvent::Up, InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
             let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&["1", "3", "4"][..], &result_buffer);
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-            app.handle_paste(
-                "1\n'2\n3\nsum".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Down,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("1\n'2\n3\nsum");
+            test.input(EditorInputEvent::Up, InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
             let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&["1", "3", "4"][..], &result_buffer);
         }
     }
@@ -14732,99 +8365,33 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
     #[test]
     fn test_sum_rerender_with_sum_reset() {
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "1\n--2\n3\nsum".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
+            let test = create_app2(35);
+            test.paste("1\n--2\n3\nsum");
             let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&["1", "3", "3"][..], &result_buffer);
         }
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            let arena = Arena::new();
-
-            app.handle_paste(
-                "1\n--2\n3\nsum".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Up,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("1\n--2\n3\nsum");
+            test.input(EditorInputEvent::Up, InputModifiers::none());
             let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&["1", "3", "3"][..], &result_buffer);
         }
     }
 
     #[test]
     fn test_paste_long_text() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "a\nb\na\nb\na\nb\na\nb\na\nb\na\nb\n1".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
+        let test = create_app2(35);
+        test.paste("a\nb\na\nb\na\nb\na\nb\na\nb\na\nb\n1");
         for i in 0..12 {
-            assert!(app.editor_area_redraw.need(EditorY::new(i)));
-            assert!(app.result_area_redraw.need(EditorY::new(i)));
+            test.assert_redraw_editor(i);
+            test.assert_redraw_result(i);
         }
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(
             &["", "", "", "", "", "", "", "", "", "", "", "1"][..],
             &result_buffer,
@@ -14833,163 +8400,70 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
 
     #[test]
     fn test_thousand_separator_and_alignment_in_result() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "1\n2.3\n2222\n4km\n50000".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single_r_c(2, 0));
+        let test = create_app2(35);
+        test.paste("1\n2.3\n2222\n4km\n50000");
+        test.set_cursor_row_col(2, 0);
         // set result to binary repr
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Left,
-            InputModifiers::alt(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Left, InputModifiers::alt());
 
-        let mut result_buffer = [0; 128];
         let mut render_buckets = RenderBuckets::new();
-        app.render(
-            &units,
-            &mut render_buckets,
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let mut result_buffer = [0; 128];
+
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
 
         let base_y = render_buckets.ascii_texts[0].column;
         assert_eq!(render_buckets.ascii_texts[0].text, "1".as_bytes());
-        assert_eq!(render_buckets.ascii_texts[0].row, RenderPosY::new(0));
+        assert_eq!(render_buckets.ascii_texts[0].row, canvas_y(0));
 
         assert_eq!(render_buckets.ascii_texts[1].text, "2".as_bytes());
-        assert_eq!(render_buckets.ascii_texts[1].row, RenderPosY::new(1));
+        assert_eq!(render_buckets.ascii_texts[1].row, canvas_y(1));
         assert_eq!(render_buckets.ascii_texts[1].column, base_y);
 
         assert_eq!(render_buckets.ascii_texts[2].text, ".3".as_bytes());
-        assert_eq!(render_buckets.ascii_texts[2].row, RenderPosY::new(1));
+        assert_eq!(render_buckets.ascii_texts[2].row, canvas_y(1));
         assert_eq!(render_buckets.ascii_texts[2].column, base_y + 1);
 
         assert_eq!(
             render_buckets.ascii_texts[3].text,
             "1000 10101110".as_bytes()
         );
-        assert_eq!(render_buckets.ascii_texts[3].row, RenderPosY::new(2));
+        assert_eq!(render_buckets.ascii_texts[3].row, canvas_y(2));
         assert_eq!(render_buckets.ascii_texts[3].column, base_y - 12);
 
         assert_eq!(render_buckets.ascii_texts[4].text, "4".as_bytes());
-        assert_eq!(render_buckets.ascii_texts[4].row, RenderPosY::new(3));
+        assert_eq!(render_buckets.ascii_texts[4].row, canvas_y(3));
         assert_eq!(render_buckets.ascii_texts[4].column, base_y);
 
         assert_eq!(render_buckets.ascii_texts[5].text, "km".as_bytes());
-        assert_eq!(render_buckets.ascii_texts[5].row, RenderPosY::new(3));
+        assert_eq!(render_buckets.ascii_texts[5].row, canvas_y(3));
         assert_eq!(render_buckets.ascii_texts[5].column, base_y + 2);
 
         assert_eq!(render_buckets.ascii_texts[6].text, "50 000".as_bytes());
-        assert_eq!(render_buckets.ascii_texts[6].row, RenderPosY::new(4));
+        assert_eq!(render_buckets.ascii_texts[6].row, canvas_y(4));
         assert_eq!(render_buckets.ascii_texts[6].column, base_y - 5);
     }
 
     #[test]
     fn test_ctrl_x() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12");
+        test.render();
 
-        app.handle_paste(
-            "0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('x'),
-            InputModifiers::ctrl(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Up, InputModifiers::shift());
+        test.input(EditorInputEvent::Up, InputModifiers::shift());
+        test.input(EditorInputEvent::Up, InputModifiers::shift());
+        test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
         for i in 0..9 {
-            assert!(!app.editor_area_redraw.need(EditorY::new(i)));
-            assert!(!app.result_area_redraw.need(EditorY::new(i)));
+            test.assert_not_redraw_editor(i);
+            test.assert_not_redraw_result(i);
         }
         for i in 9..12 {
-            assert!(app.editor_area_redraw.need(EditorY::new(i)));
-            assert!(app.result_area_redraw.need(EditorY::new(i)));
+            test.assert_redraw_editor(i);
+            test.assert_redraw_result(i);
         }
 
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(
             &["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"][..],
             &result_buffer,
@@ -14998,809 +8472,287 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
 
     #[test]
     fn test_ctrl_x_then_ctrl_z() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
-        app.handle_paste(
-            "12".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.handle_time(1000);
+        let test = create_app2(35);
+        test.paste("12");
+        test.handle_time(1000);
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["12"][..], &result_buffer);
 
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('x'),
-            InputModifiers::ctrl(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&[""][..], &result_buffer);
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('z'),
-            InputModifiers::ctrl(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+
+        test.input(EditorInputEvent::Char('z'), InputModifiers::ctrl());
         let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["12"][..], &result_buffer);
     }
 
     #[test]
     fn selection_in_the_first_row_should_not_panic() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("1+1\nasd");
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.input(EditorInputEvent::Home, InputModifiers::shift());
 
-        app.handle_paste(
-            "1+1\nasd".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Up,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Home,
-            InputModifiers::shift(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
     }
 
     #[test]
     fn test_removing_height_matrix_rerenders_everything_below_it() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("a\nb\n[1;2;3]\nb\na\nb\na\nb\na\nb\na\nb\n1");
+        test.set_cursor_row_col(2, 7);
 
-        app.handle_paste(
-            "a\nb\n[1;2;3]\nb\na\nb\na\nb\na\nb\na\nb\n1".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single(Pos::from_row_column(2, 7)));
-
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
 
         // step into the vector
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Backspace,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Backspace, InputModifiers::none());
 
         for i in 0..2 {
-            assert!(!app.editor_area_redraw.need(EditorY::new(i)));
-            assert!(!app.result_area_redraw.need(EditorY::new(i)));
+            test.assert_not_redraw_editor(i);
+            test.assert_not_redraw_result(i);
         }
         for i in 2..12 {
-            assert!(app.editor_area_redraw.need(EditorY::new(i)));
-            assert!(app.result_area_redraw.need(EditorY::new(i)));
+            test.assert_redraw_editor(i);
+            test.assert_redraw_result(i);
         }
     }
 
     #[test]
     fn test_that_removed_tail_rows_are_cleared() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.paste("a\nb\n[1;2;3]\nX\na\n1");
+        test.set_cursor_row_col(3, 0);
 
-        app.handle_paste(
-            "a\nb\n[1;2;3]\nX\na\n1".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single(Pos::from_row_column(3, 0)));
-
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
         assert_ne!(
-            app.render_data.get_render_y(EditorY::new(5)),
-            Some(RenderPosY::new(0))
+            test.get_render_data().get_render_y(content_y(5)),
+            Some(canvas_y(0))
         );
 
         // removing a line
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Backspace,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Backspace, InputModifiers::none());
 
         // they must not be 0, otherwise the renderer can't decide if they needed to be cleared,
         assert_ne!(
-            app.render_data.get_render_y(EditorY::new(5)),
-            Some(RenderPosY::new(0))
+            test.get_render_data().get_render_y(content_y(5)),
+            Some(canvas_y(0))
         );
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
 
-        assert_eq!(app.render_data.get_render_y(EditorY::new(5)), None);
+        assert_eq!(test.get_render_data().get_render_y(content_y(5)), None);
     }
 
     #[test]
     fn test_that_pressing_enter_eof_moves_scrollbar_down() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
+        let test = create_app2(35);
         // editor height is 36 in tests, so create a 35 line text
-        app.handle_paste(
-            "a\n".repeat(35),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single(Pos::from_row_column(3, 0)));
+        test.repeated_paste("a\n", 35);
+        test.set_cursor_row_col(3, 0);
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
         assert_ne!(
-            app.render_data.get_render_y(EditorY::new(5)),
-            Some(RenderPosY::new(0))
+            test.get_render_data().get_render_y(content_y(5)),
+            Some(canvas_y(0))
         );
 
         // removing a line
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Backspace,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Backspace, InputModifiers::none());
     }
 
     #[test]
     fn test_that_multiline_matrix_is_considered_when_scrolling() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
-
+        let test = create_app2(35);
         // editor height is 36 in tests, so create a 35 line text
-        app.handle_paste(
-            "a\n".repeat(40),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single(Pos::from_row_column(3, 0)));
+        test.repeated_paste("a\n", 40);
+        test.set_cursor_row_col(3, 0);
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
+        test.render();
+        assert_eq!(
+            test.get_render_data().get_render_y(content_y(34)),
+            Some(canvas_y(34))
         );
         assert_eq!(
-            app.render_data.get_render_y(EditorY::new(34)),
-            Some(RenderPosY::new(34))
+            test.get_render_data().get_render_y(content_y(35)),
+            Some(canvas_y(35))
         );
         assert_eq!(
-            app.render_data.get_render_y(EditorY::new(35)),
-            Some(RenderPosY::new(35))
+            test.get_render_data().get_render_y(content_y(39)),
+            Some(canvas_y(39))
         );
-        assert_eq!(
-            app.render_data.get_render_y(EditorY::new(39)),
-            Some(RenderPosY::new(39))
-        );
-        assert!(app.render_data.is_visible(EditorY::new(30)));
-        assert!(app.render_data.is_visible(EditorY::new(31)));
-        assert!(!app.render_data.is_visible(EditorY::new(39)));
+        assert!(test.get_render_data().is_visible(content_y(30)));
+        assert!(test.get_render_data().is_visible(content_y(31)));
+        assert!(!test.get_render_data().is_visible(content_y(39)));
 
-        app.handle_paste(
-            "[1;2;3;4]".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
+        test.paste("[1;2;3;4]");
+        test.render();
+        assert_eq!(
+            test.get_render_data().get_render_y(content_y(29)),
+            Some(canvas_y(34))
         );
         assert_eq!(
-            app.render_data.get_render_y(EditorY::new(29)),
-            Some(RenderPosY::new(34))
+            test.get_render_data().get_render_y(content_y(30)),
+            Some(canvas_y(35))
         );
         assert_eq!(
-            app.render_data.get_render_y(EditorY::new(30)),
-            Some(RenderPosY::new(35))
+            test.get_render_data().get_render_y(content_y(31)),
+            Some(canvas_y(36))
         );
         assert_eq!(
-            app.render_data.get_render_y(EditorY::new(31)),
-            Some(RenderPosY::new(36))
+            test.get_render_data().get_render_y(content_y(39)),
+            Some(canvas_y(44))
         );
-        assert_eq!(
-            app.render_data.get_render_y(EditorY::new(39)),
-            Some(RenderPosY::new(44))
-        );
-        assert!(!app.render_data.is_visible(EditorY::new(30)));
-        assert!(!app.render_data.is_visible(EditorY::new(31)));
-        assert!(!app.render_data.is_visible(EditorY::new(39)));
+        assert!(!test.get_render_data().is_visible(content_y(30)));
+        assert!(!test.get_render_data().is_visible(content_y(31)));
+        assert!(!test.get_render_data().is_visible(content_y(39)));
 
         assert_eq!(
-            app.render_data.get_render_y(EditorY::new(1)),
-            Some(RenderPosY::new(1))
+            test.get_render_data().get_render_y(content_y(1)),
+            Some(canvas_y(1))
         );
-        assert_eq!(app.render_data.scroll_y, 0);
+        assert_eq!(test.get_render_data().scroll_y, 0);
 
         // move to the last visible line
-        app.editor
-            .set_selection_save_col(Selection::single(Pos::from_row_column(29, 0)));
+        test.set_cursor_row_col(29, 0);
         // Since the matrix takes up 6 lines, a scroll should occur when pressing down
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Down,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!(app.render_data.scroll_y, 1);
+        test.input(EditorInputEvent::Down, InputModifiers::none());
+        assert_eq!(test.get_render_data().scroll_y, 1);
 
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
         assert_eq!(
-            app.render_data.get_render_y(EditorY::new(1)),
-            Some(RenderPosY::new(0))
+            test.get_render_data().get_render_y(content_y(1)),
+            Some(canvas_y(0))
         );
     }
 
     #[test]
     fn navigating_to_bottom_no_panic() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        let arena = Arena::new();
+        let test = create_app2(35);
+        test.repeated_paste("aaaaaaaaaaaa\n", 34);
 
-        app.handle_paste(
-            "aaaaaaaaaaaa\n".repeat(34),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
+        test.render();
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::PageDown,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::PageDown, InputModifiers::none());
     }
 
     #[test]
     fn ctrl_a_plus_typing() {
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(25);
-        let arena = Arena::new();
+        let test = create_app2(25);
+        test.repeated_paste("1\n", 34);
+        test.set_cursor_row_col(0, 0);
 
-        app.handle_paste(
-            "1\n".repeat(34).to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single(Pos::from_row_column(0, 0)));
+        test.render();
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
 
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('a'),
-            InputModifiers::ctrl(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.render();
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Char('1'), InputModifiers::none());
 
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('1'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
     }
 
     #[test]
     fn test_that_scrollbar_stops_at_bottom() {
         let client_height = 25;
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(client_height);
-        let arena = Arena::new();
+        let test = create_app2(client_height);
+        test.repeated_paste("1\n", client_height * 2);
+        test.set_cursor_row_col(0, 0);
 
-        app.handle_paste(
-            "1\n".repeat(client_height * 2).to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single(Pos::from_row_column(0, 0)));
+        test.render();
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::PageDown, InputModifiers::none());
 
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::PageDown,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-
-        assert_eq!(app.render_data.scroll_y, 26);
+        assert_eq!(test.get_render_data().scroll_y, 26);
     }
 
     #[test]
     fn test_that_no_full_refresh_when_stepping_into_last_line() {
         let client_height = 25;
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(client_height);
-        let arena = Arena::new();
+        let test = create_app2(client_height);
+        test.repeated_paste("1\n", client_height * 2);
+        test.set_cursor_row_col(0, 0);
 
-        app.handle_paste(
-            "1\n".repeat(client_height * 2).to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single(Pos::from_row_column(0, 0)));
-
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
 
         // step into last-1 line
         for _i in 0..(client_height - 2) {
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Down,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
+            test.input(EditorInputEvent::Down, InputModifiers::none());
         }
         // rerender so flags are cleared
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
 
         // step into last visible line
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Down,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!(app.render_data.scroll_y, 0);
-        assert_eq!(app.editor_area_redraw.need(EditorY::new(0)), false);
-        assert_eq!(app.result_area_redraw.need(EditorY::new(0)), false);
+        test.input(EditorInputEvent::Down, InputModifiers::none());
+        assert_eq!(test.get_render_data().scroll_y, 0);
+        test.assert_not_redraw_editor(0);
+        test.assert_not_redraw_result(0);
 
         // this step scrolls down one
         // step into last line
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Down,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        assert_eq!(app.render_data.scroll_y, 1);
+        test.input(EditorInputEvent::Down, InputModifiers::none());
+        assert_eq!(test.get_render_data().scroll_y, 1);
         for i in 0..client_height {
-            assert_eq!(app.editor_area_redraw.need(EditorY::new(i)), true);
-            assert_eq!(app.result_area_redraw.need(EditorY::new(i)), true);
+            test.assert_redraw_editor(i);
+            test.assert_redraw_result(i);
         }
     }
 
     #[test]
     fn test_that_paste_rerenders_the_modified_area_when_scrolled_down() {
         let client_height = 25;
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(client_height);
-        let arena = Arena::new();
+        let test = create_app2(client_height);
+        test.repeated_paste("1\n", client_height * 2);
+        test.set_cursor_row_col(client_height - 10, 0);
 
-        app.handle_paste(
-            "1\n".repeat(client_height * 2).to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single(Pos::from_row_column(
-                client_height - 10,
-                0,
-            )));
-
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
 
         // paste at (client_height-10, 0)
-        app.handle_paste(
-            "2\n".repeat(5).to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
+        test.repeated_paste("2\n", 5);
 
         for i in 0..5 {
-            assert_eq!(
-                app.editor_area_redraw
-                    .need(EditorY::new(client_height - 10 + i)),
-                true
-            );
-            assert_eq!(
-                app.result_area_redraw
-                    .need(EditorY::new(client_height - 10 + i)),
-                true
-            );
+            test.assert_redraw_editor(client_height - 10 + i);
+            test.assert_redraw_result(client_height - 10 + i);
         }
     }
 
     #[test]
     fn test_that_removed_lines_are_cleared() {
         let client_height = 25;
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(client_height);
-        let arena = Arena::new();
+        let test = create_app2(client_height);
+        test.repeated_paste("1\n", client_height * 2);
+        test.set_cursor_row_col(0, 0);
 
-        app.handle_paste(
-            "1\n".repeat(client_height * 2).to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        app.editor
-            .set_selection_save_col(Selection::single(Pos::from_row_column(0, 0)));
+        test.render();
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
 
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('a'),
-            InputModifiers::ctrl(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.render();
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
-
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Char('1'),
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Char('1'), InputModifiers::none());
 
         for i in 1..(client_height * 2 - 1) {
-            assert!(app.editor_area_redraw.need(EditorY::new(i)));
-            assert!(app.result_area_redraw.need(EditorY::new(i)));
+            test.assert_redraw_editor(i);
+            test.assert_redraw_result(i);
         }
 
-        let mut result_buffer = [0; 128];
         let mut render_buckets = RenderBuckets::new();
-        app.render(
-            &units,
-            &mut render_buckets,
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let mut result_buffer = [0; 128];
+
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
 
         // [0] SetColor
         // [1] clears the scrollbar
         // [2] clears everything below it
-        dbg!(&render_buckets.clear_commands);
         match &render_buckets.clear_commands[2] {
             OutputMessage::RenderRectangle { x, y, w, h } => {
                 assert_eq!(*x, 0);
                 assert_eq!(y.as_usize(), 1);
-                assert!(*w > app.render_data.current_editor_width);
+                assert!(*w > test.get_render_data().current_editor_width);
                 assert_eq!(*h, client_height);
             }
             _ => assert!(false),
@@ -15820,264 +8772,108 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
 
         assert_eq!(
             None,
-            app.render_data
-                .get_render_y(EditorY::new(client_height * 2 - 1))
+            test.app
+                .borrow()
+                .render_data
+                .get_render_y(content_y(client_height * 2 - 1))
         );
     }
 
     #[test]
     fn test_that_no_overscrolling() {
-        let arena = Arena::new();
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        app.handle_paste(
-            "1\n2\n3\n".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let test = create_app2(35);
+        test.paste("1\n2\n3\n");
+        test.render();
 
-        app.handle_wheel(1);
-        assert_eq!(0, app.render_data.scroll_y);
+        test.app.borrow_mut().handle_wheel(1);
+        assert_eq!(0, test.get_render_data().scroll_y);
     }
 
     #[test]
     fn test_that_unvisible_rows_have_height_1() {
-        let arena = Arena::new();
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(25);
-        app.handle_paste(
-            "1\n2\n\n[1;2;3;4]".repeat(10).to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
+        let test = create_app2(25);
+        test.repeated_paste("1\n2\n\n[1;2;3;4]", 10);
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
 
         for _ in 0..3 {
-            app.handle_wheel(1);
+            test.app.borrow_mut().handle_wheel(1);
         }
-        app.handle_wheel(1);
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
+        test.app.borrow_mut().handle_wheel(1);
+        test.render();
+        assert_eq!(
+            test.get_render_data().get_render_y(content_y(3)),
+            Some(canvas_y(-1))
         );
         assert_eq!(
-            app.render_data.get_render_y(EditorY::new(3)),
-            Some(RenderPosY::new(-1))
+            test.app
+                .borrow()
+                .render_data
+                .get_rendered_height(content_y(3)),
+            6
         );
-        assert_eq!(app.render_data.get_rendered_height(EditorY::new(3)), 6);
         assert_eq!(
-            app.render_data.get_render_y(EditorY::new(4)),
-            Some(RenderPosY::new(0))
+            test.get_render_data().get_render_y(content_y(4)),
+            Some(canvas_y(0))
         );
-        assert_eq!(app.render_data.get_rendered_height(EditorY::new(4)), 1);
+        assert_eq!(
+            test.app
+                .borrow()
+                .render_data
+                .get_rendered_height(content_y(4)),
+            1
+        );
     }
 
     #[test]
     fn test_that_unvisible_rows_contribute_with_only_1_height_to_calc_content_height() {
-        let arena = Arena::new();
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(25);
-        app.handle_paste(
-            "1\n2\n\n[1;2;3;4]".repeat(10).to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
+        let test = create_app2(25);
+        test.repeated_paste("1\n2\n\n[1;2;3;4]", 10);
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
 
         for _ in 0..4 {
-            app.handle_wheel(1);
+            test.app.borrow_mut().handle_wheel(1);
         }
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
+        test.render();
+        assert_eq!(
+            46,
+            NoteCalcApp::calc_full_content_height(&test.get_render_data())
         );
-        assert_eq!(46, NoteCalcApp::calc_full_content_height(&app.render_data));
     }
 
     #[test]
     fn test_stepping_into_scrolled_matrix_panic() {
-        let arena = Arena::new();
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(25);
-        app.handle_paste(
-            "1\n2\n\n[1;2;3;4]".repeat(10).to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
+        let test = create_app2(25);
+        test.repeated_paste("1\n2\n\n[1;2;3;4]", 10);
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
 
-        app.editor
-            .set_selection_save_col(Selection::single(Pos::from_row_column(0, 0)));
+        test.set_cursor_row_col(0, 0);
 
         for _ in 0..2 {
-            app.handle_input_and_update_tokens_plus_redraw_requirements(
-                EditorInputEvent::Down,
-                InputModifiers::none(),
-                &arena,
-                &units,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-                &mut editor_objects,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            test.render();
         }
-        app.handle_wheel(1);
-        app.handle_wheel(1);
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.app.borrow_mut().handle_wheel(1);
+        test.app.borrow_mut().handle_wheel(1);
+        test.render();
 
-        app.handle_input_and_update_tokens_plus_redraw_requirements(
-            EditorInputEvent::Down,
-            InputModifiers::none(),
-            &arena,
-            &units,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-            &mut editor_objects,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.input(EditorInputEvent::Down, InputModifiers::none());
+        test.render();
     }
 
     #[test]
     fn tall_rows_are_considered_in_scrollbar_height_calc() {
-        let arena = Arena::new();
         const CANVAS_HEIGHT: usize = 25;
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(CANVAS_HEIGHT);
-        app.handle_paste(
-            "1\n2\n\n[1;2;3;4]".repeat(5).to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
+        let test = create_app2(CANVAS_HEIGHT);
+        test.repeated_paste("1\n2\n\n[1;2;3;4]", 5);
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
 
-        let mut result_buffer = [0; 128];
         let mut render_buckets = RenderBuckets::new();
-        app.render(
-            &units,
-            &mut render_buckets,
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let mut result_buffer = [0; 128];
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
 
         match &render_buckets.custom_commands[Layer::BehindText as usize][1] {
             OutputMessage::RenderRectangle { x, y, w, h } => {
@@ -16092,586 +8888,308 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
 
     #[test]
     fn test_no_scrolling_in_empty_document() {
-        let arena = Arena::new();
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(25);
-        app.handle_paste(
-            "1".to_owned(),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
+        let test = create_app2(25);
+        test.paste("1");
 
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
 
-        app.handle_wheel(1);
+        test.app.borrow_mut().handle_wheel(1);
 
-        let mut result_buffer = [0; 128];
-        let mut render_buckets = RenderBuckets::new();
-        app.render(
-            &units,
-            &mut render_buckets,
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        test.render();
 
-        assert_eq!(0, app.render_data.scroll_y);
+        assert_eq!(0, test.get_render_data().scroll_y);
     }
 
     #[test]
     fn test_that_no_overscrolling2() {
-        let arena = Arena::new();
-        let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-            create_app(35);
-        app.handle_paste(
-            "aaaaaaaaaaaa\n".repeat(35),
-            &units,
-            &arena,
-            &mut tokens,
-            &mut results,
-            &mut vars,
-        );
-        let mut result_buffer = [0; 128];
-        app.render(
-            &units,
-            &mut RenderBuckets::new(),
-            &mut result_buffer,
-            &arena,
-            &tokens,
-            &results,
-            &vars,
-            &mut editor_objects,
-        );
+        let test = create_app2(35);
+        test.repeated_paste("aaaaaaaaaaaa\n", 35);
+        test.render();
 
-        app.handle_wheel(1);
-        assert_eq!(1, app.render_data.scroll_y);
-        app.handle_wheel(1);
-        assert_eq!(1, app.render_data.scroll_y);
+        test.app.borrow_mut().handle_wheel(1);
+        assert_eq!(1, test.get_render_data().scroll_y);
+        test.app.borrow_mut().handle_wheel(1);
+        assert_eq!(1, test.get_render_data().scroll_y);
     }
 
     #[test]
     fn test_that_scrolled_result_is_not_rendered() {
-        let arena = Arena::new();
-
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            app.handle_paste(
-                "1\n2\n3\n".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.handle_paste(
-                "aaaaaaaaaaaa\n".repeat(34),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
+            let test = create_app2(35);
+            test.paste("1\n2\n3\n");
+            test.repeated_paste("aaaaaaaaaaaa\n", 34);
 
             let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&["1", "2", "3"][..], &result_buffer);
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(0)),
-                Some(RenderPosY::new(0))
+                test.get_render_data().get_render_y(content_y(0)),
+                Some(canvas_y(0))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(1)),
-                Some(RenderPosY::new(1))
+                test.get_render_data().get_render_y(content_y(1)),
+                Some(canvas_y(1))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(2)),
-                Some(RenderPosY::new(2))
+                test.get_render_data().get_render_y(content_y(2)),
+                Some(canvas_y(2))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(35)),
-                Some(RenderPosY::new(35))
+                test.get_render_data().get_render_y(content_y(35)),
+                Some(canvas_y(35))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(36)),
-                Some(RenderPosY::new(36))
+                test.get_render_data().get_render_y(content_y(36)),
+                Some(canvas_y(36))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(37)),
-                Some(RenderPosY::new(37))
+                test.get_render_data().get_render_y(content_y(37)),
+                Some(canvas_y(37))
             );
-            assert_eq!(app.render_data.get_render_y(EditorY::new(38)), None,);
-            assert_eq!(app.render_data.is_visible(EditorY::new(35)), false);
-            assert_eq!(app.render_data.is_visible(EditorY::new(36)), false);
-            assert_eq!(app.render_data.is_visible(EditorY::new(37)), false);
-            assert_eq!(app.render_data.is_visible(EditorY::new(38)), false);
+            assert_eq!(test.get_render_data().get_render_y(content_y(38)), None,);
+            assert_eq!(test.get_render_data().is_visible(content_y(35)), false);
+            assert_eq!(test.get_render_data().is_visible(content_y(36)), false);
+            assert_eq!(test.get_render_data().is_visible(content_y(37)), false);
+            assert_eq!(test.get_render_data().is_visible(content_y(38)), false);
         }
 
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            app.handle_paste(
-                "1\n2\n3\n".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.handle_paste(
-                "aaaaaaaaaaaa\n".repeat(34),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("1\n2\n3\n");
+            test.repeated_paste("aaaaaaaaaaaa\n", 34);
+            test.render();
 
-            app.handle_wheel(1);
+            test.app.borrow_mut().handle_wheel(1);
             let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
+            test.render_get_result_buf(&mut result_buffer[..]);
+            assert_eq!(
+                test.get_render_data().get_render_y(content_y(0)),
+                Some(canvas_y(-1))
+            );
+            assert!(!test.get_render_data().is_visible(content_y(0)));
+            assert_eq!(
+                test.get_render_data().get_render_y(content_y(1)),
+                Some(canvas_y(0))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(0)),
-                Some(RenderPosY::new(-1))
-            );
-            assert!(!app.render_data.is_visible(EditorY::new(0)));
-            assert_eq!(
-                app.render_data.get_render_y(EditorY::new(1)),
-                Some(RenderPosY::new(0))
+                test.get_render_data().get_render_y(content_y(2)),
+                Some(canvas_y(1))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(2)),
-                Some(RenderPosY::new(1))
+                test.get_render_data().get_render_y(content_y(35)),
+                Some(canvas_y(34))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(35)),
-                Some(RenderPosY::new(34))
+                test.get_render_data().get_render_y(content_y(36)),
+                Some(canvas_y(35))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(36)),
-                Some(RenderPosY::new(35))
+                test.get_render_data().get_render_y(content_y(37)),
+                Some(canvas_y(36))
             );
-            assert_eq!(
-                app.render_data.get_render_y(EditorY::new(37)),
-                Some(RenderPosY::new(36))
-            );
-            assert_eq!(app.render_data.get_render_y(EditorY::new(38)), None);
+            assert_eq!(test.get_render_data().get_render_y(content_y(38)), None);
             assert_results(&["2", "3"][..], &result_buffer);
         }
 
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            app.handle_paste(
-                "1\n2\n3\n".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.handle_paste(
-                "aaaaaaaaaaaa\n".repeat(34),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("1\n2\n3\n");
+            test.repeated_paste("aaaaaaaaaaaa\n", 34);
+            test.render();
 
-            app.handle_wheel(1);
-            app.handle_wheel(1);
+            test.app.borrow_mut().handle_wheel(1);
+            test.app.borrow_mut().handle_wheel(1);
             let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&["3"][..], &result_buffer);
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(0)),
-                Some(RenderPosY::new(-2))
+                test.get_render_data().get_render_y(content_y(0)),
+                Some(canvas_y(-2))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(1)),
-                Some(RenderPosY::new(-1))
+                test.get_render_data().get_render_y(content_y(1)),
+                Some(canvas_y(-1))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(2)),
-                Some(RenderPosY::new(0))
+                test.get_render_data().get_render_y(content_y(2)),
+                Some(canvas_y(0))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(35)),
-                Some(RenderPosY::new(33))
+                test.get_render_data().get_render_y(content_y(35)),
+                Some(canvas_y(33))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(36)),
-                Some(RenderPosY::new(34))
+                test.get_render_data().get_render_y(content_y(36)),
+                Some(canvas_y(34))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(37)),
-                Some(RenderPosY::new(35))
+                test.get_render_data().get_render_y(content_y(37)),
+                Some(canvas_y(35))
             );
-            assert_eq!(app.render_data.get_render_y(EditorY::new(38)), None);
+            assert_eq!(test.get_render_data().get_render_y(content_y(38)), None);
         }
 
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            app.handle_paste(
-                "1\n2\n3\n".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.handle_paste(
-                "aaaaaaaaaaaa\n".repeat(34),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("1\n2\n3\n");
+            test.repeated_paste("aaaaaaaaaaaa\n", 34);
+            test.render();
 
-            app.handle_wheel(1);
-            app.handle_wheel(1);
-            app.handle_wheel(1);
+            test.app.borrow_mut().handle_wheel(1);
+            test.app.borrow_mut().handle_wheel(1);
+            test.app.borrow_mut().handle_wheel(1);
             let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&[""][..], &result_buffer);
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(0)),
-                Some(RenderPosY::new(-3))
+                test.get_render_data().get_render_y(content_y(0)),
+                Some(canvas_y(-3))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(1)),
-                Some(RenderPosY::new(-2))
+                test.get_render_data().get_render_y(content_y(1)),
+                Some(canvas_y(-2))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(2)),
-                Some(RenderPosY::new(-1))
+                test.get_render_data().get_render_y(content_y(2)),
+                Some(canvas_y(-1))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(35)),
-                Some(RenderPosY::new(32))
+                test.get_render_data().get_render_y(content_y(35)),
+                Some(canvas_y(32))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(36)),
-                Some(RenderPosY::new(33))
+                test.get_render_data().get_render_y(content_y(36)),
+                Some(canvas_y(33))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(37)),
-                Some(RenderPosY::new(34))
+                test.get_render_data().get_render_y(content_y(37)),
+                Some(canvas_y(34))
             );
-            assert_eq!(app.render_data.get_render_y(EditorY::new(38)), None);
+            assert_eq!(test.get_render_data().get_render_y(content_y(38)), None);
         }
 
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            app.handle_paste(
-                "1\n2\n3\n".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.handle_paste(
-                "aaaaaaaaaaaa\n".repeat(34),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("1\n2\n3\n");
+            test.repeated_paste("aaaaaaaaaaaa\n", 34);
+            test.render();
 
-            app.handle_wheel(1);
-            app.handle_wheel(1);
-            app.handle_wheel(1);
-            app.handle_wheel(0);
+            test.app.borrow_mut().handle_wheel(1);
+            test.app.borrow_mut().handle_wheel(1);
+            test.app.borrow_mut().handle_wheel(1);
+            test.app.borrow_mut().handle_wheel(0);
             let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&["3"][..], &result_buffer);
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(0)),
-                Some(RenderPosY::new(-2))
+                test.get_render_data().get_render_y(content_y(0)),
+                Some(canvas_y(-2))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(1)),
-                Some(RenderPosY::new(-1))
+                test.get_render_data().get_render_y(content_y(1)),
+                Some(canvas_y(-1))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(2)),
-                Some(RenderPosY::new(0))
+                test.get_render_data().get_render_y(content_y(2)),
+                Some(canvas_y(0))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(35)),
-                Some(RenderPosY::new(33))
+                test.get_render_data().get_render_y(content_y(35)),
+                Some(canvas_y(33))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(36)),
-                Some(RenderPosY::new(34))
+                test.get_render_data().get_render_y(content_y(36)),
+                Some(canvas_y(34))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(37)),
-                Some(RenderPosY::new(35))
+                test.get_render_data().get_render_y(content_y(37)),
+                Some(canvas_y(35))
             );
-            assert_eq!(app.render_data.get_render_y(EditorY::new(38)), None);
+            assert_eq!(test.get_render_data().get_render_y(content_y(38)), None);
         }
 
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            app.handle_paste(
-                "1\n2\n3\n".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.handle_paste(
-                "aaaaaaaaaaaa\n".repeat(34),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("1\n2\n3\n");
+            test.repeated_paste("aaaaaaaaaaaa\n", 34);
+            test.render();
 
-            app.handle_wheel(1);
-            app.handle_wheel(1);
-            app.handle_wheel(1);
-            app.handle_wheel(0);
-            app.handle_wheel(0);
+            test.app.borrow_mut().handle_wheel(1);
+            test.app.borrow_mut().handle_wheel(1);
+            test.app.borrow_mut().handle_wheel(1);
+            test.app.borrow_mut().handle_wheel(0);
+            test.app.borrow_mut().handle_wheel(0);
+
             let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&["2", "3"][..], &result_buffer);
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(0)),
-                Some(RenderPosY::new(-1))
+                test.get_render_data().get_render_y(content_y(0)),
+                Some(canvas_y(-1))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(1)),
-                Some(RenderPosY::new(0))
+                test.get_render_data().get_render_y(content_y(1)),
+                Some(canvas_y(0))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(2)),
-                Some(RenderPosY::new(1))
+                test.get_render_data().get_render_y(content_y(2)),
+                Some(canvas_y(1))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(35)),
-                Some(RenderPosY::new(34))
+                test.get_render_data().get_render_y(content_y(35)),
+                Some(canvas_y(34))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(36)),
-                Some(RenderPosY::new(35))
+                test.get_render_data().get_render_y(content_y(36)),
+                Some(canvas_y(35))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(37)),
-                Some(RenderPosY::new(36))
+                test.get_render_data().get_render_y(content_y(37)),
+                Some(canvas_y(36))
             );
-            assert_eq!(app.render_data.get_render_y(EditorY::new(38)), None);
+            assert_eq!(test.get_render_data().get_render_y(content_y(38)), None);
         }
 
         {
-            let (mut app, units, (mut tokens, mut results, mut vars, mut editor_objects)) =
-                create_app(35);
-            app.handle_paste(
-                "1\n2\n3\n".to_owned(),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            app.handle_paste(
-                "aaaaaaaaaaaa\n".repeat(34),
-                &units,
-                &arena,
-                &mut tokens,
-                &mut results,
-                &mut vars,
-            );
-            let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            let test = create_app2(35);
+            test.paste("1\n2\n3\n");
+            test.repeated_paste("aaaaaaaaaaaa\n", 34);
+            test.render();
 
-            app.handle_wheel(1);
-            app.handle_wheel(1);
-            app.handle_wheel(1);
-            app.handle_wheel(0);
-            app.handle_wheel(0);
-            app.handle_wheel(0);
+            test.app.borrow_mut().handle_wheel(1);
+            test.app.borrow_mut().handle_wheel(1);
+            test.app.borrow_mut().handle_wheel(1);
+            test.app.borrow_mut().handle_wheel(0);
+            test.app.borrow_mut().handle_wheel(0);
+            test.app.borrow_mut().handle_wheel(0);
             let mut result_buffer = [0; 128];
-            app.render(
-                &units,
-                &mut RenderBuckets::new(),
-                &mut result_buffer,
-                &arena,
-                &tokens,
-                &results,
-                &vars,
-                &mut editor_objects,
-            );
+            test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&["1", "2", "3"][..], &result_buffer);
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(0)),
-                Some(RenderPosY::new(0))
+                test.get_render_data().get_render_y(content_y(0)),
+                Some(canvas_y(0))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(1)),
-                Some(RenderPosY::new(1))
+                test.get_render_data().get_render_y(content_y(1)),
+                Some(canvas_y(1))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(2)),
-                Some(RenderPosY::new(2))
+                test.get_render_data().get_render_y(content_y(2)),
+                Some(canvas_y(2))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(35)),
-                Some(RenderPosY::new(35))
+                test.get_render_data().get_render_y(content_y(35)),
+                Some(canvas_y(35))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(36)),
-                Some(RenderPosY::new(36))
+                test.get_render_data().get_render_y(content_y(36)),
+                Some(canvas_y(36))
             );
             assert_eq!(
-                app.render_data.get_render_y(EditorY::new(37)),
-                Some(RenderPosY::new(37))
+                test.get_render_data().get_render_y(content_y(37)),
+                Some(canvas_y(37))
             );
-            assert_eq!(app.render_data.get_render_y(EditorY::new(38)), None);
+            assert_eq!(test.get_render_data().get_render_y(content_y(38)), None);
         }
     }
 }

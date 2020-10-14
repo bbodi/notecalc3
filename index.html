@@ -123,10 +123,10 @@
 
 </div>
 <script src="https://ajax.googleapis.com/ajax/libs/webfont/1.5.10/webfont.js"></script>
-<script src="frontend-web/pkg/frontend_web.js?4"></script>
+<script src="frontend-web/pkg/frontend_web.js?5"></script>
 <script>
-    let canvas_dirty = 0;
-    let last_drag_event = null;
+    let canvas_dirty = false;
+    let can_scroll = true;
     let FONT_HEIGHT = 16;
     // 3 px because of this char: ⎫, it is 20 px tall but rendered at 3px above bottom
     let FONT_VERT_PADDING = 1;
@@ -195,38 +195,39 @@
 
         init_canvas(canvas);
         wasm_bindgen.handle_resize(app_ptr, CLIENT_WIDTH_IN_CHARS);
-        canvas_dirty += 1;
+        set_canvas_dirty('resize canvas');
     }
 
     function js_log(str) {
         console.log(str);
     }
 
+    function set_canvas_dirty(reason) {
+        console.log("DIRTY", reason);
+        canvas_dirty = true;
+    }
+
+    let need_update_selected_text = false;
     function tick(now) {
-        let need_update_selected_text = false;
-        if (last_drag_event !== null) {
-            wasm_bindgen.handle_drag(app_ptr, last_drag_event.x | 0, last_drag_event.y | 0);
-            last_drag_event = null;
-            need_update_selected_text = true;
-            canvas_dirty += 1;
-        }
         if (wasm_bindgen.handle_time(app_ptr, now)) {
-            canvas_dirty += 1;
+            set_canvas_dirty('tick');
             if (content_was_modified) {
                 save_content();
             }
         }
         let started = new Date().getTime();
-        if (canvas_dirty > 0) {
+        if (canvas_dirty) {
             wasm_bindgen.render(app_ptr);
             if (need_update_selected_text) {
+                need_update_selected_text = false;
                 // hack: it must be called after the render
                 update_selected_text();
             }
             let command_count = redraw();
             let took = new Date().getTime() - started;
-            console.log('render: ', took, ' ms, render command count: ', command_count);
-            canvas_dirty -= 1;
+            console.log('render: ', took, ' ms, render command count: ', command_count, "memory: ", wasm_bindgen.get_allocated_bytes(app_ptr));
+            canvas_dirty = false;
+            can_scroll = true;
         }
         draw_pulsing_rects(pulsing_rects, started);
 
@@ -282,11 +283,12 @@
     }
 
     function on_mouse_up(e) {
+        console.log("Mouse up")
         wasm_bindgen.handle_mouse_up(app_ptr);
     }
 
     function on_wheel(e) {
-        if (e.ctrlKey) {
+        if (e.ctrlKey || can_scroll === false) {
             return;
         }
         e.preventDefault();
@@ -297,8 +299,10 @@
         } else if (e.deltaY < 0) {
             dir = 0;
         }
-        wasm_bindgen.handle_wheel(app_ptr, dir);
-        canvas_dirty += 1;
+        if (wasm_bindgen.handle_wheel(app_ptr, dir) === true) {
+            set_canvas_dirty('wheel');
+            can_scroll = false;
+        }
     }
 
 
@@ -307,7 +311,7 @@
             const char_x = (e.offsetX) / font_width;
             const char_y = (e.offsetY) / line_height;
             wasm_bindgen.handle_click(app_ptr, char_x | 0, char_y | 0);
-            canvas_dirty += 2;
+            set_canvas_dirty('click');
         }
     }
 
@@ -324,7 +328,11 @@
         if (e.buttons === 1) { //dragged with left mouse button
             const char_x = (e.offsetX) / font_width;
             const char_y = (e.offsetY) / line_height;
-            last_drag_event = {x: char_x, y: char_y};
+            const last_drag_event = {x: char_x, y: char_y};
+            if (wasm_bindgen.handle_drag(app_ptr, last_drag_event.x | 0, last_drag_event.y | 0)) {
+                need_update_selected_text = true;
+                set_canvas_dirty('dragging');
+            }
         }
     }
 
@@ -332,7 +340,7 @@
         if (e.key === 'Alt') {
             wasm_bindgen.alt_key_released(app_ptr);
             set_content_was_modified();
-            canvas_dirty += 1;
+            set_canvas_dirty('key up');
             e.preventDefault();
             return false;
         }
@@ -422,12 +430,12 @@
         }
         if (e.ctrlKey && (e.key === 'c' || e.key === 'x')) {
             if (e.key === 'x') {
-                canvas_dirty += 1;
+                set_canvas_dirty('ctrl-x');
             }
             return true;
         }
 
-        canvas_dirty += 1;
+        set_canvas_dirty('keydown');
         e.preventDefault();
         return false;
     }
@@ -565,7 +573,7 @@
 
     function paste_from_clipboard(pasted_text) {
         wasm_bindgen.handle_paste(app_ptr, pasted_text);
-        canvas_dirty += 1;
+        set_canvas_dirty('paste');
         save_content();
         return false;
     }
@@ -673,12 +681,12 @@
             tabs[active_tab_index].encoded_content
         );
         window.location.hash = tabs[active_tab_index].encoded_content;
-        canvas_dirty += 1;
+        set_canvas_dirty('reload content');
     }
 
     // http://localhost:5000/eJytU81u2zAMvuspeGwzF42dpH_BsMO6nXYasGGAkQJ0otqKZKuVlLTxW_QRcsx5QA9Db0bfa5-dZetQDFiBCo4iSuRH8iOZfpvQ--DMwS1pNZemuTfNxlPVbIxuHky0fTwXKU2gUMpKBrq0rmzWdbP2fEaFvI0oU1VEsnbSU-DcGjxF5KdKVkFdqmlEV7YK1vtmnXdITBXnq7LZOBmaB8raXZO3WrMhuPYyy6SmpTWsIwYIG8VeVfm7zvyrdEFNoYrrvKKSg1O3VpP0ANpUgNfNfZ3Jyj_eUbAaUWt8HzrjwJnVW5wlGy4VFaoKERU2X5HErw0LMBpn32xyGFKpzEoCF-HMmYwswALUctrywiEAAknj8gGuZ6BQEte0mCMpV3LOXe5dfp0J-Gtjzhi5g_CrlvO5BZlm5SS5zg3s5UwF68JTk7_KtOcLdRnoDemFq63b7xS_fP6UPd4ZKFqzZF8p8BHYBTYgii4uOqWPxkL4TViN3AIiyDKHkNg45tZK1XIm_RxMSI2Ul83aBFsHZMPUj5PBcHR0fHL6_yfxcpPXOb2K45t2CZlfv2CJ7b4dn23hQLuRJcRdn5muXX4VBv1iNYpQqCUHbdsp2z1NMYp1t5MvFm3hayEyp7wmuzA06Pf7dEijfmme3-611_sCTTRjoMdDOj7F_aAv4sO9RJeHxb4QFVNpfUBP5uhJRKkpX1nnueoGo7Bt3Wfsib2s26Y5Oych0CpvadT-9Sju94XA2069bn7suqb5DrV48O_XHg3Fkl2rlYiDOI2jJBpM_pyod0OtMKZkDImZPXfrmsUTlXQYj58rwGsp893Ew_P9EmI6SDrDcVvg05M4GkVHAKG0gxgPJ4xsZ55nQqRpEtEA3ySidBTRUUTHkwlGLxZiL056w2QfwvAEXHd0igQ4SOcnZB_IjQ
     async function run() {
-        wasm = await wasm_bindgen('frontend-web/pkg/frontend_web_bg.wasm?4');
+        wasm = await wasm_bindgen('frontend-web/pkg/frontend_web_bg.wasm?5');
 
         const t = calc_and_set_client_width();
         CLIENT_WIDTH_IN_CHARS = t[0];

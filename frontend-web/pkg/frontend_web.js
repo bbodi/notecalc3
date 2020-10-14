@@ -171,9 +171,20 @@ __exports.handle_time = function(app_ptr, now) {
 * @param {number} app_ptr
 * @param {number} x
 * @param {number} y
+* @returns {boolean}
 */
 __exports.handle_drag = function(app_ptr, x, y) {
-    wasm.handle_drag(app_ptr, x, y);
+    var ret = wasm.handle_drag(app_ptr, x, y);
+    return ret !== 0;
+};
+
+/**
+* @param {number} app_ptr
+* @returns {number}
+*/
+__exports.get_allocated_bytes = function(app_ptr) {
+    var ret = wasm.get_allocated_bytes(app_ptr);
+    return ret >>> 0;
 };
 
 /**
@@ -188,9 +199,11 @@ __exports.handle_click = function(app_ptr, x, y) {
 /**
 * @param {number} app_ptr
 * @param {number} dir
+* @returns {boolean}
 */
 __exports.handle_wheel = function(app_ptr, dir) {
-    wasm.handle_wheel(app_ptr, dir);
+    var ret = wasm.handle_wheel(app_ptr, dir);
+    return ret !== 0;
 };
 
 /**

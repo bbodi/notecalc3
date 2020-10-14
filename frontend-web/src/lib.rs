@@ -211,15 +211,20 @@ pub fn handle_time(app_ptr: u32, now: u32) -> bool {
 }
 
 #[wasm_bindgen]
-pub fn handle_drag(app_ptr: u32, x: usize, y: usize) {
-    AppPointers::mut_app(app_ptr).handle_drag(x, RenderPosY::new(y as isize));
+pub fn handle_drag(app_ptr: u32, x: usize, y: usize) -> bool {
+    return AppPointers::mut_app(app_ptr).handle_drag(x, CanvasY::new(y as isize));
+}
+
+#[wasm_bindgen]
+pub fn get_allocated_bytes(app_ptr: u32) -> usize {
+    return AppPointers::allocator(app_ptr).len();
 }
 
 #[wasm_bindgen]
 pub fn handle_click(app_ptr: u32, x: usize, y: usize) {
     AppPointers::mut_app(app_ptr).handle_click(
         x,
-        RenderPosY::new(y as isize),
+        CanvasY::new(y as isize),
         AppPointers::editor_objects(app_ptr),
         AppPointers::units(app_ptr),
         AppPointers::allocator(app_ptr),
@@ -230,8 +235,8 @@ pub fn handle_click(app_ptr: u32, x: usize, y: usize) {
 }
 
 #[wasm_bindgen]
-pub fn handle_wheel(app_ptr: u32, dir: usize) {
-    AppPointers::mut_app(app_ptr).handle_wheel(dir);
+pub fn handle_wheel(app_ptr: u32, dir: usize) -> bool {
+    return AppPointers::mut_app(app_ptr).handle_wheel(dir);
 }
 
 #[wasm_bindgen]

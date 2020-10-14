@@ -12,7 +12,7 @@ use crate::Variables;
 // it is limited by bigdecimal crate :(
 // TODO: download and mofiy the crate
 // modositsd ugy, h a beégetett 100 precision legyen akár 1000,
-// de adjon vissza valmai jelzést, ha egy irracionális számmal van dolgunk (azaz elértük
+// de adjon vissza valami jelzést, ha egy irracionális számmal van dolgunk (azaz elértük
 // a limitet, és akkor arra a számolásra limitáljuk a precisiont
 // A megoldás a problémára az volt, h jelenleg 100 precisionnel számol a rendszer
 // de a számokat ahol használjuk 50 precisionnel használjuk, igy a számolási hibák eltünnek
@@ -1409,6 +1409,11 @@ mod tests {
         test_with_dec_count(100, "140k h/ month", "191.6495550992470910335386721423682409308692676249144421629021218343600273785078713210130047912388774992");
 
         test("1 m*km", "1000 m^2");
+    }
+
+    #[test]
+    fn test_financial_without_dollar_sign() {
+        test("2 year / 1 month", "24");
     }
 
     #[test]
