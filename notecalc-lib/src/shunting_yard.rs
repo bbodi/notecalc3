@@ -335,7 +335,7 @@ impl ShuntingYard {
                             });
                             output_stack.push(fn_token_type.clone());
                         }
-                        if v.can_be_valid_closing_token() {
+                        if v.can_be_valid_closing_token() && !output_stack.is_empty() {
                             ShuntingYard::send_everything_to_output(
                                 &mut operator_stack,
                                 output_stack,
@@ -1821,6 +1821,12 @@ pub mod tests {
     #[test]
     fn line_references_are_not_reverted_back_to_str() {
         test_tokens("100 &[1]", &[num(100), str(" "), line_ref("&[1]")]);
+    }
+
+    #[test]
+    fn test_panic() {
+        test_tokens("()", &[str("("), str(")")]);
+        test_tokens("[]", &[str("["), str("]")]);
     }
 
     #[test]

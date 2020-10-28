@@ -315,7 +315,6 @@ impl Editor {
         content: &EditorContent<T>,
     ) {
         self.clipboard.clear();
-        // shitty borrow checker
         let mut dst = std::mem::replace(&mut self.clipboard, String::new());
         content.write_selection_into(selection, &mut dst);
         self.clipboard = dst;

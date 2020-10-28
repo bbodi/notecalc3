@@ -138,6 +138,7 @@
     let active_tab_btn_dom;
     let backbuffer_textarea;
     let tab_index_counter = 0;
+    let last_drag_event = {x: -1, y: -1};
     const pulsing_rects = [];
     const overlay_canvas = document.getElementById('overlay_canvas');
     const canvas = document.getElementById("canvas");
@@ -326,12 +327,13 @@
 
     function on_drag(e) {
         if (e.buttons === 1) { //dragged with left mouse button
-            const char_x = (e.offsetX) / font_width;
-            const char_y = (e.offsetY) / line_height;
-            const last_drag_event = {x: char_x, y: char_y};
-            if (wasm_bindgen.handle_drag(app_ptr, last_drag_event.x | 0, last_drag_event.y | 0)) {
+            const char_x = ((e.offsetX) / font_width)| 0;
+            const char_y = ((e.offsetY) / line_height)| 0;
+            const need_update = last_drag_event.x !== char_x || last_drag_event.y !== char_y;
+            if (need_update && wasm_bindgen.handle_drag(app_ptr, char_x, char_y)) {
                 need_update_selected_text = true;
                 set_canvas_dirty('dragging');
+                last_drag_event = {x: char_x, y: char_y};
             }
         }
     }
@@ -417,7 +419,6 @@
             let str = wasm_bindgen.get_selected_rows_with_results(app_ptr);
             modal.style.display = "block";
             document.getElementById('modal_content').innerText = str;
-            // alert(str);
             return false;
         }
 
@@ -672,6 +673,7 @@
     }
 
     function reload_content(tab_index) {
+        pulsing_rects.length = 0;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         let notecalc_data = JSON.parse(localStorage.getItem('notecalc'));
         let tabs = notecalc_data.tabs;

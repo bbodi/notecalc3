@@ -176,11 +176,16 @@ pub mod helper {
             EditorRowFlags { bitset: 0 }
         }
 
+        pub fn set(&mut self, row_index: usize) {
+            self.bitset |= 1u64 << row_index;
+        }
+
         pub fn single_row(row_index: usize) -> EditorRowFlags {
             let bitset = 1u64 << row_index;
             EditorRowFlags { bitset }
         }
 
+        #[inline]
         pub fn clear(&mut self) {
             self.bitset = 0;
         }
@@ -223,16 +228,28 @@ pub mod helper {
             EditorRowFlags { bitset }
         }
 
+        #[inline]
         pub fn merge(&mut self, other: EditorRowFlags) {
             self.bitset |= other.bitset;
         }
 
+        #[inline]
         pub fn need(&self, line_index: ContentIndex) -> bool {
             ((1 << line_index.0) & self.bitset) != 0
         }
 
+        #[inline]
         pub fn is_true(&self, line_index: usize) -> bool {
-            self.need(content_y(line_index))
+            let sh = self.need(content_y(line_index));
+            let _anyad = sh;
+            return sh;
+        }
+
+        #[inline]
+        pub fn is_false(&self, line_index: usize) -> bool {
+            let sh = !self.is_true(line_index);
+            let _anyad = sh;
+            return sh;
         }
     }
 
@@ -975,7 +992,8 @@ impl MatrixEditing {
 #[derive(Eq, PartialEq, Clone, Copy)]
 pub enum EditorObjectType {
     Matrix { row_count: usize, col_count: usize },
-    LineReference,
+    LineReference { var_index: usize },
+    Variable { var_index: usize },
     SimpleTokens,
 }
 
@@ -1014,6 +1032,11 @@ pub enum MouseState {
     RightGutterIsDragged,
 }
 
+pub struct EditorObjId {
+    content_index: ContentIndex,
+    var_index: usize,
+}
+
 pub struct NoteCalcApp {
     pub client_width: usize,
     pub editor: Editor,
@@ -1024,7 +1047,9 @@ pub struct NoteCalcApp {
     pub mouse_state: Option<MouseState>,
     pub result_area_redraw: EditorRowFlags,
     pub editor_area_redraw: EditorRowFlags,
-    pub result_has_changed: EditorRowFlags,
+    pub result_change_flag: EditorRowFlags,
+    pub updated_line_ref_obj_indices: Vec<EditorObjId>,
+    pub editor_objs_referencing_current_line: Vec<EditorObjId>,
     pub render_data: GlobalRenderData,
 }
 
@@ -1048,7 +1073,9 @@ impl NoteCalcApp {
             mouse_state: None,
             result_area_redraw: EditorRowFlags::all_rows_starting_at(0),
             editor_area_redraw: EditorRowFlags::all_rows_starting_at(0),
-            result_has_changed: EditorRowFlags::empty(),
+            result_change_flag: EditorRowFlags::empty(),
+            updated_line_ref_obj_indices: Vec::with_capacity(16),
+            editor_objs_referencing_current_line: Vec::with_capacity(16),
             render_data: GlobalRenderData::new(
                 client_width,
                 client_height,
@@ -1057,6 +1084,23 @@ impl NoteCalcApp {
                 RIGHT_GUTTER_WIDTH,
             ),
         }
+    }
+
+    pub fn get_selected_text(&self) -> Option<String> {
+        // TODO: use fix buffer don't allocate
+        let mut str = String::with_capacity(64);
+        return if let Some(matrix_editing) = &self.matrix_editing {
+            matrix_editing
+                .editor_content
+                .write_selection_into(matrix_editing.editor.get_selection(), &mut str);
+            Some(str)
+        } else if self.editor.get_selection().is_range().is_some() {
+            self.editor_content
+                .write_selection_into(self.editor.get_selection(), &mut str);
+            Some(str)
+        } else {
+            None
+        };
     }
 
     pub fn set_normalized_content<'b>(
@@ -1089,6 +1133,7 @@ impl NoteCalcApp {
             value: Err(()),
         });
         self.render_data.clear();
+        self.editor_objs_referencing_current_line.clear();
         self.update_tokens_and_redraw_requirements(
             RowModificationType::AllLinesFrom(0),
             units,
@@ -1130,6 +1175,8 @@ impl NoteCalcApp {
         results: &Results,
         vars: &Variables,
         editor_objs: &mut EditorObjects,
+        updated_line_ref_obj_indices: &[EditorObjId],
+        editor_objs_referencing_current_line: &[EditorObjId],
     ) {
         // x, h
         let mut rerendered_lines: SmallVec<[((CanvasY, usize), RedrawTarget); MAX_LINE_COUNT]> =
@@ -1204,6 +1251,9 @@ impl NoteCalcApp {
                     highlight_current_line(render_buckets, &r, editor, &gr, redraw_result_area);
 
                     if let Some(tokens) = &tokens[editor_y] {
+                        // TODO: choose a better name
+                        // it means that either we use the nice token rendering (e.g. for matrix it is the multiline matrix stuff),
+                        // or render simply the backend content (e.g. for matrix it is [1;2;3]
                         let need_matrix_renderer =
                             if let Some((first, second)) = editor.get_selection().is_range() {
                                 !(first.row..=second.row).contains(&(editor_y.as_usize()))
@@ -1365,6 +1415,20 @@ impl NoteCalcApp {
             &rerendered_lines,
             &result_has_changed,
         );
+
+        pulse_modified_line_references(
+            render_buckets,
+            gr,
+            updated_line_ref_obj_indices,
+            editor_objs,
+        );
+
+        pulse_editor_objs_referencing_current_line(
+            render_buckets,
+            gr,
+            editor_objs_referencing_current_line,
+            editor_objs,
+        );
     }
 
     pub fn handle_wheel(&mut self, dir: usize) -> bool {
@@ -1515,7 +1579,7 @@ impl NoteCalcApp {
             self.get_obj_at(clicked_x, clicked_row, clicked_y, editor_objs)
         {
             match editor_obj.typ {
-                EditorObjectType::LineReference => {
+                EditorObjectType::LineReference { .. } => {
                     Pos::from_row_column(editor_obj.row.as_usize(), editor_obj.end_x)
                 }
                 EditorObjectType::Matrix {
@@ -1536,7 +1600,7 @@ impl NoteCalcApp {
                     ));
                     Pos::from_row_column(editor_obj.row.as_usize(), editor_obj.start_x + 1)
                 }
-                EditorObjectType::SimpleTokens => {
+                EditorObjectType::SimpleTokens | EditorObjectType::Variable { .. } => {
                     let x_pos_within = clicked_x - editor_obj.rendered_x;
                     Pos::from_row_column(
                         editor_obj.row.as_usize(),
@@ -1554,6 +1618,14 @@ impl NoteCalcApp {
             editor_click_pos.row,
             &self.editor_content,
         );
+
+        // cursor moved to another line
+        /*if prev_selection.get_cursor_pos().row != clicked_row.as_usize() */
+        // there is no diff check, it is possible that after a dragging, the cursor is in the
+        // same line as the clicked one
+        {
+            self.fill_editor_objs_referencing_current_line(clicked_row, tokens, vars);
+        }
 
         let flag = self.calc_rerender_for_cursor_movement(prev_selection, false);
         self.set_redraw_flag(flag, RedrawTarget::Both);
@@ -2172,6 +2244,16 @@ impl NoteCalcApp {
                 } else {
                     false
                 };
+
+                // cursor moved to another line
+                if prev_cursor_pos.row != cursor_pos.row {
+                    self.fill_editor_objs_referencing_current_line(
+                        content_y(cursor_pos.row),
+                        tokens,
+                        vars,
+                    );
+                }
+
                 match modif_type {
                     Some(r) => InputResult {
                         modif: Some(r),
@@ -2234,8 +2316,8 @@ impl NoteCalcApp {
             results: &mut Results,
             vars: &mut Variables,
             editor_y: ContentIndex,
-            result_has_changed: &mut EditorRowFlags,
-        ) -> EditorRowFlags {
+            updated_line_ref_obj_indices: &mut Vec<EditorObjId>,
+        ) -> (bool, EditorRowFlags) {
             // TODO avoid clone
             let prev_var_name = vars[editor_y.as_usize()].as_ref().map(|it| it.name.clone());
 
@@ -2262,7 +2344,7 @@ impl NoteCalcApp {
             let vars: &Variables = vars;
 
             let prev_result = std::mem::replace(&mut results[editor_y], new_result);
-            let needs_dependency_check = {
+            let result_has_changed = {
                 let new_result = &results[editor_y];
                 match (&prev_result, new_result) {
                     (Ok(Some(_)), Err(_)) => true,
@@ -2278,19 +2360,20 @@ impl NoteCalcApp {
             };
 
             let mut rows_to_recalc = EditorRowFlags::empty();
-            if needs_dependency_check {
-                result_has_changed.merge(EditorRowFlags::single_row(editor_y.as_usize()));
-
-                rows_to_recalc.merge(find_line_ref_dependant_lines(
-                    editor_content,
+            if result_has_changed {
+                let line_ref_name =
+                    NoteCalcApp::get_line_ref_name(&editor_content, editor_y.as_usize());
+                rows_to_recalc.merge(NoteCalcApp::find_line_ref_dependant_lines(
+                    &line_ref_name,
                     tokens_per_lines,
                     editor_y.as_usize(),
+                    updated_line_ref_obj_indices,
                 ));
             }
 
             let curr_var_name = vars[editor_y.as_usize()].as_ref().map(|it| &it.name);
-            rows_to_recalc.merge(find_variable_dependant_lines(
-                needs_dependency_check,
+            rows_to_recalc.merge(find_lines_that_affected_by_var_change(
+                result_has_changed,
                 curr_var_name,
                 prev_var_name,
                 tokens_per_lines,
@@ -2301,31 +2384,7 @@ impl NoteCalcApp {
                 tokens_per_lines,
                 editor_y.as_usize(),
             ));
-            return rows_to_recalc;
-        }
-
-        fn find_line_ref_dependant_lines<'b>(
-            editor_content: &EditorContent<LineData>,
-            tokens_per_lines: &AppTokens<'b>,
-            editor_y: usize,
-        ) -> EditorRowFlags {
-            let mut rows_to_recalc = EditorRowFlags::empty();
-            let line_data = editor_content.get_data(editor_y);
-            // TODO opt
-            let line_ref_name: Vec<char> = format!("&[{}]", line_data.line_id).chars().collect();
-            for (i, tokens) in tokens_per_lines.iter().skip(editor_y + 1).enumerate() {
-                if let Some(tokens) = tokens {
-                    for token in &tokens.tokens {
-                        match token.typ {
-                            TokenType::LineReference { .. } if token.ptr == line_ref_name => {
-                                rows_to_recalc.merge(EditorRowFlags::single_row(editor_y + 1 + i));
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-            return rows_to_recalc;
+            return (result_has_changed, rows_to_recalc);
         }
 
         fn find_sum_variable_name(tokens_per_lines: &AppTokens, editor_y: usize) -> EditorRowFlags {
@@ -2354,7 +2413,7 @@ impl NoteCalcApp {
             return rows_to_recalc;
         }
 
-        fn find_variable_dependant_lines<'b>(
+        fn find_lines_that_affected_by_var_change<'b>(
             needs_dependency_check: bool,
             curr_var_name: Option<&Box<[char]>>,
             prev_var_name: Option<Box<[char]>>,
@@ -2463,7 +2522,7 @@ impl NoteCalcApp {
                 }
                 let y = content_y(editor_y);
 
-                let rows_to_recalc = eval_line(
+                let (result_has_changed, rows_to_recalc) = eval_line(
                     &self.editor_content,
                     self.editor_content.get_line_valid_chars(editor_y),
                     units,
@@ -2472,8 +2531,17 @@ impl NoteCalcApp {
                     results,
                     &mut *vars,
                     y,
-                    &mut self.result_has_changed,
+                    &mut self.updated_line_ref_obj_indices,
                 );
+                if result_has_changed {
+                    self.result_change_flag
+                        .merge(EditorRowFlags::single_row(editor_y));
+                    // changing a result can change the alignment, so we have to rerender all the results
+                    self.set_redraw_flag(
+                        EditorRowFlags::all_rows_starting_at(0),
+                        RedrawTarget::ResultArea,
+                    );
+                }
                 dependant_rows.merge(rows_to_recalc);
                 self.set_redraw_flag(rows_to_recalc, RedrawTarget::Both);
                 let orig_h = self.render_data.get_rendered_height(y);
@@ -2523,6 +2591,84 @@ impl NoteCalcApp {
                 );
             }
         }
+    }
+
+    fn get_line_ref_name(editor_content: &EditorContent<LineData>, y: usize) -> Vec<char> {
+        let line_data = editor_content.get_data(y);
+        // TODO opt
+        let line_ref_name: Vec<char> = format!("&[{}]", line_data.line_id).chars().collect();
+        return line_ref_name;
+    }
+
+    fn fill_editor_objs_referencing_current_line<'b>(
+        self: &mut NoteCalcApp,
+        current_y: ContentIndex,
+        tokens: &mut AppTokens<'b>,
+        vars: &mut Variables,
+    ) {
+        self.editor_objs_referencing_current_line.clear();
+        if let Some(var) = &vars[current_y.as_usize()] {
+            NoteCalcApp::find_line_ref_dependant_lines(
+                &var.name,
+                tokens,
+                current_y.as_usize(),
+                &mut self.editor_objs_referencing_current_line,
+            );
+        } else {
+            let line_ref_name =
+                NoteCalcApp::get_line_ref_name(&self.editor_content, current_y.as_usize());
+            NoteCalcApp::find_line_ref_dependant_lines(
+                &line_ref_name,
+                tokens,
+                current_y.as_usize(),
+                &mut self.editor_objs_referencing_current_line,
+            );
+        };
+    }
+
+    fn find_line_ref_dependant_lines<'b>(
+        editor_obj_name: &[char],
+        tokens_per_lines: &AppTokens<'b>,
+        editor_y: usize,
+        updated_line_ref_obj_indices: &mut Vec<EditorObjId>,
+    ) -> EditorRowFlags {
+        let mut rows_to_recalc = EditorRowFlags::empty();
+        for (token_line_index, tokens) in tokens_per_lines.iter().skip(editor_y + 1).enumerate() {
+            if let Some(tokens) = tokens {
+                let mut already_added = EditorRowFlags::empty();
+                for token in &tokens.tokens {
+                    let var_index = match token.typ {
+                        TokenType::LineReference { var_index }
+                            if already_added.is_false(var_index)
+                                && token.ptr == editor_obj_name =>
+                        {
+                            var_index
+                        }
+                        TokenType::Variable { var_index }
+                            if var_index != SUM_VARIABLE_INDEX
+                                && already_added.is_false(var_index)
+                                && token.ptr == editor_obj_name =>
+                        {
+                            var_index
+                        }
+
+                        _ => {
+                            continue;
+                        }
+                    };
+                    let index = editor_y + 1 + token_line_index;
+                    updated_line_ref_obj_indices.push(EditorObjId {
+                        content_index: content_y(index),
+                        var_index,
+                    });
+                    rows_to_recalc.merge(EditorRowFlags::single_row(index));
+                    already_added.set(var_index);
+                }
+            } else {
+                break;
+            }
+        }
+        return rows_to_recalc;
     }
 
     pub fn copy_selected_rows_with_result_to_clipboard<'b>(
@@ -2841,12 +2987,10 @@ impl NoteCalcApp {
             let obj = self
                 .find_editor_object_at(cursor_pos.with_prev_col(), editor_objects)
                 .map(|it| (it.typ, it.row, it.start_x));
-            if let Some((obj_typ, row, start_x)) = obj {
-                if obj_typ == EditorObjectType::LineReference {
-                    //  jump over it
-                    self.editor.set_cursor_pos_r_c(row.as_usize(), start_x);
-                    return true;
-                }
+            if let Some((EditorObjectType::LineReference { .. }, row, start_x)) = obj {
+                //  jump over it
+                self.editor.set_cursor_pos_r_c(row.as_usize(), start_x);
+                return true;
             }
         } else if *input == EditorInputEvent::Right
             && selection.is_range().is_none()
@@ -2856,12 +3000,10 @@ impl NoteCalcApp {
                 .find_editor_object_at(cursor_pos, editor_objects)
                 .map(|it| (it.typ, it.row, it.end_x));
 
-            if let Some((obj_typ, row, end_x)) = obj {
-                if obj_typ == EditorObjectType::LineReference {
-                    //  jump over it
-                    self.editor.set_cursor_pos_r_c(row.as_usize(), end_x);
-                    return true;
-                }
+            if let Some((EditorObjectType::LineReference { .. }, row, end_x)) = obj {
+                //  jump over it
+                self.editor.set_cursor_pos_r_c(row.as_usize(), end_x);
+                return true;
             }
         }
         return false;
@@ -2897,7 +3039,9 @@ impl NoteCalcApp {
                         ));
                     }
                 }
-                EditorObjectType::SimpleTokens | EditorObjectType::LineReference => {}
+                EditorObjectType::SimpleTokens
+                | EditorObjectType::LineReference { .. }
+                | EditorObjectType::Variable { .. } => {}
             }
         }
     }
@@ -2921,7 +3065,7 @@ impl NoteCalcApp {
         editor_objects: &EditorObjects,
     ) -> Option<usize> {
         return editor_objects[content_y(pos.row)].iter().position(|obj| {
-            matches!(obj.typ, EditorObjectType::LineReference | EditorObjectType::Matrix {..})
+            matches!(obj.typ, EditorObjectType::LineReference{..} | EditorObjectType::Matrix {..})
                 && (obj.start_x..obj.end_x).contains(&pos.column)
         });
     }
@@ -2980,16 +3124,20 @@ impl NoteCalcApp {
             && input == EditorInputEvent::Right
             && mat_edit.editor.is_cursor_at_eol(&mat_edit.editor_content)
         {
-            if mat_edit.current_cell.column + 1 < mat_edit.col_count {
-                mat_edit.move_to_cell(mat_edit.current_cell.with_next_col());
+            if let Some((_from, to)) = mat_edit.editor.get_selection().is_range() {
+                mat_edit.editor.set_cursor_pos_r_c(0, to.column);
             } else {
-                let end_text_index = mat_edit.end_text_index;
-                end_matrix_editing(
-                    &mut self.matrix_editing,
-                    &mut self.editor,
-                    &mut self.editor_content,
-                    Some(cur_pos.with_column(end_text_index)),
-                );
+                if mat_edit.current_cell.column + 1 < mat_edit.col_count {
+                    mat_edit.move_to_cell(mat_edit.current_cell.with_next_col());
+                } else {
+                    let end_text_index = mat_edit.end_text_index;
+                    end_matrix_editing(
+                        &mut self.matrix_editing,
+                        &mut self.editor,
+                        &mut self.editor_content,
+                        Some(cur_pos.with_column(end_text_index)),
+                    );
+                }
             }
         } else if simple && input == EditorInputEvent::Up {
             if mat_edit.current_cell.row > 0 {
@@ -3073,17 +3221,20 @@ impl NoteCalcApp {
             result_buffer,
             self.editor_area_redraw,
             self.result_area_redraw,
-            self.result_has_changed,
+            self.result_change_flag,
             &mut self.render_data,
             allocator,
             tokens,
             results,
             vars,
             editor_objs,
+            &self.updated_line_ref_obj_indices,
+            &self.editor_objs_referencing_current_line,
         );
         self.editor_area_redraw.clear();
         self.result_area_redraw.clear();
-        self.result_has_changed.clear();
+        self.result_change_flag.clear();
+        self.updated_line_ref_obj_indices.clear();
     }
 }
 
@@ -3169,12 +3320,92 @@ pub fn clear_rerendered_lines(
     }
 }
 
+pub fn pulse_modified_line_references(
+    render_buckets: &mut RenderBuckets,
+    gr: &GlobalRenderData,
+    updated_line_ref_obj_indices: &[EditorObjId],
+    editor_objects: &EditorObjects,
+) {
+    // Pulsing changed line references
+    for id in updated_line_ref_obj_indices {
+        for ed_obj in &editor_objects[id.content_index] {
+            match ed_obj {
+                EditorObject {
+                    typ: EditorObjectType::LineReference { var_index },
+                    rendered_x,
+                    rendered_y,
+                    rendered_w,
+                    rendered_h,
+                    ..
+                } if *var_index == id.var_index => {
+                    render_buckets.custom_commands[Layer::AboveText as usize].push(
+                        OutputMessage::PulsingRectangle {
+                            x: gr.left_gutter_width + *rendered_x,
+                            y: *rendered_y,
+                            w: *rendered_w,
+                            h: *rendered_h,
+                            start_color: 0xFF88FF_AA,
+                            end_color: 0xFFFFFF_00,
+                            animation_time: Duration::from_millis(2000),
+                        },
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+pub fn pulse_editor_objs_referencing_current_line(
+    render_buckets: &mut RenderBuckets,
+    gr: &GlobalRenderData,
+    editor_objs_referencing_current_line: &[EditorObjId],
+    editor_objects: &EditorObjects,
+) {
+    // Pulsing changed line references
+    for id in editor_objs_referencing_current_line {
+        for ed_obj in &editor_objects[id.content_index] {
+            match ed_obj {
+                EditorObject {
+                    typ: EditorObjectType::LineReference { var_index },
+                    rendered_x,
+                    rendered_y,
+                    rendered_w,
+                    rendered_h,
+                    ..
+                }
+                | EditorObject {
+                    typ: EditorObjectType::Variable { var_index },
+                    rendered_x,
+                    rendered_y,
+                    rendered_w,
+                    rendered_h,
+                    ..
+                } if *var_index == id.var_index => {
+                    render_buckets.custom_commands[Layer::AboveText as usize].push(
+                        OutputMessage::PulsingRectangle {
+                            x: gr.left_gutter_width + *rendered_x,
+                            y: *rendered_y,
+                            w: *rendered_w,
+                            h: *rendered_h,
+                            start_color: 0x00FF7F_33,
+                            end_color: 0x00FF7F_00,
+                            animation_time: Duration::from_millis(1000),
+                        },
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 pub fn pulse_rerendered_lines(
     render_buckets: &mut RenderBuckets,
     gr: &GlobalRenderData,
     longest_rendered_result_len: usize,
     _rerendered_lines: &[((CanvasY, usize), RedrawTarget)],
-    result_has_updated: &EditorRowFlags,
+    result_has_changed: &EditorRowFlags,
 ) {
     if gr.get_render_y(content_y(0)).is_none() {
         // there were no render yet
@@ -3182,7 +3413,7 @@ pub fn pulse_rerendered_lines(
     }
     // Pulsing changed results
     for i in 0..MAX_LINE_COUNT {
-        if result_has_updated.is_true(i) {
+        if result_has_changed.is_true(i) {
             if let Some(render_y) = gr.get_render_y(content_y(i)) {
                 render_buckets.custom_commands[Layer::AboveText as usize].push(
                     OutputMessage::PulsingRectangle {
@@ -3190,9 +3421,9 @@ pub fn pulse_rerendered_lines(
                         y: render_y,
                         w: longest_rendered_result_len,
                         h: gr.get_rendered_height(content_y(i)),
-                        start_color: 0xFF88FF_DD,
+                        start_color: 0xFF88FF_AA,
                         end_color: 0xFFFFFF_00,
-                        animation_time: Duration::from_millis(1000),
+                        animation_time: Duration::from_millis(2000),
                     },
                 );
             }
@@ -3372,7 +3603,7 @@ fn highlight_line_refs<'text_ptr>(
     gr: &GlobalRenderData,
 ) {
     for editor_obj in editor_objs.iter() {
-        if matches!(editor_obj.typ, EditorObjectType::LineReference) {
+        if matches!(editor_obj.typ, EditorObjectType::LineReference{..}) {
             let vert_align_offset = (r.rendered_row_height - editor_obj.rendered_h) / 2;
             render_buckets.set_color(Layer::BehindText, 0xFFCCCC_FF);
             render_buckets.draw_rect(
@@ -3426,6 +3657,31 @@ fn render_tokens<'text_ptr>(
                 &matrix_editing,
                 decimal_count,
             );
+        } else if let (TokenType::Variable { var_index }, true) = (&token.typ, need_matrix_renderer)
+        {
+            editor_objects.push(EditorObject {
+                typ: EditorObjectType::Variable {
+                    var_index: *var_index,
+                },
+                row: r.editor_y,
+                start_x: r.editor_x,
+                end_x: r.editor_x + token.ptr.len(),
+                rendered_x: r.render_x,
+                rendered_y: r.render_y,
+                rendered_w: token.ptr.len(),
+                rendered_h: r.rendered_row_height,
+            });
+            draw_token(
+                token,
+                r.render_x,
+                r.render_y.add(r.vert_align_offset),
+                gr.current_editor_width,
+                gr.left_gutter_width,
+                render_buckets,
+            );
+
+            token_index += 1;
+            r.token_render_done(token.ptr.len(), token.ptr.len(), 0);
         } else if let (TokenType::LineReference { var_index }, true) =
             (&token.typ, need_matrix_renderer)
         {
@@ -3442,7 +3698,9 @@ fn render_tokens<'text_ptr>(
 
             let var_name_len = var.name.len();
             editor_objects.push(EditorObject {
-                typ: EditorObjectType::LineReference,
+                typ: EditorObjectType::LineReference {
+                    var_index: *var_index,
+                },
                 row: r.editor_y,
                 start_x: r.editor_x,
                 end_x: r.editor_x + var_name_len,
@@ -3464,7 +3722,6 @@ fn render_tokens<'text_ptr>(
                 },
             );
         } else {
-            // last token was a simple token too, extend it
             if let Some(EditorObject {
                 typ: EditorObjectType::SimpleTokens,
                 end_x,
@@ -3472,6 +3729,7 @@ fn render_tokens<'text_ptr>(
                 ..
             }) = editor_objects.last_mut()
             {
+                // last token was a simple token too, extend it
                 *end_x += token.ptr.len();
                 *rendered_w += token.ptr.len();
             } else {
@@ -4279,7 +4537,7 @@ fn render_results<'text_ptr>(
                     buffer_ptr: Some(result_buffer_index..result_buffer_index + 3),
                     editor_y,
                     lengths: ResultLengths {
-                        int_part_len: 0,
+                        int_part_len: 999,
                         frac_part_len: 0,
                         unit_part_len: 0,
                     },
@@ -4415,8 +4673,12 @@ fn render_results<'text_ptr>(
                     ResultOffsetX::TooLong => 0,
                     ResultOffsetX::Ok(n) => n,
                 };
+            let int_w = match offset_x {
+                ResultOffsetX::Err => 3,
+                _ => lengths.int_part_len,
+            };
             render_buckets.ascii_texts.push(RenderAsciiTextMsg {
-                text: &result_buffer[from..from + lengths.int_part_len],
+                text: &result_buffer[from..from + int_w],
                 row,
                 column: x,
             });
@@ -5397,6 +5659,25 @@ mod tests {
     }
 
     #[test]
+    fn test_that_selected_matrix_content_is_copied_on_ctrl_c() {
+        let test = create_app2(35);
+        test.paste("abcd [69,2,3;4,5,6]");
+        test.set_cursor_row_col(0, 5);
+        test.render();
+        test.input(EditorInputEvent::Right, InputModifiers::none());
+        test.render();
+        test.input(EditorInputEvent::Char('c'), InputModifiers::ctrl());
+        assert_eq!(
+            test.app
+                .borrow()
+                .get_selected_text()
+                .as_ref()
+                .map(|it| it.as_str()),
+            Some("69")
+        );
+    }
+
+    #[test]
     fn test_moving_inside_a_matrix() {
         // right to left, cursor at end
         {
@@ -5412,6 +5693,21 @@ mod tests {
             test.render();
             assert_eq!("abcd [1,9,3;4,5,6]", test.get_editor_content());
         }
+        // pressing right while there is a selection, just cancels the selection and put the cursor
+        // at the end of it
+        {
+            let test = create_app2(35);
+            test.paste("abcd [1,2,3;4,5,6]");
+            test.set_cursor_row_col(0, 5);
+            test.render();
+            test.input(EditorInputEvent::Right, InputModifiers::none());
+            test.render();
+            test.input(EditorInputEvent::Right, InputModifiers::none());
+            test.input(EditorInputEvent::Char('9'), InputModifiers::none());
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            test.render();
+            assert_eq!("abcd [19,2,3;4,5,6]", test.get_editor_content());
+        }
         // left to right, cursor at start
         {
             let test = create_app2(35);
@@ -5420,6 +5716,8 @@ mod tests {
             test.render();
             test.input(EditorInputEvent::Right, InputModifiers::none());
             test.render();
+            test.input(EditorInputEvent::Right, InputModifiers::none());
+            test.input(EditorInputEvent::Right, InputModifiers::none());
             test.input(EditorInputEvent::Right, InputModifiers::none());
             test.input(EditorInputEvent::Right, InputModifiers::none());
             test.input(EditorInputEvent::Char('9'), InputModifiers::none());
@@ -5972,6 +6270,25 @@ Fat intake
         let mut result_buffer = [0; 128];
         test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["Err"][..], &result_buffer);
+    }
+
+    #[test]
+    fn test_err_result_rendering() {
+        let test = create_app2(35);
+        test.paste("'[X] nth, sum fv");
+        test.render();
+        test.set_cursor_row_col(0, 0);
+        test.input(EditorInputEvent::Del, InputModifiers::none());
+        let mut render_buckets = RenderBuckets::new();
+        let mut result_buffer = [0; 128];
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
+        match &render_buckets.ascii_texts[0] {
+            RenderAsciiTextMsg { text, row, column } => {
+                assert_eq!(text, &[b'E', b'r', b'r']);
+                assert_eq!(*row, canvas_y(0));
+                assert_eq!(*column, 90);
+            }
+        }
     }
 
     fn assert_results(expected_results: &[&str], result_buffer: &[u8]) {
@@ -6814,10 +7131,553 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         test.input(EditorInputEvent::Char('1'), InputModifiers::none());
         test.assert_redraw_editor(1);
         test.assert_redraw_result(1);
+        assert!(test.app.borrow().result_change_flag.need(content_y(0)));
+        assert!(test.app.borrow().result_change_flag.need(content_y(1)));
 
         let mut result_buffer = [0; 128];
         test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["12", "36"][..], &result_buffer);
+    }
+
+    #[test]
+    fn test_that_dependant_line_refs_are_pulsed_on_change() {
+        let test = create_app2(35);
+        test.paste("2\n * 3");
+        test.set_cursor_row_col(1, 0);
+
+        let mut result_buffer = [0; 128];
+        test.render_get_result_buf(&mut result_buffer[..]);
+
+        // insert linref of 1st line
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        let mut result_buffer = [0; 128];
+        test.render_get_result_buf(&mut result_buffer[..]);
+
+        // now modify the first row
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.input(EditorInputEvent::Home, InputModifiers::none());
+        test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+
+        let mut render_buckets = RenderBuckets::new();
+        let mut result_buffer = [0; 128];
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
+        // SetColor(
+        // RenderChar(
+        // PulsingRectangle {
+        // PulsingRectangle {
+        // PulsingRectangle {
+        match &render_buckets.custom_commands[Layer::AboveText as usize][4] {
+            OutputMessage::PulsingRectangle { x, y, w, h, .. } => {
+                assert_eq!(*x, 4);
+                assert_eq!(*y, canvas_y(1));
+                assert_eq!(*w, 2);
+                assert_eq!(*h, 1);
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn test_that_all_dependant_line_refs_in_same_row_are_pulsed_only_once_on_change() {
+        let test = create_app2(35);
+        test.paste("2\n * 3");
+        test.set_cursor_row_col(1, 0);
+
+        let mut result_buffer = [0; 128];
+        test.render_get_result_buf(&mut result_buffer[..]);
+
+        // insert linref of 1st line
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        test.render();
+
+        test.input(EditorInputEvent::Char(' '), InputModifiers::none());
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        test.render();
+
+        // now modify the first row
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.input(EditorInputEvent::Home, InputModifiers::none());
+        test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+
+        let mut render_buckets = RenderBuckets::new();
+        let mut result_buffer = [0; 128];
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
+        assert_eq!(
+            render_buckets.custom_commands[Layer::AboveText as usize].len(),
+            8
+        );
+
+        match &render_buckets.custom_commands[Layer::AboveText as usize][4] {
+            OutputMessage::PulsingRectangle {
+                x,
+                y,
+                w,
+                h,
+                start_color,
+                end_color,
+                animation_time,
+            } => {
+                assert_eq!(*x, 4);
+                assert_eq!(*y, canvas_y(1));
+                assert_eq!(*w, 2);
+                assert_eq!(*h, 1);
+                assert_eq!(*start_color, 0xFF88FF_AA);
+                assert_eq!(*end_color, 0xFFFFFF_00);
+                assert_eq!(*animation_time, Duration::from_millis(2000));
+            }
+            _ => panic!(),
+        }
+        match &render_buckets.custom_commands[Layer::AboveText as usize][5] {
+            OutputMessage::PulsingRectangle {
+                x,
+                y,
+                w,
+                h,
+                start_color,
+                end_color,
+                animation_time,
+            } => {
+                assert_eq!(*x, 7);
+                assert_eq!(*y, canvas_y(1));
+                assert_eq!(*w, 2);
+                assert_eq!(*h, 1);
+                assert_eq!(*start_color, 0xFF88FF_AA);
+                assert_eq!(*end_color, 0xFFFFFF_00);
+                assert_eq!(*animation_time, Duration::from_millis(2000));
+            }
+            _ => panic!(),
+        }
+        // the last 2 command is for pulsing references for the active row
+        match &render_buckets.custom_commands[Layer::AboveText as usize][6] {
+            OutputMessage::PulsingRectangle {
+                x,
+                y,
+                w,
+                h,
+                start_color,
+                end_color,
+                animation_time,
+            } => {
+                assert_eq!(*x, 4);
+                assert_eq!(*y, canvas_y(1));
+                assert_eq!(*w, 2);
+                assert_eq!(*h, 1);
+                assert_eq!(*start_color, 0x00FF7F_33);
+                assert_eq!(*end_color, 0x00FF7F_00);
+                assert_eq!(*animation_time, Duration::from_millis(1000));
+            }
+            _ => panic!(),
+        }
+        match &render_buckets.custom_commands[Layer::AboveText as usize][7] {
+            OutputMessage::PulsingRectangle {
+                x,
+                y,
+                w,
+                h,
+                start_color,
+                end_color,
+                animation_time,
+            } => {
+                assert_eq!(*x, 7);
+                assert_eq!(*y, canvas_y(1));
+                assert_eq!(*w, 2);
+                assert_eq!(*h, 1);
+                assert_eq!(*start_color, 0x00FF7F_33);
+                assert_eq!(*end_color, 0x00FF7F_00);
+                assert_eq!(*animation_time, Duration::from_millis(1000));
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn test_that_all_dependant_line_refs_in_different_rows_are_pulsed_on_change() {
+        let test = create_app2(35);
+        test.paste("2\n * 3");
+        test.set_cursor_row_col(1, 0);
+
+        let mut result_buffer = [0; 128];
+        test.render_get_result_buf(&mut result_buffer[..]);
+
+        // insert linref of 1st line
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        test.render();
+
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        test.render();
+
+        // now modify the first row
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.input(EditorInputEvent::Home, InputModifiers::none());
+        test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+
+        let mut render_buckets = RenderBuckets::new();
+        let mut result_buffer = [0; 128];
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
+        assert_eq!(
+            render_buckets.custom_commands[Layer::AboveText as usize].len(),
+            9
+        );
+
+        assert_eq!(
+            render_buckets.custom_commands[Layer::AboveText as usize].len(),
+            9
+        );
+
+        match &render_buckets.custom_commands[Layer::AboveText as usize][5] {
+            OutputMessage::PulsingRectangle {
+                x,
+                y,
+                w,
+                h,
+                start_color,
+                end_color,
+                animation_time,
+            } => {
+                assert_eq!(*x, 4);
+                assert_eq!(*y, canvas_y(1));
+                assert_eq!(*w, 2);
+                assert_eq!(*h, 1);
+                assert_eq!(*start_color, 0xFF88FF_AA);
+                assert_eq!(*end_color, 0xFFFFFF_00);
+                assert_eq!(*animation_time, Duration::from_millis(2000));
+            }
+            _ => panic!(),
+        }
+        match &render_buckets.custom_commands[Layer::AboveText as usize][6] {
+            OutputMessage::PulsingRectangle {
+                x,
+                y,
+                w,
+                h,
+                start_color,
+                end_color,
+                animation_time,
+            } => {
+                assert_eq!(*x, 4);
+                assert_eq!(*y, canvas_y(2));
+                assert_eq!(*w, 2);
+                assert_eq!(*h, 1);
+                assert_eq!(*start_color, 0xFF88FF_AA);
+                assert_eq!(*end_color, 0xFFFFFF_00);
+                assert_eq!(*animation_time, Duration::from_millis(2000));
+            }
+            _ => panic!(),
+        }
+        // the last 2 command is for pulsing references for the active row
+        match &render_buckets.custom_commands[Layer::AboveText as usize][7] {
+            OutputMessage::PulsingRectangle {
+                x,
+                y,
+                w,
+                h,
+                start_color,
+                end_color,
+                animation_time,
+            } => {
+                assert_eq!(*x, 4);
+                assert_eq!(*y, canvas_y(1));
+                assert_eq!(*w, 2);
+                assert_eq!(*h, 1);
+                assert_eq!(*start_color, 0x00FF7F_33);
+                assert_eq!(*end_color, 0x00FF7F_00);
+                assert_eq!(*animation_time, Duration::from_millis(1000));
+            }
+            _ => panic!(),
+        }
+        match &render_buckets.custom_commands[Layer::AboveText as usize][8] {
+            OutputMessage::PulsingRectangle {
+                x,
+                y,
+                w,
+                h,
+                start_color,
+                end_color,
+                animation_time,
+            } => {
+                assert_eq!(*x, 4);
+                assert_eq!(*y, canvas_y(2));
+                assert_eq!(*w, 2);
+                assert_eq!(*h, 1);
+                assert_eq!(*start_color, 0x00FF7F_33);
+                assert_eq!(*end_color, 0x00FF7F_00);
+                assert_eq!(*animation_time, Duration::from_millis(1000));
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn test_that_dependant_line_refs_are_pulsed_when_the_cursor_is_on_the_referenced_line() {
+        let test = create_app2(35);
+        test.paste("2\n * 3");
+        test.set_cursor_row_col(1, 0);
+
+        let mut result_buffer = [0; 128];
+        test.render_get_result_buf(&mut result_buffer[..]);
+
+        // insert linref of 1st line
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        let mut result_buffer = [0; 128];
+        test.render_get_result_buf(&mut result_buffer[..]);
+
+        // there should not be pulsing here yet
+        let mut render_buckets = RenderBuckets::new();
+        let mut result_buffer = [0; 128];
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
+        assert_eq!(
+            render_buckets.custom_commands[Layer::AboveText as usize].len(),
+            0
+        );
+
+        // step into the first row
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+
+        let mut render_buckets = RenderBuckets::new();
+        let mut result_buffer = [0; 128];
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
+        dbg!(&render_buckets.custom_commands[Layer::AboveText as usize]);
+        assert_eq!(
+            render_buckets.custom_commands[Layer::AboveText as usize].len(),
+            3
+        );
+        // SetColor(
+        // RenderChar(
+        // PulsingRectangle {
+        match &render_buckets.custom_commands[Layer::AboveText as usize][2] {
+            OutputMessage::PulsingRectangle {
+                x,
+                y,
+                w,
+                h,
+                start_color,
+                end_color,
+                animation_time,
+            } => {
+                assert_eq!(*x, 4);
+                assert_eq!(*y, canvas_y(1));
+                assert_eq!(*w, 1);
+                assert_eq!(*h, 1);
+                assert_eq!(*start_color, 0x00FF7F_33);
+                assert_eq!(*end_color, 0x00FF7F_00);
+                assert_eq!(*animation_time, Duration::from_millis(1000));
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn test_that_multiple_dependant_line_refs_are_pulsed_when_the_cursor_is_on_the_referenced_line()
+    {
+        let test = create_app2(35);
+        test.paste("2\n * 3");
+        test.set_cursor_row_col(1, 0);
+
+        let mut result_buffer = [0; 128];
+        test.render_get_result_buf(&mut result_buffer[..]);
+
+        // insert linref of 1st line
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        test.render();
+        test.input(EditorInputEvent::Char(' '), InputModifiers::alt());
+        test.render();
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        test.render();
+
+        // there should not be pulsing here yet
+        let mut render_buckets = RenderBuckets::new();
+        let mut result_buffer = [0; 128];
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
+        assert_eq!(
+            render_buckets.custom_commands[Layer::AboveText as usize].len(),
+            0
+        );
+
+        // step into the first row
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+
+        let mut render_buckets = RenderBuckets::new();
+        let mut result_buffer = [0; 128];
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
+        assert_eq!(
+            render_buckets.custom_commands[Layer::AboveText as usize].len(),
+            4
+        );
+        // SetColor(
+        // RenderChar(
+        // PulsingRectangle {
+        match &render_buckets.custom_commands[Layer::AboveText as usize][2] {
+            OutputMessage::PulsingRectangle {
+                x,
+                y,
+                w,
+                h,
+                start_color,
+                end_color,
+                animation_time,
+            } => {
+                assert_eq!(*x, 4);
+                assert_eq!(*y, canvas_y(1));
+                assert_eq!(*w, 1);
+                assert_eq!(*h, 1);
+                assert_eq!(*start_color, 0x00FF7F_33);
+                assert_eq!(*end_color, 0x00FF7F_00);
+                assert_eq!(*animation_time, Duration::from_millis(1000));
+            }
+            _ => panic!(),
+        }
+        match &render_buckets.custom_commands[Layer::AboveText as usize][3] {
+            OutputMessage::PulsingRectangle {
+                x,
+                y,
+                w,
+                h,
+                start_color,
+                end_color,
+                animation_time,
+            } => {
+                assert_eq!(*x, 5);
+                assert_eq!(*y, canvas_y(1));
+                assert_eq!(*w, 1);
+                assert_eq!(*h, 1);
+                assert_eq!(*start_color, 0x00FF7F_33);
+                assert_eq!(*end_color, 0x00FF7F_00);
+                assert_eq!(*animation_time, Duration::from_millis(1000));
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn test_that_multiple_dependant_vars_are_pulsed_when_the_cursor_is_on_the_definition_line() {
+        let test = create_app2(35);
+        test.paste("var = 2\nvar * 3\n12 * var");
+        test.set_cursor_row_col(1, 0);
+        test.render();
+
+        // there should not be pulsing here yet
+        let mut render_buckets = RenderBuckets::new();
+        let mut result_buffer = [0; 128];
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
+        assert_eq!(
+            render_buckets.custom_commands[Layer::AboveText as usize].len(),
+            0
+        );
+
+        // step into the first row
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+
+        let mut render_buckets = RenderBuckets::new();
+        let mut result_buffer = [0; 128];
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
+        assert_eq!(
+            render_buckets.custom_commands[Layer::AboveText as usize].len(),
+            4
+        );
+        // SetColor(
+        // RenderChar(
+        match &render_buckets.custom_commands[Layer::AboveText as usize][2] {
+            OutputMessage::PulsingRectangle {
+                x,
+                y,
+                w,
+                h,
+                start_color,
+                end_color,
+                animation_time,
+            } => {
+                assert_eq!(*x, 4);
+                assert_eq!(*y, canvas_y(1));
+                assert_eq!(*w, 3);
+                assert_eq!(*h, 1);
+                assert_eq!(*start_color, 0x00FF7F_33);
+                assert_eq!(*end_color, 0x00FF7F_00);
+                assert_eq!(*animation_time, Duration::from_millis(1000));
+            }
+            _ => panic!(),
+        }
+        match &render_buckets.custom_commands[Layer::AboveText as usize][3] {
+            OutputMessage::PulsingRectangle {
+                x,
+                y,
+                w,
+                h,
+                start_color,
+                end_color,
+                animation_time,
+            } => {
+                assert_eq!(*x, LEFT_GUTTER_WIDTH + 5);
+                assert_eq!(*y, canvas_y(2));
+                assert_eq!(*w, 3);
+                assert_eq!(*h, 1);
+                assert_eq!(*start_color, 0x00FF7F_33);
+                assert_eq!(*end_color, 0x00FF7F_00);
+                assert_eq!(*animation_time, Duration::from_millis(1000));
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn test_that_dependant_vars_are_pulsed_when_the_cursor_is_on_the_definition_line() {
+        let test = create_app2(35);
+        test.paste("var = 2\nvar * 3");
+        test.set_cursor_row_col(1, 0);
+        test.render();
+
+        // there should not be pulsing here yet
+        let mut render_buckets = RenderBuckets::new();
+        let mut result_buffer = [0; 128];
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
+        assert_eq!(
+            render_buckets.custom_commands[Layer::AboveText as usize].len(),
+            0
+        );
+
+        // step into the first row
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+
+        let mut render_buckets = RenderBuckets::new();
+        let mut result_buffer = [0; 128];
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
+        dbg!(&render_buckets.custom_commands[Layer::AboveText as usize]);
+        assert_eq!(
+            render_buckets.custom_commands[Layer::AboveText as usize].len(),
+            3
+        );
+        // SetColor(
+        // RenderChar(
+        match &render_buckets.custom_commands[Layer::AboveText as usize][2] {
+            OutputMessage::PulsingRectangle {
+                x,
+                y,
+                w,
+                h,
+                start_color,
+                end_color,
+                animation_time,
+            } => {
+                assert_eq!(*x, 4);
+                assert_eq!(*y, canvas_y(1));
+                assert_eq!(*w, 3);
+                assert_eq!(*h, 1);
+                assert_eq!(*start_color, 0x00FF7F_33);
+                assert_eq!(*end_color, 0x00FF7F_00);
+                assert_eq!(*animation_time, Duration::from_millis(1000));
+            }
+            _ => panic!(),
+        }
     }
 
     #[test]
@@ -6889,8 +7749,8 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         test.assert_not_redraw_editor(1);
         test.assert_not_redraw_result(1);
 
-        assert!(!test.app.borrow().result_has_changed.need(content_y(0)));
-        assert!(!test.app.borrow().result_has_changed.need(content_y(1)));
+        assert!(!test.app.borrow().result_change_flag.need(content_y(0)));
+        assert!(!test.app.borrow().result_change_flag.need(content_y(1)));
 
         let mut result_buffer = [0; 128];
         test.render_get_result_buf(&mut result_buffer[..]);
@@ -6980,7 +7840,7 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         test.assert_redraw_result(2);
         //
         test.assert_not_redraw_editor(1);
-        test.assert_not_redraw_result(1);
+        test.assert_redraw_result(1);
 
         let mut result_buffer = [0; 128];
         test.render_get_result_buf(&mut result_buffer[..]);
@@ -7006,7 +7866,7 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         test.assert_redraw_result(2);
         //
         test.assert_not_redraw_editor(1);
-        test.assert_not_redraw_result(1);
+        test.assert_redraw_result(1);
 
         let mut result_buffer = [0; 128];
         test.render_get_result_buf(&mut result_buffer[..]);
@@ -7029,7 +7889,7 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         test.assert_redraw_result(0);
         for i in 1..5 {
             test.assert_not_redraw_editor(i);
-            test.assert_not_redraw_result(i);
+            test.assert_redraw_result(i);
         }
 
         let mut result_buffer = [0; 128];
@@ -7053,7 +7913,7 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         test.assert_redraw_result(0);
         for i in 1..5 {
             test.assert_not_redraw_editor(i);
-            test.assert_not_redraw_result(i);
+            test.assert_redraw_result(i);
         }
 
         let mut result_buffer = [0; 128];
@@ -7081,18 +7941,18 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         test.assert_redraw_result(5);
 
         test.assert_not_redraw_editor(0);
-        test.assert_not_redraw_result(0);
+        test.assert_redraw_result(0);
 
         test.assert_not_redraw_editor(1);
-        test.assert_not_redraw_result(1);
+        test.assert_redraw_result(1);
 
         for i in 3..=4 {
             test.assert_not_redraw_editor(i);
-            test.assert_not_redraw_result(i);
+            test.assert_redraw_result(i);
         }
         for i in 6..=9 {
             test.assert_not_redraw_editor(i);
-            test.assert_not_redraw_result(i);
+            test.assert_redraw_result(i);
         }
 
         let mut result_buffer = [0; 128];
@@ -7126,15 +7986,15 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         test.assert_redraw_result(5);
 
         test.assert_not_redraw_editor(1);
-        test.assert_not_redraw_result(1);
+        test.assert_redraw_result(1);
 
         for i in 3..=4 {
             test.assert_not_redraw_editor(i);
-            test.assert_not_redraw_result(i);
+            test.assert_redraw_result(i);
         }
         for i in 6..=9 {
             test.assert_not_redraw_editor(i);
-            test.assert_not_redraw_result(i);
+            test.assert_redraw_result(i);
         }
 
         let mut result_buffer = [0; 128];
@@ -7433,7 +8293,7 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         test.input(EditorInputEvent::Del, InputModifiers::none());
 
         test.assert_not_redraw_editor(0);
-        test.assert_not_redraw_result(0);
+        test.assert_redraw_result(0);
 
         // clears the SUM
         test.assert_redraw_editor(1);
@@ -7443,7 +8303,7 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         test.assert_redraw_result(2);
 
         test.assert_not_redraw_editor(3);
-        test.assert_not_redraw_result(3);
+        test.assert_redraw_result(3);
     }
 
     #[test]
@@ -8411,36 +9271,67 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
 
         test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
 
-        let base_y = render_buckets.ascii_texts[0].column;
+        let base_x = render_buckets.ascii_texts[0].column;
         assert_eq!(render_buckets.ascii_texts[0].text, "1".as_bytes());
         assert_eq!(render_buckets.ascii_texts[0].row, canvas_y(0));
 
         assert_eq!(render_buckets.ascii_texts[1].text, "2".as_bytes());
         assert_eq!(render_buckets.ascii_texts[1].row, canvas_y(1));
-        assert_eq!(render_buckets.ascii_texts[1].column, base_y);
+        assert_eq!(render_buckets.ascii_texts[1].column, base_x);
 
         assert_eq!(render_buckets.ascii_texts[2].text, ".3".as_bytes());
         assert_eq!(render_buckets.ascii_texts[2].row, canvas_y(1));
-        assert_eq!(render_buckets.ascii_texts[2].column, base_y + 1);
+        assert_eq!(render_buckets.ascii_texts[2].column, base_x + 1);
 
         assert_eq!(
             render_buckets.ascii_texts[3].text,
             "1000 10101110".as_bytes()
         );
         assert_eq!(render_buckets.ascii_texts[3].row, canvas_y(2));
-        assert_eq!(render_buckets.ascii_texts[3].column, base_y - 12);
+        assert_eq!(render_buckets.ascii_texts[3].column, base_x - 12);
 
         assert_eq!(render_buckets.ascii_texts[4].text, "4".as_bytes());
         assert_eq!(render_buckets.ascii_texts[4].row, canvas_y(3));
-        assert_eq!(render_buckets.ascii_texts[4].column, base_y);
+        assert_eq!(render_buckets.ascii_texts[4].column, base_x);
 
         assert_eq!(render_buckets.ascii_texts[5].text, "km".as_bytes());
         assert_eq!(render_buckets.ascii_texts[5].row, canvas_y(3));
-        assert_eq!(render_buckets.ascii_texts[5].column, base_y + 2);
+        assert_eq!(render_buckets.ascii_texts[5].column, base_x + 2);
 
         assert_eq!(render_buckets.ascii_texts[6].text, "50 000".as_bytes());
         assert_eq!(render_buckets.ascii_texts[6].row, canvas_y(4));
-        assert_eq!(render_buckets.ascii_texts[6].column, base_y - 5);
+        assert_eq!(render_buckets.ascii_texts[6].column, base_x - 5);
+    }
+
+    #[test]
+    fn test_that_alignment_changes_trigger_rerendering_of_results() {
+        let test = create_app2(35);
+        test.paste("1\n");
+        test.set_cursor_row_col(1, 0);
+
+        test.render();
+        test.paste("4km");
+
+        let mut render_buckets = RenderBuckets::new();
+        let mut result_buffer = [0; 128];
+
+        test.assert_redraw_result(0);
+        test.assert_redraw_result(1);
+        test.assert_not_redraw_editor(0);
+        test.assert_redraw_editor(1);
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
+
+        let base_x = render_buckets.ascii_texts[0].column;
+        assert_eq!(render_buckets.ascii_texts[0].text, "1".as_bytes());
+        assert_eq!(render_buckets.ascii_texts[0].row, canvas_y(0));
+
+        assert_eq!(render_buckets.ascii_texts[1].text, "4".as_bytes());
+        assert_eq!(render_buckets.ascii_texts[1].row, canvas_y(1));
+        assert_eq!(render_buckets.ascii_texts[1].column, base_x);
+
+        assert_eq!(render_buckets.ascii_texts[2].text, "km".as_bytes());
+        assert_eq!(render_buckets.ascii_texts[2].row, canvas_y(1));
+        assert_eq!(render_buckets.ascii_texts[2].column, base_x + 2);
     }
 
     #[test]
@@ -8513,7 +9404,7 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
 
         for i in 0..2 {
             test.assert_not_redraw_editor(i);
-            test.assert_not_redraw_result(i);
+            test.assert_redraw_result(i);
         }
         for i in 2..12 {
             test.assert_redraw_editor(i);

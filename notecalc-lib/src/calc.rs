@@ -249,10 +249,7 @@ fn binary_operation(
                     if source_unit == target_unit {
                         Some(CalcResult::Quantity(lhs_num.clone(), target_unit.clone()))
                     } else {
-                        // incompatible units, obvious error
-                        // return something so the top 2 elements will be removed from stack
-                        // we might return an error?
-                        Some(CalcResult::Number(BigDecimal::zero()))
+                        None
                     }
                 }
                 (CalcResult::Matrix(mat), CalcResult::Quantity(..)) => {
@@ -1119,7 +1116,7 @@ mod tests {
         );
         test("1szer sem jött el + *megjegyzés 2 éve...", "1");
 
-        // test("100 Hz to s", "Err");
+        test("100 Hz to s", "Err");
 
         test("12m/h * 45s ^^", "0.15 m");
         test("12km/h * 45s ^^", "150 m");
