@@ -278,16 +278,22 @@ impl ShuntingYard {
                     // CODESMELL!!!
                     // a shunting yard kapja meg a tokens owvershipjét, és adjon vissza egy csak r
                     // rendereléshez elegendő ptr + type-ot
-                    output_stack.push(input_token.typ.clone());
-                    v.prev_token_type = ValidationTokenType::Expr;
-                    if v.can_be_valid_closing_token() {
-                        ShuntingYard::send_everything_to_output(
-                            &mut operator_stack,
-                            output_stack,
-                            &mut v.last_valid_operator_index,
-                            &mut v.last_valid_output_range,
-                        );
-                        v.close_valid_range(output_stack.len(), input_index, operator_stack.len());
+                    if !output_stack.is_empty() {
+                        output_stack.push(input_token.typ.clone());
+                        v.prev_token_type = ValidationTokenType::Expr;
+                        if v.can_be_valid_closing_token() {
+                            ShuntingYard::send_everything_to_output(
+                                &mut operator_stack,
+                                output_stack,
+                                &mut v.last_valid_operator_index,
+                                &mut v.last_valid_output_range,
+                            );
+                            v.close_valid_range(
+                                output_stack.len(),
+                                input_index,
+                                operator_stack.len(),
+                            );
+                        }
                     }
                 }
                 TokenType::Operator(op) => match op {
@@ -1827,6 +1833,7 @@ pub mod tests {
     fn test_panic() {
         test_tokens("()", &[str("("), str(")")]);
         test_tokens("[]", &[str("["), str("]")]);
+        test_tokens("() Hz", &[str("("), str(")"), str(" "), str("Hz")]);
     }
 
     #[test]

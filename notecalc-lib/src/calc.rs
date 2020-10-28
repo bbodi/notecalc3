@@ -906,6 +906,7 @@ mod tests {
         test("100 N to kg*m / s ^ 2", "100 (kg m) / s^2");
         test("100 cm to m", "1 m");
         test("100 Hz to 1/s", "100 s^-1");
+        test("() Hz", " ");
 
         test("1 ft * lbf * 2 rad", "2 ft lbf rad");
         test("1 ft * lbf * 2 rad to in*lbf*rad", "24 in lbf rad");

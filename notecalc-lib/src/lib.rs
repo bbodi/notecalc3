@@ -2139,30 +2139,29 @@ impl NoteCalcApp {
         ////////////////////////////////////////////////////
         ////////////////////////////////////////////////////
         ////////////////////////////////////////////////////
-        let cur_row = self.editor.get_selection().get_cursor_pos().row;
+        let prev_row = self.editor.get_selection().get_cursor_pos().row;
         let input_res: InputResult = if self.matrix_editing.is_none() && modifiers.alt {
             handle_input_with_alt(&mut *self, input)
         } else if self.matrix_editing.is_some() {
-            let prev_row = cur_row;
             self.handle_matrix_editor_input(input, modifiers);
             if self.matrix_editing.is_none() {
                 // user left a matrix
-                let new_row = cur_row;
+                let new_row = prev_row;
 
                 InputResult {
                     modif: Some(RowModificationType::SingleLine(prev_row)),
                     redraw: Some((EditorRowFlags::single_row(new_row), RedrawTarget::Both)),
                 }
             } else {
-                let mut redraw_flags = EditorRowFlags::single_row(cur_row);
+                let mut redraw_flags = EditorRowFlags::single_row(prev_row);
                 if modifiers.alt {
-                    let y = content_y(cur_row);
+                    let y = content_y(prev_row);
                     let old_h = self.render_data.get_rendered_height(y);
                     let new_h =
                         calc_rendered_height(y, &self.matrix_editing, tokens, results, vars);
                     self.render_data.set_rendered_height(y, new_h);
                     if new_h != old_h {
-                        redraw_flags.merge(EditorRowFlags::all_rows_starting_at(cur_row))
+                        redraw_flags.merge(EditorRowFlags::all_rows_starting_at(prev_row))
                     }
                 };
                 InputResult {
@@ -2173,7 +2172,7 @@ impl NoteCalcApp {
         } else {
             if self.handle_completion(&input, editor_objs, vars) {
                 InputResult {
-                    modif: Some(RowModificationType::SingleLine(cur_row)),
+                    modif: Some(RowModificationType::SingleLine(prev_row)),
                     redraw: None,
                 }
             } else if let Some(modif_type) = self.handle_obj_deletion(&input, editor_objs) {
@@ -2181,11 +2180,28 @@ impl NoteCalcApp {
                     modif: Some(modif_type),
                     redraw: None,
                 }
+            } else if input == EditorInputEvent::Char('b') && modifiers.ctrl {
+                if let Some(new_row_index) =
+                    self.handle_jump_to_definition(&input, modifiers, editor_objs)
+                {
+                    InputResult {
+                        modif: None,
+                        redraw: Some((
+                            EditorRowFlags::multiple(&[prev_row, new_row_index]),
+                            RedrawTarget::Both,
+                        )),
+                    }
+                } else {
+                    InputResult {
+                        modif: None,
+                        redraw: None,
+                    }
+                }
             } else if self.handle_obj_jump_over(&input, modifiers, editor_objs) {
                 InputResult {
                     modif: None,
                     redraw: Some((
-                        EditorRowFlags::single_row(cur_row),
+                        EditorRowFlags::single_row(prev_row),
                         RedrawTarget::EditorArea,
                     )),
                 }
@@ -2245,15 +2261,6 @@ impl NoteCalcApp {
                     false
                 };
 
-                // cursor moved to another line
-                if prev_cursor_pos.row != cursor_pos.row {
-                    self.fill_editor_objs_referencing_current_line(
-                        content_y(cursor_pos.row),
-                        tokens,
-                        vars,
-                    );
-                }
-
                 match modif_type {
                     Some(r) => InputResult {
                         modif: Some(r),
@@ -2284,6 +2291,12 @@ impl NoteCalcApp {
                 }
             }
         };
+
+        // cursor moved to another line
+        let cur_row = self.editor.get_selection().get_cursor_pos().row;
+        if prev_row != cur_row {
+            self.fill_editor_objs_referencing_current_line(content_y(cur_row), tokens, vars);
+        }
 
         if let Some(modif) = input_res.modif {
             self.update_tokens_and_redraw_requirements(
@@ -2985,7 +2998,7 @@ impl NoteCalcApp {
             && modifiers.shift == false
         {
             let obj = self
-                .find_editor_object_at(cursor_pos.with_prev_col(), editor_objects)
+                .find_editor_object_at_including_end_of_word(cursor_pos, editor_objects)
                 .map(|it| (it.typ, it.row, it.start_x));
             if let Some((EditorObjectType::LineReference { .. }, row, start_x)) = obj {
                 //  jump over it
@@ -2997,7 +3010,7 @@ impl NoteCalcApp {
             && modifiers.shift == false
         {
             let obj = self
-                .find_editor_object_at(cursor_pos, editor_objects)
+                .find_editor_object_at_excluding_end_of_word(cursor_pos, editor_objects)
                 .map(|it| (it.typ, it.row, it.end_x));
 
             if let Some((EditorObjectType::LineReference { .. }, row, end_x)) = obj {
@@ -3007,6 +3020,25 @@ impl NoteCalcApp {
             }
         }
         return false;
+    }
+
+    fn handle_jump_to_definition<'b>(
+        &mut self,
+        input: &EditorInputEvent,
+        modifiers: InputModifiers,
+        editor_objects: &EditorObjects,
+    ) -> Option<usize> {
+        let selection = self.editor.get_selection();
+        let cursor_pos = selection.get_cursor_pos();
+        if *input == EditorInputEvent::Char('b') && modifiers.ctrl {
+            if let Some(var_index) =
+                self.find_var_index_of_var_or_lineref_at(cursor_pos, editor_objects)
+            {
+                self.editor.set_cursor_pos_r_c(var_index, 0);
+                return Some(var_index);
+            }
+        }
+        return None;
     }
 
     fn check_stepping_into_matrix<'b>(
@@ -3046,7 +3078,43 @@ impl NoteCalcApp {
         }
     }
 
-    fn find_editor_object_at<'b>(
+    fn find_editor_object_at_including_end_of_word<'b>(
+        &self,
+        pos: Pos,
+        editor_objects: &'b EditorObjects,
+    ) -> Option<&'b EditorObject> {
+        for obj in &editor_objects[content_y(pos.row)] {
+            if (obj.start_x..=obj.end_x).contains(&pos.column) {
+                return Some(obj);
+            }
+        }
+        return None;
+    }
+
+    // "asd |var"
+    // here, the cursor is at the edge of the first and second tokens as well, but the simpletoken
+    // comes first so the variable won't be found, that's why we need this specific find method for
+    // linerefs and vars
+    fn find_var_index_of_var_or_lineref_at(
+        &self,
+        pos: Pos,
+        editor_objects: &EditorObjects,
+    ) -> Option<usize> {
+        for obj in &editor_objects[content_y(pos.row)] {
+            match obj.typ {
+                EditorObjectType::Variable { var_index }
+                | EditorObjectType::LineReference { var_index }
+                    if (obj.start_x..=obj.end_x).contains(&pos.column) =>
+                {
+                    return Some(var_index);
+                }
+                _ => {}
+            }
+        }
+        return None;
+    }
+
+    fn find_editor_object_at_excluding_end_of_word<'b>(
         &self,
         pos: Pos,
         editor_objects: &'b EditorObjects,
@@ -7144,15 +7212,12 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         let test = create_app2(35);
         test.paste("2\n * 3");
         test.set_cursor_row_col(1, 0);
-
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
+        test.render();
 
         // insert linref of 1st line
         test.input(EditorInputEvent::Up, InputModifiers::alt());
         test.alt_key_released();
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
+        test.render();
 
         // now modify the first row
         test.input(EditorInputEvent::Up, InputModifiers::none());
@@ -7183,9 +7248,7 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         let test = create_app2(35);
         test.paste("2\n * 3");
         test.set_cursor_row_col(1, 0);
-
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
+        test.render();
 
         // insert linref of 1st line
         test.input(EditorInputEvent::Up, InputModifiers::alt());
@@ -7299,8 +7362,7 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         test.paste("2\n * 3");
         test.set_cursor_row_col(1, 0);
 
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
+        test.render();
 
         // insert linref of 1st line
         test.input(EditorInputEvent::Up, InputModifiers::alt());
@@ -7420,15 +7482,12 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         let test = create_app2(35);
         test.paste("2\n * 3");
         test.set_cursor_row_col(1, 0);
-
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
+        test.render();
 
         // insert linref of 1st line
         test.input(EditorInputEvent::Up, InputModifiers::alt());
         test.alt_key_released();
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
+        test.render();
 
         // there should not be pulsing here yet
         let mut render_buckets = RenderBuckets::new();
@@ -7481,9 +7540,7 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
         let test = create_app2(35);
         test.paste("2\n * 3");
         test.set_cursor_row_col(1, 0);
-
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
+        test.render();
 
         // insert linref of 1st line
         test.input(EditorInputEvent::Up, InputModifiers::alt());
@@ -10081,6 +10138,140 @@ total human brain activity is &[14] * &[15] * (&[16]/1s)",
                 Some(canvas_y(37))
             );
             assert_eq!(test.get_render_data().get_render_y(content_y(38)), None);
+        }
+    }
+
+    #[test]
+    fn test_ctrl_b_jumps_to_var_def() {
+        for i in 0..=3 {
+            let test = create_app2(35);
+            test.paste("some text\nvar = 2\nvar * 3");
+            test.set_cursor_row_col(2, i);
+            test.render();
+
+            test.input(EditorInputEvent::Char('b'), InputModifiers::ctrl());
+            let cursor_pos = test.app.borrow().editor.get_selection().get_cursor_pos();
+            assert_eq!(cursor_pos.row, 1);
+            assert_eq!(cursor_pos.column, 0);
+            assert_eq!("some text\nvar = 2\nvar * 3", &test.get_editor_content());
+        }
+    }
+
+    #[test]
+    fn test_ctrl_b_jumps_to_var_def_negative() {
+        let test = create_app2(35);
+        test.paste("some text\nvar = 2\nvar * 3");
+        for i in 0..=9 {
+            test.set_cursor_row_col(0, i);
+            test.render();
+            test.input(EditorInputEvent::Char('b'), InputModifiers::ctrl());
+            let cursor_pos = test.app.borrow().editor.get_selection().get_cursor_pos();
+            assert_eq!(cursor_pos.row, 0);
+            assert_eq!(cursor_pos.column, i);
+            assert_eq!(
+                "some text",
+                test.get_editor_content().lines().next().unwrap()
+            );
+        }
+        for i in 0..=7 {
+            test.set_cursor_row_col(1, i);
+            test.render();
+            test.input(EditorInputEvent::Char('b'), InputModifiers::ctrl());
+            let cursor_pos = test.app.borrow().editor.get_selection().get_cursor_pos();
+            assert_eq!(cursor_pos.row, 1);
+            assert_eq!(cursor_pos.column, i);
+            let content = test.get_editor_content();
+            let mut lines = content.lines();
+            lines.next();
+            assert_eq!("var = 2", lines.next().unwrap());
+        }
+        for i in 0..=4 {
+            test.set_cursor_row_col(2, 4 + i);
+            test.render();
+            test.input(EditorInputEvent::Char('b'), InputModifiers::ctrl());
+            let cursor_pos = test.app.borrow().editor.get_selection().get_cursor_pos();
+            assert_eq!(cursor_pos.row, 2);
+            assert_eq!(cursor_pos.column, 4 + i);
+            let content = test.get_editor_content();
+            let mut lines = content.lines();
+            lines.next();
+            lines.next();
+            assert_eq!("var * 3", lines.next().unwrap());
+        }
+    }
+
+    #[test]
+    fn test_ctrl_b_jumps_to_line_ref() {
+        let test = create_app2(35);
+        test.paste("2\n3\nasd &[2] * 4");
+        test.set_cursor_row_col(2, 3);
+
+        test.input(EditorInputEvent::Right, InputModifiers::none());
+        test.render();
+        test.input(EditorInputEvent::Char('b'), InputModifiers::ctrl());
+        let cursor_pos = test.app.borrow().editor.get_selection().get_cursor_pos();
+        assert_eq!(cursor_pos.row, 1);
+        assert_eq!(cursor_pos.column, 0);
+
+        test.input(EditorInputEvent::Down, InputModifiers::none());
+        test.set_cursor_row_col(2, 3);
+        test.input(EditorInputEvent::Right, InputModifiers::none());
+        test.input(EditorInputEvent::Right, InputModifiers::none());
+        test.render();
+        test.input(EditorInputEvent::Char('b'), InputModifiers::ctrl());
+        let cursor_pos = test.app.borrow().editor.get_selection().get_cursor_pos();
+        assert_eq!(cursor_pos.row, 1);
+        assert_eq!(cursor_pos.column, 0);
+    }
+
+    #[test]
+    fn test_that_dependant_vars_are_pulsed_when_the_cursor_gets_there_by_ctrl_b() {
+        let test = create_app2(35);
+        test.paste("var = 2\nvar * 3");
+        test.set_cursor_row_col(1, 0);
+        test.render();
+
+        // there should not be pulsing here yet
+        let mut render_buckets = RenderBuckets::new();
+        let mut result_buffer = [0; 128];
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
+        assert_eq!(
+            render_buckets.custom_commands[Layer::AboveText as usize].len(),
+            0
+        );
+
+        // step into the first row
+        test.input(EditorInputEvent::Char('b'), InputModifiers::ctrl());
+
+        let mut render_buckets = RenderBuckets::new();
+        let mut result_buffer = [0; 128];
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
+        dbg!(&render_buckets.custom_commands[Layer::AboveText as usize]);
+        assert_eq!(
+            render_buckets.custom_commands[Layer::AboveText as usize].len(),
+            3
+        );
+        // SetColor(
+        // RenderChar(
+        match &render_buckets.custom_commands[Layer::AboveText as usize][2] {
+            OutputMessage::PulsingRectangle {
+                x,
+                y,
+                w,
+                h,
+                start_color,
+                end_color,
+                animation_time,
+            } => {
+                assert_eq!(*x, 4);
+                assert_eq!(*y, canvas_y(1));
+                assert_eq!(*w, 3);
+                assert_eq!(*h, 1);
+                assert_eq!(*start_color, 0x00FF7F_33);
+                assert_eq!(*end_color, 0x00FF7F_00);
+                assert_eq!(*animation_time, Duration::from_millis(1000));
+            }
+            _ => panic!(),
         }
     }
 }
