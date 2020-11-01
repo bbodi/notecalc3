@@ -89,11 +89,6 @@ impl AppPointers {
         unsafe { &mut *(ptr_holder.editor_objects_ptr as *mut EditorObjects) }
     }
 
-    fn editor_objects<'a>(ptr: u32) -> &'a EditorObjects {
-        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
-        unsafe { &*(ptr_holder.editor_objects_ptr as *const EditorObjects) }
-    }
-
     fn mut_vars<'a>(ptr: u32) -> &'a mut [Option<Variable>] {
         let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
         unsafe {
@@ -144,12 +139,17 @@ fn to_box_ptr<T>(t: T) -> u32 {
 
 #[wasm_bindgen]
 pub fn alt_key_released(app_ptr: u32) {
+    let rb = AppPointers::mut_render_bucket(app_ptr);
+
     AppPointers::mut_app(app_ptr).alt_key_released(
         AppPointers::units(app_ptr),
         AppPointers::allocator(app_ptr),
         AppPointers::mut_tokens(app_ptr),
         AppPointers::mut_results(app_ptr),
         AppPointers::mut_vars(app_ptr),
+        AppPointers::mut_editor_objects(app_ptr),
+        rb,
+        unsafe { &mut RESULT_BUFFER },
     );
 }
 
@@ -192,6 +192,7 @@ pub fn set_compressed_encoded_content(app_ptr: u32, compressed_encoded: String) 
     };
     if let Some(content) = content {
         let app = AppPointers::mut_app(app_ptr);
+
         app.set_normalized_content(
             &content.trim_end(),
             AppPointers::units(app_ptr),
@@ -199,13 +200,26 @@ pub fn set_compressed_encoded_content(app_ptr: u32, compressed_encoded: String) 
             AppPointers::mut_tokens(app_ptr),
             AppPointers::mut_results(app_ptr),
             AppPointers::mut_vars(app_ptr),
+            AppPointers::mut_editor_objects(app_ptr),
+            AppPointers::mut_render_bucket(app_ptr),
+            unsafe { &mut RESULT_BUFFER },
         );
     }
 }
 
 #[wasm_bindgen]
 pub fn handle_time(app_ptr: u32, now: u32) -> bool {
-    let rerender_needed = AppPointers::mut_app(app_ptr).handle_time(now);
+    let rerender_needed = AppPointers::mut_app(app_ptr).handle_time(
+        now,
+        AppPointers::units(app_ptr),
+        AppPointers::allocator(app_ptr),
+        AppPointers::mut_tokens(app_ptr),
+        AppPointers::mut_results(app_ptr),
+        AppPointers::mut_vars(app_ptr),
+        AppPointers::mut_editor_objects(app_ptr),
+        AppPointers::mut_render_bucket(app_ptr),
+        unsafe { &mut RESULT_BUFFER },
+    );
 
     return rerender_needed;
 }
@@ -225,12 +239,14 @@ pub fn handle_click(app_ptr: u32, x: usize, y: usize) {
     AppPointers::mut_app(app_ptr).handle_click(
         x,
         CanvasY::new(y as isize),
-        AppPointers::editor_objects(app_ptr),
+        AppPointers::mut_editor_objects(app_ptr),
         AppPointers::units(app_ptr),
         AppPointers::allocator(app_ptr),
         AppPointers::mut_tokens(app_ptr),
         AppPointers::mut_results(app_ptr),
         AppPointers::mut_vars(app_ptr),
+        AppPointers::mut_render_bucket(app_ptr),
+        unsafe { &mut RESULT_BUFFER },
     );
 }
 
@@ -264,37 +280,24 @@ pub fn handle_paste(app_ptr: u32, input: String) {
         AppPointers::mut_tokens(app_ptr),
         AppPointers::mut_results(app_ptr),
         AppPointers::mut_vars(app_ptr),
+        AppPointers::mut_editor_objects(app_ptr),
+        AppPointers::mut_render_bucket(app_ptr),
+        unsafe { &mut RESULT_BUFFER },
     );
 }
 
 #[wasm_bindgen]
 pub fn render(app_ptr: u32) {
-    let rb = AppPointers::mut_render_bucket(app_ptr);
-
-    rb.clear();
-    AppPointers::mut_app(app_ptr).render(
-        AppPointers::units(app_ptr),
-        rb,
-        unsafe { &mut RESULT_BUFFER },
-        AppPointers::allocator(app_ptr),
-        AppPointers::mut_tokens(app_ptr),
-        AppPointers::mut_results(app_ptr),
-        AppPointers::mut_vars(app_ptr),
-        AppPointers::mut_editor_objects(app_ptr),
-    );
-
-    send_render_commands_to_js(rb);
+    send_render_commands_to_js(AppPointers::mut_render_bucket(app_ptr));
 }
 
 #[wasm_bindgen]
 pub fn get_selected_rows_with_results(app_ptr: u32) -> String {
     let app = AppPointers::mut_app(app_ptr);
     let units = AppPointers::units(app_ptr);
-    let rb = AppPointers::mut_render_bucket(app_ptr);
-    rb.clear();
     return app.copy_selected_rows_with_result_to_clipboard(
         units,
-        rb,
+        AppPointers::mut_render_bucket(app_ptr),
         unsafe { &mut RESULT_BUFFER },
         AppPointers::allocator(app_ptr),
         AppPointers::mut_results(app_ptr),
@@ -332,7 +335,7 @@ pub fn handle_input(app_ptr: u32, input: u32, modifiers: u8) -> bool {
         }
     };
     let app = AppPointers::mut_app(app_ptr);
-    let modif = app.handle_input_and_update_tokens_plus_redraw_requirements(
+    let modif = app.handle_input(
         input,
         modifiers,
         AppPointers::allocator(app_ptr),
@@ -341,6 +344,8 @@ pub fn handle_input(app_ptr: u32, input: u32, modifiers: u8) -> bool {
         AppPointers::mut_results(app_ptr),
         AppPointers::mut_vars(app_ptr),
         AppPointers::mut_editor_objects(app_ptr),
+        AppPointers::mut_render_bucket(app_ptr),
+        unsafe { &mut RESULT_BUFFER },
     );
 
     return modif.is_some();
@@ -543,25 +548,6 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
     if !render_buckets.units.is_empty() {
         write_command(&mut js_command_buffer, &OutputMessage::SetColor(COLOR_UNIT));
         write_commands(&mut js_command_buffer, &render_buckets.units);
-    }
-
-    if !render_buckets.line_ref_results.is_empty() {
-        // background for line reference results
-        write_command(
-            &mut js_command_buffer,
-            &OutputMessage::SetColor(0xFFCCCC_FF),
-        );
-        for command in &render_buckets.line_ref_results {
-            write_command(
-                &mut js_command_buffer,
-                &OutputMessage::RenderRectangle {
-                    x: command.column,
-                    y: command.row,
-                    w: command.text.chars().count(),
-                    h: 1,
-                },
-            )
-        }
     }
 
     if !render_buckets.operators.is_empty() || !render_buckets.line_ref_results.is_empty() {

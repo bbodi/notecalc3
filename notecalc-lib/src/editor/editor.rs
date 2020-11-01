@@ -1,6 +1,8 @@
 use crate::editor::editor_content::{EditorCommand, EditorContent, JumpMode};
 use std::ops::{Range, RangeInclusive};
 
+pub const EDITOR_CURSOR_TICK_MS: u32 = 500;
+
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub enum EditorInputEvent {
     Left,
@@ -403,14 +405,14 @@ impl Editor {
 
     pub fn blink_cursor(&mut self) {
         self.show_cursor = true;
-        self.next_blink_at = self.time + 500;
+        self.next_blink_at = self.time + EDITOR_CURSOR_TICK_MS;
     }
 
     pub fn handle_tick(&mut self, now: u32) -> bool {
         self.time = now;
         return if now >= self.next_blink_at {
             self.show_cursor = !self.show_cursor;
-            self.next_blink_at = now + 500;
+            self.next_blink_at = now + EDITOR_CURSOR_TICK_MS;
             true
         } else {
             false
@@ -673,7 +675,7 @@ impl Editor {
         } else if let Some(command) = self.create_command(&input, modifiers, content) {
             self.execute_user_input(command, content)
         } else {
-            self.next_blink_at = self.time + 500;
+            self.next_blink_at = self.time + EDITOR_CURSOR_TICK_MS;
             self.show_cursor = true;
             self.handle_navigation_input(&input, modifiers, content);
             None
@@ -685,7 +687,7 @@ impl Editor {
         command: EditorCommand<T>,
         content: &mut EditorContent<T>,
     ) -> Option<RowModificationType> {
-        self.next_blink_at = self.time + 500;
+        self.next_blink_at = self.time + EDITOR_CURSOR_TICK_MS;
         self.show_cursor = true;
         let modif_type = self.do_command(&command, content);
         if modif_type.is_some() {
@@ -694,7 +696,7 @@ impl Editor {
                 content.undo_stack.push(Vec::with_capacity(4));
             }
             content.undo_stack.last_mut().unwrap().push(command);
-            self.modif_time_treshold_expires_at = self.time + 500;
+            self.modif_time_treshold_expires_at = self.time + EDITOR_CURSOR_TICK_MS;
         }
         modif_type
     }

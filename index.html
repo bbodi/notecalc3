@@ -444,6 +444,8 @@
     let command_buffer_ptr;
 
     function redraw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
         let command_count = -1;
         let buf_index = 0;
         const command_buffer = new Uint8Array(wasm.memory.buffer, command_buffer_ptr);
