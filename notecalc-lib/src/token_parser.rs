@@ -42,10 +42,10 @@ pub enum OperatorTokenType {
     Mult,
     Div,
     Perc,
-    And,
-    Or,
-    Xor,
-    Not,
+    BinAnd,
+    BinOr,
+    BinXor,
+    BinNot,
     Pow,
     ParenOpen,
     ParenClose,
@@ -76,10 +76,10 @@ impl OperatorTokenType {
             OperatorTokenType::Mult => 3,
             OperatorTokenType::Div => 3,
             OperatorTokenType::Perc => 6,
-            OperatorTokenType::And => 0,
-            OperatorTokenType::Or => 0,
-            OperatorTokenType::Xor => 0,
-            OperatorTokenType::Not => 0,
+            OperatorTokenType::BinAnd => 0,
+            OperatorTokenType::BinOr => 0,
+            OperatorTokenType::BinXor => 0,
+            OperatorTokenType::BinNot => 4,
             OperatorTokenType::Pow => 5,
             OperatorTokenType::ParenOpen => 0,
             OperatorTokenType::ParenClose => 0,
@@ -105,10 +105,10 @@ impl OperatorTokenType {
             OperatorTokenType::Mult => Assoc::Left,
             OperatorTokenType::Div => Assoc::Left,
             OperatorTokenType::Perc => Assoc::Left,
-            OperatorTokenType::And => Assoc::Left,
-            OperatorTokenType::Or => Assoc::Left,
-            OperatorTokenType::Xor => Assoc::Left,
-            OperatorTokenType::Not => Assoc::Left,
+            OperatorTokenType::BinAnd => Assoc::Left,
+            OperatorTokenType::BinOr => Assoc::Left,
+            OperatorTokenType::BinXor => Assoc::Left,
+            OperatorTokenType::BinNot => Assoc::Left,
             OperatorTokenType::Pow => Assoc::Right,
             OperatorTokenType::ParenOpen => Assoc::Left,
             OperatorTokenType::ShiftLeft => Assoc::Left,
@@ -187,7 +187,7 @@ impl TokenParser {
                             || matches!(typ, OperatorTokenType::UnitConverter);
                     }
                     TokenType::Variable { .. } | TokenType::LineReference { .. } => {
-                        can_be_unit = true;
+                        can_be_unit = false;
                     }
                 }
                 index += token.ptr.len();
@@ -543,24 +543,24 @@ impl TokenParser {
             ',' => op(OperatorTokenType::Comma, str, 1, allocator),
             ';' => op(OperatorTokenType::Semicolon, str, 1, allocator),
             _ => {
-                if str.starts_with(&['t', 'o', ' ']) {
+                if str.starts_with(&['i', 'n', ' ']) {
                     op(OperatorTokenType::UnitConverter, str, 2, allocator)
                 } else if str.starts_with(&['A', 'N', 'D'])
                     && str.get(3).map(|it| !it.is_alphabetic()).unwrap_or(true)
                 {
                     // TODO unit test "0xff and(12)"
-                    op(OperatorTokenType::And, str, 3, allocator)
+                    op(OperatorTokenType::BinAnd, str, 3, allocator)
                 } else if str.starts_with(&['O', 'R'])
                     && str.get(2).map(|it| !it.is_alphabetic()).unwrap_or(true)
                 {
-                    op(OperatorTokenType::Or, str, 2, allocator)
+                    op(OperatorTokenType::BinOr, str, 2, allocator)
                 } else if str.starts_with(&['N', 'O', 'T', '(']) {
-                    op(OperatorTokenType::Not, str, 3, allocator)
+                    op(OperatorTokenType::BinNot, str, 3, allocator)
                 // '(' will be parsed separately as an operator
                 } else if str.starts_with(&['X', 'O', 'R'])
                     && str.get(3).map(|it| !it.is_alphabetic()).unwrap_or(true)
                 {
-                    op(OperatorTokenType::Xor, str, 3, allocator)
+                    op(OperatorTokenType::BinXor, str, 3, allocator)
                 } else if str.starts_with(&['<', '<']) {
                     op(OperatorTokenType::ShiftLeft, str, 2, allocator)
                 } else if str.starts_with(&['>', '>']) {
@@ -873,7 +873,7 @@ mod tests {
             &[
                 num(0xFF),
                 str(" "),
-                op(OperatorTokenType::And),
+                op(OperatorTokenType::BinAnd),
                 str(" "),
                 num(0b11),
             ],
@@ -881,27 +881,30 @@ mod tests {
 
         test(
             "0xFF AND",
-            &[num(0xff), str(" "), op(OperatorTokenType::And)],
+            &[num(0xff), str(" "), op(OperatorTokenType::BinAnd)],
         );
-        test("0xFF OR", &[num(0xff), str(" "), op(OperatorTokenType::Or)]);
+        test(
+            "0xFF OR",
+            &[num(0xff), str(" "), op(OperatorTokenType::BinOr)],
+        );
         test(
             "0xFF XOR",
-            &[num(0xff), str(" "), op(OperatorTokenType::Xor)],
+            &[num(0xff), str(" "), op(OperatorTokenType::BinXor)],
         );
 
         test(
-            "((0b00101 AND 0xFF) XOR 0xFF00) << 16 >> 16  NOT(0xFF)",
+            "((0b00101 AND 0xFF) XOR 0xFF00) << 16 >> 16",
             &[
                 op(OperatorTokenType::ParenOpen),
                 op(OperatorTokenType::ParenOpen),
                 num(0b00101),
                 str(" "),
-                op(OperatorTokenType::And),
+                op(OperatorTokenType::BinAnd),
                 str(" "),
                 num(0xFF),
                 op(OperatorTokenType::ParenClose),
                 str(" "),
-                op(OperatorTokenType::Xor),
+                op(OperatorTokenType::BinXor),
                 str(" "),
                 num(0xFF00),
                 op(OperatorTokenType::ParenClose),
@@ -913,15 +916,52 @@ mod tests {
                 op(OperatorTokenType::ShiftRight),
                 str(" "),
                 num(16),
-                str("  "),
-                op(OperatorTokenType::Not),
+            ],
+        );
+        test(
+            "NOT(0xFF)",
+            &[
+                op(OperatorTokenType::BinNot),
                 op(OperatorTokenType::ParenOpen),
                 num(0xFF),
                 op(OperatorTokenType::ParenClose),
             ],
         );
         test(
-            "10km/h * 45min to m",
+            "((0b00101 AND 0xFF) XOR 0xFF00) << 16 >> 16 AND NOT(0xFF)",
+            &[
+                op(OperatorTokenType::ParenOpen),
+                op(OperatorTokenType::ParenOpen),
+                num(0b00101),
+                str(" "),
+                op(OperatorTokenType::BinAnd),
+                str(" "),
+                num(0xFF),
+                op(OperatorTokenType::ParenClose),
+                str(" "),
+                op(OperatorTokenType::BinXor),
+                str(" "),
+                num(0xFF00),
+                op(OperatorTokenType::ParenClose),
+                str(" "),
+                op(OperatorTokenType::ShiftLeft),
+                str(" "),
+                num(16),
+                str(" "),
+                op(OperatorTokenType::ShiftRight),
+                str(" "),
+                num(16),
+                str(" "),
+                op(OperatorTokenType::BinAnd),
+                str(" "),
+                op(OperatorTokenType::BinNot),
+                op(OperatorTokenType::ParenOpen),
+                num(0xFF),
+                op(OperatorTokenType::ParenClose),
+            ],
+        );
+        test(
+            "10km/h * 45min in m",
             &[
                 num(10),
                 unit("km/h"),
@@ -938,7 +978,7 @@ mod tests {
         );
 
         test(
-            "45min to m",
+            "45min in m",
             &[
                 num(45),
                 unit("min"),
@@ -950,7 +990,7 @@ mod tests {
         );
 
         test(
-            "10(km/h)^2 * 45min to m",
+            "10(km/h)^2 * 45min in m",
             &[
                 num(10),
                 unit("(km/h)"),

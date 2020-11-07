@@ -575,7 +575,7 @@ impl ShuntingYard {
                             )
                             .is_some()
                             {
-                                // after 'to', there must be a single unit component, nothing else
+                                // after 'in', there must be a single unit component, nothing else
                                 continue;
                             }
                             v.expect_expression = false;
@@ -605,7 +605,7 @@ impl ShuntingYard {
                         panic!("Token parser does not generate unary operators");
                     }
                     _ => {
-                        if v.expect_expression {
+                        if !matches!(op, OperatorTokenType::BinNot) && v.expect_expression {
                             ShuntingYard::rollback(
                                 &mut operator_stack,
                                 output_stack,
@@ -1146,7 +1146,7 @@ pub mod tests {
         );
 
         test_output(
-            "10km/h * 45min * 12 km to h",
+            "10km/h * 45min * 12 km in h",
             &[
                 num(10),
                 unit("km / h"),
@@ -1202,6 +1202,11 @@ pub mod tests {
                 op(OperatorTokenType::Add),
             ],
         );
+    }
+
+    #[test]
+    fn test_binary_not() {
+        test_output("NOT(0b11)", &[num(0b11), op(OperatorTokenType::BinNot)]);
     }
 
     #[test]
@@ -1537,7 +1542,7 @@ pub mod tests {
         );
 
         test_output(
-            "100 ft * lbf to (in*lbf)",
+            "100 ft * lbf in (in*lbf)",
             &[
                 num(100),
                 unit("ft lbf"),
@@ -1547,7 +1552,7 @@ pub mod tests {
         );
 
         test_tokens(
-            "100 ft * lbf to (in*lbf)",
+            "100 ft * lbf in (in*lbf)",
             &[
                 num(100),
                 str(" "),
@@ -1560,7 +1565,7 @@ pub mod tests {
         );
 
         test_tokens(
-            "1 Kib/s to b/s ",
+            "1 Kib/s in b/s ",
             &[
                 num(1),
                 str(" "),
@@ -1573,15 +1578,15 @@ pub mod tests {
             ],
         );
         // typo: the text contain 'lbG' and not lbF
-        test_output("100 ft * lbf to (in*lbg)", &[num(100), unit("ft lbf")]);
+        test_output("100 ft * lbf in (in*lbg)", &[num(100), unit("ft lbf")]);
         test_tokens(
-            "100 ft * lbf to (in*lbg)",
+            "100 ft * lbf in (in*lbg)",
             &[
                 num(100),
                 str(" "),
                 unit("ft lbf"),
                 str(" "),
-                str("to"),
+                str("in"),
                 str(" "),
                 str("("),
                 str("in"),
@@ -1593,17 +1598,17 @@ pub mod tests {
 
         // typo: the text contain 'lbG' and not lbF
         test_output(
-            "100 ft * lbf to (in*lbg) 1 + 100",
+            "100 ft * lbf in (in*lbg) 1 + 100",
             &[num(1), num(100), op(OperatorTokenType::Add)],
         );
         test_tokens(
-            "100 ft * lbf to (in*lbg) 1 + 100",
+            "100 ft * lbf in (in*lbg) 1 + 100",
             &[
                 str("100"),
                 str(" "),
                 str("ft * lbf"),
                 str(" "),
-                str("to"),
+                str("in"),
                 str(" "),
                 str("("),
                 str("in"),

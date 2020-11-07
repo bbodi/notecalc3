@@ -135,9 +135,9 @@ fn apply_operation(stack: &mut Vec<CalcResult>, op: &OperatorTokenType) -> bool 
         | OperatorTokenType::Div
         | OperatorTokenType::Add
         | OperatorTokenType::Sub
-        | OperatorTokenType::And
-        | OperatorTokenType::Or
-        | OperatorTokenType::Xor
+        | OperatorTokenType::BinAnd
+        | OperatorTokenType::BinOr
+        | OperatorTokenType::BinXor
         | OperatorTokenType::Pow
         | OperatorTokenType::ShiftLeft
         | OperatorTokenType::ShiftRight
@@ -158,7 +158,7 @@ fn apply_operation(stack: &mut Vec<CalcResult>, op: &OperatorTokenType) -> bool 
         OperatorTokenType::UnaryMinus
         | OperatorTokenType::UnaryPlus
         | OperatorTokenType::Perc
-        | OperatorTokenType::Not => {
+        | OperatorTokenType::BinNot => {
             let maybe_top = stack.last();
             if let Some(result) = maybe_top.and_then(|top| unary_operation(&op, top)) {
                 stack.pop();
@@ -219,7 +219,7 @@ fn unary_operation(op: &OperatorTokenType, top: &CalcResult) -> Option<CalcResul
         OperatorTokenType::UnaryPlus => Some(top.clone()),
         OperatorTokenType::UnaryMinus => unary_minus_op(top),
         OperatorTokenType::Perc => percentage_operator(top),
-        OperatorTokenType::Not => binary_complement(top),
+        OperatorTokenType::BinNot => binary_complement(top),
         _ => None,
     };
 }
@@ -234,9 +234,9 @@ fn binary_operation(
         OperatorTokenType::Div => divide_op(lhs, rhs),
         OperatorTokenType::Add => add_op(lhs, rhs),
         OperatorTokenType::Sub => sub_op(lhs, rhs),
-        OperatorTokenType::And => binary_and_op(lhs, rhs),
-        OperatorTokenType::Or => binary_or_op(lhs, rhs),
-        OperatorTokenType::Xor => binary_xor_op(lhs, rhs),
+        OperatorTokenType::BinAnd => binary_and_op(lhs, rhs),
+        OperatorTokenType::BinOr => binary_or_op(lhs, rhs),
+        OperatorTokenType::BinXor => binary_xor_op(lhs, rhs),
         OperatorTokenType::Pow => pow_op(lhs, rhs),
         OperatorTokenType::ShiftLeft => binary_shift_left(lhs, rhs),
         OperatorTokenType::ShiftRight => binary_shift_right(lhs, rhs),
@@ -287,6 +287,8 @@ fn binary_complement(lhs: &CalcResult) -> Option<CalcResult> {
         CalcResult::Number(lhs) => {
             // 0b01 and 0b10
             let lhs = lhs.to_i64()?;
+            let _a = lhs;
+            let _b = lhs.not();
             Some(CalcResult::Number(dec(lhs.not())))
         }
         _ => None,
@@ -885,11 +887,11 @@ mod tests {
         test("2^-2", "0.25");
         test_with_dec_count(5, "5km + 5cm", "5.00005 km");
         test("5kg*m / 1s^2", "5 N");
-        test("0.000001 km2 to m2", "1 m2");
-        test("0.000000001 km3 to m3", "1 m3");
+        test("0.000001 km2 in m2", "1 m2");
+        test("0.000000001 km3 in m3", "1 m3");
 
-        test("0.000000002 km^3 to m^3", "2 m^3");
-        test("0.000000002 km3 to m^3", "2 m^3");
+        test("0.000000002 km^3 in m^3", "2 m^3");
+        test("0.000000002 km3 in m^3", "2 m^3");
 
         test("2 - -1", "3");
 
@@ -899,17 +901,17 @@ mod tests {
         test("9.81 kg*m/s^2 * 1", "9.81 N");
 
         // should test whether two units are equal
-        test("100 cm to m", "1 m");
-        test("5000 cm to m", "50 m");
+        test("100 cm in m", "1 m");
+        test("5000 cm in m", "50 m");
 
-        test("100 ft * lbf to (in*lbf)", "1200 in lbf");
-        test("100 N to kg*m / s ^ 2", "100 (kg m) / s^2");
-        test("100 cm to m", "1 m");
-        test("100 Hz to 1/s", "100 s^-1");
+        test("100 ft * lbf in (in*lbf)", "1200 in lbf");
+        test("100 N in kg*m / s ^ 2", "100 (kg m) / s^2");
+        test("100 cm in m", "1 m");
+        test("100 Hz in 1/s", "100 s^-1");
         test("() Hz", " ");
 
         test("1 ft * lbf * 2 rad", "2 ft lbf rad");
-        test("1 ft * lbf * 2 rad to in*lbf*rad", "24 in lbf rad");
+        test("1 ft * lbf * 2 rad in in*lbf*rad", "24 in lbf rad");
         test("(2/3)m", "0.6667 m");
         test_with_dec_count(
             50,
@@ -922,7 +924,7 @@ mod tests {
             "0.66666666666666666666666666666666666666666666666667 m^-1",
         );
 
-        test("123 N to (kg m)/s^2", "123 (kg m) / s^2");
+        test("123 N in (kg m)/s^2", "123 (kg m) / s^2");
 
         test("1 km / 3000000 mm", "0.3333");
         test_with_dec_count(100,
@@ -936,20 +938,20 @@ mod tests {
         test("-5kg  * 1", "-5 kg");
         test("+5kg  * 1", "5 kg");
         test(".5kg  * 1", "0.5 kg");
-        test_with_dec_count(6, "-5mg to kg", "-0.000005 kg");
+        test_with_dec_count(6, "-5mg in kg", "-0.000005 kg");
         test("5.2mg * 1", "5.2 mg");
 
-        test("981 cm/s^2 to m/s^2", "9.81 m / s^2");
-        test("5exabytes to bytes", "5000000000000000000 bytes");
+        test("981 cm/s^2 in m/s^2", "9.81 m / s^2");
+        test("5exabytes in bytes", "5000000000000000000 bytes");
         test(
             "8.314 kg*(m^2 / (s^2 / (K^-1 / mol))) * 1",
             "8.314 (kg m^2) / (s^2 K mol)",
         );
 
         test("9.81 meters/second^2 * 1", "9.81 meter / second^2");
-        test("10 decades to decade", "10 decade");
-        test("10 centuries to century", "10 century");
-        test("10 millennia to millennium", "10 millennium");
+        test("10 decades in decade", "10 decade");
+        test("10 centuries in century", "10 century");
+        test("10 millennia in millennium", "10 millennium");
 
         test("(10 + 20)km", "30 km");
     }
@@ -1002,13 +1004,13 @@ mod tests {
 
     #[test]
     fn test_longer_texts() {
-        test("I traveled 13km at a rate / 40km/h to min", "19.5 min");
+        test("I traveled 13km at a rate / 40km/h in min", "19.5 min");
         test(
             "I traveled 24 miles and rode my bike  / 2 hours",
             "12 mile / hour",
         );
         test(
-            "Now let's say you rode your bike at a rate of 10 miles/h for * 4 h to mile",
+            "Now let's say you rode your bike at a rate of 10 miles/h for * 4 h in mile",
             "40 mile",
         );
         test(
@@ -1117,7 +1119,7 @@ mod tests {
         );
         test("1szer sem jött el + *megjegyzés 2 éve...", "1");
 
-        test("100 Hz to s", "Err");
+        test("100 Hz in s", "Err");
 
         test("12m/h * 45s ^^", "0.15 m");
         test("12km/h * 45s ^^", "150 m");
@@ -1193,10 +1195,10 @@ mod tests {
 
     #[test]
     fn test_calc_angles() {
-        test("1 radian to rad", "1 rad");
+        test("1 radian in rad", "1 rad");
         test_with_dec_count(
             51,
-            "1 deg to rad",
+            "1 deg in rad",
             "0.017453292519943295769236907684886127111111111111111 rad",
         );
     }
@@ -1212,7 +1214,7 @@ mod tests {
         // then 60 km/h is converted to m/s, which is 16.6666...7 m/s,
         // and it causes inaccuracies
         test("60km/h * 2h", "120000 m");
-        test("60km/h * 2h to km", "120 km");
+        test("60km/h * 2h in km", "120 km");
         test("1s * 2s^-1", "2");
         test("2s * 3(s^-1)", "6");
         test("2s * 3(1/s)", "6");
@@ -1314,13 +1316,13 @@ mod tests {
 
     #[test]
     fn matrix_unit() {
-        test("[2cm,3mm; 4m,5km] to m", "[0.02 m, 0.003 m; 4 m, 5000 m]");
+        test("[2cm,3mm; 4m,5km] in m", "[0.02 m, 0.003 m; 4 m, 5000 m]");
     }
 
     #[test]
     fn kcal_unit() {
-        test("1 cal to J", "4.1868 J");
-        test("3kcal to J", "12560.4 J");
+        test("1 cal in J", "4.1868 J");
+        test("3kcal in J", "12560.4 J");
     }
 
     #[test]
@@ -1345,11 +1347,11 @@ mod tests {
             &[
                 num(0xff),
                 str(" "),
-                op(OperatorTokenType::And),
+                op(OperatorTokenType::BinAnd),
                 op(OperatorTokenType::ParenOpen),
                 num(0b11),
                 str(" "),
-                op(OperatorTokenType::Or),
+                op(OperatorTokenType::BinOr),
                 str(" "),
                 num(0b1111),
                 op(OperatorTokenType::ParenClose),
@@ -1366,7 +1368,7 @@ mod tests {
             &[
                 num(0xff),
                 str(" "),
-                op(OperatorTokenType::And),
+                op(OperatorTokenType::BinAnd),
                 str(" "),
                 num(0b11),
                 str(" "),
@@ -1379,11 +1381,11 @@ mod tests {
     fn test_binary() {
         ///// binary
         // Kibi BIT!
-        test("1 Kib to bits", "1024 bits");
-        test("1 Kib to bytes", "128 bytes");
-        test("1 Kib/s to b/s", "1024 b / s");
+        test("1 Kib in bits", "1024 bits");
+        test("1 Kib in bytes", "128 bytes");
+        test("1 Kib/s in b/s", "1024 b / s");
 
-        test("1kb to bytes", "125 bytes");
+        test("1kb in bytes", "125 bytes");
     }
 
     #[test]
@@ -1431,6 +1433,12 @@ mod tests {
     #[test]
     fn test_func_sum() {
         test("sum([5, 6, 7])", "18");
+    }
+
+    #[test]
+    fn test_binary_not() {
+        test("NOT(0b11)", "-4");
+        test("13 AND NOT(4 - 1)", "12");
     }
 
     #[test]

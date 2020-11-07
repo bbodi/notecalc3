@@ -1402,7 +1402,7 @@ impl NoteCalcApp {
             Some(4),
         );
 
-        pulse_rerendered_lines(
+        pulse_changed_results(
             render_buckets,
             gr,
             longest_rendered_result_len,
@@ -3325,7 +3325,7 @@ pub fn pulse_editor_objs_referencing_current_line(
     }
 }
 
-pub fn pulse_rerendered_lines(
+pub fn pulse_changed_results(
     render_buckets: &mut RenderBuckets,
     gr: &GlobalRenderData,
     longest_rendered_result_len: usize,
@@ -3347,55 +3347,12 @@ pub fn pulse_rerendered_lines(
                         h: gr.get_rendered_height(content_y(i)),
                         start_color: 0xFF88FF_AA,
                         end_color: 0xFFFFFF_00,
-                        animation_time: Duration::from_millis(2000),
+                        animation_time: Duration::from_millis(1000),
                     },
                 );
             }
         }
     }
-
-    // for DEBUG, pulses the whole line
-    // for ((render_y, render_height), target) in rerendered_lines {
-    // let x_w_coords = match *target {
-    //     RedrawTarget::Both => Some((
-    //         LEFT_GUTTER_WIDTH,
-    //         gr.current_result_panel_width
-    //             + gr.current_editor_width
-    //             + gr.left_gutter_width
-    //             + SCROLL_BAR_WIDTH
-    //             + RIGHT_GUTTER_WIDTH,
-    //     )),
-    //     RedrawTarget::EditorArea => Some((LEFT_GUTTER_WIDTH, gr.current_editor_width)),
-    //
-    //     RedrawTarget::ResultArea => Some((
-    //         gr.result_gutter_x,
-    //         gr.current_result_panel_width + RIGHT_GUTTER_WIDTH,
-    //     )),
-    // };
-
-    // pulses only the result
-    // let x_w_coords = match *target {
-    //     RedrawTarget::Both | RedrawTarget::ResultArea => Some((
-    //         gr.result_gutter_x,
-    //         gr.current_result_panel_width + RIGHT_GUTTER_WIDTH,
-    //     )),
-    //     _ => None,
-    // };
-    //
-    // if let Some((x, w)) = x_w_coords {
-    //     render_buckets.custom_commands[Layer::AboveText as usize].push(
-    //         OutputMessage::PulsingRectangle {
-    //             x,
-    //             y: *render_y,
-    //             w,
-    //             h: *render_height,
-    //             start_color: 0xFF88FF_DD,
-    //             end_color: 0xFFFFFF_00,
-    //             animation_time: Duration::from_millis(1000),
-    //         },
-    //     );
-    // }
-    // }
 }
 
 pub fn parse_tokens<'b>(
@@ -4419,20 +4376,17 @@ fn render_results<'text_ptr>(
                                 &results[editor_y.as_usize()..],
                             );
                         }
-                        // if modif_type.need(editor_y) {
-                        if true {
-                            let width = render_matrix_result(
-                                units,
-                                result_gutter_x + RIGHT_GUTTER_WIDTH,
-                                render_y,
-                                mat,
-                                render_buckets,
-                                prev_result_matrix_length.as_ref(),
-                                gr.get_rendered_height(editor_y),
-                                decimal_count,
-                            );
-                            result_len = width;
-                        }
+                        let width = render_matrix_result(
+                            units,
+                            result_gutter_x + RIGHT_GUTTER_WIDTH,
+                            render_y,
+                            mat,
+                            render_buckets,
+                            prev_result_matrix_length.as_ref(),
+                            gr.get_rendered_height(editor_y),
+                            decimal_count,
+                        );
+                        result_len = width;
                         result_ranges.push(ResultTmp {
                             buffer_ptr: None,
                             editor_y,
@@ -4554,10 +4508,17 @@ fn render_results<'text_ptr>(
             }
             if lengths.unit_part_len > 0 {
                 let from = result_range.start + lengths.int_part_len + lengths.frac_part_len + 1;
+                // e.g. in case of 2 units mm and m, m should be 1 coordinates right
+                let offset_x = max_lengths.unit_part_len - lengths.unit_part_len;
                 render_buckets.ascii_texts.push(RenderAsciiTextMsg {
                     text: &result_buffer[from..result_range.end],
                     row,
-                    column: x + lengths.int_part_len + lengths.frac_part_len + 1,
+                    column: result_gutter_x
+                        + RIGHT_GUTTER_WIDTH
+                        + max_lengths.int_part_len
+                        + max_lengths.frac_part_len
+                        + 1
+                        + offset_x,
                 });
             }
             match offset_x {
@@ -6992,7 +6953,7 @@ sum",
                     h: 1,
                     start_color: 0xFF88FFAA,
                     end_color: 0xFFFFFF00,
-                    animation_time: Duration::from_millis(2000),
+                    animation_time: Duration::from_millis(1000),
                 }
             );
             assert_eq!(
@@ -7004,7 +6965,7 @@ sum",
                     h: 1,
                     start_color: 0xFF88FFAA,
                     end_color: 0xFFFFFF00,
-                    animation_time: Duration::from_millis(2000),
+                    animation_time: Duration::from_millis(1000),
                 }
             );
 
@@ -8326,11 +8287,44 @@ sum",
 
         assert_eq!(render_buckets.ascii_texts[5].text, "km".as_bytes());
         assert_eq!(render_buckets.ascii_texts[5].row, canvas_y(3));
-        assert_eq!(render_buckets.ascii_texts[5].column, base_x + 2);
+        assert_eq!(render_buckets.ascii_texts[5].column, base_x + 4);
 
         assert_eq!(render_buckets.ascii_texts[6].text, "50 000".as_bytes());
         assert_eq!(render_buckets.ascii_texts[6].row, canvas_y(4));
         assert_eq!(render_buckets.ascii_texts[6].column, base_x - 5);
+    }
+
+    #[test]
+    fn test_units_are_aligned_as_well() {
+        let test = create_app2(35);
+        test.paste("1cm\n2.3m\n2222.33 km\n4km\n50000 mm");
+        let mut render_buckets = RenderBuckets::new();
+        let mut result_buffer = [0; 128];
+
+        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
+
+        dbg!(&render_buckets.ascii_texts);
+        let base_x = render_buckets.ascii_texts[1].column; // 1 cm
+
+        assert_eq!(render_buckets.ascii_texts[1].text, "cm".as_bytes());
+        assert_eq!(render_buckets.ascii_texts[1].row, canvas_y(0));
+        assert_eq!(render_buckets.ascii_texts[1].column, base_x);
+
+        assert_eq!(render_buckets.ascii_texts[4].text, "m".as_bytes());
+        assert_eq!(render_buckets.ascii_texts[4].row, canvas_y(1));
+        assert_eq!(render_buckets.ascii_texts[4].column, base_x + 1);
+
+        assert_eq!(render_buckets.ascii_texts[7].text, "km".as_bytes());
+        assert_eq!(render_buckets.ascii_texts[7].row, canvas_y(2));
+        assert_eq!(render_buckets.ascii_texts[7].column, base_x);
+
+        assert_eq!(render_buckets.ascii_texts[9].text, "km".as_bytes());
+        assert_eq!(render_buckets.ascii_texts[9].row, canvas_y(3));
+        assert_eq!(render_buckets.ascii_texts[9].column, base_x);
+
+        assert_eq!(render_buckets.ascii_texts[11].text, "mm".as_bytes());
+        assert_eq!(render_buckets.ascii_texts[11].row, canvas_y(4));
+        assert_eq!(render_buckets.ascii_texts[11].column, base_x);
     }
 
     #[test]
@@ -9505,5 +9499,26 @@ sum",
                 }
             );
         }
+    }
+
+    #[test]
+    fn converting_unit_of_line_ref() {
+        let test = create_app2(35);
+        test.paste("573 390 s");
+        test.set_cursor_row_col(0, 9);
+        test.render();
+
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        test.input(EditorInputEvent::Char(' '), InputModifiers::none());
+        test.input(EditorInputEvent::Char('i'), InputModifiers::none());
+        test.input(EditorInputEvent::Char('n'), InputModifiers::none());
+        test.input(EditorInputEvent::Char(' '), InputModifiers::none());
+        test.input(EditorInputEvent::Char('h'), InputModifiers::none());
+
+        let mut result_buffer = [0; 128];
+        test.render_get_result_buf(&mut result_buffer[..]);
+        assert_results(&["573 390 s", "159.275 h"][..], &result_buffer);
     }
 }
