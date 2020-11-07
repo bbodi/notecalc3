@@ -11,12 +11,13 @@ crate-type = ["cdylib", "rlib"]
 default = ["console_error_panic_hook"]
 
 [dependencies]
-wasm-bindgen = "0.2"
+#see https://github.com/rustwasm/wasm-pack/issues/886#issuecomment-689597345
+wasm-bindgen = "=0.2.60"
+web-sys = "=0.3.37"
 notecalc-lib = { path = "../notecalc-lib" }
-web-sys = "0.3.37"
 byteorder = "1.3.4"
-flate2 = "1.0"
-base64 = "0.12.0"
+flate2 = "1.0.19"
+base64 = "0.13.0"
 typed-arena = "2.0.1"
 
 # The `console_error_panic_hook` crate provides better debugging of panics by

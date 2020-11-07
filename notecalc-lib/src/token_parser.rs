@@ -613,7 +613,8 @@ mod tests {
                     ptr: _,
                     typ: TokenType::NumberLiteral(num),
                 }) => {
-                    assert_eq!(BigDecimal::from(expected_value), *num);
+                    use std::convert::TryFrom;
+                    assert_eq!(BigDecimal::try_from(expected_value).expect("must"), *num);
                 }
                 _ => panic!("'{}' failed", str),
             }

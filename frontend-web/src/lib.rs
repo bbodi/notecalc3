@@ -226,7 +226,18 @@ pub fn handle_time(app_ptr: u32, now: u32) -> bool {
 
 #[wasm_bindgen]
 pub fn handle_drag(app_ptr: u32, x: usize, y: usize) -> bool {
-    return AppPointers::mut_app(app_ptr).handle_drag(x, CanvasY::new(y as isize));
+    return AppPointers::mut_app(app_ptr).handle_drag(
+        x,
+        CanvasY::new(y as isize),
+        AppPointers::mut_editor_objects(app_ptr),
+        AppPointers::units(app_ptr),
+        AppPointers::allocator(app_ptr),
+        AppPointers::mut_tokens(app_ptr),
+        AppPointers::mut_results(app_ptr),
+        AppPointers::mut_vars(app_ptr),
+        AppPointers::mut_render_bucket(app_ptr),
+        unsafe { &mut RESULT_BUFFER },
+    );
 }
 
 #[wasm_bindgen]
@@ -252,7 +263,17 @@ pub fn handle_click(app_ptr: u32, x: usize, y: usize) {
 
 #[wasm_bindgen]
 pub fn handle_wheel(app_ptr: u32, dir: usize) -> bool {
-    return AppPointers::mut_app(app_ptr).handle_wheel(dir);
+    return AppPointers::mut_app(app_ptr).handle_wheel(
+        dir,
+        AppPointers::mut_editor_objects(app_ptr),
+        AppPointers::units(app_ptr),
+        AppPointers::allocator(app_ptr),
+        AppPointers::mut_tokens(app_ptr),
+        AppPointers::mut_results(app_ptr),
+        AppPointers::mut_vars(app_ptr),
+        AppPointers::mut_render_bucket(app_ptr),
+        unsafe { &mut RESULT_BUFFER },
+    );
 }
 
 #[wasm_bindgen]

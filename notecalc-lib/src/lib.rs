@@ -1424,8 +1424,19 @@ impl NoteCalcApp {
         );
     }
 
-    pub fn handle_wheel(&mut self, dir: usize) -> bool {
-        return if dir == 0 && self.render_data.scroll_y > 0 {
+    pub fn handle_wheel<'b>(
+        &mut self,
+        dir: usize,
+        editor_objs: &mut EditorObjects,
+        units: &Units,
+        allocator: &'b Arena<char>,
+        tokens: &mut AppTokens<'b>,
+        results: &mut Results,
+        vars: &mut Variables,
+        render_buckets: &mut RenderBuckets<'b>,
+        result_buffer: &'b mut [u8],
+    ) -> bool {
+        let has_moved = if dir == 0 && self.render_data.scroll_y > 0 {
             self.render_data.scroll_y -= 1;
             true
         } else if dir == 1 {
@@ -1442,6 +1453,20 @@ impl NoteCalcApp {
         } else {
             false
         };
+        if has_moved {
+            self.generate_render_commands_and_fill_editor_objs(
+                units,
+                render_buckets,
+                result_buffer,
+                allocator,
+                tokens,
+                results,
+                vars,
+                editor_objs,
+                EditorRowFlags::empty(),
+            );
+        }
+        return has_moved;
     }
 
     pub fn handle_click<'b>(
@@ -1602,15 +1627,6 @@ impl NoteCalcApp {
             &self.editor_content,
         );
 
-        // cursor moved to another line
-        /*if prev_selection.get_cursor_pos().row != clicked_row.as_usize() */
-        // there is no diff check, it is possible that after a dragging, the cursor is in the
-        // same line as the clicked one
-        {
-            // TODO asd rerender miért nincs itt??
-            // NoteCalcApp::fill_editor_objs_referencing_current_line(clicked_row, tokens, vars);
-        }
-
         self.editor.blink_cursor();
 
         if self.mouse_state.is_none() {
@@ -1726,8 +1742,20 @@ impl NoteCalcApp {
             .find(|editor_obj| (editor_obj.start_x + 1..editor_obj.end_x).contains(&x));
     }
 
-    pub fn handle_drag(&mut self, x: usize, y: CanvasY) -> bool {
-        return match self.mouse_state {
+    pub fn handle_drag<'b>(
+        &mut self,
+        x: usize,
+        y: CanvasY,
+        editor_objs: &mut EditorObjects,
+        units: &Units,
+        allocator: &'b Arena<char>,
+        tokens: &mut AppTokens<'b>,
+        results: &mut Results,
+        vars: &mut Variables,
+        render_buckets: &mut RenderBuckets<'b>,
+        result_buffer: &'b mut [u8],
+    ) -> bool {
+        let need_render = match self.mouse_state {
             Some(MouseState::RightGutterIsDragged) => {
                 self.set_result_gutter_x(
                     self.client_width,
@@ -1759,6 +1787,7 @@ impl NoteCalcApp {
                     let delta_y = y.as_isize() - original_click_y.as_isize();
                     gr.scroll_y = ((original_scroll_y as isize + delta_y).max(0) as usize)
                         .min(scrollbar_info.max_scroll_y);
+
                     true
                 } else {
                     false
@@ -1766,6 +1795,20 @@ impl NoteCalcApp {
             }
             None => false,
         };
+        if need_render {
+            self.generate_render_commands_and_fill_editor_objs(
+                units,
+                render_buckets,
+                result_buffer,
+                allocator,
+                tokens,
+                results,
+                vars,
+                editor_objs,
+                EditorRowFlags::empty(),
+            );
+        }
+        return need_render;
     }
 
     fn get_scrollbar_info(
@@ -2388,10 +2431,8 @@ impl NoteCalcApp {
                         if let Some(tokens) = tokens {
                             for token in &tokens.tokens {
                                 let recalc = match token.typ {
-                                    TokenType::StringLiteral if *token.ptr == **var_name => true,
-                                    TokenType::Variable { .. } if *token.ptr == *old_var_name => {
-                                        true
-                                    }
+                                    TokenType::StringLiteral => var_name.starts_with(token.ptr),
+                                    TokenType::Variable { .. } => *token.ptr == *old_var_name,
                                     _ => false,
                                 };
                                 if recalc {
@@ -3053,12 +3094,11 @@ impl NoteCalcApp {
             } else if mat_edit.current_cell.row + 1 < mat_edit.row_count {
                 mat_edit.move_to_cell(mat_edit.current_cell.with_next_row().with_column(0));
             } else {
-                let end_text_index = mat_edit.end_text_index;
                 end_matrix_editing(
                     &mut self.matrix_editing,
                     &mut self.editor,
                     &mut self.editor_content,
-                    Some(cur_pos.with_column(end_text_index)),
+                    None,
                 );
             }
         } else if alt && input == EditorInputEvent::Right {
@@ -3094,12 +3134,11 @@ impl NoteCalcApp {
                 if mat_edit.current_cell.column + 1 < mat_edit.col_count {
                     mat_edit.move_to_cell(mat_edit.current_cell.with_next_col());
                 } else {
-                    let end_text_index = mat_edit.end_text_index;
                     end_matrix_editing(
                         &mut self.matrix_editing,
                         &mut self.editor,
                         &mut self.editor_content,
-                        Some(cur_pos.with_column(end_text_index)),
+                        None,
                     );
                 }
             }
@@ -3133,12 +3172,11 @@ impl NoteCalcApp {
             if mat_edit.current_cell.column != mat_edit.col_count - 1 {
                 mat_edit.move_to_cell(mat_edit.current_cell.with_column(mat_edit.col_count - 1));
             } else {
-                let end_text_index = mat_edit.end_text_index;
                 end_matrix_editing(
                     &mut self.matrix_editing,
                     &mut self.editor,
                     &mut self.editor_content,
-                    Some(cur_pos.with_column(end_text_index)),
+                    None,
                 );
                 self.editor
                     .handle_input(input, modifiers, &mut self.editor_content);
@@ -5247,8 +5285,33 @@ mod tests {
             );
         }
 
+        fn handle_wheel(&self, dir: usize) {
+            self.mut_app().handle_wheel(
+                dir,
+                self.mut_editor_objects(),
+                self.units(),
+                self.allocator(),
+                self.mut_tokens(),
+                self.mut_results(),
+                self.mut_vars(),
+                self.mut_render_bucket(),
+                unsafe { &mut RESULT_BUFFER },
+            );
+        }
+
         fn handle_drag(&self, x: usize, y: isize) {
-            self.mut_app().handle_drag(x, canvas_y(y));
+            self.mut_app().handle_drag(
+                x,
+                canvas_y(y),
+                self.mut_editor_objects(),
+                self.units(),
+                self.allocator(),
+                self.mut_tokens(),
+                self.mut_results(),
+                self.mut_vars(),
+                self.mut_render_bucket(),
+                unsafe { &mut RESULT_BUFFER },
+            );
         }
 
         fn alt_key_released(&self) {
@@ -5703,6 +5766,52 @@ mod tests {
         test.input(EditorInputEvent::Char('7'), InputModifiers::none());
         test.render();
         assert_eq!("[1,2,3;4,5,6]7", test.get_editor_content());
+    }
+
+    #[test]
+    fn end_matrix_edit_by_right_key() {
+        let test = create_app2(35);
+        test.paste("");
+        test.input(EditorInputEvent::Char('m'), InputModifiers::none());
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
+        test.input(EditorInputEvent::Right, InputModifiers::alt());
+        test.input(EditorInputEvent::Right, InputModifiers::alt());
+        test.input(EditorInputEvent::Right, InputModifiers::alt());
+        // inside the matrix
+        test.input(EditorInputEvent::End, InputModifiers::none());
+        test.input(EditorInputEvent::Right, InputModifiers::none());
+        test.input(EditorInputEvent::Right, InputModifiers::none());
+        assert_eq!(test.app().editor.get_selection().get_cursor_pos().column, 9);
+    }
+
+    #[test]
+    fn end_matrix_edit_by_tab_key() {
+        let test = create_app2(35);
+        test.paste("");
+        test.input(EditorInputEvent::Char('m'), InputModifiers::none());
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
+        test.input(EditorInputEvent::Right, InputModifiers::alt());
+        test.input(EditorInputEvent::Right, InputModifiers::alt());
+        test.input(EditorInputEvent::Right, InputModifiers::alt());
+        // inside the matrix
+        test.input(EditorInputEvent::End, InputModifiers::none());
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
+        assert_eq!(test.app().editor.get_selection().get_cursor_pos().column, 9);
+    }
+
+    #[test]
+    fn end_matrix_edit_by_end_key() {
+        let test = create_app2(35);
+        test.paste("");
+        test.input(EditorInputEvent::Char('m'), InputModifiers::none());
+        test.input(EditorInputEvent::Tab, InputModifiers::none());
+        test.input(EditorInputEvent::Right, InputModifiers::alt());
+        test.input(EditorInputEvent::Right, InputModifiers::alt());
+        test.input(EditorInputEvent::Right, InputModifiers::alt());
+        // inside the matrix
+        test.input(EditorInputEvent::End, InputModifiers::none());
+        test.input(EditorInputEvent::End, InputModifiers::none());
+        assert_eq!(test.app().editor.get_selection().get_cursor_pos().column, 9);
     }
 
     #[test]
@@ -6808,6 +6917,26 @@ sum",
         assert_results(&["", "2"][..], &result_buffer);
         // now define the variable 'apple'
         test.paste("apple = 3");
+
+        let mut result_buffer = [0; 128];
+        test.render_get_result_buf(&mut result_buffer[..]);
+        assert_results(&["3", "6"][..], &result_buffer);
+    }
+
+    #[test]
+    fn test_variables_can_be_defined_afterwards_of_their_usage2() {
+        let test = create_app2(35);
+        test.paste("apple asd * 2");
+        test.set_cursor_row_col(0, 0);
+
+        test.render();
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        let mut result_buffer = [0; 128];
+        test.render_get_result_buf(&mut result_buffer[..]);
+        assert_results(&["", "2"][..], &result_buffer);
+        // now define the variable 'apple'
+        test.paste("apple asd = 3");
 
         let mut result_buffer = [0; 128];
         test.render_get_result_buf(&mut result_buffer[..]);
@@ -8612,7 +8741,7 @@ sum",
         test.paste("1\n2\n3\n");
         test.render();
 
-        test.mut_app().handle_wheel(1);
+        test.handle_wheel(1);
         assert_eq!(0, test.get_render_data().scroll_y);
     }
 
@@ -8624,9 +8753,9 @@ sum",
         test.render();
 
         for _ in 0..3 {
-            test.mut_app().handle_wheel(1);
+            test.handle_wheel(1);
         }
-        test.mut_app().handle_wheel(1);
+        test.handle_wheel(1);
         test.render();
         assert_eq!(
             test.get_render_data().get_render_y(content_y(3)),
@@ -8648,7 +8777,7 @@ sum",
         test.render();
 
         for _ in 0..4 {
-            test.mut_app().handle_wheel(1);
+            test.handle_wheel(1);
         }
         test.render();
         assert_eq!(
@@ -8673,8 +8802,8 @@ sum",
             test.input(EditorInputEvent::Down, InputModifiers::none());
             test.render();
         }
-        test.mut_app().handle_wheel(1);
-        test.mut_app().handle_wheel(1);
+        test.handle_wheel(1);
+        test.handle_wheel(1);
         test.render();
 
         test.input(EditorInputEvent::Down, InputModifiers::none());
@@ -8711,7 +8840,7 @@ sum",
 
         test.render();
 
-        test.mut_app().handle_wheel(1);
+        test.handle_wheel(1);
 
         test.render();
 
@@ -8724,9 +8853,9 @@ sum",
         test.repeated_paste("aaaaaaaaaaaa\n", 35);
         test.render();
 
-        test.mut_app().handle_wheel(1);
+        test.handle_wheel(1);
         assert_eq!(1, test.get_render_data().scroll_y);
-        test.mut_app().handle_wheel(1);
+        test.handle_wheel(1);
         assert_eq!(1, test.get_render_data().scroll_y);
     }
 
@@ -8777,7 +8906,7 @@ sum",
             test.repeated_paste("aaaaaaaaaaaa\n", 34);
             test.render();
 
-            test.mut_app().handle_wheel(1);
+            test.handle_wheel(1);
             let mut result_buffer = [0; 128];
             test.render_get_result_buf(&mut result_buffer[..]);
             assert_eq!(
@@ -8815,8 +8944,8 @@ sum",
             test.repeated_paste("aaaaaaaaaaaa\n", 34);
             test.render();
 
-            test.mut_app().handle_wheel(1);
-            test.mut_app().handle_wheel(1);
+            test.handle_wheel(1);
+            test.handle_wheel(1);
             let mut result_buffer = [0; 128];
             test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&["3"][..], &result_buffer);
@@ -8853,9 +8982,9 @@ sum",
             test.repeated_paste("aaaaaaaaaaaa\n", 34);
             test.render();
 
-            test.mut_app().handle_wheel(1);
-            test.mut_app().handle_wheel(1);
-            test.mut_app().handle_wheel(1);
+            test.handle_wheel(1);
+            test.handle_wheel(1);
+            test.handle_wheel(1);
             let mut result_buffer = [0; 128];
             test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&[""][..], &result_buffer);
@@ -8892,10 +9021,10 @@ sum",
             test.repeated_paste("aaaaaaaaaaaa\n", 34);
             test.render();
 
-            test.mut_app().handle_wheel(1);
-            test.mut_app().handle_wheel(1);
-            test.mut_app().handle_wheel(1);
-            test.mut_app().handle_wheel(0);
+            test.handle_wheel(1);
+            test.handle_wheel(1);
+            test.handle_wheel(1);
+            test.handle_wheel(0);
             let mut result_buffer = [0; 128];
             test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&["3"][..], &result_buffer);
@@ -8932,11 +9061,11 @@ sum",
             test.repeated_paste("aaaaaaaaaaaa\n", 34);
             test.render();
 
-            test.mut_app().handle_wheel(1);
-            test.mut_app().handle_wheel(1);
-            test.mut_app().handle_wheel(1);
-            test.mut_app().handle_wheel(0);
-            test.mut_app().handle_wheel(0);
+            test.handle_wheel(1);
+            test.handle_wheel(1);
+            test.handle_wheel(1);
+            test.handle_wheel(0);
+            test.handle_wheel(0);
 
             let mut result_buffer = [0; 128];
             test.render_get_result_buf(&mut result_buffer[..]);
@@ -8974,12 +9103,12 @@ sum",
             test.repeated_paste("aaaaaaaaaaaa\n", 34);
             test.render();
 
-            test.mut_app().handle_wheel(1);
-            test.mut_app().handle_wheel(1);
-            test.mut_app().handle_wheel(1);
-            test.mut_app().handle_wheel(0);
-            test.mut_app().handle_wheel(0);
-            test.mut_app().handle_wheel(0);
+            test.handle_wheel(1);
+            test.handle_wheel(1);
+            test.handle_wheel(1);
+            test.handle_wheel(0);
+            test.handle_wheel(0);
+            test.handle_wheel(0);
             let mut result_buffer = [0; 128];
             test.render_get_result_buf(&mut result_buffer[..]);
             assert_results(&["1", "2", "3"][..], &result_buffer);
