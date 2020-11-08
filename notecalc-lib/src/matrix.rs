@@ -1,4 +1,5 @@
 use crate::calc::{divide_op, multiply_op, CalcResult};
+use crate::MATRIX_ASCII_HEADER_FOOTER_LINE_COUNT;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct MatrixData {
@@ -15,6 +16,20 @@ impl MatrixData {
             row_count,
             col_count,
         }
+    }
+
+    #[inline]
+    pub fn calc_render_height(row_count: usize) -> usize {
+        if row_count == 1 {
+            1
+        } else {
+            row_count + MATRIX_ASCII_HEADER_FOOTER_LINE_COUNT
+        }
+    }
+
+    #[inline]
+    pub fn render_height(&self) -> usize {
+        MatrixData::calc_render_height(self.row_count)
     }
 
     pub fn cell(&self, row: usize, col: usize) -> &CalcResult {

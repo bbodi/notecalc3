@@ -386,6 +386,8 @@ fn pow_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         // 1^x
         //////////////
         (CalcResult::Number(lhs), CalcResult::Number(rhs)) => {
+            dbg!(&lhs);
+            dbg!(&rhs);
             // 2^3
             rhs.to_i64()
                 .map(|rhs| CalcResult::Number(pow(lhs.clone(), rhs)))
@@ -752,6 +754,8 @@ pub fn pow(this: BigDecimal, mut exp: i64) -> BigDecimal {
     let mut base = this.clone();
     let mut acc = BigDecimal::one();
     let neg = exp < 0;
+    dbg!(&base);
+    dbg!(&exp);
 
     exp = exp.abs();
 
@@ -761,6 +765,8 @@ pub fn pow(this: BigDecimal, mut exp: i64) -> BigDecimal {
         }
         exp /= 2;
         base = base.square();
+        dbg!(&base);
+        dbg!(&exp);
     }
 
     if exp == 1 {

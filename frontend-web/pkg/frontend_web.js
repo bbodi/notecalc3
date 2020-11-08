@@ -38,12 +38,30 @@ function getUint8Memory0() {
 function getStringFromWasm0(ptr, len) {
     return cachedTextDecoder.decode(getUint8Memory0().subarray(ptr, ptr + len));
 }
+
+function logError(e) {
+    let error = (function () {
+        try {
+            return e instanceof Error ? `${e.message}\n\nStack:\n${e.stack}` : e.toString();
+        } catch(_) {
+            return "<failed to stringify thrown value>";
+        }
+    }());
+    console.error("wasm-bindgen: imported JS function that was not marked as `catch` threw an error:", error);
+    throw e;
+}
+
+function _assertNum(n) {
+    if (typeof(n) !== 'number') throw new Error('expected a number argument');
+}
 /**
 * @param {number} client_width
 * @param {number} client_height
 * @returns {number}
 */
 __exports.create_app = function(client_width, client_height) {
+    _assertNum(client_width);
+    _assertNum(client_height);
     var ret = wasm.create_app(client_width, client_height);
     return ret >>> 0;
 };
@@ -60,6 +78,7 @@ __exports.get_command_buffer_ptr = function() {
 * @param {number} app_ptr
 */
 __exports.alt_key_released = function(app_ptr) {
+    _assertNum(app_ptr);
     wasm.alt_key_released(app_ptr);
 };
 
@@ -68,6 +87,8 @@ __exports.alt_key_released = function(app_ptr) {
 * @param {number} new_client_width
 */
 __exports.handle_resize = function(app_ptr, new_client_width) {
+    _assertNum(app_ptr);
+    _assertNum(new_client_width);
     wasm.handle_resize(app_ptr, new_client_width);
 };
 
@@ -84,6 +105,7 @@ function getInt32Memory0() {
 */
 __exports.get_compressed_encoded_content = function(app_ptr) {
     try {
+        _assertNum(app_ptr);
         wasm.get_compressed_encoded_content(8, app_ptr);
         var r0 = getInt32Memory0()[8 / 4 + 0];
         var r1 = getInt32Memory0()[8 / 4 + 1];
@@ -111,6 +133,8 @@ const encodeString = (typeof cachedTextEncoder.encodeInto === 'function'
 });
 
 function passStringToWasm0(arg, malloc, realloc) {
+
+    if (typeof(arg) !== 'string') throw new Error('expected a string argument');
 
     if (realloc === undefined) {
         const buf = cachedTextEncoder.encode(arg);
@@ -140,7 +164,7 @@ function passStringToWasm0(arg, malloc, realloc) {
         ptr = realloc(ptr, len, len = offset + arg.length * 3);
         const view = getUint8Memory0().subarray(ptr + offset, ptr + len);
         const ret = encodeString(arg, view);
-
+        if (ret.read !== arg.length) throw new Error('failed to pass whole string');
         offset += ret.written;
     }
 
@@ -152,6 +176,7 @@ function passStringToWasm0(arg, malloc, realloc) {
 * @param {string} compressed_encoded
 */
 __exports.set_compressed_encoded_content = function(app_ptr, compressed_encoded) {
+    _assertNum(app_ptr);
     var ptr0 = passStringToWasm0(compressed_encoded, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     var len0 = WASM_VECTOR_LEN;
     wasm.set_compressed_encoded_content(app_ptr, ptr0, len0);
@@ -163,6 +188,8 @@ __exports.set_compressed_encoded_content = function(app_ptr, compressed_encoded)
 * @returns {boolean}
 */
 __exports.handle_time = function(app_ptr, now) {
+    _assertNum(app_ptr);
+    _assertNum(now);
     var ret = wasm.handle_time(app_ptr, now);
     return ret !== 0;
 };
@@ -174,6 +201,9 @@ __exports.handle_time = function(app_ptr, now) {
 * @returns {boolean}
 */
 __exports.handle_drag = function(app_ptr, x, y) {
+    _assertNum(app_ptr);
+    _assertNum(x);
+    _assertNum(y);
     var ret = wasm.handle_drag(app_ptr, x, y);
     return ret !== 0;
 };
@@ -183,6 +213,7 @@ __exports.handle_drag = function(app_ptr, x, y) {
 * @returns {number}
 */
 __exports.get_allocated_bytes = function(app_ptr) {
+    _assertNum(app_ptr);
     var ret = wasm.get_allocated_bytes(app_ptr);
     return ret >>> 0;
 };
@@ -193,6 +224,9 @@ __exports.get_allocated_bytes = function(app_ptr) {
 * @param {number} y
 */
 __exports.handle_click = function(app_ptr, x, y) {
+    _assertNum(app_ptr);
+    _assertNum(x);
+    _assertNum(y);
     wasm.handle_click(app_ptr, x, y);
 };
 
@@ -202,6 +236,8 @@ __exports.handle_click = function(app_ptr, x, y) {
 * @returns {boolean}
 */
 __exports.handle_wheel = function(app_ptr, dir) {
+    _assertNum(app_ptr);
+    _assertNum(dir);
     var ret = wasm.handle_wheel(app_ptr, dir);
     return ret !== 0;
 };
@@ -210,6 +246,7 @@ __exports.handle_wheel = function(app_ptr, dir) {
 * @param {number} app_ptr
 */
 __exports.handle_mouse_up = function(app_ptr) {
+    _assertNum(app_ptr);
     wasm.handle_mouse_up(app_ptr);
 };
 
@@ -219,6 +256,7 @@ __exports.handle_mouse_up = function(app_ptr) {
 */
 __exports.get_clipboard_text = function(app_ptr) {
     try {
+        _assertNum(app_ptr);
         wasm.get_clipboard_text(8, app_ptr);
         var r0 = getInt32Memory0()[8 / 4 + 0];
         var r1 = getInt32Memory0()[8 / 4 + 1];
@@ -233,6 +271,7 @@ __exports.get_clipboard_text = function(app_ptr) {
 * @returns {string | undefined}
 */
 __exports.get_selected_text = function(app_ptr) {
+    _assertNum(app_ptr);
     wasm.get_selected_text(8, app_ptr);
     var r0 = getInt32Memory0()[8 / 4 + 0];
     var r1 = getInt32Memory0()[8 / 4 + 1];
@@ -249,6 +288,7 @@ __exports.get_selected_text = function(app_ptr) {
 * @param {string} input
 */
 __exports.handle_paste = function(app_ptr, input) {
+    _assertNum(app_ptr);
     var ptr0 = passStringToWasm0(input, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     var len0 = WASM_VECTOR_LEN;
     wasm.handle_paste(app_ptr, ptr0, len0);
@@ -258,6 +298,7 @@ __exports.handle_paste = function(app_ptr, input) {
 * @param {number} app_ptr
 */
 __exports.render = function(app_ptr) {
+    _assertNum(app_ptr);
     wasm.render(app_ptr);
 };
 
@@ -267,6 +308,7 @@ __exports.render = function(app_ptr) {
 */
 __exports.get_selected_rows_with_results = function(app_ptr) {
     try {
+        _assertNum(app_ptr);
         wasm.get_selected_rows_with_results(8, app_ptr);
         var r0 = getInt32Memory0()[8 / 4 + 0];
         var r1 = getInt32Memory0()[8 / 4 + 1];
@@ -283,6 +325,9 @@ __exports.get_selected_rows_with_results = function(app_ptr) {
 * @returns {boolean}
 */
 __exports.handle_input = function(app_ptr, input, modifiers) {
+    _assertNum(app_ptr);
+    _assertNum(input);
+    _assertNum(modifiers);
     var ret = wasm.handle_input(app_ptr, input, modifiers);
     return ret !== 0;
 };
@@ -291,6 +336,8 @@ function addHeapObject(obj) {
     if (heap_next === heap.length) heap.push(heap.length + 1);
     const idx = heap_next;
     heap_next = heap[idx];
+
+    if (typeof(heap_next) !== 'number') throw new Error('corrupt heap');
 
     heap[idx] = obj;
     return idx;
@@ -342,28 +389,47 @@ async function init(input) {
     const imports = {};
     imports.wbg = {};
     imports.wbg.__wbg_jslog_5575d9e0a489304a = function(arg0, arg1) {
-        js_log(getStringFromWasm0(arg0, arg1));
-    };
-    imports.wbg.__wbg_new_59cb74e423758ede = function() {
-        var ret = new Error();
-        return addHeapObject(ret);
-    };
-    imports.wbg.__wbg_stack_558ba5917b466edd = function(arg0, arg1) {
-        var ret = getObject(arg1).stack;
-        var ptr0 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len0 = WASM_VECTOR_LEN;
-        getInt32Memory0()[arg0 / 4 + 1] = len0;
-        getInt32Memory0()[arg0 / 4 + 0] = ptr0;
+        try {
+            js_log(getStringFromWasm0(arg0, arg1));
+        } catch (e) {
+            logError(e)
+        }
     };
     imports.wbg.__wbg_error_4bb6c2a97407129a = function(arg0, arg1) {
         try {
-            console.error(getStringFromWasm0(arg0, arg1));
-        } finally {
-            wasm.__wbindgen_free(arg0, arg1);
+            try {
+                console.error(getStringFromWasm0(arg0, arg1));
+            } finally {
+                wasm.__wbindgen_free(arg0, arg1);
+            }
+        } catch (e) {
+            logError(e)
+        }
+    };
+    imports.wbg.__wbg_new_59cb74e423758ede = function() {
+        try {
+            var ret = new Error();
+            return addHeapObject(ret);
+        } catch (e) {
+            logError(e)
+        }
+    };
+    imports.wbg.__wbg_stack_558ba5917b466edd = function(arg0, arg1) {
+        try {
+            var ret = getObject(arg1).stack;
+            var ptr0 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len0 = WASM_VECTOR_LEN;
+            getInt32Memory0()[arg0 / 4 + 1] = len0;
+            getInt32Memory0()[arg0 / 4 + 0] = ptr0;
+        } catch (e) {
+            logError(e)
         }
     };
     imports.wbg.__wbindgen_object_drop_ref = function(arg0) {
         takeObject(arg0);
+    };
+    imports.wbg.__wbindgen_throw = function(arg0, arg1) {
+        throw new Error(getStringFromWasm0(arg0, arg1));
     };
 
     if (typeof input === 'string' || (typeof Request === 'function' && input instanceof Request) || (typeof URL === 'function' && input instanceof URL)) {

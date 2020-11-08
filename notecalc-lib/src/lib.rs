@@ -2,7 +2,6 @@
 #![feature(type_alias_impl_trait)]
 #![feature(const_in_array_repeat_expressions)]
 #![deny(
-    warnings,
     anonymous_parameters,
     unused_extern_crates,
     unused_import_braces,
@@ -52,7 +51,7 @@ const LEFT_GUTTER_WIDTH: usize = 1 + 2 + 1;
 pub const MAX_LINE_COUNT: usize = 64;
 const SCROLL_BAR_WIDTH: usize = 1;
 const RIGHT_GUTTER_WIDTH: usize = 2;
-const MIN_RESULT_PANEL_WIDTH: usize = 30;
+const MIN_RESULT_PANEL_WIDTH: usize = 7;
 const SUM_VARIABLE_INDEX: usize = MAX_LINE_COUNT;
 const MATRIX_ASCII_HEADER_FOOTER_LINE_COUNT: usize = 2;
 const ACTIVE_LINE_REF_HIGHLIGHT_COLORS: [u32; 9] = [
@@ -80,6 +79,7 @@ pub mod helper {
         return vars;
     }
 
+    #[derive(Debug)]
     pub struct EditorObjects(Vec<Vec<EditorObject>>);
 
     impl EditorObjects {
@@ -179,6 +179,10 @@ pub mod helper {
             EditorRowFlags { bitset: 0 }
         }
 
+        pub fn as_u64(&self) -> u64 {
+            self.bitset
+        }
+
         pub fn set(&mut self, row_index: usize) {
             self.bitset |= 1u64 << row_index;
         }
@@ -243,16 +247,12 @@ pub mod helper {
 
         #[inline]
         pub fn is_true(&self, line_index: usize) -> bool {
-            let sh = self.need(content_y(line_index));
-            let _anyad = sh;
-            return sh;
+            return self.need(content_y(line_index));
         }
 
         #[inline]
         pub fn is_false(&self, line_index: usize) -> bool {
-            let sh = !self.is_true(line_index);
-            let _anyad = sh;
-            return sh;
+            return !self.is_true(line_index);
         }
     }
 
@@ -262,6 +262,7 @@ pub mod helper {
         pub scroll_y: usize,
         pub result_gutter_x: usize,
         pub left_gutter_width: usize,
+        pub longest_rendered_result_len: usize,
 
         pub current_editor_width: usize,
         pub current_result_panel_width: usize,
@@ -277,8 +278,16 @@ pub mod helper {
             left_gutter_width: usize,
             right_gutter_width: usize,
         ) -> GlobalRenderData {
+            let min_req_width = MIN_RESULT_PANEL_WIDTH + RIGHT_GUTTER_WIDTH + LEFT_GUTTER_WIDTH + 4;
+            if client_width < min_req_width {
+                panic!(
+                    "client width is too small, it must be at least {} but it is {}",
+                    min_req_width, client_width
+                );
+            }
             let mut r = GlobalRenderData {
                 scroll_y: 0,
+                longest_rendered_result_len: 0,
                 result_gutter_x,
                 left_gutter_width,
                 current_editor_width: 0,
@@ -291,6 +300,12 @@ pub mod helper {
             r.current_editor_width = result_gutter_x - left_gutter_width;
             r.current_result_panel_width = client_width - result_gutter_x - right_gutter_width;
             r
+        }
+
+        pub fn set_result_gutter_x(&mut self, client_width: usize, x: usize) {
+            self.result_gutter_x = x;
+            self.current_editor_width = x - self.left_gutter_width;
+            self.current_result_panel_width = client_width - x - RIGHT_GUTTER_WIDTH;
         }
 
         pub fn calc_bottom_y(&self, content_len: usize) -> CanvasY {
@@ -410,13 +425,7 @@ pub mod helper {
             let result_row_height = if let Ok(result) = result {
                 if let Some(result) = result {
                     let result_row_height = match &result {
-                        CalcResult::Matrix(mat) => {
-                            if mat.row_count == 1 {
-                                1
-                            } else {
-                                mat.row_count + MATRIX_ASCII_HEADER_FOOTER_LINE_COUNT
-                            }
-                        }
+                        CalcResult::Matrix(mat) => mat.render_height(),
                         _ => max_height,
                     };
                     result_row_height
@@ -433,20 +442,14 @@ pub mod helper {
                     TokenType::Operator(OperatorTokenType::Matrix {
                         row_count,
                         col_count: _,
-                    }) => {
-                        if row_count == 1 {
-                            1
-                        } else {
-                            row_count + MATRIX_ASCII_HEADER_FOOTER_LINE_COUNT
-                        }
-                    }
+                    }) => MatrixData::calc_render_height(row_count),
                     TokenType::LineReference { var_index } => {
                         let var = &vars[var_index];
                         match &var {
                             Some(Variable {
                                 value: Ok(CalcResult::Matrix(mat)),
                                 ..
-                            }) => mat.row_count,
+                            }) => mat.render_height(),
                             _ => 1,
                         }
                     }
@@ -466,7 +469,7 @@ pub mod helper {
         }
     }
 
-    #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+    #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
     pub struct ContentIndex(usize);
 
     pub fn content_y(y: usize) -> ContentIndex {
@@ -879,11 +882,8 @@ impl MatrixEditing {
         render_buckets: &mut RenderBuckets<'b>,
         rendered_row_height: usize,
     ) -> usize {
-        let vert_align_offset = if self.row_count == 1 {
-            (rendered_row_height - 1) / 2
-        } else {
-            (rendered_row_height - (self.row_count + MATRIX_ASCII_HEADER_FOOTER_LINE_COUNT)) / 2
-        };
+        let vert_align_offset =
+            (rendered_row_height - MatrixData::calc_render_height(self.row_count)) / 2;
 
         render_matrix_left_brackets(
             render_x + left_gutter_width,
@@ -1000,7 +1000,7 @@ impl MatrixEditing {
     }
 }
 
-#[derive(Eq, PartialEq, Clone, Copy)]
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub enum EditorObjectType {
     Matrix { row_count: usize, col_count: usize },
     LineReference { var_index: usize },
@@ -1008,7 +1008,7 @@ pub enum EditorObjectType {
     SimpleTokens,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct EditorObject {
     typ: EditorObjectType,
     row: ContentIndex,
@@ -1043,6 +1043,7 @@ pub enum MouseState {
     RightGutterIsDragged,
 }
 
+#[derive(Debug)]
 pub struct EditorObjId {
     content_index: ContentIndex,
     var_index: usize,
@@ -1077,7 +1078,7 @@ impl NoteCalcApp {
             render_data: GlobalRenderData::new(
                 client_width,
                 client_height,
-                calc_result_gutter_x(None, client_width),
+                default_result_gutter_x(client_width),
                 LEFT_GUTTER_WIDTH,
                 RIGHT_GUTTER_WIDTH,
             ),
@@ -1145,6 +1146,13 @@ impl NoteCalcApp {
             editor_objs,
             render_buckets,
             result_buffer,
+        );
+        self.render_data.set_result_gutter_x(
+            self.client_width,
+            calc_result_gutter_x_wrt_result_lengths(
+                self.render_data.longest_rendered_result_len,
+                self.client_width,
+            ),
         );
     }
 
@@ -1391,21 +1399,33 @@ impl NoteCalcApp {
             allocator,
         );
 
-        let longest_rendered_result_len = render_results(
+        let mut tmp = ResultRender::new(SmallVec::with_capacity(MAX_LINE_COUNT));
+
+        render_results_into_buf_and_calc_len(
             &units,
-            render_buckets,
             results.as_slice(),
             result_buffer,
+            &mut tmp,
             &editor_content,
-            &gr,
-            gr.result_gutter_x,
+            gr,
+            Some(4),
+        );
+        gr.longest_rendered_result_len = tmp.max_len;
+
+        create_render_commands_for_results(
+            &tmp,
+            units,
+            results.as_slice(),
+            render_buckets,
+            result_buffer,
+            gr,
             Some(4),
         );
 
         pulse_changed_results(
             render_buckets,
             gr,
-            longest_rendered_result_len,
+            gr.longest_rendered_result_len,
             &result_change_flag,
         );
 
@@ -1757,9 +1777,9 @@ impl NoteCalcApp {
     ) -> bool {
         let need_render = match self.mouse_state {
             Some(MouseState::RightGutterIsDragged) => {
-                self.set_result_gutter_x(
+                self.render_data.set_result_gutter_x(
                     self.client_width,
-                    calc_result_gutter_x(Some(x), self.client_width),
+                    calc_result_gutter_x(x, self.client_width),
                 );
                 true
             }
@@ -1836,17 +1856,36 @@ impl NoteCalcApp {
         }
     }
 
-    pub fn set_result_gutter_x(&mut self, client_width: usize, x: usize) {
-        self.render_data.result_gutter_x = x;
-        self.render_data.current_editor_width = x - self.render_data.left_gutter_width;
-        self.render_data.current_result_panel_width = client_width - x - RIGHT_GUTTER_WIDTH;
-    }
-
-    pub fn handle_resize(&mut self, new_client_width: usize) {
+    pub fn handle_resize<'b>(
+        &mut self,
+        new_client_width: usize,
+        editor_objs: &mut EditorObjects,
+        units: &Units,
+        allocator: &'b Arena<char>,
+        tokens: &mut AppTokens<'b>,
+        results: &mut Results,
+        vars: &mut Variables,
+        render_buckets: &mut RenderBuckets<'b>,
+        result_buffer: &'b mut [u8],
+    ) {
         self.client_width = new_client_width;
-        self.set_result_gutter_x(
+        self.render_data.set_result_gutter_x(
             new_client_width,
-            calc_result_gutter_x(Some(self.render_data.result_gutter_x), new_client_width),
+            calc_result_gutter_x_wrt_result_lengths(
+                self.render_data.longest_rendered_result_len,
+                new_client_width,
+            ),
+        );
+        self.generate_render_commands_and_fill_editor_objs(
+            units,
+            render_buckets,
+            result_buffer,
+            allocator,
+            tokens,
+            results,
+            vars,
+            editor_objs,
+            EditorRowFlags::empty(),
         );
     }
 
@@ -2221,19 +2260,16 @@ impl NoteCalcApp {
                     self.check_stepping_into_matrix(prev_cursor_pos, editor_objs);
                 }
 
-                let cursor_pos = self.editor.get_selection().get_cursor_pos();
-                let scroll_y = get_scroll_y_after_cursor_movement(
-                    prev_cursor_pos,
-                    cursor_pos,
-                    &self.render_data,
-                );
-                if let Some(scroll_y) = scroll_y {
-                    self.render_data.scroll_y = scroll_y;
-                }
-
                 modif_type
             }
         };
+
+        let cursor_pos = self.editor.get_selection().get_cursor_pos();
+        let scroll_y =
+            get_scroll_y_after_cursor_movement(prev_row, cursor_pos.row, &self.render_data);
+        if let Some(scroll_y) = scroll_y {
+            self.render_data.scroll_y = scroll_y;
+        }
 
         if let Some(modif) = modif {
             self.process_and_render_tokens(
@@ -2259,6 +2295,8 @@ impl NoteCalcApp {
                 editor_objs,
                 EditorRowFlags::empty(),
             );
+            // because of ALT+left or ALT+right, result len can change
+            change_result_panel_size_wrt_result_len(self.client_width, &mut self.render_data);
         }
 
         return modif;
@@ -2541,6 +2579,11 @@ impl NoteCalcApp {
             editor_objs,
             result_change_flag,
         );
+
+        // is there any change
+        if result_change_flag.as_u64() > 0 {
+            change_result_panel_size_wrt_result_len(self.client_width, &mut self.render_data);
+        }
     }
 
     fn get_line_ref_name(editor_content: &EditorContent<LineData>, y: usize) -> Vec<char> {
@@ -2718,19 +2761,49 @@ impl NoteCalcApp {
         //////////////////////////////////////////////////////////////////////////
         //////////////////////////////////////////////////////////////////////////
         render_buckets.clear();
-        let result_gutter_x = max_len + 2;
-        render_results(
+
+        let mut tmp = ResultRender::new(SmallVec::with_capacity(MAX_LINE_COUNT));
+
+        gr.result_gutter_x = max_len + 2;
+        //let result_gutter_x = max_len + 2;
+        render_results_into_buf_and_calc_len(
             &units,
-            render_buckets,
             &results.as_slice()[first_row..=second_row],
             result_buffer,
+            &mut tmp,
             &self.editor_content,
             &gr,
-            result_gutter_x,
             None,
         );
+        gr.longest_rendered_result_len = tmp.max_len;
+
+        create_render_commands_for_results(
+            &tmp,
+            units,
+            &results.as_slice()[first_row..=second_row],
+            render_buckets,
+            result_buffer,
+            &gr,
+            None,
+        );
+
+        // render_results(
+        //     &units,
+        //     render_buckets,
+        //     &results.as_slice()[first_row..=second_row],
+        //     result_buffer,
+        //     &self.editor_content,
+        //     &gr,
+        //     result_gutter_x,
+        //     None,
+        // );
         for i in 0..render_height {
-            render_buckets.draw_char(Layer::AboveText, result_gutter_x, canvas_y(i as isize), '█');
+            render_buckets.draw_char(
+                Layer::AboveText,
+                gr.result_gutter_x,
+                canvas_y(i as isize),
+                '█',
+            );
         }
         render_buckets_into(&render_buckets, &mut tmp_canvas);
         let mut result_str = String::with_capacity(row_nums * 64);
@@ -3237,6 +3310,7 @@ impl NoteCalcApp {
     }
 }
 
+#[derive(Debug)]
 pub struct ResultLengths {
     int_part_len: usize,
     frac_part_len: usize,
@@ -3325,37 +3399,32 @@ pub fn pulse_editor_objs_referencing_current_line(
     editor_objs_referencing_current_line: &[EditorObjId],
     editor_objects: &EditorObjects,
 ) {
-    // Pulsing changed line references
     for id in editor_objs_referencing_current_line {
         for ed_obj in &editor_objects[id.content_index] {
             match ed_obj {
                 EditorObject {
                     typ: EditorObjectType::LineReference { var_index },
-                    rendered_x,
-                    rendered_y,
-                    rendered_w,
-                    rendered_h,
                     ..
                 }
                 | EditorObject {
                     typ: EditorObjectType::Variable { var_index },
-                    rendered_x,
-                    rendered_y,
-                    rendered_w,
-                    rendered_h,
                     ..
                 } if *var_index == id.var_index => {
-                    render_buckets.custom_commands[Layer::AboveText as usize].push(
-                        OutputMessage::PulsingRectangle {
-                            x: gr.left_gutter_width + *rendered_x,
-                            y: *rendered_y,
-                            w: *rendered_w,
-                            h: *rendered_h,
-                            start_color: 0x00FF7F_33,
-                            end_color: 0x00FF7F_00,
-                            animation_time: Duration::from_millis(1000),
-                        },
-                    );
+                    if gr.is_visible(ed_obj.row) {
+                        let rendered_row_height = gr.get_rendered_height(ed_obj.row);
+                        let vert_align_offset = (rendered_row_height - ed_obj.rendered_h) / 2;
+                        render_buckets.custom_commands[Layer::AboveText as usize].push(
+                            OutputMessage::PulsingRectangle {
+                                x: gr.left_gutter_width + ed_obj.rendered_x,
+                                y: ed_obj.rendered_y.add(vert_align_offset),
+                                w: ed_obj.rendered_w,
+                                h: ed_obj.rendered_h,
+                                start_color: 0x00FF7F_33,
+                                end_color: 0x00FF7F_00,
+                                animation_time: Duration::from_millis(1000),
+                            },
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -3373,6 +3442,7 @@ pub fn pulse_changed_results(
         // there were no render yet
         return;
     }
+    // TODO iter through only visible rows
     // Pulsing changed results
     for i in 0..MAX_LINE_COUNT {
         if result_change_flag.is_true(i) {
@@ -3459,7 +3529,7 @@ fn highlight_line_refs<'text_ptr>(
 
 #[inline]
 fn highlight_active_line_refs<'text_ptr>(
-    editor_objs: &Vec<EditorObject>,
+    editor_objs: &[EditorObject],
     render_buckets: &mut RenderBuckets<'text_ptr>,
     r: &PerLineRenderData,
     gr: &GlobalRenderData,
@@ -3468,7 +3538,10 @@ fn highlight_active_line_refs<'text_ptr>(
     let mut colors: [Option<u32>; MAX_LINE_COUNT] = [None; MAX_LINE_COUNT];
     for editor_obj in editor_objs.iter() {
         match editor_obj.typ {
-            EditorObjectType::LineReference { var_index } => {
+            EditorObjectType::LineReference { var_index }
+            | EditorObjectType::Variable { var_index }
+                if var_index != SUM_VARIABLE_INDEX =>
+            {
                 let color = if let Some(color) = colors[var_index] {
                     color
                 } else {
@@ -3876,7 +3949,7 @@ fn render_matrix<'text_ptr>(
         rendered_x: r.render_x,
         rendered_y: r.render_y,
         rendered_w: rendered_width,
-        rendered_h: row_count,
+        rendered_h: MatrixData::calc_render_height(row_count),
     });
 
     let x_diff = if cursor_pos.row == r.editor_y.as_usize()
@@ -3988,11 +4061,7 @@ fn render_matrix_obj<'text_ptr>(
     render_buckets: &mut RenderBuckets<'text_ptr>,
     rendered_row_height: usize,
 ) -> usize {
-    let vert_align_offset = if row_count == 1 {
-        (rendered_row_height - 1) / 2
-    } else {
-        (rendered_row_height - (row_count + MATRIX_ASCII_HEADER_FOOTER_LINE_COUNT)) / 2
-    };
+    let vert_align_offset = (rendered_row_height - MatrixData::calc_render_height(row_count)) / 2;
 
     render_matrix_left_brackets(
         render_x + left_gutter_width,
@@ -4174,11 +4243,8 @@ fn render_matrix_result<'text_ptr>(
     decimal_count: Option<usize>,
 ) -> usize {
     let start_x = render_x;
-    let vert_align_offset = if mat.row_count == 1 {
-        (rendered_row_height - 1) / 2
-    } else {
-        (rendered_row_height - (mat.row_count + MATRIX_ASCII_HEADER_FOOTER_LINE_COUNT)) / 2
-    };
+
+    let vert_align_offset = (rendered_row_height - mat.render_height()) / 2;
     render_matrix_left_brackets(
         start_x,
         render_y,
@@ -4320,7 +4386,7 @@ fn render_result_inside_editor<'text_ptr>(
                 r.rendered_row_height,
                 decimal_count,
             );
-            (rendered_width, mat.row_count)
+            (rendered_width, mat.render_height())
         }
         Ok(result) => {
             // TODO: optimize string alloc
@@ -4349,138 +4415,133 @@ fn render_result_inside_editor<'text_ptr>(
     };
 }
 
-fn render_results<'text_ptr>(
+struct ResultTmp {
+    buffer_ptr: Option<Range<usize>>,
+    editor_y: ContentIndex,
+    lengths: ResultLengths,
+}
+struct ResultRender {
+    result_ranges: SmallVec<[ResultTmp; MAX_LINE_COUNT]>,
+    max_len: usize,
+    max_lengths: ResultLengths,
+}
+
+impl ResultRender {
+    pub fn new(vec: SmallVec<[ResultTmp; MAX_LINE_COUNT]>) -> ResultRender {
+        return ResultRender {
+            result_ranges: vec,
+            max_len: 0,
+            max_lengths: ResultLengths {
+                int_part_len: 0,
+                frac_part_len: 0,
+                unit_part_len: 0,
+            },
+        };
+    }
+}
+
+fn render_results_into_buf_and_calc_len<'text_ptr>(
     units: &Units,
-    render_buckets: &mut RenderBuckets<'text_ptr>,
     results: &[LineResult],
     result_buffer: &'text_ptr mut [u8],
+    tmp: &mut ResultRender,
     editor_content: &EditorContent<LineData>,
     gr: &GlobalRenderData,
-    result_gutter_x: usize,
     decimal_count: Option<usize>,
-) -> usize {
-    struct ResultTmp {
-        buffer_ptr: Option<Range<usize>>,
-        editor_y: ContentIndex,
-        lengths: ResultLengths,
-    }
-    let mut longest_result_len = 0;
-    let (max_lengths, result_ranges) = {
-        let mut result_ranges: SmallVec<[ResultTmp; MAX_LINE_COUNT]> =
-            SmallVec::with_capacity(MAX_LINE_COUNT);
-        let mut result_buffer_index = 0;
-        let mut max_lengths = ResultLengths {
-            int_part_len: 0,
-            frac_part_len: 0,
-            unit_part_len: 0,
+) {
+    let mut result_buffer_index = 0;
+    // calc max length and render results into buffer
+    for (editor_y, result) in results.iter().enumerate() {
+        let editor_y = content_y(editor_y);
+        if gr.get_render_y(editor_y).is_none() {
+            continue;
         };
-        let mut prev_result_matrix_length = None;
-        // calc max length and render results into buffer
-        for (editor_y, result) in results.iter().enumerate() {
-            let mut result_len = 0;
-            let editor_y = content_y(editor_y);
-            let render_y = if let Some(render_y) = gr.get_render_y(editor_y) {
-                render_y
-            } else {
-                continue;
-            };
-            if !gr.is_visible(editor_y) {
-                continue;
-            }
-
-            if let Err(..) = result {
-                result_buffer[result_buffer_index] = b'E';
-                result_buffer[result_buffer_index + 1] = b'r';
-                result_buffer[result_buffer_index + 2] = b'r';
-                result_ranges.push(ResultTmp {
-                    buffer_ptr: Some(result_buffer_index..result_buffer_index + 3),
-                    editor_y,
-                    lengths: ResultLengths {
-                        int_part_len: 999,
-                        frac_part_len: 0,
-                        unit_part_len: 0,
-                    },
-                });
-                result_len = 3;
-                result_buffer_index += 3;
-                prev_result_matrix_length = None;
-            } else if let Ok(Some(result)) = result {
-                match &result {
-                    CalcResult::Matrix(mat) => {
-                        // TODO: why it is called "prev.."?
-                        if prev_result_matrix_length.is_none() {
-                            prev_result_matrix_length = calc_consecutive_matrices_max_lengths(
-                                units,
-                                &results[editor_y.as_usize()..],
-                            );
-                        }
-                        let width = render_matrix_result(
-                            units,
-                            result_gutter_x + RIGHT_GUTTER_WIDTH,
-                            render_y,
-                            mat,
-                            render_buckets,
-                            prev_result_matrix_length.as_ref(),
-                            gr.get_rendered_height(editor_y),
-                            decimal_count,
-                        );
-                        result_len = width;
-                        result_ranges.push(ResultTmp {
-                            buffer_ptr: None,
-                            editor_y,
-                            lengths: ResultLengths {
-                                int_part_len: 0,
-                                frac_part_len: 0,
-                                unit_part_len: 0,
-                            },
-                        });
-                    }
-                    _ => {
-                        prev_result_matrix_length = None;
-                        let start = result_buffer_index;
-                        let mut c = Cursor::new(&mut result_buffer[start..]);
-                        let lens = render_result_into(
-                            &units,
-                            &result,
-                            &editor_content.get_data(editor_y.as_usize()).result_format,
-                            false,
-                            &mut c,
-                            decimal_count,
-                            true,
-                        );
-                        let len = c.position() as usize;
-                        let range = start..start + len;
-                        max_lengths.set_max(&lens);
-                        result_ranges.push(ResultTmp {
-                            buffer_ptr: Some(range),
-                            editor_y,
-                            lengths: lens,
-                        });
-                        result_buffer_index += len;
-                        result_len = len;
-                    }
-                };
-            } else {
-                prev_result_matrix_length = None;
-                result_ranges.push(ResultTmp {
-                    buffer_ptr: None,
-                    editor_y,
-                    lengths: ResultLengths {
-                        int_part_len: 0,
-                        frac_part_len: 0,
-                        unit_part_len: 0,
-                    },
-                });
-            }
-            if result_len > longest_result_len {
-                longest_result_len = result_len;
-            }
+        if !gr.is_visible(editor_y) {
+            continue;
         }
-        (max_lengths, result_ranges)
-    };
 
-    // render results from the buffer
-    for result_tmp in result_ranges.iter() {
+        if let Err(..) = result {
+            result_buffer[result_buffer_index] = b'E';
+            result_buffer[result_buffer_index + 1] = b'r';
+            result_buffer[result_buffer_index + 2] = b'r';
+            tmp.result_ranges.push(ResultTmp {
+                buffer_ptr: Some(result_buffer_index..result_buffer_index + 3),
+                editor_y,
+                lengths: ResultLengths {
+                    int_part_len: 999,
+                    frac_part_len: 0,
+                    unit_part_len: 0,
+                },
+            });
+            result_buffer_index += 3;
+        } else if let Ok(Some(result)) = result {
+            match &result {
+                CalcResult::Matrix(_mat) => {
+                    tmp.result_ranges.push(ResultTmp {
+                        buffer_ptr: None,
+                        editor_y,
+                        lengths: ResultLengths {
+                            int_part_len: 0,
+                            frac_part_len: 0,
+                            unit_part_len: 0,
+                        },
+                    });
+                }
+                _ => {
+                    let start = result_buffer_index;
+                    let mut c = Cursor::new(&mut result_buffer[start..]);
+                    let lens = render_result_into(
+                        &units,
+                        &result,
+                        &editor_content.get_data(editor_y.as_usize()).result_format,
+                        false,
+                        &mut c,
+                        decimal_count,
+                        true,
+                    );
+                    let len = c.position() as usize;
+                    let range = start..start + len;
+                    tmp.max_lengths.set_max(&lens);
+                    tmp.result_ranges.push(ResultTmp {
+                        buffer_ptr: Some(range),
+                        editor_y,
+                        lengths: lens,
+                    });
+                    result_buffer_index += len;
+                }
+            };
+        } else {
+            tmp.result_ranges.push(ResultTmp {
+                buffer_ptr: None,
+                editor_y,
+                lengths: ResultLengths {
+                    int_part_len: 0,
+                    frac_part_len: 0,
+                    unit_part_len: 0,
+                },
+            });
+        }
+    }
+    tmp.max_len = tmp.max_lengths.int_part_len
+        + tmp.max_lengths.frac_part_len
+        + if tmp.max_lengths.unit_part_len > 0 {
+            tmp.max_lengths.unit_part_len + 1
+        } else {
+            0
+        };
+}
+
+fn create_render_commands_for_results<'text_ptr>(
+    tmp: &ResultRender,
+    units: &Units,
+    results: &[LineResult],
+    render_buckets: &mut RenderBuckets<'text_ptr>,
+    result_buffer: &'text_ptr [u8],
+    gr: &GlobalRenderData,
+    decimal_count: Option<usize>,
+) {
+    let mut prev_result_matrix_length = None;
+    for result_tmp in tmp.result_ranges.iter() {
         let rendered_row_height = gr.get_rendered_height(result_tmp.editor_y);
         let render_y = gr.get_render_y(result_tmp.editor_y).expect("");
         if let Some(result_range) = &result_tmp.buffer_ptr {
@@ -4503,13 +4564,14 @@ fn render_results<'text_ptr>(
                 Ok(usize),
                 TooLong,
             }
-            let offset_x = if max_lengths.int_part_len < lengths.int_part_len {
+            let offset_x = if tmp.max_lengths.int_part_len < lengths.int_part_len {
                 // it is an "Err"
                 ResultOffsetX::Err
             } else {
-                let offset_x = max_lengths.int_part_len - lengths.int_part_len;
-                let sum_len =
-                    lengths.int_part_len + max_lengths.frac_part_len + max_lengths.unit_part_len;
+                let offset_x = tmp.max_lengths.int_part_len - lengths.int_part_len;
+                let sum_len = lengths.int_part_len
+                    + tmp.max_lengths.frac_part_len
+                    + tmp.max_lengths.unit_part_len;
                 if offset_x + sum_len > gr.current_result_panel_width {
                     if sum_len > gr.current_result_panel_width {
                         ResultOffsetX::TooLong
@@ -4520,7 +4582,7 @@ fn render_results<'text_ptr>(
                     ResultOffsetX::Ok(offset_x)
                 }
             };
-            let x = result_gutter_x
+            let x = gr.result_gutter_x
                 + RIGHT_GUTTER_WIDTH
                 + match offset_x {
                     ResultOffsetX::Err => 0,
@@ -4547,14 +4609,14 @@ fn render_results<'text_ptr>(
             if lengths.unit_part_len > 0 {
                 let from = result_range.start + lengths.int_part_len + lengths.frac_part_len + 1;
                 // e.g. in case of 2 units mm and m, m should be 1 coordinates right
-                let offset_x = max_lengths.unit_part_len - lengths.unit_part_len;
+                let offset_x = tmp.max_lengths.unit_part_len - lengths.unit_part_len;
                 render_buckets.ascii_texts.push(RenderAsciiTextMsg {
                     text: &result_buffer[from..result_range.end],
                     row,
-                    column: result_gutter_x
+                    column: gr.result_gutter_x
                         + RIGHT_GUTTER_WIDTH
-                        + max_lengths.int_part_len
-                        + max_lengths.frac_part_len
+                        + tmp.max_lengths.int_part_len
+                        + tmp.max_lengths.frac_part_len
                         + 1
                         + offset_x,
                 });
@@ -4578,22 +4640,44 @@ fn render_results<'text_ptr>(
                 }
                 _ => {}
             }
-        } else
-        /*if modif_type.need(result_tmp.editor_y)*/
-        {
-            // no result but need rerender
-            // result background
-            render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
-            render_buckets.draw_rect(
-                Layer::BehindText,
-                gr.result_gutter_x + RIGHT_GUTTER_WIDTH,
-                render_y,
-                gr.current_result_panel_width,
-                rendered_row_height,
-            );
+            prev_result_matrix_length = None;
+        } else {
+            match &results[result_tmp.editor_y.as_usize()] {
+                Ok(Some(CalcResult::Matrix(mat))) => {
+                    // TODO: why it is called "prev.."?
+                    if prev_result_matrix_length.is_none() {
+                        prev_result_matrix_length = calc_consecutive_matrices_max_lengths(
+                            units,
+                            &results[result_tmp.editor_y.as_usize()..],
+                        );
+                    }
+                    let _width = render_matrix_result(
+                        units,
+                        gr.result_gutter_x + RIGHT_GUTTER_WIDTH,
+                        render_y,
+                        mat,
+                        render_buckets,
+                        prev_result_matrix_length.as_ref(),
+                        gr.get_rendered_height(result_tmp.editor_y),
+                        decimal_count,
+                    );
+                }
+                _ => {
+                    // no result but need rerender
+                    // result background
+                    prev_result_matrix_length = None;
+                    render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
+                    render_buckets.draw_rect(
+                        Layer::BehindText,
+                        gr.result_gutter_x + RIGHT_GUTTER_WIDTH,
+                        render_y,
+                        gr.current_result_panel_width,
+                        rendered_row_height,
+                    );
+                }
+            }
         }
     }
-    return longest_result_len;
 }
 
 fn calc_consecutive_matrices_max_lengths(
@@ -4966,13 +5050,24 @@ fn render_selection_and_its_sum<'text_ptr>(
     }
 }
 
-fn calc_result_gutter_x(current_x: Option<usize>, client_width: usize) -> usize {
-    return (if let Some(current_x) = current_x {
-        current_x
-    } else {
-        LEFT_GUTTER_WIDTH + MAX_EDITOR_WIDTH + SCROLL_BAR_WIDTH
-    })
-    .min(client_width - (RIGHT_GUTTER_WIDTH + MIN_RESULT_PANEL_WIDTH));
+fn calc_result_gutter_x(current_x: usize, client_width: usize) -> usize {
+    current_x
+        .min(client_width - (RIGHT_GUTTER_WIDTH + MIN_RESULT_PANEL_WIDTH).min(client_width))
+        .max(LEFT_GUTTER_WIDTH + 4)
+}
+
+fn calc_result_gutter_x_wrt_result_lengths(
+    longest_result_len: usize,
+    client_width: usize,
+) -> usize {
+    (client_width - (RIGHT_GUTTER_WIDTH + longest_result_len.max(MIN_RESULT_PANEL_WIDTH)))
+        .max(LEFT_GUTTER_WIDTH + 4)
+}
+
+fn default_result_gutter_x(client_width: usize) -> usize {
+    (LEFT_GUTTER_WIDTH + MAX_EDITOR_WIDTH + SCROLL_BAR_WIDTH)
+        .min(client_width - (RIGHT_GUTTER_WIDTH + MIN_RESULT_PANEL_WIDTH).min(client_width))
+        .max(LEFT_GUTTER_WIDTH + 4)
 }
 
 fn calc_rendered_height<'b>(
@@ -4990,13 +5085,7 @@ fn calc_rendered_height<'b>(
             matrix_editing
                 .as_ref()
                 .filter(|it| it.row_index == editor_y)
-                .map(|it| {
-                    if it.row_count == 1 {
-                        1
-                    } else {
-                        it.row_count + MATRIX_ASCII_HEADER_FOOTER_LINE_COUNT
-                    }
-                }),
+                .map(|it| MatrixData::calc_render_height(it.row_count)),
         );
         h
     } else {
@@ -5061,23 +5150,23 @@ pub fn end_matrix_editing(
 }
 
 fn get_scroll_y_after_cursor_movement(
-    prev_cursor_pos: Pos,
-    cursor_pos: Pos,
+    prev_row: usize,
+    current_row: usize,
     render_data: &GlobalRenderData,
 ) -> Option<usize> {
-    if prev_cursor_pos.row != cursor_pos.row {
-        if cursor_pos.row < render_data.scroll_y {
+    if prev_row != current_row {
+        if current_row < render_data.scroll_y {
             // scroll up
-            Some(cursor_pos.row)
+            Some(current_row)
         } else if render_data
-            .get_render_y(content_y(cursor_pos.row))
+            .get_render_y(content_y(current_row))
             .map(|render_y| render_y.as_isize() >= (render_data.client_height as isize))
             .unwrap_or(false)
         {
             // scroll down
             Some(
                 render_data
-                    .get_render_y(content_y(cursor_pos.row))
+                    .get_render_y(content_y(current_row))
                     .expect("must")
                     .as_usize()
                     + render_data.scroll_y
@@ -5088,6 +5177,17 @@ fn get_scroll_y_after_cursor_movement(
         }
     } else {
         None
+    }
+}
+
+fn change_result_panel_size_wrt_result_len(client_width: usize, gr: &mut GlobalRenderData) {
+    let new_x =
+        calc_result_gutter_x_wrt_result_lengths(gr.longest_rendered_result_len, client_width);
+    if new_x < gr.result_gutter_x {
+        // there might be a new result which requires more space to render
+
+        // TODO: this change will have an effect only in the next render cycle
+        gr.set_result_gutter_x(client_width, new_x);
     }
 }
 
@@ -5285,6 +5385,20 @@ mod tests {
             );
         }
 
+        fn handle_resize(&self, new_client_width: usize) {
+            self.mut_app().handle_resize(
+                new_client_width,
+                self.mut_editor_objects(),
+                self.units(),
+                self.allocator(),
+                self.mut_tokens(),
+                self.mut_results(),
+                self.mut_vars(),
+                self.mut_render_bucket(),
+                unsafe { &mut RESULT_BUFFER },
+            );
+        }
+
         fn handle_wheel(&self, dir: usize) {
             self.mut_app().handle_wheel(
                 dir,
@@ -5386,8 +5500,8 @@ mod tests {
         }
     }
 
-    fn create_app2<'a>(client_height: usize) -> RustIsShit {
-        let app = NoteCalcApp::new(120, client_height);
+    fn create_app3<'a>(client_width: usize, client_height: usize) -> RustIsShit {
+        let app = NoteCalcApp::new(client_width, client_height);
         let editor_objects = EditorObjects::new();
         let tokens = AppTokens::new();
         let results = Results::new();
@@ -5406,6 +5520,10 @@ mod tests {
             editor_objects_ptr: to_box_ptr(editor_objects),
             allocator: to_box_ptr(Arena::<char>::with_capacity(MAX_LINE_COUNT * 120)),
         };
+    }
+
+    fn create_app2<'a>(client_height: usize) -> RustIsShit {
+        create_app3(120, client_height)
     }
 
     #[test]
@@ -5639,6 +5757,82 @@ mod tests {
                 .map(|it| it.as_str()),
             Some("69")
         );
+    }
+
+    #[test]
+    fn test_insert_matrix_line_ref_panic() {
+        let test = create_app2(35);
+        test.paste("[1,2,3;4,5,6]\n[1;2;3]\n");
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        assert_eq!(test.get_render_data().get_rendered_height(content_y(2)), 5);
+    }
+
+    #[test]
+    fn test_matrix_rendering_parameters_single_row() {
+        let test = create_app2(35);
+        test.paste("[1]");
+        assert_eq!(test.editor_objects()[content_y(0)][0].rendered_x, 0);
+        assert_eq!(
+            test.editor_objects()[content_y(0)][0].rendered_y,
+            canvas_y(0)
+        );
+        assert_eq!(test.editor_objects()[content_y(0)][0].rendered_h, 1);
+        assert_eq!(test.editor_objects()[content_y(0)][0].rendered_w, 3);
+    }
+
+    #[test]
+    fn test_matrix_rendering_parameters_multiple_rows() {
+        let test = create_app2(35);
+        test.paste("[1;2;3]");
+        assert_eq!(test.editor_objects()[content_y(0)][0].rendered_x, 0);
+        assert_eq!(
+            test.editor_objects()[content_y(0)][0].rendered_y,
+            canvas_y(0)
+        );
+        assert_eq!(test.editor_objects()[content_y(0)][0].rendered_h, 5);
+        assert_eq!(test.editor_objects()[content_y(0)][0].rendered_w, 3);
+    }
+
+    #[test]
+    fn test_referencing_matrix_size_correct2() {
+        let test = create_app2(35);
+        test.paste("[6]\n&[1]");
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        assert_eq!(test.editor_objects()[content_y(1)][0].rendered_h, 1);
+    }
+
+    #[test]
+    fn test_referencing_matrix_size_correct2_vert_align() {
+        let test = create_app2(35);
+        test.paste("[1;2;3]\n[4]\n&[1]  &[2]");
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        let first_line_h = 5;
+        let second_line_half = (5 / 2) + 1;
+        test.contains(
+            &test.mut_render_bucket().custom_commands[Layer::AboveText as usize],
+            1,
+            OutputMessage::PulsingRectangle {
+                x: 9,
+                y: canvas_y(first_line_h + second_line_half),
+                w: 3,
+                h: 1,
+                start_color: 0x00FF7F_33,
+                end_color: 0x00FF7F_00,
+                animation_time: Duration::from_millis(1000),
+            },
+        )
+    }
+
+    #[test]
+    fn test_referencing_matrix_size_correct() {
+        let test = create_app2(35);
+        test.paste("[1;2;3]\n&[1]");
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        assert_eq!(test.editor_objects()[content_y(1)][0].rendered_h, 5);
     }
 
     #[test]
@@ -5984,6 +6178,91 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_right_gutter_min_len() {
+        let test = create_app2(35);
+        test.set_normalized_content("");
+        assert_eq!(
+            test.get_render_data().result_gutter_x,
+            120 - (MIN_RESULT_PANEL_WIDTH + RIGHT_GUTTER_WIDTH)
+        );
+    }
+
+    #[test]
+    fn right_gutter_is_moving_if_there_would_be_enough_space_for_result() {
+        let test = create_app2(35);
+        test.paste("1\n");
+        assert_eq!(
+            test.get_render_data().result_gutter_x,
+            120 - (MIN_RESULT_PANEL_WIDTH + RIGHT_GUTTER_WIDTH)
+        );
+
+        test.paste("999 999 999 999");
+        assert_eq!(
+            test.get_render_data().result_gutter_x,
+            120 - ("999 999 999 999".len() + RIGHT_GUTTER_WIDTH)
+        );
+    }
+
+    #[test]
+    fn right_gutter_is_moving_if_there_would_be_enough_space_for_binary_result() {
+        let test = create_app2(35);
+        test.paste("9999");
+        assert_eq!(
+            test.get_render_data().result_gutter_x,
+            120 - (MIN_RESULT_PANEL_WIDTH + RIGHT_GUTTER_WIDTH)
+        );
+
+        test.input(EditorInputEvent::Left, InputModifiers::alt());
+        assert_eq!(
+            test.get_render_data().result_gutter_x,
+            120 - ("100111 00001111".len() + RIGHT_GUTTER_WIDTH)
+        );
+    }
+
+    #[test]
+    fn test_that_alignment_is_considered_for_longest_result_len() {
+        let test = create_app2(35);
+        test.set_normalized_content("80kg\n190cm\n0.0016\n0.128 kg");
+        assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
+    }
+
+    #[test]
+    fn test_resize_keeps_result_width() {
+        let test = create_app2(35);
+        test.set_normalized_content("80kg\n190cm\n0.0016\n0.128 kg");
+        assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
+        assert_eq!(
+            test.get_render_data().result_gutter_x,
+            120 - (11 + RIGHT_GUTTER_WIDTH)
+        );
+
+        test.handle_resize(100);
+        assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
+        assert_eq!(
+            test.get_render_data().result_gutter_x,
+            100 - (11 + RIGHT_GUTTER_WIDTH)
+        );
+
+        test.handle_resize(120);
+        assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
+        assert_eq!(
+            test.get_render_data().result_gutter_x,
+            120 - (11 + RIGHT_GUTTER_WIDTH)
+        );
+
+        test.handle_resize(80);
+        assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
+        test.handle_resize(60);
+        assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
+        test.handle_resize(40);
+        assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
+
+        test.handle_resize(20);
+        assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
+        assert_eq!(test.get_render_data().result_gutter_x, 8);
+    }
+
+    #[test]
     fn test_scroll_y_reset() {
         let test = create_app2(35);
         test.mut_app().render_data.scroll_y = 1;
@@ -6228,7 +6507,7 @@ Fat intake
             RenderAsciiTextMsg { text, row, column } => {
                 assert_eq!(text, &[b'E', b'r', b'r']);
                 assert_eq!(*row, canvas_y(0));
-                assert_eq!(*column, 90);
+                assert_eq!(*column, 113);
             }
         }
     }
@@ -7076,7 +7355,7 @@ sum",
             assert_eq!(
                 render_commands[2],
                 OutputMessage::PulsingRectangle {
-                    x: 90,
+                    x: 113,
                     y: canvas_y(0),
                     w: 2,
                     h: 1,
@@ -7088,7 +7367,7 @@ sum",
             assert_eq!(
                 render_commands[3],
                 OutputMessage::PulsingRectangle {
-                    x: 90,
+                    x: 113,
                     y: canvas_y(1),
                     w: 2,
                     h: 1,
@@ -7165,7 +7444,6 @@ sum",
 
             let render_bucket =
                 &test.mut_render_bucket().custom_commands[Layer::AboveText as usize];
-            dbg!(render_bucket);
             assert_eq!(render_bucket.len(), 8);
 
             assert_eq!(
@@ -7959,7 +8237,6 @@ sum",
         assert_eq!(test.get_cursor_pos().row, 5);
     }
 
-    // Task: [Kijelölés után mátrix mögé kattintva + gépelve]
     #[test]
     fn clicking_inside_matrix_while_selected_should_put_cursor_after_matrix() {
         let test = create_app2(35);
@@ -8094,6 +8371,36 @@ sum",
             test.get_selection().is_range(),
             Some((Pos::from_row_column(0, 0), Pos::from_row_column(0, 7)))
         );
+    }
+
+    #[test]
+    fn test_dragging_right_gutter_panic() {
+        let test = create_app2(35);
+        test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
+        test.set_cursor_row_col(0, 0);
+        test.render();
+
+        let orig_x = test.get_render_data().result_gutter_x;
+        test.click(test.get_render_data().result_gutter_x, 0);
+
+        for i in 1..=orig_x {
+            test.handle_drag(orig_x - i, 0);
+        }
+    }
+
+    #[test]
+    fn test_small_right_gutter_panic() {
+        let test = create_app3(20, 35);
+        test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
+        test.set_cursor_row_col(0, 0);
+        test.render();
+
+        let orig_x = test.get_render_data().result_gutter_x;
+        test.click(test.get_render_data().result_gutter_x, 0);
+
+        for i in 1..=orig_x {
+            test.handle_drag(orig_x - i, 0);
+        }
     }
 
     #[test]
@@ -8820,12 +9127,11 @@ sum",
         let mut result_buffer = [0; 128];
         test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
 
-        dbg!(&render_buckets.custom_commands[Layer::BehindText as usize]);
         test.contains(
             &render_buckets.custom_commands[Layer::BehindText as usize],
             1,
             OutputMessage::RenderRectangle {
-                x: 87,
+                x: 110,
                 y: canvas_y(0),
                 w: 1,
                 h: 19,
@@ -9154,6 +9460,20 @@ sum",
             assert_eq!(cursor_pos.column, 0);
             assert_eq!("some text\nvar = 2\nvar * 3", &test.get_editor_content());
         }
+    }
+
+    #[test]
+    fn test_ctrl_b_jumps_to_var_def_and_moves_the_scrollbar() {
+        let test = create_app2(35);
+        test.paste("var = 2\n");
+        test.repeated_paste("asd\n", 40);
+        test.paste("var");
+        test.set_cursor_row_col(0, 0);
+        assert_eq!(test.get_render_data().scroll_y, 0);
+        test.input(EditorInputEvent::PageDown, InputModifiers::none());
+        assert_eq!(test.get_render_data().scroll_y, 7 /*42 - 35*/);
+        test.input(EditorInputEvent::Char('b'), InputModifiers::ctrl());
+        assert_eq!(test.get_render_data().scroll_y, 0);
     }
 
     #[test]
@@ -9561,6 +9881,24 @@ sum",
         }
 
         #[test]
+        fn test_out_of_screen_pulsing_var() {
+            let test = create_app2(20);
+            test.paste("var = 4");
+            test.repeated_paste("asd\n", 30);
+            test.paste("var");
+            test.set_cursor_row_col(0, 0);
+            test.render();
+            test.input(EditorInputEvent::PageDown, InputModifiers::none());
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+            let render_bucket =
+                &test.mut_render_bucket().custom_commands[Layer::AboveText as usize];
+            // no pulsing should happen since the referencing line is out of view
+            for command in render_bucket {
+                assert!(!matches!(command, OutputMessage::PulsingRectangle {..}));
+            }
+        }
+
+        #[test]
         fn test_referenced_vars_and_linerefs_of_active_lines_are_pulsing() {
             let test = create_app2(35);
             test.paste("2\n3\nvar = 4\nasd &[1] * &[2] * var");
@@ -9649,5 +9987,23 @@ sum",
         let mut result_buffer = [0; 128];
         test.render_get_result_buf(&mut result_buffer[..]);
         assert_results(&["573 390 s", "159.275 h"][..], &result_buffer);
+    }
+
+    #[test]
+    fn calc_pow() {
+        let test = create_app2(35);
+        test.paste(
+            "price = 350k$
+down payment = 20% * price
+finance amount = price - down payment
+
+interest rate = 0.037 (1/year)
+term = 30 years
+-- n = term * 12 (1/year)
+n = 360
+r = interest rate / (12 (1/year))
+
+monthly payment = r/(1 - (1 + r)^(-n)) *finance amount",
+        );
     }
 }

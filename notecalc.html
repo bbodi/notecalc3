@@ -166,6 +166,17 @@
     }
 
     function init_canvas() {
+        const t = calc_and_set_client_width();
+        CLIENT_WIDTH_IN_CHARS = t[0];
+        CLIENT_HEIGHT_IN_CHARS = t[1];
+        if (CLIENT_WIDTH_IN_CHARS * font_width < canvas.width) {
+            CLIENT_WIDTH_IN_CHARS += 1;
+        }
+
+        const div = document.getElementById('containder-div');
+        div.style.width = (canvas.width + 2 * font_width) + 'px';
+        div.style.height = (canvas.height + 2 * line_height) + 'px';
+
         // some browser extension add a class to the body, so rmeove them
         let body = document.getElementsByTagName('body').item(0);
         body.className = '';
@@ -206,31 +217,46 @@
     function set_canvas_dirty(reason) {
         console.log("DIRTY", reason);
         canvas_dirty = true;
-    }
-
-    let need_update_selected_text = false;
-    function tick(now) {
-        if (wasm_bindgen.handle_time(app_ptr, now)) {
-            set_canvas_dirty('tick');
-            if (content_was_modified) {
-                save_content();
-            }
-        }
-        let started = new Date().getTime();
         if (canvas_dirty) {
+            const now = new Date().getTime();
             wasm_bindgen.render(app_ptr);
             if (need_update_selected_text) {
                 need_update_selected_text = false;
                 // hack: it must be called after the render
                 update_selected_text();
             }
-            let command_count = redraw();
-            let took = new Date().getTime() - started;
+            let command_count = redraw(now);
+            let took = new Date().getTime() - now;
             console.log('render: ', took, ' ms, render command count: ', command_count, "memory: ", wasm_bindgen.get_allocated_bytes(app_ptr));
             canvas_dirty = false;
             can_scroll = true;
         }
-        draw_pulsing_rects(pulsing_rects, started);
+    }
+
+    let need_update_selected_text = false;
+    function tick(_now) {
+        let now = new Date().getTime();
+        if (wasm_bindgen.handle_time(app_ptr, now)) {
+            set_canvas_dirty('tick');
+            if (content_was_modified) {
+                save_content();
+            }
+        }
+        // let started = new Date().getTime();
+        // if (canvas_dirty) {
+        //     wasm_bindgen.render(app_ptr);
+        //     if (need_update_selected_text) {
+        //         need_update_selected_text = false;
+        //         // hack: it must be called after the render
+        //         update_selected_text();
+        //     }
+        //     let command_count = redraw(now);
+        //     let took = new Date().getTime() - started;
+        //     console.log('render: ', took, ' ms, render command count: ', command_count, "memory: ", wasm_bindgen.get_allocated_bytes(app_ptr));
+        //     canvas_dirty = false;
+        //     can_scroll = true;
+        // }
+        draw_pulsing_rects(pulsing_rects, now);
 
         requestAnimationFrame(tick);
     }
@@ -256,6 +282,7 @@
             let g = interp((pulsing_rect.start_color & 0x00FF0000) >>> 16, (pulsing_rect.end_color & 0x00FF0000) >>> 16, delta);
             let b = interp((pulsing_rect.start_color & 0x0000FF00) >>> 8, (pulsing_rect.end_color & 0x0000FF00) >>> 8, delta);
             let a = interp((pulsing_rect.start_color & 0x000000FF) >>> 0, (pulsing_rect.end_color & 0x000000FF) >>> 0, delta);
+            // TODO opt
             overlay_ctx.fillStyle = 'rgba(' + r + ', ' + g + ', ' + b + ', ' + a / 255.0 + ')';
             overlay_ctx.fillRect(
                 pulsing_rect.x * font_width,
@@ -301,8 +328,9 @@
             dir = 0;
         }
         if (wasm_bindgen.handle_wheel(app_ptr, dir) === true) {
-            set_canvas_dirty('wheel');
+            pulsing_rects.length = 0;
             can_scroll = false;
+            set_canvas_dirty('wheel');
         }
     }
 
@@ -443,14 +471,14 @@
 
     let command_buffer_ptr;
 
-    function redraw() {
+    function redraw(now) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         let command_count = -1;
         let buf_index = 0;
         const command_buffer = new Uint8Array(wasm.memory.buffer, command_buffer_ptr);
-        const now = new Date().getTime();
 
+        const can_add_pulsing_commands = pulsing_rects.length === 0;
         const debug_commands = [];
         while (true) {
             command_count += 1;
@@ -542,6 +570,10 @@
                     const end_color = read_u32(command_buffer, buf_index + 4);
                     const animation_time_ms = read_u16(command_buffer, buf_index + 8);
                     buf_index += 4 + 4 + 2;
+
+                    if (!can_add_pulsing_commands) {
+                        continue;
+                    }
                     let item = {
                         x,y,w,h,
                         start_color,
@@ -554,7 +586,7 @@
                 }
             }
         }
-        console.log(debug_commands);
+        //console.log(debug_commands);
         return command_count;
     }
 
@@ -621,6 +653,7 @@
             }
             tab_index_counter = tab_names.length;
             reload_content(Math.min(index, notecalc_data.tabs.length-1));
+            active_tab_btn_dom.className = 'tablinks active';
         }
         return false;
     }
@@ -706,7 +739,7 @@
             event.preventDefault();
         });
 
-        resizeCanvas();
+        init_canvas();
 
         var notecalc_data = JSON.parse(localStorage.getItem('notecalc'));
         if (!notecalc_data) {

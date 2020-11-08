@@ -155,7 +155,17 @@ pub fn alt_key_released(app_ptr: u32) {
 
 #[wasm_bindgen]
 pub fn handle_resize(app_ptr: u32, new_client_width: usize) {
-    AppPointers::mut_app(app_ptr).handle_resize(new_client_width);
+    AppPointers::mut_app(app_ptr).handle_resize(
+        new_client_width,
+        AppPointers::mut_editor_objects(app_ptr),
+        AppPointers::units(app_ptr),
+        AppPointers::allocator(app_ptr),
+        AppPointers::mut_tokens(app_ptr),
+        AppPointers::mut_results(app_ptr),
+        AppPointers::mut_vars(app_ptr),
+        AppPointers::mut_render_bucket(app_ptr),
+        unsafe { &mut RESULT_BUFFER },
+    );
 }
 
 #[wasm_bindgen]
