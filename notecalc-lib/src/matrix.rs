@@ -1,4 +1,4 @@
-use crate::calc::{divide_op, multiply_op, CalcResult};
+use crate::calc::{divide_op, multiply_op, CalcResult, CalcResultType};
 use crate::MATRIX_ASCII_HEADER_FOOTER_LINE_COUNT;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -50,7 +50,12 @@ impl MatrixData {
             .iter()
             .map(|cell| multiply_op(scalar, cell))
             .collect();
-        cells.map(|it| CalcResult::Matrix(MatrixData::new(it, self.row_count, self.col_count)))
+        cells.map(|it| {
+            CalcResult::new(
+                CalcResultType::Matrix(MatrixData::new(it, self.row_count, self.col_count)),
+                0,
+            )
+        })
     }
 
     pub fn div_scalar(&self, scalar: &CalcResult) -> Option<CalcResult> {
@@ -59,7 +64,13 @@ impl MatrixData {
             .iter()
             .map(|cell| divide_op(cell, scalar))
             .collect();
-        cells.map(|it| CalcResult::Matrix(MatrixData::new(it, self.row_count, self.col_count)))
+
+        cells.map(|it| {
+            CalcResult::new(
+                CalcResultType::Matrix(MatrixData::new(it, self.row_count, self.col_count)),
+                0,
+            )
+        })
     }
 
     pub fn transposed(&self) -> MatrixData {
@@ -74,7 +85,7 @@ impl MatrixData {
         for (i, cell) in self.cells.iter().enumerate() {
             let row_i = i % result.row_count;
             let col_i = i / result.row_count;
-            result.cells[row_i * result.col_count + col_i] = cell.clone();
+            result.cells[row_i * result.col_count + col_i] = cell.clone()
         }
 
         return result;

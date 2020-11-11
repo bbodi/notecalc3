@@ -1,11 +1,19 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use bigdecimal::*;
+use rust_decimal::prelude::*;
 
 use crate::units::units::{UnitInstance, Units};
 use crate::units::{Prefix, Unit, UnitPrefixes};
 use std::cell::RefCell;
+
+const E21: &str = "1000000000000000000000";
+const E24: &str = "1000000000000000000000000";
+const E27: &str = "1000000000000000000000000000";
+//const E30: &str = "1000000000000000000000000000000";
+//const E36: &str = "1000000000000000000000000000000000000";
+//const E42: &str = "1000000000000000000000000000000000000000000";
+//const E48: &str = "1000000000000000000000000000000000000000000000000";
 
 #[repr(C)]
 enum UnitType {
@@ -77,134 +85,214 @@ pub(crate) const BASE_UNIT_DIMENSIONS: [[UnitDimensionExponent; BASE_UNIT_DIMENS
 fn create_prefixes() -> UnitPrefixes {
     UnitPrefixes {
         short: RefCell::new(Box::new(vec![
-            RefCell::new(Prefix::new(&['d', 'a'], "1e1", false)),
-            RefCell::new(Prefix::new(&['h'], "1e2", false)),
-            RefCell::new(Prefix::new(&['k'], "1e3", true)),
-            RefCell::new(Prefix::new(&['M'], "1e6", true)),
-            RefCell::new(Prefix::new(&['G'], "1e9", true)),
-            RefCell::new(Prefix::new(&['T'], "1e12", true)),
-            RefCell::new(Prefix::new(&['P'], "1e15", true)),
-            RefCell::new(Prefix::new(&['E'], "1e18", true)),
-            RefCell::new(Prefix::new(&['Z'], "1e21", true)),
-            RefCell::new(Prefix::new(&['Y'], "1e24", true)),
-            RefCell::new(Prefix::new(&['d'], "1e-1", false)),
-            RefCell::new(Prefix::new(&['c'], "1e-2", false)),
-            RefCell::new(Prefix::new(&['m'], "1e-3", true)),
-            RefCell::new(Prefix::new(&['u'], "1e-6", true)),
-            RefCell::new(Prefix::new(&['n'], "1e-9", true)),
-            RefCell::new(Prefix::new(&['p'], "1e-12", true)),
-            RefCell::new(Prefix::new(&['f'], "1e-15", true)),
-            RefCell::new(Prefix::new(&['a'], "1e-18", true)),
-            RefCell::new(Prefix::new(&['z'], "1e-21", true)),
-            RefCell::new(Prefix::new(&['y'], "1e-24", true)),
+            RefCell::new(Prefix::from_scientific(&['d', 'a'], "1e1", false)),
+            RefCell::new(Prefix::from_scientific(&['h'], "1e2", false)),
+            RefCell::new(Prefix::from_scientific(&['k'], "1e3", true)),
+            RefCell::new(Prefix::from_scientific(&['M'], "1e6", true)),
+            RefCell::new(Prefix::from_scientific(&['G'], "1e9", true)),
+            RefCell::new(Prefix::from_scientific(&['T'], "1e12", true)),
+            RefCell::new(Prefix::from_scientific(&['P'], "1e15", true)),
+            RefCell::new(Prefix::from_scientific(&['E'], "1e18", true)),
+            RefCell::new(Prefix::from_decimal(&['Z'], E21, true)),
+            RefCell::new(Prefix::from_decimal(&['Y'], E24, true)),
+            RefCell::new(Prefix::from_scientific(&['d'], "1e-1", false)),
+            RefCell::new(Prefix::from_scientific(&['c'], "1e-2", false)),
+            RefCell::new(Prefix::from_scientific(&['m'], "1e-3", true)),
+            RefCell::new(Prefix::from_scientific(&['u'], "1e-6", true)),
+            RefCell::new(Prefix::from_scientific(&['n'], "1e-9", true)),
+            RefCell::new(Prefix::from_scientific(&['p'], "1e-12", true)),
+            RefCell::new(Prefix::from_scientific(&['f'], "1e-15", true)),
+            RefCell::new(Prefix::from_scientific(&['a'], "1e-18", true)),
+            RefCell::new(Prefix::from_scientific(&['z'], "1e-21", true)),
+            RefCell::new(Prefix::from_scientific(&['y'], "1e-24", true)),
         ])),
         long: RefCell::new(Box::new(vec![
-            RefCell::new(Prefix::new(&['d', 'e', 'c', 'a'], "1e1", false)),
-            RefCell::new(Prefix::new(&['h', 'e', 'c', 't', 'o'], "1e2", false)),
-            RefCell::new(Prefix::new(&['k', 'i', 'l', 'o'], "1e3", true)),
-            RefCell::new(Prefix::new(&['m', 'e', 'g', 'a'], "1e6", true)),
-            RefCell::new(Prefix::new(&['g', 'i', 'g', 'a'], "1e9", true)),
-            RefCell::new(Prefix::new(&['t', 'e', 'r', 'a'], "1e12", true)),
-            RefCell::new(Prefix::new(&['p', 'e', 't', 'a'], "1e15", true)),
-            RefCell::new(Prefix::new(&['e', 'x', 'a'], "1e18", true)),
-            RefCell::new(Prefix::new(&['z', 'e', 't', 't', 'a'], "1e21", true)),
-            RefCell::new(Prefix::new(&['y', 'o', 't', 't', 'a'], "1e24", true)),
-            RefCell::new(Prefix::new(&['d', 'e', 'c', 'i'], "1e-1", false)),
-            RefCell::new(Prefix::new(&['c', 'e', 'n', 't', 'i'], "1e-2", false)),
-            RefCell::new(Prefix::new(&['m', 'i', 'l', 'l', 'i'], "1e-3", true)),
-            RefCell::new(Prefix::new(&['m', 'i', 'c', 'r', 'o'], "1e-6", true)),
-            RefCell::new(Prefix::new(&['n', 'a', 'n', 'o'], "1e-9", true)),
-            RefCell::new(Prefix::new(&['p', 'i', 'c', 'o'], "1e-12", true)),
-            RefCell::new(Prefix::new(&['f', 'e', 'm', 't', 'o'], "1e-15", true)),
-            RefCell::new(Prefix::new(&['a', 't', 't', 'o'], "1e-18", true)),
-            RefCell::new(Prefix::new(&['z', 'e', 'p', 't', 'o'], "1e-21", true)),
-            RefCell::new(Prefix::new(&['y', 'o', 'c', 't', 'o'], "1e-24", true)),
+            RefCell::new(Prefix::from_scientific(&['d', 'e', 'c', 'a'], "1e1", false)),
+            RefCell::new(Prefix::from_scientific(
+                &['h', 'e', 'c', 't', 'o'],
+                "1e2",
+                false,
+            )),
+            RefCell::new(Prefix::from_scientific(&['k', 'i', 'l', 'o'], "1e3", true)),
+            RefCell::new(Prefix::from_scientific(&['m', 'e', 'g', 'a'], "1e6", true)),
+            RefCell::new(Prefix::from_scientific(&['g', 'i', 'g', 'a'], "1e9", true)),
+            RefCell::new(Prefix::from_scientific(&['t', 'e', 'r', 'a'], "1e12", true)),
+            RefCell::new(Prefix::from_scientific(&['p', 'e', 't', 'a'], "1e15", true)),
+            RefCell::new(Prefix::from_scientific(&['e', 'x', 'a'], "1e18", true)),
+            RefCell::new(Prefix::from_decimal(&['z', 'e', 't', 't', 'a'], E21, true)),
+            RefCell::new(Prefix::from_decimal(&['y', 'o', 't', 't', 'a'], E24, true)),
+            RefCell::new(Prefix::from_scientific(
+                &['d', 'e', 'c', 'i'],
+                "1e-1",
+                false,
+            )),
+            RefCell::new(Prefix::from_scientific(
+                &['c', 'e', 'n', 't', 'i'],
+                "1e-2",
+                false,
+            )),
+            RefCell::new(Prefix::from_scientific(
+                &['m', 'i', 'l', 'l', 'i'],
+                "1e-3",
+                true,
+            )),
+            RefCell::new(Prefix::from_scientific(
+                &['m', 'i', 'c', 'r', 'o'],
+                "1e-6",
+                true,
+            )),
+            RefCell::new(Prefix::from_scientific(&['n', 'a', 'n', 'o'], "1e-9", true)),
+            RefCell::new(Prefix::from_scientific(
+                &['p', 'i', 'c', 'o'],
+                "1e-12",
+                true,
+            )),
+            RefCell::new(Prefix::from_scientific(
+                &['f', 'e', 'm', 't', 'o'],
+                "1e-15",
+                true,
+            )),
+            RefCell::new(Prefix::from_scientific(
+                &['a', 't', 't', 'o'],
+                "1e-18",
+                true,
+            )),
+            RefCell::new(Prefix::from_scientific(
+                &['z', 'e', 'p', 't', 'o'],
+                "1e-21",
+                true,
+            )),
+            RefCell::new(Prefix::from_scientific(
+                &['y', 'o', 'c', 't', 'o'],
+                "1e-24",
+                true,
+            )),
         ])),
         squared: RefCell::new(Box::new(vec![
-            RefCell::new(Prefix::new(&['d', 'a'], "1e2", false)),
-            RefCell::new(Prefix::new(&['h'], "1e4", false)),
-            RefCell::new(Prefix::new(&['k'], "1e6", true)),
-            RefCell::new(Prefix::new(&['M'], "1e12", true)),
-            RefCell::new(Prefix::new(&['G'], "1e18", true)),
-            RefCell::new(Prefix::new(&['T'], "1e24", true)),
-            RefCell::new(Prefix::new(&['P'], "1e30", true)),
-            RefCell::new(Prefix::new(&['E'], "1e36", true)),
-            RefCell::new(Prefix::new(&['Z'], "1e42", true)),
-            RefCell::new(Prefix::new(&['Y'], "1e48", true)),
-            RefCell::new(Prefix::new(&['d'], "1e-2", false)),
-            RefCell::new(Prefix::new(&['c'], "1e-4", false)),
-            RefCell::new(Prefix::new(&['m'], "1e-6", true)),
-            RefCell::new(Prefix::new(&['u'], "1e-12", true)),
-            RefCell::new(Prefix::new(&['n'], "1e-18", true)),
-            RefCell::new(Prefix::new(&['p'], "1e-24", true)),
-            RefCell::new(Prefix::new(&['f'], "1e-30", true)),
-            RefCell::new(Prefix::new(&['a'], "1e-36", true)),
-            RefCell::new(Prefix::new(&['z'], "1e-42", true)),
-            RefCell::new(Prefix::new(&['y'], "1e-48", true)),
+            RefCell::new(Prefix::from_scientific(&['d', 'a'], "1e2", false)),
+            RefCell::new(Prefix::from_scientific(&['h'], "1e4", false)),
+            RefCell::new(Prefix::from_scientific(&['k'], "1e6", true)),
+            RefCell::new(Prefix::from_scientific(&['M'], "1e12", true)),
+            RefCell::new(Prefix::from_scientific(&['G'], "1e18", true)),
+            RefCell::new(Prefix::from_decimal(&['T'], E24, true)),
+            // TODO rust_decimal can't support these big numbers
+            //RefCell::new(Prefix::new2(&['P'], E30, true)),
+            //RefCell::new(Prefix::new2(&['E'], E36, true)),
+            //RefCell::new(Prefix::new2(&['Z'], E42, true)),
+            //RefCell::new(Prefix::new2(&['Y'], E48, true)),
+            RefCell::new(Prefix::from_scientific(&['d'], "1e-2", false)),
+            RefCell::new(Prefix::from_scientific(&['c'], "1e-4", false)),
+            RefCell::new(Prefix::from_scientific(&['m'], "1e-6", true)),
+            RefCell::new(Prefix::from_scientific(&['u'], "1e-12", true)),
+            RefCell::new(Prefix::from_scientific(&['n'], "1e-18", true)),
+            RefCell::new(Prefix::from_scientific(&['p'], "1e-24", true)),
+            // TODO rust_decimal can't support these small numbers
+            //RefCell::new(Prefix::new(&['f'], "1e-30", true)),
+            //RefCell::new(Prefix::new(&['a'], "1e-36", true)),
+            //RefCell::new(Prefix::new(&['z'], "1e-42", true)),
+            //RefCell::new(Prefix::new(&['y'], "1e-48", true)),
         ])),
         cubic: RefCell::new(Box::new(vec![
-            RefCell::new(Prefix::new(&['d', 'a'], "1e3", false)),
-            RefCell::new(Prefix::new(&['h'], "1e6", false)),
-            RefCell::new(Prefix::new(&['k'], "1e9", true)),
-            RefCell::new(Prefix::new(&['M'], "1e18", true)),
-            RefCell::new(Prefix::new(&['G'], "1e27", true)),
-            RefCell::new(Prefix::new(&['T'], "1e36", true)),
-            RefCell::new(Prefix::new(&['P'], "1e45", true)),
-            RefCell::new(Prefix::new(&['E'], "1e54", true)),
-            RefCell::new(Prefix::new(&['Z'], "1e63", true)),
-            RefCell::new(Prefix::new(&['Y'], "1e72", true)),
-            RefCell::new(Prefix::new(&['d'], "1e-3", false)),
-            RefCell::new(Prefix::new(&['c'], "1e-6", false)),
-            RefCell::new(Prefix::new(&['m'], "1e-9", true)),
-            RefCell::new(Prefix::new(&['u'], "1e-18", true)),
-            RefCell::new(Prefix::new(&['n'], "1e-27", true)),
-            RefCell::new(Prefix::new(&['p'], "1e-36", true)),
-            RefCell::new(Prefix::new(&['f'], "1e-45", true)),
-            RefCell::new(Prefix::new(&['a'], "1e-54", true)),
-            RefCell::new(Prefix::new(&['z'], "1e-63", true)),
-            RefCell::new(Prefix::new(&['y'], "1e-72", true)),
+            RefCell::new(Prefix::from_scientific(&['d', 'a'], "1e3", false)),
+            RefCell::new(Prefix::from_scientific(&['h'], "1e6", false)),
+            RefCell::new(Prefix::from_scientific(&['k'], "1e9", true)),
+            RefCell::new(Prefix::from_scientific(&['M'], "1e18", true)),
+            // TODO
+            RefCell::new(Prefix::from_decimal(&['G'], E27, true)),
+            // RefCell::new(Prefix::new(&['T'], "1e36", true)),
+            // RefCell::new(Prefix::new(&['P'], "1e45", true)),
+            // RefCell::new(Prefix::new(&['E'], "1e54", true)),
+            // RefCell::new(Prefix::new(&['Z'], "1e63", true)),
+            // RefCell::new(Prefix::new(&['Y'], "1e72", true)),
+            RefCell::new(Prefix::from_scientific(&['d'], "1e-3", false)),
+            RefCell::new(Prefix::from_scientific(&['c'], "1e-6", false)),
+            RefCell::new(Prefix::from_scientific(&['m'], "1e-9", true)),
+            RefCell::new(Prefix::from_scientific(&['u'], "1e-18", true)),
+            RefCell::new(Prefix::from_scientific(&['n'], "1e-27", true)),
+            // TODO
+            //RefCell::new(Prefix::new(&['p'], "1e-36", true)),
+            //RefCell::new(Prefix::new(&['f'], "1e-45", true)),
+            //RefCell::new(Prefix::new(&['a'], "1e-54", true)),
+            //RefCell::new(Prefix::new(&['z'], "1e-63", true)),
+            //RefCell::new(Prefix::new(&['y'], "1e-72", true)),
         ])),
         binary_short_si: RefCell::new(Box::new(vec![
-            RefCell::new(Prefix::new(&['k'], "1e3", true)),
-            RefCell::new(Prefix::new(&['M'], "1e6", true)),
-            RefCell::new(Prefix::new(&['G'], "1e9", true)),
-            RefCell::new(Prefix::new(&['T'], "1e12", true)),
-            RefCell::new(Prefix::new(&['P'], "1e15", true)),
-            RefCell::new(Prefix::new(&['E'], "1e18", true)),
-            RefCell::new(Prefix::new(&['Z'], "1e21", true)),
-            RefCell::new(Prefix::new(&['Y'], "1e24", true)),
+            RefCell::new(Prefix::from_scientific(&['k'], "1e3", true)),
+            RefCell::new(Prefix::from_scientific(&['M'], "1e6", true)),
+            RefCell::new(Prefix::from_scientific(&['G'], "1e9", true)),
+            RefCell::new(Prefix::from_scientific(&['T'], "1e12", true)),
+            RefCell::new(Prefix::from_scientific(&['P'], "1e15", true)),
+            RefCell::new(Prefix::from_scientific(&['E'], "1e18", true)),
+            RefCell::new(Prefix::from_decimal(&['Z'], E21, true)),
+            RefCell::new(Prefix::from_decimal(&['Y'], E24, true)),
         ])),
         binary_short_iec: RefCell::new(Box::new(vec![
-            RefCell::new(Prefix::new(&['K', 'i'], "1024", true)),
-            RefCell::new(Prefix::new(&['M', 'i'], "1048576", true)),
-            RefCell::new(Prefix::new(&['G', 'i'], "1073741824", true)),
-            RefCell::new(Prefix::new(&['T', 'i'], "1.0995116e+12", true)),
-            RefCell::new(Prefix::new(&['P', 'i'], "1.1258999e+15", true)),
-            RefCell::new(Prefix::new(&['E', 'i'], "1.1529215e+18", true)),
-            RefCell::new(Prefix::new(&['Z', 'i'], "1.1805916e+21", true)),
-            RefCell::new(Prefix::new(&['Y', 'i'], "1.2089258e+24", true)),
+            RefCell::new(Prefix::from_decimal(&['K', 'i'], "1024", true)),
+            RefCell::new(Prefix::from_decimal(&['M', 'i'], "1048576", true)),
+            RefCell::new(Prefix::from_decimal(&['G', 'i'], "1073741824", true)),
+            RefCell::new(Prefix::from_scientific(&['T', 'i'], "1.0995116e+12", true)),
+            RefCell::new(Prefix::from_scientific(&['P', 'i'], "1.1258999e+15", true)),
+            RefCell::new(Prefix::from_scientific(&['E', 'i'], "1.1529215e+18", true)),
+            RefCell::new(Prefix::from_decimal(
+                &['Z', 'i'],
+                "1180591620717411303424",
+                true,
+            )),
+            //RefCell::new(Prefix::from_scientific(&['Z', 'i'], "1.1805916e+21", true)),
+            RefCell::new(Prefix::from_decimal(
+                &['Y', 'i'],
+                "1208925819614629174706176",
+                true,
+            )),
+            //RefCell::new(Prefix::from_scientific(&['Y', 'i'], "1.2089258e+24", true)),
         ])),
         binary_long_si: RefCell::new(Box::new(vec![
-            RefCell::new(Prefix::new(&['k', 'i', 'l', 'o'], "1e3", true)),
-            RefCell::new(Prefix::new(&['m', 'e', 'g', 'a'], "1e6", true)),
-            RefCell::new(Prefix::new(&['g', 'i', 'g', 'a'], "1e9", true)),
-            RefCell::new(Prefix::new(&['t', 'e', 'r', 'a'], "1e12", true)),
-            RefCell::new(Prefix::new(&['p', 'e', 't', 'a'], "1e15", true)),
-            RefCell::new(Prefix::new(&['e', 'x', 'a'], "1e18", true)),
-            RefCell::new(Prefix::new(&['z', 'e', 't', 't', 'a'], "1e21", true)),
-            RefCell::new(Prefix::new(&['y', 'o', 't', 't', 'a'], "1e24", true)),
+            RefCell::new(Prefix::from_scientific(&['k', 'i', 'l', 'o'], "1e3", true)),
+            RefCell::new(Prefix::from_scientific(&['m', 'e', 'g', 'a'], "1e6", true)),
+            RefCell::new(Prefix::from_scientific(&['g', 'i', 'g', 'a'], "1e9", true)),
+            RefCell::new(Prefix::from_scientific(&['t', 'e', 'r', 'a'], "1e12", true)),
+            RefCell::new(Prefix::from_scientific(&['p', 'e', 't', 'a'], "1e15", true)),
+            RefCell::new(Prefix::from_scientific(&['e', 'x', 'a'], "1e18", true)),
+            RefCell::new(Prefix::from_decimal(&['z', 'e', 't', 't', 'a'], E21, true)),
+            RefCell::new(Prefix::from_decimal(&['y', 'o', 't', 't', 'a'], E24, true)),
         ])),
         binary_long_iec: RefCell::new(Box::new(vec![
-            RefCell::new(Prefix::new(&['k', 'i', 'b', 'i'], "1024", true)),
-            RefCell::new(Prefix::new(&['m', 'e', 'b', 'i'], "1048576", true)),
-            RefCell::new(Prefix::new(&['g', 'i', 'b', 'i'], "1073741824", true)),
-            RefCell::new(Prefix::new(&['t', 'e', 'b', 'i'], "1.0995116e+12", true)),
-            RefCell::new(Prefix::new(&['p', 'e', 'b', 'i'], "1.1258999e+15", true)),
-            RefCell::new(Prefix::new(&['e', 'x', 'i'], "1.1529215e+18", true)),
-            RefCell::new(Prefix::new(&['z', 'e', 'b', 'i'], "1.1805916e+21", true)),
-            RefCell::new(Prefix::new(&['y', 'o', 'b', 'i'], "1.2089258e+24", true)),
+            RefCell::new(Prefix::from_decimal(&['k', 'i', 'b', 'i'], "1024", true)),
+            RefCell::new(Prefix::from_decimal(&['m', 'e', 'b', 'i'], "1048576", true)),
+            RefCell::new(Prefix::from_decimal(
+                &['g', 'i', 'b', 'i'],
+                "1073741824",
+                true,
+            )),
+            RefCell::new(Prefix::from_scientific(
+                &['t', 'e', 'b', 'i'],
+                "1.0995116e+12",
+                true,
+            )),
+            RefCell::new(Prefix::from_scientific(
+                &['p', 'e', 'b', 'i'],
+                "1.1258999e+15",
+                true,
+            )),
+            RefCell::new(Prefix::from_scientific(
+                &['e', 'x', 'i'],
+                "1.1529215e+18",
+                true,
+            )),
+            RefCell::new(Prefix::from_decimal(
+                &['z', 'e', 'b', 'i'],
+                "1180591620717411303424",
+                //"1.1805916e+21",
+                true,
+            )),
+            RefCell::new(Prefix::from_decimal(
+                &['y', 'o', 'b', 'i'],
+                //"1.2089258e+24",
+                "1208925819614629174706176",
+                true,
+            )),
         ])),
-        btu: RefCell::new(Box::new(vec![RefCell::new(Prefix::new(
+        btu: RefCell::new(Box::new(vec![RefCell::new(Prefix::from_scientific(
             &['M', 'M'],
             "1e6",
             true,
@@ -214,7 +302,7 @@ fn create_prefixes() -> UnitPrefixes {
 
 pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
     let prefixes = create_prefixes();
-    let pi: BigDecimal = BigDecimal::from_str("3.14159265358979323846264338327950288").unwrap();
+    let pi: Decimal = Decimal::from_str("3.14159265358979323846264338327950288").unwrap();
     let mut map = HashMap::<&str, Unit>::with_capacity(168);
 
     map.insert(
@@ -224,8 +312,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             // prefixes: (Some(&prefixes.long), None),
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::one(),
-            offset: BigDecimal::zero(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -234,8 +322,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['i', 'n', 'c', 'h'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.0254").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.0254").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -244,8 +332,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['f', 'o', 'o', 't'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.3048").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.3048").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -254,8 +342,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['y', 'a', 'r', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.9144").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.9144").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -264,8 +352,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['m', 'i', 'l', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("1609.344").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("1609.344").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -274,8 +362,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['l', 'i', 'n', 'k'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.201168").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.201168").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -284,8 +372,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['r', 'o', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("5.0292").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("5.0292").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -294,8 +382,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['c', 'h', 'a', 'i', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("20.1168").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("20.1168").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -304,8 +392,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['a', 'n', 'g', 's', 't', 'r', 'o', 'm'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("1e-10").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_scientific("1e-10").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -314,8 +402,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['m'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -324,8 +412,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['i', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.0254").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.0254").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -334,8 +422,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['f', 't'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.3048").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.3048").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -344,8 +432,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['y', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.9144").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.9144").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -354,8 +442,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['m', 'i'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("1609.344").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("1609.344").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -364,8 +452,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['l', 'i'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.201168").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.201168").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -374,8 +462,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['r', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("5.029210").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("5.029210").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -384,8 +472,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['c', 'h'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("20.1168").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("20.1168").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -394,8 +482,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['m', 'i', 'l'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.0000254").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.0000254").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 1/1000 inch
        // Surface
@@ -405,8 +493,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['m', '2'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Surface as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.squared)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -415,8 +503,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['s', 'q', 'i', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Surface as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.00064516").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.00064516").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 645.16 mm2
     map.insert(
@@ -425,8 +513,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['s', 'q', 'f', 't'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Surface as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.09290304").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.09290304").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 0.09290304 m2
     map.insert(
@@ -435,8 +523,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['s', 'q', 'y', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Surface as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.83612736").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.83612736").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 0.83612736 m2
     map.insert(
@@ -445,8 +533,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['s', 'q', 'm', 'i'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Surface as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("2589988.110336").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("2589988.110336").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 2.589988110336 km2
     map.insert(
@@ -455,8 +543,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['s', 'q', 'r', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Surface as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("25.29295").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("25.29295").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 25.29295 m2
     map.insert(
@@ -465,8 +553,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['s', 'q', 'c', 'h'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Surface as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("404.6873").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("404.6873").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 404.6873 m2
     map.insert(
@@ -475,8 +563,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['s', 'q', 'm', 'i', 'l'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Surface as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("6.4516e-10").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_scientific("6.4516e-10").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 6.4516 * 10^-10 m2
     map.insert(
@@ -485,8 +573,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['a', 'c', 'r', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Surface as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("4046.86").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("4046.86").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 4046.86 m2
     map.insert(
@@ -495,8 +583,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['h', 'e', 'c', 't', 'a', 'r', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Surface as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_i64(10000).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(10000).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 10000 m2
        // Volume
@@ -506,8 +594,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['m', '3'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.cubic)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -516,8 +604,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['L'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_str("0.001").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.001").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // litre
     map.insert(
@@ -526,8 +614,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['l'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_str("0.001").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.001").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // litre
     map.insert(
@@ -536,8 +624,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['l', 'i', 't', 'r', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_str("0.001").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.001").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -546,8 +634,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['c', 'u', 'i', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("1.6387064e-5").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_scientific("1.6387064e-5").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 1.6387064e-5 m3
     map.insert(
@@ -556,8 +644,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['c', 'u', 'f', 't'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.028316846592").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.028316846592").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 28.316 846 592 L
     map.insert(
@@ -566,8 +654,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['c', 'u', 'y', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.764554857984").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.764554857984").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 764.554 857 984 L
     map.insert(
@@ -576,8 +664,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['t', 'e', 'a', 's', 'p', 'o', 'o', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.000005").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.000005").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 5 mL
     map.insert(
@@ -586,19 +674,19 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['t', 'a', 'b', 'l', 'e', 's', 'p', 'o', 'o', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.000015").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.000015").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 15 mL
-       // {name: &['c', 'u', 'p'], base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize], prefixes: (None, None), value: BigDecimal::from_str("0.000240").unwrap(), offset: BigDecimal::from_i64(0}).unwrap(), // 240 mL  // not possible, we have already another cup
+       // {name: &['c', 'u', 'p'], base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize], prefixes: (None, None), value: Decimal::from_str("0.000240").unwrap(), offset: Decimal::from_i64(0}).unwrap(), // 240 mL  // not possible, we have already another cup
     map.insert(
         "drop",
         Unit {
             name: &['d', 'r', 'o', 'p'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("5e-8").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_scientific("5e-8").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 0.05 mL = 5e-8 m3
     map.insert(
@@ -607,8 +695,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['g', 't', 't'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("5e-8").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_scientific("5e-8").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 0.05 mL = 5e-8 m3
        // Liquid volume
@@ -618,8 +706,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['m', 'i', 'n', 'i', 'm'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.00000006161152").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.00000006161152").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 0.06161152 mL
     map.insert(
@@ -628,8 +716,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['f', 'l', 'u', 'i', 'd', 'd', 'r', 'a', 'm'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.0000036966911").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.0000036966911").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 3.696691 mL
     map.insert(
@@ -638,8 +726,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['f', 'l', 'u', 'i', 'd', 'o', 'u', 'n', 'c', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.00002957353").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.00002957353").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 29.57353 mL
     map.insert(
@@ -648,8 +736,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['g', 'i', 'l', 'l'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.0001182941").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.0001182941").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 118.2941 mL
     map.insert(
@@ -658,8 +746,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['c', 'c'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("1e-6").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_scientific("1e-6").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 1e-6 L
     map.insert(
@@ -668,8 +756,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['c', 'u', 'p'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.0002365882").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.0002365882").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 236.5882 mL
     map.insert(
@@ -678,8 +766,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['p', 'i', 'n', 't'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.0004731765").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.0004731765").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 473.1765 mL
     map.insert(
@@ -688,8 +776,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['q', 'u', 'a', 'r', 't'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.0009463529").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.0009463529").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 946.3529 mL
     map.insert(
@@ -698,8 +786,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['g', 'a', 'l', 'l', 'o', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.003785412").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.003785412").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 3.785412 L
     map.insert(
@@ -708,8 +796,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['b', 'e', 'e', 'r', 'b', 'a', 'r', 'r', 'e', 'l'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.1173478").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.1173478").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 117.3478 L
     map.insert(
@@ -718,8 +806,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['o', 'i', 'l', 'b', 'a', 'r', 'r', 'e', 'l'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.1589873").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.1589873").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 158.9873 L
     map.insert(
@@ -728,19 +816,19 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['h', 'o', 'g', 's', 'h', 'e', 'a', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.2384810").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.2384810").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 238.4810 L
-       // {name: &['m', 'i', 'n'], base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize], prefixes: (None, None), value: BigDecimal::from_str("0.00000006161152").unwrap(), offset: BigDecimal::from_i64(0}).unwrap(), // 0.06161152 mL // min is already in use as minute
+       // {name: &['m', 'i', 'n'], base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize], prefixes: (None, None), value: Decimal::from_str("0.00000006161152").unwrap(), offset: Decimal::from_i64(0}).unwrap(), // 0.06161152 mL // min is already in use as minute
     map.insert(
         "fldr",
         Unit {
             name: &['f', 'l', 'd', 'r'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.0000036966911").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.0000036966911").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 3.696691 mL
     map.insert(
@@ -749,8 +837,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['f', 'l', 'o', 'z'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.00002957353").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.00002957353").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 29.57353 mL
     map.insert(
@@ -759,8 +847,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['g', 'i'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.0001182941").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.0001182941").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 118.2941 mL
     map.insert(
@@ -769,8 +857,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['c', 'p'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.0002365882").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.0002365882").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 236.5882 mL
     map.insert(
@@ -779,8 +867,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['p', 't'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.0004731765").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.0004731765").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 473.1765 mL
     map.insert(
@@ -789,8 +877,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['q', 't'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.0009463529").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.0009463529").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 946.3529 mL
     map.insert(
@@ -799,8 +887,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['g', 'a', 'l'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.003785412").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.003785412").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 3.785412 L
     map.insert(
@@ -809,8 +897,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['b', 'b', 'l'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.1173478").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.1173478").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 117.3478 L
     map.insert(
@@ -819,11 +907,11 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['o', 'b', 'l'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("0.1589873").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.1589873").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     ); // 158.9873 L
-       // {name: &['h', 'o', 'g', 's', 'h','e','a', 'd'], base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize], prefixes: (None, None), value: BigDecimal::from_str("0.2384810").unwrap(), offset: BigDecimal::from_i64(0}).unwrap(), // 238.4810 L // TODO: hh?
+       // {name: &['h', 'o', 'g', 's', 'h','e','a', 'd'], base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize], prefixes: (None, None), value: Decimal::from_str("0.2384810").unwrap(), offset: Decimal::from_i64(0}).unwrap(), // 238.4810 L // TODO: hh?
 
     // Mass
     map.insert(
@@ -832,8 +920,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['g'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_str("0.001").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.001").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -842,8 +930,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['g', 'r', 'a', 'm'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_str("0.001").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.001").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -852,8 +940,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['t', 'o', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_str("907.18474").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("907.18474").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -862,8 +950,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['t'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1000).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1000).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -872,8 +960,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['t', 'o', 'n', 'n', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_i64(1000).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1000).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -882,8 +970,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['g', 'r', 'a', 'i', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("64.79891e-6").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_scientific("64.79891e-6").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -892,8 +980,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['d', 'r', 'a', 'm'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("1.7718451953125e-3").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_scientific("1.7718451953125e-3").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -902,8 +990,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['o', 'u', 'n', 'c', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("28.349523125e-3").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_scientific("28.349523125e-3").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -912,8 +1000,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['p', 'o', 'u', 'n', 'd', 'm', 'a', 's', 's'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("453.59237e-3").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_scientific("453.59237e-3").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -924,8 +1012,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             ],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("45.359237").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("45.359237").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -934,8 +1022,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['s', 't', 'i', 'c', 'k'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("115e-3").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_scientific("115e-3").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -944,8 +1032,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['s', 't', 'o', 'n', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("6.35029318").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("6.35029318").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -954,8 +1042,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['g', 'r'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("64.79891e-6").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_scientific("64.79891e-6").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -964,8 +1052,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['d', 'r'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("1.7718451953125e-3").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_scientific("1.7718451953125e-3").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -974,8 +1062,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['o', 'z'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("28.349523125e-3").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_scientific("28.349523125e-3").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -984,8 +1072,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['l', 'b', 'm'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("453.59237e-3").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_scientific("453.59237e-3").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -994,8 +1082,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['c', 'w', 't'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("45.359237").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("45.359237").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // Time
@@ -1005,8 +1093,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['s'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1015,8 +1103,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['m', 'i', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_i64(60).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(60).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1025,8 +1113,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['h'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_i64(3600).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(3600).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1035,8 +1123,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['s', 'e', 'c', 'o', 'n', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1045,8 +1133,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['s', 'e', 'c'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1055,8 +1143,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['m', 'i', 'n', 'u', 't', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_i64(60).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(60).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1065,8 +1153,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['h', 'o', 'u', 'r'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_i64(3600).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(3600).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1075,8 +1163,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['d', 'a', 'y'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_i64(86400).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(86400).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1086,8 +1174,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (None, None),
             // 7 * 86400
-            value: BigDecimal::from_i64(604800).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(604800).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1096,8 +1184,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['m', 'o', 'n', 't', 'h'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_i64(2629800).unwrap(), // 1/12th of Julian year
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(2629800).unwrap(), // 1/12th of Julian year
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1106,8 +1194,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['y', 'e', 'a', 'r'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_i64(31557600).unwrap(), // Julian year
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(31557600).unwrap(), // Julian year
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1116,8 +1204,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['d', 'e', 'c', 'a', 'd', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_i64(315576000).unwrap(), // Julian decade
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(315576000).unwrap(), // Julian decade
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1126,8 +1214,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['c', 'e', 'n', 't', 'u', 'r', 'y'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_i64(3155760000).unwrap(), // Julian century
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(3155760000).unwrap(), // Julian century
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1136,8 +1224,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['m', 'i', 'l', 'l', 'e', 'n', 'n', 'i', 'u', 'm'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_i64(31557600000).unwrap(), // Julian millennium
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(31557600000).unwrap(), // Julian millennium
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // Frequency
@@ -1147,8 +1235,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['H', 'e', 'r', 't', 'z'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Frequency as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
             // reciprocal: true,
         },
     );
@@ -1158,8 +1246,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['H', 'z'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Frequency as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
             // reciprocal: true,
         },
     );
@@ -1170,8 +1258,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['r', 'a', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1180,8 +1268,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['r', 'a', 'd', 'i', 'a', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // deg = rad / (2*pi) * 360 = rad / 0.017453292519943295769236907684888
@@ -1191,8 +1279,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['d', 'e', 'g'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: &pi / &BigDecimal::from_isize(180).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: &pi / &Decimal::from_isize(180).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1201,8 +1289,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['d', 'e', 'g', 'r', 'e', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: &pi / &BigDecimal::from_isize(180).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: &pi / &Decimal::from_isize(180).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // grad = rad / (2*pi) * 400  = rad / 0.015707963267948966192313216916399
@@ -1212,8 +1300,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['g', 'r', 'a', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: &pi / &BigDecimal::from_isize(200).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: &pi / &Decimal::from_isize(200).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1222,8 +1310,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['g', 'r', 'a', 'd', 'i', 'a', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: &pi / &BigDecimal::from_isize(200).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: &pi / &Decimal::from_isize(200).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // cycle = rad / (2*pi) = rad / 6.2831853071795864769252867665793
@@ -1233,8 +1321,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['c', 'y', 'c', 'l', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
             prefix_groups: (None, None),
-            value: &pi * &BigDecimal::from_isize(2).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: &pi * &Decimal::from_isize(2).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // arcsec = rad / (3600 * (360 / 2 * pi)) = rad / 0.0000048481368110953599358991410235795
@@ -1244,8 +1332,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['a', 'r', 'c', 's', 'e', 'c'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
             prefix_groups: (None, None),
-            value: &pi / &BigDecimal::from_isize(648000).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: &pi / &Decimal::from_isize(648000).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // arcmin = rad / (60 * (360 / 2 * pi)) = rad / 0.00029088820866572159615394846141477
@@ -1255,8 +1343,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['a', 'r', 'c', 'm', 'i', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
             prefix_groups: (None, None),
-            value: &pi / &BigDecimal::from_isize(10800).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: &pi / &Decimal::from_isize(10800).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // Electric current
@@ -1266,8 +1354,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['A'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Current as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1276,8 +1364,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['a', 'm', 'p', 'e', 'r', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Current as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // Temperature
@@ -1290,8 +1378,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['K'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Temperature as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1300,8 +1388,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['d', 'e', 'g', 'C'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Temperature as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_str("273.15").unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_str("273.15").unwrap(),
         },
     );
     map.insert(
@@ -1310,8 +1398,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['d', 'e', 'g', 'F'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Temperature as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::one() / BigDecimal::from_str("1.8").unwrap(),
-            offset: BigDecimal::from_str("459.67").unwrap(),
+            value: Decimal::one() / Decimal::from_str("1.8").unwrap(),
+            offset: Decimal::from_str("459.67").unwrap(),
         },
     );
     map.insert(
@@ -1320,8 +1408,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['d', 'e', 'g', 'R'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Temperature as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::one() / BigDecimal::from_str("1.8").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::one() / Decimal::from_str("1.8").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1330,8 +1418,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['k', 'e', 'l', 'v', 'i', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Temperature as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1340,8 +1428,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['c', 'e', 'l', 's', 'i', 'u', 's'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Temperature as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_str("273.15").unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_str("273.15").unwrap(),
         },
     );
     map.insert(
@@ -1350,8 +1438,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['f', 'a', 'h', 'r', 'e', 'n', 'h', 'e', 'i', 't'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Temperature as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::one() / BigDecimal::from_str("1.8").unwrap(),
-            offset: BigDecimal::from_str("459.67").unwrap(),
+            value: Decimal::one() / Decimal::from_str("1.8").unwrap(),
+            offset: Decimal::from_str("459.67").unwrap(),
         },
     );
     map.insert(
@@ -1360,8 +1448,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['r', 'a', 'n', 'k', 'i', 'n', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Temperature as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::one() / BigDecimal::from_str("1.8").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::one() / Decimal::from_str("1.8").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // amount of substance
@@ -1371,8 +1459,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['m', 'o', 'l'],
             base: BASE_UNIT_DIMENSIONS[UnitType::AmountOfSubstance as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1381,8 +1469,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['m', 'o', 'l', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::AmountOfSubstance as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // luminous intensity
@@ -1392,8 +1480,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['c', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::LuminousIntensity as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1402,13 +1490,13 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['c', 'a', 'n', 'd', 'e', 'l', 'a'],
             base: BASE_UNIT_DIMENSIONS[UnitType::LuminousIntensity as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // TODO: units STERADIAN
-    // {name: &['s', 'r'], base: BASE_UNITS_STERADIAN, prefixes: (None, None), value: BigDecimal::from_i64(1).unwrap(), offset: BigDecimal::from_i64(0}).unwrap(),
-    // {name: &['s', 't', 'e', 'r', 'a','d','i', 'a', 'n'], base: BASE_UNITS_STERADIAN, prefixes: (None, None), value: BigDecimal::from_i64(1).unwrap(), offset: BigDecimal::from_i64(0}).unwrap(),
+    // {name: &['s', 'r'], base: BASE_UNITS_STERADIAN, prefixes: (None, None), value: Decimal::from_i64(1).unwrap(), offset: Decimal::from_i64(0}).unwrap(),
+    // {name: &['s', 't', 'e', 'r', 'a','d','i', 'a', 'n'], base: BASE_UNITS_STERADIAN, prefixes: (None, None), value: Decimal::from_i64(1).unwrap(), offset: Decimal::from_i64(0}).unwrap(),
 
     // Force
     map.insert(
@@ -1417,8 +1505,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['N'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Force as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1427,8 +1515,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['n', 'e', 'w', 't', 'o', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Force as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1437,8 +1525,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['d', 'y', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Force as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_str("0.00001").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.00001").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1447,8 +1535,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['d', 'y', 'n', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Force as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_str("0.00001").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("0.00001").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1457,8 +1545,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['l', 'b', 'f'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Force as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("4.4482216152605").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("4.4482216152605").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1467,8 +1555,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['p', 'o', 'u', 'n', 'd', 'f', 'o', 'r', 'c', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Force as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("4.4482216152605").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("4.4482216152605").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1477,8 +1565,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['k', 'i', 'p'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Force as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_str("4448.2216").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("4448.2216").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // Energy
@@ -1488,8 +1576,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['J'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1498,8 +1586,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['j', 'o', 'u', 'l', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1508,8 +1596,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['c', 'a', 'l'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_str("4.1868").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("4.1868").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1518,8 +1606,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['e', 'r', 'g'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("1e-7").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_scientific("1e-7").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1528,8 +1616,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['W', 'h'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(3600).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(3600).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1538,8 +1626,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['B', 'T', 'U'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.btu)), None),
-            value: BigDecimal::from_str("1055.05585262").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("1055.05585262").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1548,8 +1636,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['e', 'V'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_str("1.602176565e-19").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_scientific("1.602176565e-19").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1558,8 +1646,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['e', 'l', 'e', 'c', 't', 'r', 'o', 'n', 'v', 'o', 'l', 't'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_str("1.602176565e-19").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_scientific("1.602176565e-19").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // Power
@@ -1569,8 +1657,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['W'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Power as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1579,8 +1667,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['w', 'a', 't', 't'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Power as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1589,8 +1677,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['h', 'p'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Power as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("745.6998715386").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("745.6998715386").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     ///////////////////////////////////
@@ -1600,8 +1688,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
     //     name: &['V', 'A', 'R'],
     //     base: BASE_UNIT_DIMENSIONS[UnitType::Power as usize],
     //     prefixes: (Some(RefCell::clone(&prefixes.short)), None),
-    //     value: BigDecimal::from_str("Complex.I").unwrap(),
-    //     offset: BigDecimal::from_i64(0).unwrap(),
+    //     value: Decimal::from_str("Complex.I").unwrap(),
+    //     offset: Decimal::from_i64(0).unwrap(),
     // },
     map.insert(
         "VA",
@@ -1609,8 +1697,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['V', 'A'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Power as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // Pressure
@@ -1620,8 +1708,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['P', 'a'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Pressure as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1630,8 +1718,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['p', 's', 'i'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Pressure as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("6894.75729276459").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("6894.75729276459").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1640,8 +1728,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['a', 't', 'm'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Pressure as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_i64(101325).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(101325).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1653,8 +1741,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
                 Some(RefCell::clone(&prefixes.short)),
                 Some(RefCell::clone(&prefixes.long)),
             ),
-            value: BigDecimal::from_i64(100000).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(100000).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1663,8 +1751,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['t', 'o', 'r', 'r'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Pressure as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("133.322").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("133.322").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1673,8 +1761,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['m', 'm', 'H', 'g'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Pressure as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("133.322").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("133.322").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1683,8 +1771,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['m', 'm', 'H', '2', 'O'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Pressure as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("9.80665").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("9.80665").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1693,8 +1781,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['c', 'm', 'H', '2', 'O'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Pressure as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_str("98.0665").unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_str("98.0665").unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // Electric charge
@@ -1704,8 +1792,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['c', 'o', 'u', 'l', 'o', 'm', 'b'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricCharge as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1714,8 +1802,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['C'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricCharge as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // Electric capacitance
@@ -1725,8 +1813,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['f', 'a', 'r', 'a', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricCapacitance as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1735,8 +1823,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['F'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricCapacitance as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // Electric potential
@@ -1746,8 +1834,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['v', 'o', 'l', 't'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricPotential as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1756,8 +1844,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['V'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricPotential as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // Electric resistance
@@ -1770,8 +1858,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
                 Some(RefCell::clone(&prefixes.short)),
                 Some(RefCell::clone(&prefixes.long)),
             ), // Both Mohm and megaohm are acceptable
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1780,8 +1868,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['Ω'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricResistance as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // Electric inductance
@@ -1791,8 +1879,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['h', 'e', 'n', 'r', 'y'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricInductance as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1801,8 +1889,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['H'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricInductance as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // Electric conductance
@@ -1812,8 +1900,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['s', 'i', 'e', 'm', 'e', 'n', 's'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricConductance as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1822,8 +1910,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['S'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricConductance as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // Magnetic flux
@@ -1833,8 +1921,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['w', 'e', 'b', 'e', 'r'],
             base: BASE_UNIT_DIMENSIONS[UnitType::MagneticFlux as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1843,8 +1931,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['W', 'b'],
             base: BASE_UNIT_DIMENSIONS[UnitType::MagneticFlux as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // Magnetic flux density
@@ -1854,8 +1942,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['t', 'e', 's', 'l', 'a'],
             base: BASE_UNIT_DIMENSIONS[UnitType::MagneticFluxDensity as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1864,8 +1952,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['T'],
             base: BASE_UNIT_DIMENSIONS[UnitType::MagneticFluxDensity as usize],
             prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     // Binary
@@ -1878,8 +1966,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
                 Some(RefCell::clone(&prefixes.binary_short_si)),
                 Some(RefCell::clone(&prefixes.binary_short_iec)),
             ),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1891,8 +1979,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
                 Some(RefCell::clone(&prefixes.binary_long_si)),
                 Some(RefCell::clone(&prefixes.binary_long_iec)),
             ),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1904,8 +1992,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
                 Some(RefCell::clone(&prefixes.binary_short_si)),
                 Some(RefCell::clone(&prefixes.binary_short_iec)),
             ),
-            value: BigDecimal::from_i64(8).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(8).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
     map.insert(
@@ -1917,8 +2005,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
                 Some(RefCell::clone(&prefixes.binary_long_si)),
                 Some(RefCell::clone(&prefixes.binary_long_iec)),
             ),
-            value: BigDecimal::from_i64(8).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(8).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
 
@@ -1928,8 +2016,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['$'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Money as usize],
             prefix_groups: (None, None),
-            value: BigDecimal::from_i64(1).unwrap(),
-            offset: BigDecimal::from_i64(0).unwrap(),
+            value: Decimal::from_i64(1).unwrap(),
+            offset: Decimal::from_i64(0).unwrap(),
         },
     );
 

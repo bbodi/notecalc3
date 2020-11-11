@@ -385,6 +385,7 @@ pub fn handle_input(app_ptr: u32, input: u32, modifiers: u8) -> bool {
 pub const COLOR_TEXT: u32 = 0x595959_FF;
 pub const COLOR_RESULTS: u32 = 0x000000_FF;
 pub const COLOR_NUMBER: u32 = 0xF92672_FF;
+pub const COLOR_NUMBER_ERROR: u32 = 0xFF0000_FF;
 pub const COLOR_OPERATOR: u32 = 0x000000_FF;
 pub const COLOR_UNIT: u32 = 0x000BED_FF;
 pub const COLOR_VARIABLE: u32 = 0x269d94_FF;
@@ -574,6 +575,13 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
             &OutputMessage::SetColor(COLOR_NUMBER),
         );
         write_commands(&mut js_command_buffer, &render_buckets.numbers);
+    }
+    if !render_buckets.number_errors.is_empty() {
+        write_command(
+            &mut js_command_buffer,
+            &OutputMessage::SetColor(COLOR_NUMBER_ERROR),
+        );
+        write_commands(&mut js_command_buffer, &render_buckets.number_errors);
     }
 
     if !render_buckets.units.is_empty() {

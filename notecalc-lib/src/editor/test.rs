@@ -144,6 +144,9 @@ mod tests {
                     row_len += 1;
                 }
             }
+            if content.line_lens.len() <= row_index {
+                content.push_line();
+            }
             content.line_lens[row_index] = row_len;
         }
         if selection_found {
@@ -915,6 +918,28 @@ mod tests {
             },
         );
         assert_eq!(&content.line_data, &[2, 3]);
+
+        let mut content = EditorContent::new(80);
+        content.line_data = vec![1, 2, 3];
+        let mut editor = Editor::new(&mut content);
+        test0(
+            &mut editor,
+            &mut content,
+            TestParams {
+                text_input: None,
+                initial_content: "11111111█\n\
+            \n\
+            3333333333",
+                inputs: &[EditorInputEvent::Del],
+                delay_after_inputs: &[],
+                modifiers: InputModifiers::none(),
+                undo_count: 1,
+                redo_count: 1,
+                expected_content: "11111111█\n\
+            3333333333",
+            },
+        );
+        assert_eq!(&content.line_data, &[1, 3]);
 
         let mut content = EditorContent::new(80);
         content.line_data = vec![1, 2, 3];
@@ -5692,5 +5717,48 @@ mod tests {
             ),
             "12s aa\na\na\na\na".to_owned()
         )
+    }
+
+    #[test]
+    fn test_editor_panic() {
+        test(
+            "❱\n\
+            a❰",
+            &[EditorInputEvent::Char('p')],
+            InputModifiers::none(),
+            "p█",
+        );
+    }
+
+    #[test]
+    fn test_wrong_selection_removal() {
+        //'❱';
+        //const SELECTION_END_MARK: char = '❰';
+        test(
+            "❱
+interest rate = 3.7%/year
+term = 30 years
+n = term * 12/year
+interest rate / (12 (1/year))
+
+2m^4kg/s^3
+946728000 *1246728000 *12❰",
+            &[EditorInputEvent::Char('p')],
+            InputModifiers::none(),
+            "p█",
+        );
+    }
+
+    #[test]
+    fn test_wrong_selection_removal2() {
+        //'❱';
+        //const SELECTION_END_MARK: char = '❰';
+        test(
+            "❱interest rate = 3.7%/year
+❰",
+            &[EditorInputEvent::Char('p')],
+            InputModifiers::none(),
+            "p█",
+        );
     }
 }

@@ -1,8 +1,9 @@
-use crate::calc::CalcResult;
+use crate::calc::{CalcResult, CalcResultType};
 use crate::units::units::Units;
 use crate::{ResultFormat, ResultLengths};
-use bigdecimal::{BigDecimal, ToPrimitive, Zero};
 use byteorder::WriteBytesExt;
+use rust_decimal::prelude::*;
+use rust_decimal::Decimal;
 use smallvec::SmallVec;
 use std::io::Cursor;
 
@@ -36,8 +37,8 @@ pub fn render_result_into(
     decimal_count: Option<usize>,
     use_grouping: bool,
 ) -> ResultLengths {
-    match &result {
-        CalcResult::Quantity(num, unit) => {
+    match &result.typ {
+        CalcResultType::Quantity(num, unit) => {
             let final_unit = if there_was_unit_conversion {
                 None
             } else {
@@ -47,34 +48,57 @@ pub fn render_result_into(
             if unit.units.is_empty() {
                 num_to_string(f, &num, &ResultFormat::Dec, decimal_count, use_grouping)
             } else {
-                let mut lens = num_to_string(
-                    f,
-                    &unit.denormalize(num),
-                    &ResultFormat::Dec,
-                    decimal_count,
-                    use_grouping,
-                );
-                f.write_u8(b' ').expect("");
-                // TODO:mem to_string -> into(buf)
-                // implement a into(std::io:Write) method for UnitOutput
-                for ch in unit.to_string().as_bytes() {
-                    f.write_u8(*ch).expect("");
-                    lens.unit_part_len += 1;
+                let denormalized_num = unit.from_base_to_this_unit(num);
+                if let Ok(denormalized_num) = denormalized_num {
+                    let mut lens = num_to_string(
+                        f,
+                        &denormalized_num,
+                        &ResultFormat::Dec,
+                        decimal_count,
+                        use_grouping,
+                    );
+                    f.write_u8(b' ').expect("");
+                    // TODO:mem to_string -> into(buf)
+                    // implement a into(std::io:Write) method for UnitOutput
+                    for ch in unit.to_string().as_bytes() {
+                        f.write_u8(*ch).expect("");
+                        lens.unit_part_len += 1;
+                    }
+                    lens
+                } else {
+                    ResultLengths {
+                        int_part_len: 0,
+                        frac_part_len: 0,
+                        unit_part_len: 0,
+                    }
                 }
-                lens
             }
         }
-        CalcResult::Number(num) => {
+        CalcResultType::Unit(unit) => {
+            // TODO:mem to_string -> into(buf)
+            // implement a into(std::io:Write) method for UnitOutput
+            let mut len = 0;
+            for ch in unit.to_string().as_bytes() {
+                f.write_u8(*ch).expect("");
+                len += 1;
+            }
+            ResultLengths {
+                int_part_len: 0,
+                frac_part_len: 0,
+                unit_part_len: len,
+            }
+        }
+        CalcResultType::Number(num) => {
             // TODO optimize
             num_to_string(f, num, format, decimal_count, use_grouping)
         }
-        CalcResult::Percentage(num) => {
+        CalcResultType::Percentage(num) => {
             let mut lens = num_to_string(f, num, &ResultFormat::Dec, decimal_count, use_grouping);
             f.write_u8(b'%').expect("");
             lens.unit_part_len += 1;
             lens
         }
-        CalcResult::Matrix(mat) => {
+        CalcResultType::Matrix(mat) => {
             f.write_u8(b'[').expect("");
             for row_i in 0..mat.row_count {
                 if row_i > 0 {
@@ -102,32 +126,36 @@ pub fn render_result_into(
 
 fn num_to_string(
     f: &mut impl std::io::Write,
-    num: &BigDecimal,
+    num: &Decimal,
     format: &ResultFormat,
     decimal_count: Option<usize>,
     use_grouping: bool,
 ) -> ResultLengths {
-    let num_a = if *format != ResultFormat::Dec && num.is_integer() {
-        Some(num.with_scale(0))
+    let num_a = if *format != ResultFormat::Dec && num.trunc() == *num {
+        Some(num.clone())
     } else if let Some(decimal_count) = decimal_count {
-        let (_, scale) = num.as_bigint_and_exponent();
-        let digits = num.digits();
-        let mut a = (digits as i64 - (scale - decimal_count as i64)).max(0) as u64;
-        // try to find the shortest meaningful representation
-        let max_count = decimal_count.max(10) as u64;
-        let result;
-        loop {
-            let r = strip_trailing_zeroes(&num.with_prec(a));
-            if a > max_count || !r.is_zero() {
-                result = Some(r);
-                break;
-            }
-            a += 1;
-        }
-        result
+        // let (_, scale) = num.as_bigint_and_exponent();
+        // let digits = num.digits();
+        // let mut a = (digits as i64 - (scale - decimal_count as i64)).max(0) as u64;
+        // // try to find the shortest meaningful representation
+        // let max_count = decimal_count.max(10) as u64;
+        // let result;
+        // loop {
+        //     let r = strip_trailing_zeroes(&num.with_prec(a));
+        //     if a > max_count || !r.is_zero() {
+        //         result = Some(r);
+        //         break;
+        //     }
+        //     a += 1;
+        // }
+        // result
+        let mut result = num.clone();
+        result.rescale(decimal_count as u32);
+        Some(result.normalize())
     } else {
-        if num.is_integer() {
-            Some(num.with_scale(0))
+        let with_scale_0 = num.trunc();
+        if *num == with_scale_0 {
+            Some(with_scale_0)
         } else {
             None
         }
@@ -271,20 +299,20 @@ pub fn get_int_frac_part_len(cell_str: &str) -> ResultLengths {
 }
 
 // TODO: really hack and ugly and slow
-pub fn strip_trailing_zeroes(num: &BigDecimal) -> BigDecimal {
-    let (_, mut scale) = num.as_bigint_and_exponent();
-    let mut result = num.clone();
-    loop {
-        if scale == 0 {
-            break;
-        }
-        let scaled = result.with_scale(scale - 1);
-        if &scaled == num {
-            result = scaled;
-        } else {
-            break;
-        }
-        scale -= 1;
-    }
-    return result;
-}
+// pub fn strip_trailing_zeroes(num: &BigDecimal) -> BigDecimal {
+//     let (_, mut scale) = num.as_bigint_and_exponent();
+//     let mut result = num.clone();
+//     loop {
+//         if scale == 0 {
+//             break;
+//         }
+//         let scaled = result.with_scale(scale - 1);
+//         if &scaled == num {
+//             result = scaled;
+//         } else {
+//             break;
+//         }
+//         scale -= 1;
+//     }
+//     return result;
+// }

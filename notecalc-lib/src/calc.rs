@@ -1,44 +1,73 @@
-use bigdecimal::*;
 use std::ops::BitXor;
 use std::ops::Neg;
 use std::ops::Not;
 
 use crate::matrix::MatrixData;
-use crate::token_parser::{OperatorTokenType, TokenType};
+use crate::token_parser::{OperatorTokenType, Token, TokenType};
 use crate::units::consts::EMPTY_UNIT_DIMENSIONS;
 use crate::units::units::UnitOutput;
 use crate::Variables;
-
-// it is limited by bigdecimal crate :(
-// TODO: download and mofiy the crate
-// modositsd ugy, h a beégetett 100 precision legyen akár 1000,
-// de adjon vissza valami jelzést, ha egy irracionális számmal van dolgunk (azaz elértük
-// a limitet, és akkor arra a számolásra limitáljuk a precisiont
-// A megoldás a problémára az volt, h jelenleg 100 precisionnel számol a rendszer
-// de a számokat ahol használjuk 50 precisionnel használjuk, igy a számolási hibák eltünnek
-// az 50 precision miatt, mivel azok "mögötte" lesznek (tehát az 50. tizedesjegy után)
-pub const MAX_PRECISION: u64 = 50;
+use rust_decimal::prelude::*;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum CalcResult {
-    Number(BigDecimal),
-    Percentage(BigDecimal),
-    Quantity(BigDecimal, UnitOutput),
+pub struct CalcResult {
+    pub typ: CalcResultType,
+    index_into_tokens: usize,
+    index2_into_tokens: Option<usize>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum CalcResultType {
+    Number(Decimal),
+    Percentage(Decimal),
+    Unit(UnitOutput),
+    Quantity(Decimal, UnitOutput),
     Matrix(MatrixData),
 }
 
 impl CalcResult {
+    pub fn new(typ: CalcResultType, index: usize) -> CalcResult {
+        CalcResult {
+            typ,
+            index_into_tokens: index,
+            index2_into_tokens: None,
+        }
+    }
+
+    pub fn new2(typ: CalcResultType, index: usize, index2: usize) -> CalcResult {
+        CalcResult {
+            typ,
+            index_into_tokens: index,
+            index2_into_tokens: Some(index2),
+        }
+    }
+
+    pub fn get_index_into_tokens(&self) -> usize {
+        self.index_into_tokens
+    }
+
+    pub fn set_token_error_flag<'text_ptr>(&self, tokens: &mut [Token<'text_ptr>]) {
+        tokens[self.index_into_tokens].has_error = true;
+        if let Some(i) = self.index2_into_tokens {
+            tokens[i].has_error = true;
+        }
+    }
+
     /// creates a cheap CalcResult without memory allocation. Use it only as a temporary value.
     pub fn hack_empty() -> CalcResult {
-        CalcResult::Matrix(MatrixData {
-            cells: Vec::new(),
-            row_count: 0,
-            col_count: 0,
-        })
+        CalcResult {
+            typ: CalcResultType::Matrix(MatrixData {
+                cells: Vec::new(),
+                row_count: 0,
+                col_count: 0,
+            }),
+            index_into_tokens: 0,
+            index2_into_tokens: None,
+        }
     }
 
     pub fn zero() -> CalcResult {
-        CalcResult::Number(BigDecimal::zero())
+        CalcResult::new(CalcResultType::Number(Decimal::zero()), 0)
     }
 }
 
@@ -49,38 +78,53 @@ pub struct EvaluationResult {
     pub result: CalcResult,
 }
 
-pub fn evaluate_tokens(
-    tokens: &mut Vec<TokenType>,
+#[derive(Debug, Clone)]
+pub struct ShuntingYardResult {
+    pub typ: TokenType,
+    pub index_into_tokens: usize,
+}
+
+impl ShuntingYardResult {
+    pub fn new(typ: TokenType, index_into_tokens: usize) -> ShuntingYardResult {
+        ShuntingYardResult {
+            typ,
+            index_into_tokens,
+        }
+    }
+}
+
+pub fn evaluate_tokens<'text_ptr>(
+    tokens: &mut [Token<'text_ptr>],
+    shunting_tokens: &mut Vec<ShuntingYardResult>,
     variables: &Variables,
 ) -> Result<Option<EvaluationResult>, ()> {
-    let mut stack = vec![];
+    let mut stack: Vec<CalcResult> = vec![];
     let mut there_was_unit_conversion = false;
     let mut assignment = false;
     let mut last_success_operation_result_index = None;
-    for token in tokens.iter_mut() {
-        match &token {
-            TokenType::NumberLiteral(num) => stack.push(CalcResult::Number(num.clone())),
+
+    for token in shunting_tokens.iter_mut() {
+        match &token.typ {
+            TokenType::NumberLiteral(num) => stack.push(CalcResult::new(
+                CalcResultType::Number(num.clone()),
+                token.index_into_tokens,
+            )),
+            TokenType::NumberErr => {
+                return Err(());
+            }
             TokenType::Unit(target_unit) => {
-                let maybe_top = stack.last();
-                if let Some(result) = maybe_top.and_then(|top| unit_conversion(top, &target_unit)) {
-                    stack.pop();
-                    stack.push(result);
-                } else {
-                    // it is the unit operand for "in" conversion
-                    // e.g. "3m in cm",
-                    // put the unit name into the stack, the next operator is probably an 'in'
-                    stack.push(CalcResult::Quantity(
-                        BigDecimal::zero(),
-                        target_unit.clone(),
-                    ));
-                }
+                // TODO clone
+                stack.push(CalcResult::new(
+                    CalcResultType::Unit(target_unit.clone()),
+                    token.index_into_tokens,
+                ))
             }
             TokenType::Operator(typ) => {
                 if *typ == OperatorTokenType::Assign {
                     assignment = true;
                     continue;
                 }
-                if apply_operation(&mut stack, &typ) == true {
+                if apply_operation(tokens, &mut stack, &typ, token.index_into_tokens) == true {
                     if matches!(typ, OperatorTokenType::UnitConverter) {
                         there_was_unit_conversion = true;
                     }
@@ -100,7 +144,7 @@ pub fn evaluate_tokens(
                     .value
                 {
                     Ok(value) => {
-                        stack.push(value.clone());
+                        stack.push(CalcResult::new(value.typ.clone(), token.index_into_tokens));
                     }
                     Err(_) => {
                         return Err(());
@@ -129,7 +173,12 @@ pub fn evaluate_tokens(
     };
 }
 
-fn apply_operation(stack: &mut Vec<CalcResult>, op: &OperatorTokenType) -> bool {
+fn apply_operation<'text_ptr>(
+    tokens: &mut [Token<'text_ptr>],
+    stack: &mut Vec<CalcResult>,
+    op: &OperatorTokenType,
+    op_token_index: usize,
+) -> bool {
     let succeed = match &op {
         OperatorTokenType::Mult
         | OperatorTokenType::Div
@@ -149,6 +198,9 @@ fn apply_operation(stack: &mut Vec<CalcResult>, op: &OperatorTokenType) -> bool 
                     stack.push(result);
                     true
                 } else {
+                    lhs.set_token_error_flag(tokens);
+                    rhs.set_token_error_flag(tokens);
+                    tokens[op_token_index].has_error = true;
                     false
                 }
             } else {
@@ -160,7 +212,9 @@ fn apply_operation(stack: &mut Vec<CalcResult>, op: &OperatorTokenType) -> bool 
         | OperatorTokenType::Perc
         | OperatorTokenType::BinNot => {
             let maybe_top = stack.last();
-            if let Some(result) = maybe_top.and_then(|top| unary_operation(&op, top)) {
+            if let Some(result) =
+                maybe_top.and_then(|top| unary_operation(&op, top, op_token_index))
+            {
                 stack.pop();
                 stack.push(result);
                 true
@@ -175,17 +229,18 @@ fn apply_operation(stack: &mut Vec<CalcResult>, op: &OperatorTokenType) -> bool 
             let arg_count = row_count * col_count;
             if stack.len() >= arg_count {
                 let matrix_args = stack.drain(stack.len() - arg_count..).collect::<Vec<_>>();
-                stack.push(CalcResult::Matrix(MatrixData::new(
-                    matrix_args,
-                    *row_count,
-                    *col_count,
-                )));
+                stack.push(CalcResult::new(
+                    CalcResultType::Matrix(MatrixData::new(matrix_args, *row_count, *col_count)),
+                    op_token_index,
+                ));
                 true
             } else {
                 false
             }
         }
-        OperatorTokenType::Fn { arg_count, typ } => typ.execute(*arg_count, stack),
+        OperatorTokenType::Fn { arg_count, typ } => {
+            typ.execute(*arg_count, stack, op_token_index, tokens)
+        }
         OperatorTokenType::Semicolon | OperatorTokenType::Comma => {
             // ignore
             true
@@ -195,30 +250,53 @@ fn apply_operation(stack: &mut Vec<CalcResult>, op: &OperatorTokenType) -> bool 
         | OperatorTokenType::ParenClose
         | OperatorTokenType::BracketOpen
         | OperatorTokenType::BracketClose => panic!(),
+        OperatorTokenType::ApplyUnit(target_unit) => {
+            let maybe_top = stack.last();
+            if let Some(result) = maybe_top.and_then(|top| unit_conversion(top, &target_unit)) {
+                stack.pop();
+                stack.push(result);
+            } else {
+                // it is the unit operand for "in" conversion
+                // e.g. "3m in cm",
+                // put the unit name into the stack, the next operator is probably an 'in'
+                stack.push(CalcResult::new(
+                    CalcResultType::Unit(target_unit.clone()),
+                    op_token_index,
+                ));
+            }
+            true
+        }
     };
     return succeed;
 }
 
 fn unit_conversion(top: &CalcResult, target_unit: &UnitOutput) -> Option<CalcResult> {
-    match top {
-        CalcResult::Number(num) => {
+    match &top.typ {
+        CalcResultType::Number(num) => {
             let norm = target_unit.normalize(num);
             if target_unit.dimensions == EMPTY_UNIT_DIMENSIONS {
                 // the units cancelled each other, e.g. km/m
-                Some(CalcResult::Number(norm))
+                norm.ok()
+                    .map(|norm| CalcResult::new(CalcResultType::Number(norm), 0))
             } else {
-                Some(CalcResult::Quantity(norm, target_unit.clone()))
+                norm.ok().map(|norm| {
+                    CalcResult::new(CalcResultType::Quantity(norm, target_unit.clone()), 0)
+                })
             }
         }
         _ => None,
     }
 }
 
-fn unary_operation(op: &OperatorTokenType, top: &CalcResult) -> Option<CalcResult> {
+fn unary_operation(
+    op: &OperatorTokenType,
+    top: &CalcResult,
+    op_token_index: usize,
+) -> Option<CalcResult> {
     return match &op {
         OperatorTokenType::UnaryPlus => Some(top.clone()),
         OperatorTokenType::UnaryMinus => unary_minus_op(top),
-        OperatorTokenType::Perc => percentage_operator(top),
+        OperatorTokenType::Perc => percentage_operator(top, op_token_index),
         OperatorTokenType::BinNot => binary_complement(top),
         _ => None,
     };
@@ -241,25 +319,35 @@ fn binary_operation(
         OperatorTokenType::ShiftLeft => binary_shift_left(lhs, rhs),
         OperatorTokenType::ShiftRight => binary_shift_right(lhs, rhs),
         OperatorTokenType::UnitConverter => {
-            return match (lhs, rhs) {
+            return match (&lhs.typ, &rhs.typ) {
                 (
-                    CalcResult::Quantity(lhs_num, source_unit),
-                    CalcResult::Quantity(_, target_unit),
+                    CalcResultType::Quantity(lhs_num, source_unit),
+                    CalcResultType::Unit(target_unit),
                 ) => {
                     if source_unit == target_unit {
-                        Some(CalcResult::Quantity(lhs_num.clone(), target_unit.clone()))
+                        Some(CalcResult::new(
+                            CalcResultType::Quantity(lhs_num.clone(), target_unit.clone()),
+                            0,
+                        ))
                     } else {
                         None
                     }
                 }
-                (CalcResult::Matrix(mat), CalcResult::Quantity(..)) => {
+                (CalcResultType::Matrix(mat), CalcResultType::Unit(..)) => {
                     let cells: Option<Vec<CalcResult>> = mat
                         .cells
                         .iter()
                         .map(|cell| binary_operation(op, cell, rhs))
                         .collect();
                     cells.map(|it| {
-                        CalcResult::Matrix(MatrixData::new(it, mat.row_count, mat.col_count))
+                        CalcResult::new(
+                            CalcResultType::Matrix(MatrixData::new(
+                                it,
+                                mat.row_count,
+                                mat.col_count,
+                            )),
+                            0,
+                        )
                     })
                 }
                 _ => None,
@@ -272,201 +360,266 @@ fn binary_operation(
     result
 }
 
-fn percentage_operator(lhs: &CalcResult) -> Option<CalcResult> {
-    match lhs {
-        CalcResult::Number(lhs) => {
+fn percentage_operator(lhs: &CalcResult, op_token_index: usize) -> Option<CalcResult> {
+    match &lhs.typ {
+        CalcResultType::Number(lhs_num) => {
             // 5%
-            Some(CalcResult::Percentage(lhs.clone()))
+            Some(CalcResult::new2(
+                CalcResultType::Percentage(lhs_num.clone()),
+                lhs.index_into_tokens,
+                op_token_index,
+            ))
         }
         _ => None,
     }
 }
 
 fn binary_complement(lhs: &CalcResult) -> Option<CalcResult> {
-    match lhs {
-        CalcResult::Number(lhs) => {
+    match &lhs.typ {
+        CalcResultType::Number(lhs_num) => {
             // 0b01 and 0b10
-            let lhs = lhs.to_i64()?;
-            let _a = lhs;
-            let _b = lhs.not();
-            Some(CalcResult::Number(dec(lhs.not())))
+            let lhs_num = lhs_num.to_i64()?;
+            Some(CalcResult::new(
+                CalcResultType::Number(dec(lhs_num.not())),
+                lhs.index_into_tokens,
+            ))
         }
         _ => None,
     }
 }
 
 fn binary_xor_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
-    match (lhs, rhs) {
+    match (&lhs.typ, &rhs.typ) {
         //////////////
         // 12 and x
         //////////////
-        (CalcResult::Number(lhs), CalcResult::Number(rhs)) => {
+        (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             // 0b01 and 0b10
             let lhs = lhs.to_i64()?;
             let rhs = rhs.to_i64()?;
-            Some(CalcResult::Number(dec(lhs.bitxor(rhs))))
+            Some(CalcResult::new(
+                CalcResultType::Number(dec(lhs.bitxor(rhs))),
+                0,
+            ))
         }
         _ => None,
     }
 }
 
 fn binary_or_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
-    match (lhs, rhs) {
+    match (&lhs.typ, &rhs.typ) {
         //////////////
         // 12 and x
         //////////////
-        (CalcResult::Number(lhs), CalcResult::Number(rhs)) => {
+        (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             // 0b01 and 0b10
             let lhs = lhs.to_i64()?;
             let rhs = rhs.to_i64()?;
-            Some(CalcResult::Number(dec(lhs | rhs)))
+            Some(CalcResult::new(CalcResultType::Number(dec(lhs | rhs)), 0))
         }
         _ => None,
     }
 }
 
 fn binary_shift_right(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
-    match (lhs, rhs) {
-        (CalcResult::Number(lhs), CalcResult::Number(rhs)) => {
+    match (&lhs.typ, &rhs.typ) {
+        (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             let lhs = lhs.to_i64()?;
             let rhs = rhs.to_u32()?;
-            Some(CalcResult::Number(dec(lhs.wrapping_shr(rhs))))
+            Some(CalcResult::new(
+                CalcResultType::Number(dec(lhs.wrapping_shr(rhs))),
+                0,
+            ))
         }
         _ => None,
     }
 }
 
 fn binary_shift_left(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
-    match (lhs, rhs) {
-        (CalcResult::Number(lhs), CalcResult::Number(rhs)) => {
+    match (&lhs.typ, &rhs.typ) {
+        (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             let lhs = lhs.to_i64()?;
             let rhs = rhs.to_u32()?;
-            Some(CalcResult::Number(dec(lhs.wrapping_shl(rhs))))
+            Some(CalcResult::new(
+                CalcResultType::Number(dec(lhs.wrapping_shl(rhs))),
+                0,
+            ))
         }
         _ => None,
     }
 }
 
 fn binary_and_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
-    match (lhs, rhs) {
+    match (&lhs.typ, &rhs.typ) {
         //////////////
         // 12 and x
         //////////////
-        (CalcResult::Number(lhs), CalcResult::Number(rhs)) => {
+        (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             // 0b01 and 0b10
             let lhs = lhs.to_i64()?;
             let rhs = rhs.to_i64()?;
-            Some(CalcResult::Number(dec(lhs & rhs)))
+            Some(CalcResult::new(CalcResultType::Number(dec(lhs & rhs)), 0))
         }
         _ => None,
     }
 }
 
 fn unary_minus_op(lhs: &CalcResult) -> Option<CalcResult> {
-    match lhs {
-        CalcResult::Number(lhs) => {
+    match &lhs.typ {
+        CalcResultType::Number(lhs_num) => {
             // -12
-            Some(CalcResult::Number(lhs.neg()))
+            Some(CalcResult::new(
+                CalcResultType::Number(lhs_num.neg()),
+                lhs.index_into_tokens,
+            ))
         }
-        CalcResult::Quantity(lhs, unit) => {
+        CalcResultType::Quantity(lhs_num, unit) => {
             // -12km
-            Some(CalcResult::Quantity(lhs.neg(), unit.clone()))
+            Some(CalcResult::new(
+                CalcResultType::Quantity(lhs_num.neg(), unit.clone()),
+                lhs.index_into_tokens,
+            ))
         }
-        CalcResult::Percentage(lhs) => {
+        CalcResultType::Percentage(lhs_num) => {
             // -50%
-            Some(CalcResult::Percentage(lhs.neg()))
+            Some(CalcResult::new(
+                CalcResultType::Percentage(lhs_num.neg()),
+                lhs.index_into_tokens,
+            ))
         }
-        _ => None, // CalcResult::Matrix(mat) => CalcResult::Matrix(mat.neg()),
+        _ => None, // CalcResultType::Matrix(mat) => CalcResultType::Matrix(mat.neg()),
     }
 }
 
 fn pow_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
-    match (lhs, rhs) {
+    match (&lhs.typ, &rhs.typ) {
         //////////////
         // 1^x
         //////////////
-        (CalcResult::Number(lhs), CalcResult::Number(rhs)) => {
-            dbg!(&lhs);
-            dbg!(&rhs);
+        (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             // 2^3
             rhs.to_i64()
-                .map(|rhs| CalcResult::Number(pow(lhs.clone(), rhs)))
+                .and_then(|rhs| pow(lhs.clone(), rhs).ok())
+                .map(|pow| CalcResult::new(CalcResultType::Number(pow), 0))
         }
-        (CalcResult::Quantity(lhs, lhs_unit), CalcResult::Number(rhs)) => {
+        (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Number(rhs)) => {
             let p = rhs.to_i64()?;
-            let num_powered = pow(lhs.clone(), p);
+            let num_powered = pow(lhs.clone(), p).ok()?;
             let unit_powered = lhs_unit.pow(p);
-            Some(CalcResult::Quantity(num_powered, unit_powered))
+            Some(CalcResult::new(
+                CalcResultType::Quantity(num_powered, unit_powered),
+                0,
+            ))
         }
         _ => None,
     }
 }
 
 pub fn multiply_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
-    let result = match (lhs, rhs) {
+    let result = match (&lhs.typ, &rhs.typ) {
+        (CalcResultType::Unit(..), CalcResultType::Unit(..))
+        | (CalcResultType::Unit(..), CalcResultType::Number(..))
+        | (CalcResultType::Unit(..), CalcResultType::Quantity(..))
+        | (CalcResultType::Unit(..), CalcResultType::Percentage(..))
+        | (CalcResultType::Unit(..), CalcResultType::Matrix(..))
+        | (CalcResultType::Number(..), CalcResultType::Unit(..))
+        | (CalcResultType::Quantity(..), CalcResultType::Unit(..))
+        | (CalcResultType::Percentage(..), CalcResultType::Unit(..))
+        | (CalcResultType::Matrix(..), CalcResultType::Unit(..)) => None,
         //////////////
         // 12 * x
         //////////////
-        (CalcResult::Number(lhs), CalcResult::Number(rhs)) => {
+        (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             // 12 * 2
-            Some(CalcResult::Number(lhs * rhs))
+            lhs.checked_mul(rhs)
+                .map(|num| CalcResult::new(CalcResultType::Number(num), 0))
         }
-        (CalcResult::Number(lhs), CalcResult::Quantity(rhs, unit)) => {
+        (CalcResultType::Number(lhs), CalcResultType::Quantity(rhs, unit)) => {
             // 12 * 2km
-            Some(CalcResult::Quantity(lhs * rhs, unit.clone()))
+            lhs.checked_mul(rhs)
+                .map(|num| CalcResult::new(CalcResultType::Quantity(num, unit.clone()), 0))
         }
-        (CalcResult::Number(lhs), CalcResult::Percentage(rhs)) => {
+        (CalcResultType::Number(lhs), CalcResultType::Percentage(rhs)) => {
             // 100 * 50%
-            Some(CalcResult::Number(percentage_of(rhs, lhs)))
+            Some(CalcResult::new(
+                CalcResultType::Number(percentage_of(rhs, lhs)),
+                0,
+            ))
         }
-        (CalcResult::Number(..), CalcResult::Matrix(mat)) => mat.mult_scalar(lhs),
+        (CalcResultType::Number(..), CalcResultType::Matrix(mat)) => mat.mult_scalar(lhs),
         //////////////
         // 12km * x
         //////////////
-        (CalcResult::Quantity(lhs, lhs_unit), CalcResult::Number(rhs)) => {
+        (CalcResultType::Quantity(lhs_num, lhs_unit), CalcResultType::Number(rhs_num)) => {
             // 2m * 5
-            Some(CalcResult::Quantity(lhs * rhs, lhs_unit.clone()))
+            lhs_num
+                .checked_mul(rhs_num)
+                .map(|num| CalcResult::new(CalcResultType::Quantity(num, lhs_unit.clone()), 0))
         }
-        (CalcResult::Quantity(lhs, lhs_unit), CalcResult::Quantity(rhs, rhs_unit)) => {
+        (
+            CalcResultType::Quantity(lhs_num, lhs_unit),
+            CalcResultType::Quantity(rhs_num, rhs_unit),
+        ) => {
             // 2s * 3s
-            let num = lhs * rhs;
             let new_unit = lhs_unit * rhs_unit;
-            Some(CalcResult::Quantity(num, new_unit))
+            if new_unit.is_unitless() {
+                if let Ok(lhs_num) = lhs_unit.from_base_to_this_unit(lhs_num) {
+                    if let Ok(rhs_num) = rhs_unit.from_base_to_this_unit(rhs_num) {
+                        lhs_num
+                            .checked_mul(&rhs_num)
+                            .map(|num| CalcResult::new(CalcResultType::Number(num), 0))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                lhs_num
+                    .checked_mul(rhs_num)
+                    .map(|num| CalcResult::new(CalcResultType::Quantity(num, new_unit), 0))
+            }
         }
-        (CalcResult::Quantity(lhs, lhs_unit), CalcResult::Percentage(rhs)) => {
+        (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Percentage(rhs)) => {
             // e.g. 2m * 50%
-            Some(CalcResult::Quantity(
-                percentage_of(rhs, lhs),
-                lhs_unit.clone(),
+            Some(CalcResult::new(
+                CalcResultType::Quantity(percentage_of(rhs, lhs), lhs_unit.clone()),
+                0,
             ))
         }
-        (CalcResult::Quantity(..), CalcResult::Matrix(mat)) => mat.mult_scalar(lhs),
+        (CalcResultType::Quantity(..), CalcResultType::Matrix(mat)) => mat.mult_scalar(lhs),
         //////////////
         // 12% * x
         //////////////
-        (CalcResult::Percentage(lhs), CalcResult::Number(rhs)) => {
+        (CalcResultType::Percentage(lhs), CalcResultType::Number(rhs)) => {
             // 5% * 10
-            Some(CalcResult::Number(percentage_of(lhs, rhs)))
-        }
-        (CalcResult::Percentage(lhs), CalcResult::Quantity(rhs, rhs_unit)) => {
-            // 5% * 10km
-            Some(CalcResult::Quantity(
-                percentage_of(lhs, rhs),
-                rhs_unit.clone(),
+            Some(CalcResult::new(
+                CalcResultType::Number(percentage_of(lhs, rhs)),
+                0,
             ))
         }
-        (CalcResult::Percentage(lhs), CalcResult::Percentage(rhs)) => {
-            // 50% * 50%
-            Some(CalcResult::Percentage((lhs / dec(100)) * (rhs / dec(100))))
+        (CalcResultType::Percentage(lhs), CalcResultType::Quantity(rhs, rhs_unit)) => {
+            // 5% * 10km
+            Some(CalcResult::new(
+                CalcResultType::Quantity(percentage_of(lhs, rhs), rhs_unit.clone()),
+                0,
+            ))
         }
-        (CalcResult::Percentage(..), CalcResult::Matrix(..)) => None,
+        (CalcResultType::Percentage(lhs), CalcResultType::Percentage(rhs)) => {
+            // 50% * 50%
+            Some(CalcResult::new(
+                CalcResultType::Percentage((lhs / dec(100)) * (rhs / dec(100))),
+                0,
+            ))
+        }
+        (CalcResultType::Percentage(..), CalcResultType::Matrix(..)) => None,
         //////////////
         // Matrix
         //////////////
-        (CalcResult::Matrix(mat), CalcResult::Number(..))
-        | (CalcResult::Matrix(mat), CalcResult::Quantity(..))
-        | (CalcResult::Matrix(mat), CalcResult::Percentage(..)) => mat.mult_scalar(rhs),
-        (CalcResult::Matrix(a), CalcResult::Matrix(b)) => {
+        (CalcResultType::Matrix(mat), CalcResultType::Number(..))
+        | (CalcResultType::Matrix(mat), CalcResultType::Quantity(..))
+        | (CalcResultType::Matrix(mat), CalcResultType::Percentage(..)) => mat.mult_scalar(rhs),
+        (CalcResultType::Matrix(a), CalcResultType::Matrix(b)) => {
             if a.col_count != b.row_count {
                 return None;
             }
@@ -490,88 +643,105 @@ pub fn multiply_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
                     result.push(sum);
                 }
             }
-            Some(CalcResult::Matrix(MatrixData::new(
-                result,
-                a.row_count,
-                b.col_count,
-            )))
+            Some(CalcResult::new(
+                CalcResultType::Matrix(MatrixData::new(result, a.row_count, b.col_count)),
+                0,
+            ))
         }
     };
     return match result {
-        Some(CalcResult::Quantity(num, unit)) if unit.is_unitless() => {
+        Some(CalcResult {
+            typ: CalcResultType::Quantity(num, unit),
+            ..
+        }) if unit.is_unitless() => {
             // some operation cancelled out its units, put a simple number on the stack
-            Some(CalcResult::Number(num))
+            Some(CalcResult::new(CalcResultType::Number(num), 0))
         }
         _ => result,
     };
 }
 
 pub fn add_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
-    match (lhs, rhs) {
+    match (&lhs.typ, &rhs.typ) {
+        (CalcResultType::Unit(..), CalcResultType::Unit(..))
+        | (CalcResultType::Unit(..), CalcResultType::Number(..))
+        | (CalcResultType::Unit(..), CalcResultType::Quantity(..))
+        | (CalcResultType::Unit(..), CalcResultType::Percentage(..))
+        | (CalcResultType::Unit(..), CalcResultType::Matrix(..))
+        | (CalcResultType::Number(..), CalcResultType::Unit(..))
+        | (CalcResultType::Quantity(..), CalcResultType::Unit(..))
+        | (CalcResultType::Percentage(..), CalcResultType::Unit(..))
+        | (CalcResultType::Matrix(..), CalcResultType::Unit(..)) => None,
         //////////////
         // 12 + x
         //////////////
-        (CalcResult::Number(lhs), CalcResult::Number(rhs)) => {
+        (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             // 12 + 3
-            Some(CalcResult::Number(lhs + rhs))
+            Some(CalcResult::new(CalcResultType::Number(lhs + rhs), 0))
         }
-        (CalcResult::Number(_lhs), CalcResult::Quantity(_rhs, _unit)) => {
+        (CalcResultType::Number(_lhs), CalcResultType::Quantity(_rhs, _unit)) => {
             // 12 + 3 km
             None
         }
-        (CalcResult::Number(lhs), CalcResult::Percentage(rhs)) => {
+        (CalcResultType::Number(lhs), CalcResultType::Percentage(rhs)) => {
             // 100 + 50%
             let x_percent_of_left_hand_side = lhs / &dec(100) * rhs;
-            Some(CalcResult::Number(lhs + x_percent_of_left_hand_side))
+            Some(CalcResult::new(
+                CalcResultType::Number(lhs + x_percent_of_left_hand_side),
+                0,
+            ))
         }
-        (CalcResult::Number(_lhs), CalcResult::Matrix(..)) => None,
+        (CalcResultType::Number(_lhs), CalcResultType::Matrix(..)) => None,
         //////////////
         // 12km + x
         //////////////
-        (CalcResult::Quantity(_lhs, _lhs_unit), CalcResult::Number(_rhs)) => {
+        (CalcResultType::Quantity(_lhs, _lhs_unit), CalcResultType::Number(_rhs)) => {
             // 2m + 5
             None
         }
-        (CalcResult::Quantity(lhs, lhs_unit), CalcResult::Quantity(rhs, rhs_unit)) => {
+        (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Quantity(rhs, rhs_unit)) => {
             // 2s + 3s
             if lhs_unit != rhs_unit {
                 None
             } else {
-                Some(CalcResult::Quantity(lhs + rhs, lhs_unit.clone()))
+                Some(CalcResult::new(
+                    CalcResultType::Quantity(lhs + rhs, lhs_unit.clone()),
+                    0,
+                ))
             }
         }
-        (CalcResult::Quantity(lhs, lhs_unit), CalcResult::Percentage(rhs)) => {
+        (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Percentage(rhs)) => {
             // e.g. 2m + 50%
             let x_percent_of_left_hand_side = lhs / dec(100) * rhs;
-            Some(CalcResult::Quantity(
-                lhs + x_percent_of_left_hand_side,
-                lhs_unit.clone(),
+            Some(CalcResult::new(
+                CalcResultType::Quantity(lhs + x_percent_of_left_hand_side, lhs_unit.clone()),
+                0,
             ))
         }
-        (CalcResult::Quantity(..), CalcResult::Matrix(..)) => None,
+        (CalcResultType::Quantity(..), CalcResultType::Matrix(..)) => None,
         //////////////
         // 12% + x
         //////////////
-        (CalcResult::Percentage(_lhs), CalcResult::Number(_rhs)) => {
+        (CalcResultType::Percentage(_lhs), CalcResultType::Number(_rhs)) => {
             // 5% + 10
             None
         }
-        (CalcResult::Percentage(_lhs), CalcResult::Quantity(_rhs, _rhs_unit)) => {
+        (CalcResultType::Percentage(_lhs), CalcResultType::Quantity(_rhs, _rhs_unit)) => {
             // 5% + 10km
             None
         }
-        (CalcResult::Percentage(lhs), CalcResult::Percentage(rhs)) => {
+        (CalcResultType::Percentage(lhs), CalcResultType::Percentage(rhs)) => {
             // 50% + 50%
-            Some(CalcResult::Percentage(lhs + rhs))
+            Some(CalcResult::new(CalcResultType::Percentage(lhs + rhs), 0))
         }
-        (CalcResult::Percentage(..), CalcResult::Matrix(..)) => None,
+        (CalcResultType::Percentage(..), CalcResultType::Matrix(..)) => None,
         ///////////
         // Matrix
         //////////
-        (CalcResult::Matrix(..), CalcResult::Number(..)) => None,
-        (CalcResult::Matrix(..), CalcResult::Quantity(..)) => None,
-        (CalcResult::Matrix(..), CalcResult::Percentage(..)) => None,
-        (CalcResult::Matrix(lhs), CalcResult::Matrix(rhs)) => {
+        (CalcResultType::Matrix(..), CalcResultType::Number(..)) => None,
+        (CalcResultType::Matrix(..), CalcResultType::Quantity(..)) => None,
+        (CalcResultType::Matrix(..), CalcResultType::Percentage(..)) => None,
+        (CalcResultType::Matrix(lhs), CalcResultType::Matrix(rhs)) => {
             if lhs.row_count != rhs.row_count || lhs.col_count != rhs.col_count {
                 return None;
             }
@@ -581,77 +751,97 @@ pub fn add_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
                 .zip(rhs.cells.iter())
                 .map(|(a, b)| add_op(a, b))
                 .collect();
-            cells.map(|it| CalcResult::Matrix(MatrixData::new(it, lhs.row_count, lhs.col_count)))
+            cells.map(|it| {
+                CalcResult::new(
+                    CalcResultType::Matrix(MatrixData::new(it, lhs.row_count, lhs.col_count)),
+                    0,
+                )
+            })
         }
     }
 }
 
 fn sub_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
-    match (lhs, rhs) {
+    match (&lhs.typ, &rhs.typ) {
+        (CalcResultType::Unit(..), CalcResultType::Unit(..))
+        | (CalcResultType::Unit(..), CalcResultType::Number(..))
+        | (CalcResultType::Unit(..), CalcResultType::Quantity(..))
+        | (CalcResultType::Unit(..), CalcResultType::Percentage(..))
+        | (CalcResultType::Unit(..), CalcResultType::Matrix(..))
+        | (CalcResultType::Number(..), CalcResultType::Unit(..))
+        | (CalcResultType::Quantity(..), CalcResultType::Unit(..))
+        | (CalcResultType::Percentage(..), CalcResultType::Unit(..))
+        | (CalcResultType::Matrix(..), CalcResultType::Unit(..)) => None,
         //////////////
         // 12 - x
         //////////////
-        (CalcResult::Number(lhs), CalcResult::Number(rhs)) => {
+        (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             // 12 - 3
-            Some(CalcResult::Number(lhs - rhs))
+            Some(CalcResult::new(CalcResultType::Number(lhs - rhs), 0))
         }
-        (CalcResult::Number(_lhs), CalcResult::Quantity(_rhs, _unit)) => {
+        (CalcResultType::Number(_lhs), CalcResultType::Quantity(_rhs, _unit)) => {
             // 12 - 3 km
             None
         }
-        (CalcResult::Number(lhs), CalcResult::Percentage(rhs)) => {
+        (CalcResultType::Number(lhs), CalcResultType::Percentage(rhs)) => {
             // 100 - 50%
             let x_percent_of_left_hand_side = lhs / dec(100) * rhs;
-            Some(CalcResult::Number(lhs - x_percent_of_left_hand_side))
+            Some(CalcResult::new(
+                CalcResultType::Number(lhs - x_percent_of_left_hand_side),
+                0,
+            ))
         }
-        (CalcResult::Number(..), CalcResult::Matrix(..)) => None,
+        (CalcResultType::Number(..), CalcResultType::Matrix(..)) => None,
         //////////////
         // 12km - x
         //////////////
-        (CalcResult::Quantity(_lhs, _lhs_unit), CalcResult::Number(_rhs)) => {
+        (CalcResultType::Quantity(_lhs, _lhs_unit), CalcResultType::Number(_rhs)) => {
             // 2m - 5
             None
         }
-        (CalcResult::Quantity(lhs, lhs_unit), CalcResult::Quantity(rhs, rhs_unit)) => {
+        (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Quantity(rhs, rhs_unit)) => {
             // 2s - 3s
             if lhs_unit != rhs_unit {
                 None
             } else {
-                Some(CalcResult::Quantity(lhs - rhs, lhs_unit.clone()))
+                Some(CalcResult::new(
+                    CalcResultType::Quantity(lhs - rhs, lhs_unit.clone()),
+                    0,
+                ))
             }
         }
-        (CalcResult::Quantity(lhs, lhs_unit), CalcResult::Percentage(rhs)) => {
+        (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Percentage(rhs)) => {
             // e.g. 2m - 50%
             let x_percent_of_left_hand_side = lhs / dec(100) * rhs;
-            Some(CalcResult::Quantity(
-                lhs - x_percent_of_left_hand_side,
-                lhs_unit.clone(),
+            Some(CalcResult::new(
+                CalcResultType::Quantity(lhs - x_percent_of_left_hand_side, lhs_unit.clone()),
+                0,
             ))
         }
-        (CalcResult::Quantity(..), CalcResult::Matrix(..)) => None,
+        (CalcResultType::Quantity(..), CalcResultType::Matrix(..)) => None,
         //////////////
         // 12% - x
         //////////////
-        (CalcResult::Percentage(_lhs), CalcResult::Number(_rhs)) => {
+        (CalcResultType::Percentage(_lhs), CalcResultType::Number(_rhs)) => {
             // 5% - 10
             None
         }
-        (CalcResult::Percentage(_lhs), CalcResult::Quantity(_rhs, _rhs_unit)) => {
+        (CalcResultType::Percentage(_lhs), CalcResultType::Quantity(_rhs, _rhs_unit)) => {
             // 5% - 10km
             None
         }
-        (CalcResult::Percentage(lhs), CalcResult::Percentage(rhs)) => {
+        (CalcResultType::Percentage(lhs), CalcResultType::Percentage(rhs)) => {
             // 50% - 50%
-            Some(CalcResult::Percentage(lhs - rhs))
+            Some(CalcResult::new(CalcResultType::Percentage(lhs - rhs), 0))
         }
-        (CalcResult::Percentage(..), CalcResult::Matrix(..)) => None,
+        (CalcResultType::Percentage(..), CalcResultType::Matrix(..)) => None,
         ///////////
         // Matrix
         //////////
-        (CalcResult::Matrix(..), CalcResult::Number(..)) => None,
-        (CalcResult::Matrix(..), CalcResult::Quantity(..)) => None,
-        (CalcResult::Matrix(..), CalcResult::Percentage(..)) => None,
-        (CalcResult::Matrix(lhs), CalcResult::Matrix(rhs)) => {
+        (CalcResultType::Matrix(..), CalcResultType::Number(..)) => None,
+        (CalcResultType::Matrix(..), CalcResultType::Quantity(..)) => None,
+        (CalcResultType::Matrix(..), CalcResultType::Percentage(..)) => None,
+        (CalcResultType::Matrix(lhs), CalcResultType::Matrix(rhs)) => {
             if lhs.row_count != rhs.row_count || lhs.col_count != rhs.col_count {
                 return None;
             }
@@ -661,145 +851,204 @@ fn sub_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
                 .zip(rhs.cells.iter())
                 .map(|(a, b)| sub_op(a, b))
                 .collect();
-            cells.map(|it| CalcResult::Matrix(MatrixData::new(it, lhs.row_count, lhs.col_count)))
+            cells.map(|it| {
+                CalcResult::new(
+                    CalcResultType::Matrix(MatrixData::new(it, lhs.row_count, lhs.col_count)),
+                    0,
+                )
+            })
         }
     }
 }
 
 pub fn divide_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
-    let result = match (lhs, rhs) {
+    let result: Option<CalcResult> = match (&lhs.typ, &rhs.typ) {
+        (CalcResultType::Unit(..), CalcResultType::Unit(..))
+        | (CalcResultType::Unit(..), CalcResultType::Number(..))
+        | (CalcResultType::Unit(..), CalcResultType::Quantity(..))
+        | (CalcResultType::Unit(..), CalcResultType::Percentage(..))
+        | (CalcResultType::Unit(..), CalcResultType::Matrix(..))
+        | (CalcResultType::Matrix(..), CalcResultType::Unit(..)) => None,
+        //////////////
+        // 12 / year
+        //////////////
+        (CalcResultType::Quantity(lhs_num, lhs_unit), CalcResultType::Unit(rhs_unit)) => {
+            let new_unit = lhs_unit / rhs_unit;
+            if new_unit.is_unitless() {
+                if let Ok(lhs_num) = lhs_unit.from_base_to_this_unit(lhs_num) {
+                    Some(CalcResult::new(CalcResultType::Number(lhs_num), 0))
+                } else {
+                    None
+                }
+            } else {
+                Some(CalcResult::new(
+                    CalcResultType::Quantity(lhs_num.clone(), new_unit),
+                    0,
+                ))
+            }
+        }
+        (CalcResultType::Number(num), CalcResultType::Unit(unit)) => {
+            let new_unit = unit.pow(-1);
+            let num_part = new_unit.normalize(&num).ok()?;
+            Some(CalcResult::new(
+                CalcResultType::Quantity(num_part, new_unit),
+                0,
+            ))
+        }
+        //////////////
+        // 5% / year
+        //////////////
+        (CalcResultType::Percentage(num), CalcResultType::Unit(unit)) => {
+            let new_unit = unit.pow(-1);
+            let num_part = new_unit.normalize(&num.checked_div(dec(100))?).ok()?;
+            Some(CalcResult::new(
+                CalcResultType::Quantity(num_part, new_unit),
+                0,
+            ))
+        }
         //////////////
         // 12 / x
         //////////////
-        (CalcResult::Number(lhs), CalcResult::Number(rhs)) => {
+        (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             // 100 / 2
             if rhs.is_zero() {
                 None
             } else {
-                Some(CalcResult::Number(lhs / rhs))
+                Some(CalcResult::new(CalcResultType::Number(lhs / rhs), 0))
             }
         }
-        (CalcResult::Number(lhs), CalcResult::Quantity(rhs, unit)) => {
+        (CalcResultType::Number(lhs), CalcResultType::Quantity(rhs, unit)) => {
             // 100 / 2km => 100 / (2 km)
             let new_unit = unit.pow(-1);
 
-            let denormalized_num = unit.denormalize(rhs);
+            let denormalized_num = unit.from_base_to_this_unit(rhs).ok()?;
             if denormalized_num.is_zero() {
                 return None;
             }
-            let num_part = new_unit.normalize(&(lhs / &denormalized_num));
-            Some(CalcResult::Quantity(num_part, new_unit.clone()))
+            let num_part = new_unit.normalize(&(lhs / &denormalized_num)).ok()?;
+            Some(CalcResult::new(
+                CalcResultType::Quantity(num_part, new_unit.clone()),
+                0,
+            ))
         }
-        (CalcResult::Number(lhs), CalcResult::Percentage(rhs)) => {
+        (CalcResultType::Number(lhs), CalcResultType::Percentage(rhs)) => {
             if rhs.is_zero() {
                 return None;
             }
             // 100 / 50%
-            Some(CalcResult::Percentage(lhs / rhs * dec(100)))
+            Some(CalcResult::new(
+                CalcResultType::Percentage(lhs / rhs * dec(100)),
+                0,
+            ))
         }
-        (CalcResult::Number(..), CalcResult::Matrix(..)) => None,
+        (CalcResultType::Number(..), CalcResultType::Matrix(..)) => None,
         //////////////
         // 12km / x
         //////////////
-        (CalcResult::Quantity(lhs, lhs_unit), CalcResult::Number(rhs)) => {
+        (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Number(rhs)) => {
             // 2m / 5
             if rhs.is_zero() {
                 return None;
             }
-            Some(CalcResult::Quantity(lhs / rhs, lhs_unit.clone()))
+            Some(CalcResult::new(
+                CalcResultType::Quantity(lhs / rhs, lhs_unit.clone()),
+                0,
+            ))
         }
-        (CalcResult::Quantity(lhs, lhs_unit), CalcResult::Quantity(rhs, rhs_unit)) => {
+        (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Quantity(rhs, rhs_unit)) => {
             // 12 km / 3s
             if rhs.is_zero() {
                 return None;
             }
-            Some(CalcResult::Quantity(lhs / rhs, lhs_unit / rhs_unit))
+            Some(CalcResult::new(
+                CalcResultType::Quantity(lhs / rhs, lhs_unit / rhs_unit),
+                0,
+            ))
         }
-        (CalcResult::Quantity(_lhs, _lhs_unit), CalcResult::Percentage(_rhs)) => {
+        (CalcResultType::Quantity(_lhs, _lhs_unit), CalcResultType::Percentage(_rhs)) => {
             // 2m / 50%
             None
         }
-        (CalcResult::Quantity(..), CalcResult::Matrix(..)) => None,
+        (CalcResultType::Quantity(..), CalcResultType::Matrix(..)) => None,
         //////////////
         // 12% / x
         //////////////
-        (CalcResult::Percentage(_lhs), CalcResult::Number(_rhs)) => {
+        (CalcResultType::Percentage(_lhs), CalcResultType::Number(_rhs)) => {
             // 5% / 10
             None
         }
-        (CalcResult::Percentage(_lhs), CalcResult::Quantity(_rhs, _rhs_unit)) => {
+        (CalcResultType::Percentage(_lhs), CalcResultType::Quantity(_rhs, _rhs_unit)) => {
             // 5% / 10km
             None
         }
-        (CalcResult::Percentage(_lhs), CalcResult::Percentage(_rhs)) => {
+        (CalcResultType::Percentage(_lhs), CalcResultType::Percentage(_rhs)) => {
             // 50% / 50%
             None
         }
-        (CalcResult::Percentage(..), CalcResult::Matrix(..)) => None,
-        (CalcResult::Matrix(mat), CalcResult::Number(..))
-        | (CalcResult::Matrix(mat), CalcResult::Quantity(..))
-        | (CalcResult::Matrix(mat), CalcResult::Percentage(..)) => mat.div_scalar(rhs),
-        (CalcResult::Matrix(..), CalcResult::Matrix(..)) => None,
+        (CalcResultType::Percentage(..), CalcResultType::Matrix(..)) => None,
+        (CalcResultType::Matrix(mat), CalcResultType::Number(..))
+        | (CalcResultType::Matrix(mat), CalcResultType::Quantity(..))
+        | (CalcResultType::Matrix(mat), CalcResultType::Percentage(..)) => mat.div_scalar(rhs),
+        (CalcResultType::Matrix(..), CalcResultType::Matrix(..)) => None,
     };
     return match result {
-        Some(CalcResult::Quantity(num, unit)) if unit.is_unitless() => {
+        Some(CalcResult {
+            typ: CalcResultType::Quantity(num, unit),
+            ..
+        }) if unit.is_unitless() => {
             // some operation cancelled out its units, put a simple number on the stack
-            Some(CalcResult::Number(num))
+            Some(CalcResult::new(CalcResultType::Number(num), 0))
         }
         _ => result,
     };
 }
 
-pub fn pow(this: BigDecimal, mut exp: i64) -> BigDecimal {
+pub fn pow(this: Decimal, mut exp: i64) -> Result<Decimal, ()> {
     let mut base = this.clone();
-    let mut acc = BigDecimal::one();
+    let mut acc = Decimal::one();
     let neg = exp < 0;
-    dbg!(&base);
-    dbg!(&exp);
 
     exp = exp.abs();
 
     while exp > 1 {
         if (exp & 1) == 1 {
-            acc *= &base;
+            acc = acc.checked_mul(&base).ok_or(())?;
         }
         exp /= 2;
-        base = base.square();
-        dbg!(&base);
-        dbg!(&exp);
+        // TODO improve square
+        base = base.checked_mul(&base).ok_or(())?;
     }
 
     if exp == 1 {
         acc *= &base;
     }
 
-    if neg {
-        BigDecimal::one() / acc
-    } else {
-        acc
-    }
+    Ok(if neg { Decimal::one() / acc } else { acc })
 }
 
-pub fn dec(num: i64) -> BigDecimal {
-    BigDecimal::from_i64(num).unwrap()
+pub fn dec(num: i64) -> Decimal {
+    Decimal::from_i64(num).unwrap()
 }
 
-fn percentage_of(this: &BigDecimal, base: &BigDecimal) -> BigDecimal {
+fn percentage_of(this: &Decimal, base: &Decimal) -> Decimal {
     base / &dec(100) * this
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::shunting_yard::tests::{num, op, str, unit};
+    use crate::shunting_yard::tests::{
+        apply_to_prev_token_unit, num, num_err, op, op_err, str, unit,
+    };
     use crate::units::units::Units;
     use crate::{ResultFormat, Variable, Variables};
     use std::str::FromStr;
 
-    use crate::calc::{CalcResult, EvaluationResult};
+    use crate::calc::{CalcResult, CalcResultType, EvaluationResult};
+    use crate::functions::FnType;
     use crate::helper::create_vars;
     use crate::renderer::render_result;
     use crate::token_parser::{OperatorTokenType, Token};
-    use bigdecimal::BigDecimal;
+    use rust_decimal::prelude::*;
     use typed_arena::Arena;
 
     const DECIMAL_COUNT: usize = 4;
@@ -819,7 +1068,7 @@ mod tests {
             &vars,
             &arena,
         );
-        let _result_stack = crate::calc::evaluate_tokens(&mut shunting_output, &vars);
+        let _result_stack = crate::calc::evaluate_tokens(&mut tokens, &mut shunting_output, &vars);
 
         crate::shunting_yard::tests::compare_tokens(expected_tokens, &tokens);
     }
@@ -832,15 +1081,11 @@ mod tests {
         let units = Units::new();
 
         let mut tokens = vec![];
-        let mut shunting_output = crate::shunting_yard::tests::do_shunting_yard(
-            &temp,
-            &units,
-            &mut tokens,
-            vars,
-            &Arena::new(),
-        );
+        let arena = Arena::new();
+        let mut shunting_output =
+            crate::shunting_yard::tests::do_shunting_yard(&temp, &units, &mut tokens, vars, &arena);
 
-        let result = crate::calc::evaluate_tokens(&mut shunting_output, vars);
+        let result = crate::calc::evaluate_tokens(&mut tokens, &mut shunting_output, vars);
 
         if let Err(..) = &result {
             assert_eq!("Err", expected);
@@ -848,7 +1093,11 @@ mod tests {
             there_was_unit_conversion,
             there_was_operation: _,
             assignment: _assignment,
-            result: CalcResult::Quantity(_num, _unit),
+            result:
+                CalcResult {
+                    typ: CalcResultType::Quantity(_num, _unit),
+                    ..
+                },
         })) = &result
         {
             assert_eq!(
@@ -919,24 +1168,13 @@ mod tests {
         test("1 ft * lbf * 2 rad", "2 ft lbf rad");
         test("1 ft * lbf * 2 rad in in*lbf*rad", "24 in lbf rad");
         test("(2/3)m", "0.6667 m");
-        test_with_dec_count(
-            50,
-            "(2/3)m",
-            "0.66666666666666666666666666666666666666666666666667 m",
-        );
-        test_with_dec_count(
-            50,
-            "2/3m",
-            "0.66666666666666666666666666666666666666666666666667 m^-1",
-        );
+        test_with_dec_count(50, "(2/3)m", "0.6666666666666666666666666667 m");
+        test_with_dec_count(50, "2/3m", "0.6666666666666666666666666667 m^-1");
 
         test("123 N in (kg m)/s^2", "123 (kg m) / s^2");
 
         test("1 km / 3000000 mm", "0.3333");
-        test_with_dec_count(100,
-            "1 km / 3000000 mm",
-            "0.3333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333",
-        );
+        test_with_dec_count(100, "1 km / 3000000 mm", "0.3333333333333333333333333333");
 
         test("5kg * 1", "5 kg");
         test("5 kg * 1", "5 kg");
@@ -970,10 +1208,14 @@ mod tests {
 
         test_with_dec_count(5, "2.3e-4 + 0", "0.00023");
         test("2.8e-4 + 0", "0.0003");
-        test(
-            "1.23e50 + 0",
-            "123000000000000000000000000000000000000000000000000",
-        );
+
+        // TODO rust_decimal's range is too small for this :(
+        test("1.23e50 + 0", "Err");
+        // test(
+        //     "1.23e50 + 0",
+        //     "123000000000000000000000000000000000000000000000000",
+        // );
+
         test("3 e + 0", "3");
         test("3e + 0", "3");
         test("33e + 0", "33");
@@ -1133,12 +1375,12 @@ mod tests {
             "12km/h * 45s ^^",
             &[
                 num(12),
-                unit("km / h"),
+                apply_to_prev_token_unit("km / h"),
                 str(" "),
                 op(OperatorTokenType::Mult),
                 str(" "),
                 num(45),
-                unit("s"),
+                apply_to_prev_token_unit("s"),
                 str(" "),
                 str("^"),
                 str("^"),
@@ -1179,16 +1421,8 @@ mod tests {
         test("3 kg * m * 1 s^-2", "3 N");
 
         test("128PiB / 30Mb/s", "38430716586.6667 s");
-        test_with_dec_count(
-            39,
-            "128PiB / 30Mb/s",
-            "38430716586.666666666666666666666666666666666666667 s",
-        );
-        test_with_dec_count(
-            40,
-            "128PiB / 30Mb/s",
-            "38430716586.666666666666666666666666666666666666667 s",
-        );
+        test_with_dec_count(39, "128PiB / 30Mb/s", "38430716586.666666666666666666 s");
+        test_with_dec_count(40, "128PiB / 30Mb/s", "38430716586.666666666666666666 s");
     }
 
     #[test]
@@ -1202,11 +1436,7 @@ mod tests {
     #[test]
     fn test_calc_angles() {
         test("1 radian in rad", "1 rad");
-        test_with_dec_count(
-            51,
-            "1 deg in rad",
-            "0.017453292519943295769236907684886127111111111111111 rad",
-        );
+        test_with_dec_count(51, "1 deg in rad", "0.0174532925199432957692369077 rad");
     }
 
     #[test]
@@ -1215,7 +1445,11 @@ mod tests {
         test("3 (s^-1) * 4 s", "12");
         test("(8.314 J / mol / K) ^ 0", "1");
         test("60 minute / 1 s", "3600");
-        test_with_dec_count(303,"60 km/h*h/h/h * 1", "0.004629629629629629629629629629629629629629629629629629629629629629629629629629629629629629629629629630740740740740740740740740740740740740740740740740740740740740740740740740740740740740740740740740740829629629629629629629629629629629629629629629629629629629629629629629629629629629629629629629629629632 m / s^2");
+        test_with_dec_count(
+            303,
+            "60 km/h*h/h/h * 1",
+            "0.0046296296296296296296296307 m / s^2",
+        );
         // it is a very important test, if it gets converted wrongly
         // then 60 km/h is converted to m/s, which is 16.6666...7 m/s,
         // and it causes inaccuracies
@@ -1399,7 +1633,10 @@ mod tests {
         let mut vars = create_vars();
         vars[0] = Some(Variable {
             name: Box::from(&['v', 'a', 'r'][..]),
-            value: Ok(CalcResult::Number(BigDecimal::from_str("12").unwrap())),
+            value: Ok(CalcResult::new(
+                CalcResultType::Number(Decimal::from_str("12").unwrap()),
+                0,
+            )),
         });
         test_vars(&vars, "var * 2", "24", 0);
         test_vars(&vars, "var - var", "0", 0);
@@ -1409,10 +1646,13 @@ mod tests {
     fn test_unit_cancelling() {
         test("1 km / 50m", "20");
 
-        test_tokens("1 km/m", &[num(1), str(" "), unit("km / m")]);
+        test_tokens(
+            "1 km/m",
+            &[num(1), str(" "), apply_to_prev_token_unit("km / m")],
+        );
         test("1 km/m", "1000");
         test("1 m/km", "0.001");
-        test_with_dec_count(100, "140k h/ month", "191.6495550992470910335386721423682409308692676249144421629021218343600273785078713210130047912388774992");
+        test_with_dec_count(100, "140k h/ month", "191.6495550992470910335272");
 
         test("1 m*km", "1000 m^2");
     }
@@ -1424,7 +1664,10 @@ mod tests {
 
     #[test]
     fn test_unit_money() {
-        test_tokens("10 $/month", &[num(10), str(" "), unit("$ / month")]);
+        test_tokens(
+            "10 $/month",
+            &[num(10), str(" "), apply_to_prev_token_unit("$ / month")],
+        );
         test("1 $/month", "1 $ / month");
         test("140k $ / month * 3 years", "5040000 $");
     }
@@ -1434,6 +1677,53 @@ mod tests {
         test("nth([5, 6, 7], 0)", "5");
         test("nth([5, 6, 7], 1)", "6");
         test("nth([5, 6, 7], 2)", "7");
+    }
+
+    #[test]
+    fn test_missing_arg_nth_panic() {
+        test_tokens(
+            "nth(,[1])",
+            &[
+                op_err(OperatorTokenType::Fn {
+                    arg_count: 0,
+                    typ: FnType::Nth,
+                }),
+                op(OperatorTokenType::ParenOpen),
+                op(OperatorTokenType::Comma),
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 1,
+                }),
+                op(OperatorTokenType::BracketOpen),
+                num(1),
+                op(OperatorTokenType::BracketClose),
+                op(OperatorTokenType::ParenClose),
+            ],
+        )
+    }
+
+    #[test]
+    fn test_out_of_index_nth() {
+        test_tokens(
+            "nth([1],5)",
+            &[
+                op(OperatorTokenType::Fn {
+                    arg_count: 0,
+                    typ: FnType::Nth,
+                }),
+                op(OperatorTokenType::ParenOpen),
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 1,
+                }),
+                op(OperatorTokenType::BracketOpen),
+                num(1),
+                op(OperatorTokenType::BracketClose),
+                op(OperatorTokenType::Comma),
+                num_err(5),
+                op(OperatorTokenType::ParenClose),
+            ],
+        )
     }
 
     #[test]
@@ -1456,7 +1746,7 @@ mod tests {
 
     #[test]
     fn test_func_pi() {
-        test_with_dec_count(1000, "pi()", "3.1415926535897932384626433832795028841971693993751058209749445923078164062862089986280348253421170679821480865132823066470938446095505822317253594081284811174502841027019385211055596446229489549303819644288109756659334461284756482337867831652712019091456485669234603486104543266482133936072602491412737245870066063155881748815209209628292540917153643678925903600113305305488204665213841469519415116094330572703657595919530921861173819326117931051185480744623799627495673518857527248912279381830119491298336733624406566430860213949463952247371907021798609437027705392171762931767523846748184676694051320005681271452635608277857713427577896091736371787214684409012249534301465495853710507922796892589235420199561121290219608640344181598136297747713099605187072113499999983729780499510597317328160963185950244594553469083026425223082533446850352619311881710100031378387528865875332083814206171776691473035982534904287554687311595628638823537875937519577818577805321712268066130019278766111959092164201989");
+        test_with_dec_count(1000, "pi()", "3.1415926535897932384626433833");
         test("pi(1)", "Err");
     }
 
@@ -1467,5 +1757,70 @@ mod tests {
         test("(", " ");
         test(")", " ");
         test("=", " ");
+    }
+
+    #[test]
+    fn test_error_for_pow_percent() {
+        test_tokens(
+            "30^5%",
+            &[
+                num_err(30),
+                op_err(OperatorTokenType::Pow),
+                num_err(5),
+                op_err(OperatorTokenType::Perc),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_simple_unit() {
+        test("30 years", "30 year");
+    }
+
+    #[test]
+    fn test_error_wrong_result_year_multiply() {
+        test("30 years * 12(1/year)", "360");
+        test("30 years * 12/year", "360");
+    }
+
+    #[test]
+    fn test_unit_in_denominator() {
+        test("12/year", "12 year^-1");
+    }
+
+    #[test]
+    fn test_unit_in_denominator_tokens() {
+        test_tokens(
+            "12/year",
+            &[num(12), op(OperatorTokenType::Div), unit("year")],
+        );
+    }
+
+    #[test]
+    fn test_unit_in_denominator_tokens2() {
+        test_tokens(
+            "1/12/year",
+            &[
+                num(1),
+                op(OperatorTokenType::Div),
+                num(12),
+                op(OperatorTokenType::Div),
+                unit("year"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_unit_in_denominator_tokens_with_parens() {
+        test_tokens(
+            "(12/year)",
+            &[
+                op(OperatorTokenType::ParenOpen),
+                num(12),
+                op(OperatorTokenType::Div),
+                unit("year"),
+                op(OperatorTokenType::ParenClose),
+            ],
+        );
     }
 }

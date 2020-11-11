@@ -1,10 +1,9 @@
 // Credits to https://mathjs.org, most of this code based on their implementation
 
 use crate::units::consts::BASE_UNIT_DIMENSION_COUNT;
-use bigdecimal::*;
+use rust_decimal::prelude::*;
 use smallvec::alloc::fmt::Formatter;
 use std::cell::RefCell;
-use std::str::FromStr;
 
 pub mod consts;
 pub mod units;
@@ -18,8 +17,8 @@ pub struct Unit {
         Option<RefCell<Box<Vec<RefCell<Prefix>>>>>,
         Option<RefCell<Box<Vec<RefCell<Prefix>>>>>,
     ),
-    value: BigDecimal,
-    offset: BigDecimal,
+    value: Decimal,
+    offset: Decimal,
 }
 
 impl std::fmt::Debug for Unit {
@@ -47,15 +46,23 @@ pub struct UnitPrefixes {
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub struct Prefix {
     name: &'static [char],
-    value: BigDecimal,
+    value: Decimal,
     scientific: bool,
 }
 
 impl Prefix {
-    pub fn new(name: &'static [char], num: &str, scientific: bool) -> Prefix {
+    pub fn from_scientific(name: &'static [char], num: &str, scientific: bool) -> Prefix {
         Prefix {
             name,
-            value: BigDecimal::from_str(num).unwrap(),
+            value: Decimal::from_scientific(num).unwrap(),
+            scientific,
+        }
+    }
+
+    pub fn from_decimal(name: &'static [char], num: &str, scientific: bool) -> Prefix {
+        Prefix {
+            name,
+            value: Decimal::from_str(num).unwrap(),
             scientific,
         }
     }

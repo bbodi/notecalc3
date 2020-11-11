@@ -1,10 +1,10 @@
-use crate::calc::{pow, MAX_PRECISION};
+use crate::calc::pow;
 use crate::units::consts::{
     get_base_unit_for, init_aliases, init_units, UnitDimensionExponent, BASE_UNIT_DIMENSIONS,
     BASE_UNIT_DIMENSION_COUNT,
 };
 use crate::units::{Prefix, Unit, UnitPrefixes};
-use bigdecimal::BigDecimal;
+use rust_decimal::Decimal;
 use smallvec::alloc::fmt::{Debug, Display, Formatter};
 use smallvec::SmallVec;
 use std::cell::RefCell;
@@ -49,7 +49,7 @@ impl Units {
     pub fn new() -> Units {
         let (units, prefixes) = init_units();
         Units {
-            no_prefix: RefCell::new(Prefix::new(&[], "1", false)),
+            no_prefix: RefCell::new(Prefix::from_decimal(&[], "1", false)),
             units,
             prefixes,
             aliases: init_aliases(),
@@ -69,6 +69,7 @@ impl Units {
 
         // Running product of all elements in powerMultiplierStack
         let mut power_multiplier_stack_product = 1;
+        let mut expecting_unit = false;
 
         'main_loop: loop {
             c = skip_whitespaces(c);
@@ -83,11 +84,15 @@ impl Units {
                 c = skip_whitespaces(c);
             }
 
-            let value = parse_number(&mut c);
+            //let value = parse_number(&mut c);
+            let value = parse_char(&mut c, '1');
 
             c = skip_whitespaces(c);
-            if value.is_some() && !c.is_empty() {
+            if value && !c.is_empty() {
                 // handle multiplication or division right after the value, like '1/s'
+                if expecting_unit {
+                    return (output, last_valid_cursor_pos);
+                }
                 if parse_char(&mut c, '*') {
                     power_multiplier_current = 1;
                 } else if parse_char(&mut c, '/') {
@@ -155,7 +160,7 @@ impl Units {
             }
             // "*" and "/" should mean we are expecting something to come next.
             // Is there a forward slash? If so, negate powerMultiplierCurrent. The next unit or paren group is in the denominator.
-            let mut expecting_unit = false;
+            expecting_unit = false;
             if parse_char(&mut c, '*') {
                 // explicit multiplication
                 power_multiplier_current = 1;
@@ -529,36 +534,41 @@ impl PartialEq for UnitOutput {
 }
 
 impl UnitOutput {
-    pub fn normalize(&self, value: &BigDecimal) -> BigDecimal {
+    pub fn normalize(&self, value: &Decimal) -> Result<Decimal, ()> {
         if self.is_derived() {
             let mut result = value.clone();
             for unit in &self.units {
                 let base_value = &unit.unit.borrow().value;
                 let prefix_val = &unit.prefix.borrow().value;
                 let power = unit.power;
-                result = result * pow(base_value * prefix_val, power as i64);
+
+                result = result
+                    .checked_mul(&pow(base_value * prefix_val, power as i64)?)
+                    .ok_or(())?;
             }
-            return result;
+            return Ok(result);
         } else {
             let base_value = &self.units[0].unit.borrow().value;
             let offset = &self.units[0].unit.borrow().offset;
             let prefix_val = &self.units[0].prefix.borrow().value;
 
-            return (value + offset) * (base_value * prefix_val);
+            let a = value + offset;
+            let b = base_value * prefix_val;
+            return a.checked_mul(&b).ok_or(());
         }
     }
 
-    pub fn denormalize(&self, value: &BigDecimal) -> BigDecimal {
+    pub fn from_base_to_this_unit(&self, value: &Decimal) -> Result<Decimal, ()> {
         return if self.is_derived() {
             let mut result = value.clone();
             for unit in &self.units {
                 let base_value = &unit.unit.borrow().value;
                 let prefix_val = &unit.prefix.borrow().value;
                 let power = unit.power;
-                let pow = pow(base_value * prefix_val, power as i64);
-                result = result / pow;
+                let pow = pow(base_value * prefix_val, power as i64)?;
+                result = result.checked_div(pow).ok_or(())?;
             }
-            result
+            Ok(result)
         } else {
             // az előző ág az a current numra hivodik meg mivel az a km/h*h unitot számolja
             // ki, ami derived, viszont a /h*h miatt eltünik a m/sbol fakadó
@@ -571,7 +581,8 @@ impl UnitOutput {
             let borrow_prefix = self.units[0].prefix.borrow();
             let prefix_val = &borrow_prefix.value;
 
-            (((value / base_value) / prefix_val) - offset).with_prec(MAX_PRECISION)
+            let a = value / base_value;
+            Ok(((a) / prefix_val) - offset)
         };
     }
 
@@ -629,7 +640,7 @@ impl Debug for UnitInstance {
 mod tests {
     use super::*;
     use crate::units::consts::EMPTY_UNIT_DIMENSIONS;
-    use bigdecimal::*;
+    use rust_decimal::prelude::*;
 
     fn parse(str: &str, units: &Units) -> UnitOutput {
         units.parse(&str.chars().collect::<Vec<char>>()).0
@@ -699,7 +710,7 @@ mod tests {
         assert_eq!(1, unit1.units[0].power);
         assert_eq!(3, unit1.dimensions[1]);
         assert_eq!(
-            BigDecimal::from_i64(1000000000).unwrap(),
+            Decimal::from_i64(1000000000).unwrap(),
             unit1.units[0].prefix.borrow().value
         );
         assert_eq!(&['k'], unit1.units[0].prefix.borrow().name);
@@ -1040,6 +1051,28 @@ mod tests {
         assert_eq!(0, unit1.units.len());
 
         let unit1 = parse("(s ^^)", &units);
+        assert_eq!(0, unit1.units.len());
+    }
+
+    #[test]
+    fn test_parsing_units_in_denom() {
+        let units = Units::new();
+
+        let unit1 = parse("years * 12/year", &units);
+        assert_eq!(1, unit1.units.len());
+        assert_eq!(1, unit1.units[0].power);
+        assert_eq!(1, unit1.dimensions[2]);
+
+        assert_eq!(unit1.units[0].prefix.borrow().name, &[]);
+        assert_eq!(unit1.units[0].unit.borrow().name, &['y', 'e', 'a', 'r',]);
+        assert_eq!(1, unit1.units[0].power);
+    }
+
+    #[test]
+    fn test_parsing_units_in_denom2() {
+        let units = Units::new();
+
+        let unit1 = parse("12/year", &units);
         assert_eq!(0, unit1.units.len());
     }
 }

@@ -1,7 +1,7 @@
 use crate::functions::FnType;
 use crate::units::units::{UnitOutput, Units};
 use crate::{Variables, SUM_VARIABLE_INDEX};
-use bigdecimal::{BigDecimal, Num};
+use rust_decimal::prelude::*;
 use std::str::FromStr;
 use typed_arena::Arena;
 
@@ -11,15 +11,17 @@ pub enum TokenType {
     // index to the variable vec
     Variable { var_index: usize },
     LineReference { var_index: usize },
-    NumberLiteral(BigDecimal),
+    NumberLiteral(Decimal),
     Operator(OperatorTokenType),
     Unit(UnitOutput),
+    NumberErr,
 }
 
 #[derive(Debug, Clone)]
 pub struct Token<'a> {
     pub ptr: &'a [char],
     pub typ: TokenType,
+    pub has_error: bool,
 }
 
 impl<'text_ptr> Token<'text_ptr> {
@@ -56,6 +58,7 @@ pub enum OperatorTokenType {
     ShiftRight,
     Assign,
     UnitConverter,
+    ApplyUnit(UnitOutput),
     Matrix { row_count: usize, col_count: usize },
     Fn { arg_count: usize, typ: FnType },
 }
@@ -92,6 +95,7 @@ impl OperatorTokenType {
             OperatorTokenType::BracketClose => 0,
             OperatorTokenType::Matrix { .. } => 0,
             OperatorTokenType::Fn { .. } => 0,
+            OperatorTokenType::ApplyUnit(_) => 5,
         }
     }
 
@@ -121,11 +125,19 @@ impl OperatorTokenType {
             OperatorTokenType::BracketClose => Assoc::Left,
             OperatorTokenType::Matrix { .. } => Assoc::Left,
             OperatorTokenType::Fn { .. } => Assoc::Left,
+            OperatorTokenType::ApplyUnit(_) => Assoc::Left,
         }
     }
 }
 
 pub struct TokenParser {}
+
+#[derive(Clone, Copy)]
+enum CanBeUnit {
+    Not,
+    ApplyToPrevToken,
+    StandInItself,
+}
 
 impl TokenParser {
     pub fn parse_line<'text_ptr>(
@@ -137,11 +149,12 @@ impl TokenParser {
         allocator: &'text_ptr Arena<char>,
     ) {
         let mut index = 0;
-        let mut can_be_unit = false;
+        let mut can_be_unit = CanBeUnit::Not;
         if line.starts_with(&['-', '-']) {
             dst.push(Token {
                 ptr: allocator.alloc_extend(line.iter().map(|it| *it)),
                 typ: TokenType::StringLiteral,
+                has_error: false,
             });
             return;
         }
@@ -172,22 +185,29 @@ impl TokenParser {
                         if token.ptr[0].is_ascii_whitespace() {
                             // keep can_be_unit as it was
                         } else {
-                            can_be_unit = false;
+                            can_be_unit = CanBeUnit::Not;
                         }
                     }
-                    TokenType::NumberLiteral(..) => {
-                        can_be_unit = true;
+                    TokenType::NumberLiteral(..) | TokenType::NumberErr => {
+                        can_be_unit = CanBeUnit::ApplyToPrevToken;
                     }
                     TokenType::Unit(..) => {
-                        can_be_unit = false;
+                        can_be_unit = CanBeUnit::Not;
                     }
                     TokenType::Operator(typ) => {
-                        // TODO: what is this can be unit??
-                        can_be_unit = matches!(typ, OperatorTokenType::ParenClose)
-                            || matches!(typ, OperatorTokenType::UnitConverter);
+                        match typ {
+                            OperatorTokenType::ParenClose => {
+                                // keep can_be_unit as it was
+                            }
+                            OperatorTokenType::UnitConverter => {
+                                can_be_unit = CanBeUnit::StandInItself
+                            }
+                            OperatorTokenType::Div => can_be_unit = CanBeUnit::StandInItself,
+                            _ => can_be_unit = CanBeUnit::Not,
+                        }
                     }
                     TokenType::Variable { .. } | TokenType::LineReference { .. } => {
-                        can_be_unit = false;
+                        can_be_unit = CanBeUnit::Not;
                     }
                 }
                 index += token.ptr.len();
@@ -235,8 +255,8 @@ impl TokenParser {
             }
             i = end_index_before_last_whitespace;
             if i > 2 {
-                // bigdecimal cannot parse binary, that's why the explicit i64 type
-                let num: i64 = Num::from_str_radix(
+                // Decimal cannot parse binary, that's why the explicit i64 type
+                let num: i64 = i64::from_str_radix(
                     &unsafe { std::str::from_utf8_unchecked(&number_str[0..number_str_index]) },
                     2,
                 )
@@ -245,6 +265,7 @@ impl TokenParser {
                     typ: TokenType::NumberLiteral(num.into()),
                     // ptr: &str[0..i],
                     ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(i)),
+                    has_error: false,
                 })
             } else {
                 None
@@ -275,8 +296,8 @@ impl TokenParser {
             }
             i = end_index_before_last_whitespace;
             if i > 2 {
-                // bigdecimal cannot parse hex, that's why the explicit i64 type
-                let num: i64 = Num::from_str_radix(
+                // Decimal cannot parse hex, that's why the explicit i64 type
+                let num: i64 = i64::from_str_radix(
                     &unsafe { std::str::from_utf8_unchecked(&number_str[0..number_str_index]) },
                     16,
                 )
@@ -285,6 +306,7 @@ impl TokenParser {
                     typ: TokenType::NumberLiteral(num.into()),
                     // ptr: &str[0..i],
                     ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(i)),
+                    has_error: false,
                 })
             } else {
                 None
@@ -359,19 +381,32 @@ impl TokenParser {
             }
             i = end_index_before_last_whitespace;
             if digit_count > 0 {
-                let num = BigDecimal::from_str(&unsafe {
-                    std::str::from_utf8_unchecked(&number_str[0..number_str_index])
-                })
-                .ok()?;
-                Some(Token {
-                    typ: TokenType::NumberLiteral(
-                        multiplier
-                            .map(|it| BigDecimal::from(it) * &num)
-                            .unwrap_or(num),
-                    ),
-                    // ptr: &str[0..i],
-                    ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(i)),
-                })
+                let num = if e_already_added {
+                    Decimal::from_scientific(&unsafe {
+                        std::str::from_utf8_unchecked(&number_str[0..number_str_index])
+                    })
+                } else {
+                    Decimal::from_str(&unsafe {
+                        std::str::from_utf8_unchecked(&number_str[0..number_str_index])
+                    })
+                };
+                if let Ok(num) = num {
+                    Some(Token {
+                        typ: TokenType::NumberLiteral(
+                            multiplier.map(|it| Decimal::from(it) * &num).unwrap_or(num),
+                        ),
+                        // ptr: &str[0..i],
+                        ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(i)),
+                        has_error: false,
+                    })
+                } else {
+                    Some(Token {
+                        typ: TokenType::NumberErr,
+                        // ptr: &str[0..i],
+                        ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(i)),
+                        has_error: true,
+                    })
+                }
             } else {
                 None
             }
@@ -383,10 +418,10 @@ impl TokenParser {
     fn try_extract_unit<'text_ptr>(
         str: &[char],
         unit: &Units,
-        can_be_unit: bool,
+        can_be_unit: CanBeUnit,
         allocator: &'text_ptr Arena<char>,
     ) -> Option<Token<'text_ptr>> {
-        if !can_be_unit || str[0].is_ascii_whitespace() {
+        if matches!(can_be_unit, CanBeUnit::Not) || str[0].is_ascii_whitespace() {
             return None;
         }
         let (unit, parsed_len) = unit.parse(str);
@@ -398,11 +433,20 @@ impl TokenParser {
             while i > 0 && str[i - 1].is_ascii_whitespace() {
                 i -= 1;
             }
-            Some(Token {
-                typ: TokenType::Unit(unit),
-                // ptr: &str[0..i],
-                ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(i)),
-            })
+            let ptr = allocator.alloc_extend(str.iter().map(|it| *it).take(i));
+            match can_be_unit {
+                CanBeUnit::Not => panic!("impossible"),
+                CanBeUnit::ApplyToPrevToken => Some(Token {
+                    typ: TokenType::Operator(OperatorTokenType::ApplyUnit(unit)),
+                    ptr,
+                    has_error: false,
+                }),
+                CanBeUnit::StandInItself => Some(Token {
+                    typ: TokenType::Unit(unit),
+                    ptr,
+                    has_error: false,
+                }),
+            }
         };
     }
 
@@ -418,11 +462,12 @@ impl TokenParser {
                     var_index: SUM_VARIABLE_INDEX,
                 },
                 ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(3)),
+                has_error: false,
             });
         }
         let mut longest_match_index = 0;
         let mut longest_match = 0;
-        'asd: for (var_index, var) in vars[0..=row_index].iter().enumerate().rev() {
+        'asd: for (var_index, var) in vars[0..row_index].iter().enumerate().rev() {
             if var.is_none() {
                 continue;
             }
@@ -466,6 +511,7 @@ impl TokenParser {
             Some(Token {
                 typ,
                 ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(longest_match)),
+                has_error: false,
             })
         } else {
             None
@@ -491,6 +537,7 @@ impl TokenParser {
                 typ: TokenType::StringLiteral,
                 ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(i)),
                 // ptr: &str[0..i],
+                has_error: false,
             });
         } else {
             for ch in &str[0..] {
@@ -505,6 +552,7 @@ impl TokenParser {
                     typ: TokenType::StringLiteral,
                     // ptr: &str[0..i],
                     ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(i)),
+                    has_error: false,
                 })
             } else {
                 None
@@ -526,6 +574,7 @@ impl TokenParser {
                 typ: TokenType::Operator(typ),
                 // ptr: &str[0..len],
                 ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(len)),
+                has_error: false,
             });
         }
         match str[0] {
@@ -576,7 +625,7 @@ impl TokenParser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::calc::CalcResult;
+    use crate::calc::{CalcResult, CalcResultType};
     use crate::helper::create_vars;
     use crate::shunting_yard::tests::*;
     use crate::units::units::Units;
@@ -594,6 +643,7 @@ mod tests {
                 Some(Token {
                     ptr: _,
                     typ: TokenType::NumberLiteral(num),
+                    has_error: _,
                 }) => {
                     assert_eq!(*num, expected_value.into());
                 }
@@ -602,7 +652,7 @@ mod tests {
             println!("{} OK", str);
         }
 
-        fn test_parse_f(str: &str, expected_value: f64) {
+        fn test_parse_f(str: &str, expected_value: &str) {
             let mut vec = vec![];
             let temp = str.chars().collect::<Vec<_>>();
             let units = Units::new();
@@ -612,9 +662,9 @@ mod tests {
                 Some(Token {
                     ptr: _,
                     typ: TokenType::NumberLiteral(num),
+                    has_error: _,
                 }) => {
-                    use std::convert::TryFrom;
-                    assert_eq!(BigDecimal::try_from(expected_value).expect("must"), *num);
+                    assert_eq!(Decimal::from_str(expected_value).expect("must"), *num);
                 }
                 _ => panic!("'{}' failed", str),
             }
@@ -632,25 +682,24 @@ mod tests {
         test_parse("1", 1);
         test_parse("123456", 123456);
         test_parse("12 34 5        6", 123456);
-        test_parse_f("123.456", 123.456);
+        test_parse_f("123.456", "123.456");
 
-        test_parse_f("0.1", 0.1);
-        test_parse_f(".1", 0.1);
-        test_parse_f(".1.", 0.1);
-        test_parse_f("123.456.", 123.456);
+        test_parse_f("0.1", "0.1");
+        test_parse_f(".1", "0.1");
+        test_parse_f(".1.", "0.1");
+        test_parse_f("123.456.", "123.456");
         // it means 2 numbers, 123.456 and 0.3
-        test_parse_f("123.456.3", 123.456);
+        test_parse_f("123.456.3", "123.456");
     }
 
     fn test_vars(var_names: &[&'static [char]], text: &str, expected_tokens: &[Token]) {
-        use bigdecimal::Zero;
         let var_names: Vec<Option<Variable>> = (0..MAX_LINE_COUNT + 1)
             .into_iter()
             .map(|index| {
                 if let Some(var_name) = var_names.get(index) {
                     Some(Variable {
                         name: Box::from(*var_name),
-                        value: Ok(CalcResult::Number(BigDecimal::zero())),
+                        value: Ok(CalcResult::new(CalcResultType::Number(Decimal::zero()), 0)),
                     })
                 } else {
                     None
@@ -678,7 +727,11 @@ mod tests {
                 (TokenType::NumberLiteral(expected_num), TokenType::NumberLiteral(actual_num)) => {
                     assert_eq!(expected_num, actual_num)
                 }
-                (TokenType::Unit(_), TokenType::Unit(_)) => {
+                (TokenType::Unit(_), TokenType::Unit(_))
+                | (
+                    TokenType::Operator(OperatorTokenType::ApplyUnit(_)),
+                    TokenType::Operator(OperatorTokenType::ApplyUnit(_)),
+                ) => {
                     //     expected_op is an &str
                     let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
                     let expected_chars = str_slice.chars().collect::<Vec<char>>();
@@ -829,7 +882,7 @@ mod tests {
             "200kg alma + 300 kg banán",
             &[
                 num(200),
-                unit("kg"),
+                apply_to_prev_token_unit("kg"),
                 str(" "),
                 str("alma"),
                 str(" "),
@@ -837,7 +890,7 @@ mod tests {
                 str(" "),
                 num(300),
                 str(" "),
-                unit("kg"),
+                apply_to_prev_token_unit("kg"),
                 str(" "),
                 str("banán"),
             ],
@@ -867,7 +920,12 @@ mod tests {
 
         test(
             "1/2s",
-            &[num(1), op(OperatorTokenType::Div), num(2), unit("s")],
+            &[
+                num(1),
+                op(OperatorTokenType::Div),
+                num(2),
+                apply_to_prev_token_unit("s"),
+            ],
         );
         test(
             "0xFF AND 0b11",
@@ -965,12 +1023,12 @@ mod tests {
             "10km/h * 45min in m",
             &[
                 num(10),
-                unit("km/h"),
+                apply_to_prev_token_unit("km/h"),
                 str(" "),
                 op(OperatorTokenType::Mult),
                 str(" "),
                 num(45),
-                unit("min"),
+                apply_to_prev_token_unit("min"),
                 str(" "),
                 op(OperatorTokenType::UnitConverter),
                 str(" "),
@@ -982,7 +1040,7 @@ mod tests {
             "45min in m",
             &[
                 num(45),
-                unit("min"),
+                apply_to_prev_token_unit("min"),
                 str(" "),
                 op(OperatorTokenType::UnitConverter),
                 str(" "),
@@ -994,14 +1052,14 @@ mod tests {
             "10(km/h)^2 * 45min in m",
             &[
                 num(10),
-                unit("(km/h)"),
+                apply_to_prev_token_unit("(km/h)"),
                 op(OperatorTokenType::Pow),
                 num(2),
                 str(" "),
                 op(OperatorTokenType::Mult),
                 str(" "),
                 num(45),
-                unit("min"),
+                apply_to_prev_token_unit("min"),
                 str(" "),
                 op(OperatorTokenType::UnitConverter),
                 str(" "),
@@ -1009,33 +1067,48 @@ mod tests {
             ],
         );
 
-        test("1 (m*kg)/(s^2)", &[num(1), str(" "), unit("(m*kg)/(s^2)")]);
+        test(
+            "1 (m*kg)/(s^2)",
+            &[num(1), str(" "), apply_to_prev_token_unit("(m*kg)/(s^2)")],
+        );
 
         // explicit multiplication is mandatory before units
         test(
             "2m^4kg/s^3",
             &[
                 num(2),
-                unit("m^4"),
+                apply_to_prev_token_unit("m^4"),
                 str("kg"),
                 op(OperatorTokenType::Div),
-                str("s"),
-                op(OperatorTokenType::Pow),
-                num(3),
+                unit("s^3"),
             ],
         );
 
         // test("5kg*m/s^2", "5 (kg m) / s^2")
 
-        test("2m^2*kg/s^2", &[num(2), unit("m^2*kg/s^2")]);
-        test("2(m^2)*kg/s^2", &[num(2), unit("(m^2)*kg/s^2")]);
+        test(
+            "2m^2*kg/s^2",
+            &[num(2), apply_to_prev_token_unit("m^2*kg/s^2")],
+        );
+        test(
+            "2(m^2)*kg/s^2",
+            &[num(2), apply_to_prev_token_unit("(m^2)*kg/s^2")],
+        );
 
         // but it is allowed if they parenthesis are around
-        test("2(m^2 kg)/s^2", &[num(2), unit("(m^2 kg)/s^2")]);
+        test(
+            "2(m^2 kg)/s^2",
+            &[num(2), apply_to_prev_token_unit("(m^2 kg)/s^2")],
+        );
 
         test(
             "2/3m",
-            &[num(2), op(OperatorTokenType::Div), num(3), unit("m")],
+            &[
+                num(2),
+                op(OperatorTokenType::Div),
+                num(3),
+                apply_to_prev_token_unit("m"),
+            ],
         );
 
         test(
@@ -1043,13 +1116,31 @@ mod tests {
             &[
                 num(3),
                 str(" "),
-                unit("s^-1"),
+                apply_to_prev_token_unit("s^-1"),
                 str(" "),
                 op(OperatorTokenType::Mult),
                 str(" "),
                 num(4),
                 str(" "),
-                unit("s"),
+                apply_to_prev_token_unit("s"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_parsing_units_in_denom() {
+        test(
+            "30 years * 12/year",
+            &[
+                num(30),
+                str(" "),
+                apply_to_prev_token_unit("years"),
+                str(" "),
+                op(OperatorTokenType::Mult),
+                str(" "),
+                num(12),
+                op(OperatorTokenType::Div),
+                unit("year"),
             ],
         );
     }
@@ -1073,12 +1164,12 @@ mod tests {
             "12km/h * 45s ^^",
             &[
                 num(12),
-                unit("km/h"),
+                apply_to_prev_token_unit("km/h"),
                 str(" "),
                 op(OperatorTokenType::Mult),
                 str(" "),
                 num(45),
-                unit("s"),
+                apply_to_prev_token_unit("s"),
                 str(" "),
                 op(OperatorTokenType::Pow),
                 op(OperatorTokenType::Pow),
@@ -1094,7 +1185,7 @@ mod tests {
                 op(OperatorTokenType::ParenOpen),
                 numf(8.314),
                 str(" "),
-                unit("J / mol / K"),
+                apply_to_prev_token_unit("J / mol / K"),
                 op(OperatorTokenType::ParenClose),
                 str(" "),
                 op(OperatorTokenType::Pow),
@@ -1192,7 +1283,11 @@ mod tests {
     #[test]
     fn exponential_notation() {
         test("2.3e-4", &[numf(2.3e-4f64)]);
-        test("1.23e50", &[numf(1.23e50f64)]);
+        test("1.23e18", &[numf(1.23e18f64)]);
+
+        // TODO rust_decimal's range is too small for this :(
+        // test("1.23e50", &[numf(1.23e50f64)]);
+
         test("3 e", &[num(3), str(" "), str("e")]);
         test("3e", &[num(3), str("e")]);
         test("33e", &[num(33), str("e")]);
@@ -1372,7 +1467,7 @@ mod tests {
             &[
                 num(3),
                 str(" "),
-                unit("years"),
+                apply_to_prev_token_unit("years"),
                 str(" "),
                 op(OperatorTokenType::Mult),
                 str(" "),
@@ -1383,12 +1478,43 @@ mod tests {
 
     #[test]
     fn test_unit_cancelling() {
-        test("1 km/m", &[num(1), str(" "), unit("km/m")]);
+        test(
+            "1 km/m",
+            &[num(1), str(" "), apply_to_prev_token_unit("km/m")],
+        );
     }
 
     #[test]
     fn test_unit_parsing_latin_chars() {
         test("1 hónap", &[num(1), str(" "), str("hónap")]);
+    }
+
+    #[test]
+    fn test_unit_in_denominator_tokens2() {
+        test(
+            "1/12/year",
+            &[
+                num(1),
+                op(OperatorTokenType::Div),
+                num(12),
+                op(OperatorTokenType::Div),
+                unit("year"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_unit_in_denominator_tokens_with_parens() {
+        test(
+            "(12/year)",
+            &[
+                op(OperatorTokenType::ParenOpen),
+                num(12),
+                op(OperatorTokenType::Div),
+                unit("year"),
+                op(OperatorTokenType::ParenClose),
+            ],
+        );
     }
 
     #[test]
@@ -1400,7 +1526,7 @@ mod tests {
                 op(OperatorTokenType::ParenOpen),
                 num(60),
                 str(" "),
-                unit("degree"),
+                apply_to_prev_token_unit("degree"),
                 op(OperatorTokenType::ParenClose),
             ],
         );

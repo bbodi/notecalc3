@@ -332,18 +332,17 @@ impl<T: Default + Clone> EditorContent<T> {
         first_row_col: usize,
         second_row_col: usize,
     ) -> bool {
-        if (self.line_lens[row_index] - first_row_col)
-            + (self.line_lens[row_index + 1] - second_row_col)
-            > self.max_line_len
+        if ((self.line_lens[row_index] as isize - first_row_col as isize)
+            + (self.line_lens[row_index + 1] as isize - second_row_col as isize))
+            > self.max_line_len as isize
         {
             return false;
         }
-
-        if self.line_lens[row_index] == 0 {
-            // keep the data of the 2nd row
+        if self.line_lens[row_index] == 0 && second_row_col == 0 {
+            // keep the line_data of the 2nd row
             self.remove_line_at(row_index);
-        } else if self.line_lens[row_index + 1] == 0 {
-            // keep the data of the 1st row
+        } else if self.line_lens[row_index + 1] == 0 && first_row_col == self.line_len(row_index) {
+            // keep the line_data of the 1st row
             self.remove_line_at(row_index + 1);
         } else {
             let dst = self.get_char_pos(row_index, first_row_col);
@@ -358,12 +357,14 @@ impl<T: Default + Clone> EditorContent<T> {
     }
 
     pub fn remove_selection(&mut self, selection: Selection) -> Option<RowModificationType> {
+        // TODO: why do we have get_first and get_second here as well? redundant... The caller already does it.
         let first = selection.get_first();
         let second = selection.get_second();
         return if second.row > first.row {
             for _ in first.row + 1..second.row {
                 self.remove_line_at(first.row + 1);
             }
+            dbg!(self.get_content());
             if first.column == 0 {
                 self.remove_selection(Selection::range(
                     Pos::from_row_column(first.row + 1, 0),
@@ -373,8 +374,10 @@ impl<T: Default + Clone> EditorContent<T> {
                 Some(RowModificationType::AllLinesFrom(first.row))
             } else {
                 if self.merge_with_next_row(first.row, first.column, second.column) {
+                    dbg!(self.get_content());
                     Some(RowModificationType::AllLinesFrom(first.row))
                 } else {
+                    dbg!(self.get_content());
                     None
                 }
             }
