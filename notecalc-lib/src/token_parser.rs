@@ -24,6 +24,8 @@ pub struct Token<'a> {
     pub has_error: bool,
 }
 
+const PI: Decimal = Decimal::from_parts(1102470953, 185874565, 1703060790, false, 28);
+
 impl<'text_ptr> Token<'text_ptr> {
     pub fn is_number(&self) -> bool {
         matches!(self.typ, TokenType::NumberLiteral(..))
@@ -83,7 +85,7 @@ impl OperatorTokenType {
             OperatorTokenType::BinOr => 0,
             OperatorTokenType::BinXor => 0,
             OperatorTokenType::BinNot => 4,
-            OperatorTokenType::Pow => 5,
+            OperatorTokenType::Pow => 6,
             OperatorTokenType::ParenOpen => 0,
             OperatorTokenType::ParenClose => 0,
             OperatorTokenType::ShiftLeft => 0,
@@ -237,6 +239,15 @@ impl TokenParser {
             number_str_index = 1;
             i = 1;
         };
+
+        if str[0] == 'π' {
+            return Some(Token {
+                typ: TokenType::NumberLiteral(PI),
+                // ptr: &str[0..i],
+                ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(1)),
+                has_error: false,
+            });
+        }
 
         if str[i..].starts_with(&['0', 'b']) {
             i += 2;

@@ -94,6 +94,7 @@ pub fn render_result_into(
         }
         CalcResultType::Percentage(num) => {
             let mut lens = num_to_string(f, num, &ResultFormat::Dec, decimal_count, use_grouping);
+            f.write_u8(b' ').expect("");
             f.write_u8(b'%').expect("");
             lens.unit_part_len += 1;
             lens
@@ -134,21 +135,6 @@ fn num_to_string(
     let num_a = if *format != ResultFormat::Dec && num.trunc() == *num {
         Some(num.clone())
     } else if let Some(decimal_count) = decimal_count {
-        // let (_, scale) = num.as_bigint_and_exponent();
-        // let digits = num.digits();
-        // let mut a = (digits as i64 - (scale - decimal_count as i64)).max(0) as u64;
-        // // try to find the shortest meaningful representation
-        // let max_count = decimal_count.max(10) as u64;
-        // let result;
-        // loop {
-        //     let r = strip_trailing_zeroes(&num.with_prec(a));
-        //     if a > max_count || !r.is_zero() {
-        //         result = Some(r);
-        //         break;
-        //     }
-        //     a += 1;
-        // }
-        // result
         let mut result = num.clone();
         result.rescale(decimal_count as u32);
         Some(result.normalize())
@@ -187,12 +173,14 @@ fn num_to_string(
                 unit_part_len: 0,
             }
         } else {
-            // TODO to_string opt
-            let string = num.to_string();
-            for ch in string.as_bytes() {
-                f.write_u8(*ch).expect("");
+            f.write_u8(b'E').expect("");
+            f.write_u8(b'r').expect("");
+            f.write_u8(b'r').expect("");
+            ResultLengths {
+                int_part_len: 3,
+                frac_part_len: 0,
+                unit_part_len: 0,
             }
-            get_int_frac_part_len(&string)
         }
     } else {
         // TODO to_string opt

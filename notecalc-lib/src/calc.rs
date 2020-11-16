@@ -47,7 +47,10 @@ impl CalcResult {
     }
 
     pub fn set_token_error_flag<'text_ptr>(&self, tokens: &mut [Token<'text_ptr>]) {
-        tokens[self.index_into_tokens].has_error = true;
+        // TODO I could not reproduce it but it happened runtime
+        if let Some(t) = tokens.get_mut(self.index_into_tokens) {
+            t.has_error = true
+        }
         if let Some(i) = self.index2_into_tokens {
             tokens[i].has_error = true;
         }
@@ -499,7 +502,10 @@ fn pow_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             // 2^3
             rhs.to_i64()
-                .and_then(|rhs| pow(lhs.clone(), rhs).ok())
+                .and_then(|rhs| {
+                    let p = pow(lhs.clone(), rhs);
+                    p.ok()
+                })
                 .map(|pow| CalcResult::new(CalcResultType::Number(pow), 0))
         }
         (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Number(rhs)) => {
@@ -1020,7 +1026,7 @@ pub fn pow(this: Decimal, mut exp: i64) -> Result<Decimal, ()> {
     }
 
     if exp == 1 {
-        acc *= &base;
+        acc = acc.checked_mul(&base).ok_or(())?;
     }
 
     Ok(if neg { Decimal::one() / acc } else { acc })
@@ -1073,7 +1079,7 @@ mod tests {
         crate::shunting_yard::tests::compare_tokens(expected_tokens, &tokens);
     }
 
-    fn test_vars(vars: &Variables, text: &str, expected: &'static str, dec_count: usize) {
+    fn test_vars(vars: &Variables, text: &str, expected: &str, dec_count: usize) {
         dbg!("===========================================================");
         dbg!(text);
         let temp = text.chars().collect::<Vec<char>>();
@@ -1129,7 +1135,7 @@ mod tests {
         }
     }
 
-    fn test(text: &str, expected: &'static str) {
+    fn test(text: &str, expected: &str) {
         test_vars(&create_vars(), text, expected, DECIMAL_COUNT);
     }
 
@@ -1245,9 +1251,9 @@ mod tests {
         test("200 * 0%", "0");
         test("10% * 200", "20");
         test("0% * 200", "0");
-        test("(10 + 20)%", "30%");
+        test("(10 + 20)%", "30 %");
 
-        test("30/200%", "15%");
+        test("30/200%", "15 %");
     }
 
     #[test]
@@ -1822,5 +1828,33 @@ mod tests {
                 op(OperatorTokenType::ParenClose),
             ],
         );
+    }
+
+    #[test]
+    fn test_that_pow_has_higher_precedence_than_unit() {
+        test_tokens(
+            "10^24kg",
+            &[
+                num(10),
+                op(OperatorTokenType::Pow),
+                num(24),
+                apply_to_prev_token_unit("kg"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_huge_nums_in_scientific_form() {
+        test("1e28", "10000000000000000000000000000");
+        for i in 0..=28 {
+            let input = format!("1e{}", i);
+            let expected = format!("1{}", "0".repeat(i));
+            test(&input, &expected);
+        }
+    }
+
+    #[test]
+    fn test_pi() {
+        test("π", "3.1416");
     }
 }

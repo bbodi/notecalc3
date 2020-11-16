@@ -1294,9 +1294,10 @@ impl Editor {
                 self.set_selection_save_col(Selection::single(*pos));
                 Some(RowModificationType::AllLinesFrom(pos.row))
             }
-            EditorCommand::DuplicateLine { .. } => {
-                // TODO
-                None
+            EditorCommand::DuplicateLine { pos, .. } => {
+                content.remove_line_at(pos.row + 1);
+                self.set_selection_save_col(Selection::single(*pos));
+                Some(RowModificationType::AllLinesFrom(pos.row + 1))
             }
             EditorCommand::InsertText {
                 pos,

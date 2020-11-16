@@ -241,11 +241,10 @@ mod tests {
             );
         } else {
             if expected_cursor.is_range().is_none() && params.undo_count > 0 {
-                // the cursor is not reverted back during undo
                 assert_eq!(
                     editor.get_selection().start.row,
                     expected_cursor.start.row,
-                    "Cursor row"
+                    "The cursor is not reverted back during undo"
                 );
             } else {
                 assert_eq!(editor.get_selection(), expected_cursor, "Cursor");
@@ -5527,6 +5526,45 @@ mod tests {
             a\n\
             a█",
         );
+    }
+
+    #[test]
+    fn test_ctrl_d_undo_redo() {
+        test_normal_undo_redo(TestParams2 {
+            text_input: None,
+            initial_content: "aaa█aa12s aa\n\
+            a\n\
+            a\n\
+            a\n\
+            a",
+            inputs: &[EditorInputEvent::Char('d')],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "aaaaa12s aa\n\
+            aaa█aa12s aa\n\
+            a\n\
+            a\n\
+            a\n\
+            a",
+        });
+
+        test_normal_undo_redo(TestParams2 {
+            text_input: None,
+            initial_content: "aaaaa12s aa\n\
+            a\n\
+            a\n\
+            a\n\
+            a█",
+            inputs: &[EditorInputEvent::Char('d')],
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::ctrl(),
+            expected_content: "aaaaa12s aa\n\
+            a\n\
+            a\n\
+            a\n\
+            a\n\
+            a█",
+        });
     }
 
     #[test]

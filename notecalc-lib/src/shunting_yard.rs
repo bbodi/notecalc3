@@ -595,6 +595,15 @@ impl ShuntingYard {
                         }
                     }
                     OperatorTokenType::ApplyUnit(unit) => {
+                        ShuntingYard::operator_rule(
+                            op,
+                            &mut operator_stack,
+                            output_stack,
+                            &mut v.last_valid_operator_index,
+                            &mut v.last_valid_output_range,
+                            input_index,
+                        );
+
                         to_out2(
                             output_stack,
                             TokenType::Operator(OperatorTokenType::ApplyUnit(unit.clone())),
@@ -937,6 +946,9 @@ impl ShuntingYard {
         last_valid_output_range: &mut Option<(usize, usize)>,
     ) {
         if let Some(last_valid_operator_index) = *maybe_last_valid_operator_index {
+            if operator_stack.len() <= last_valid_operator_index {
+                return;
+            }
             for op in operator_stack.drain(0..=last_valid_operator_index).rev() {
                 to_out2(
                     output_stack,
@@ -2249,6 +2261,19 @@ pub mod tests {
                 op(OperatorTokenType::Div),
                 unit("year"),
                 op(OperatorTokenType::ParenClose),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_that_pow_has_higher_precedence_than_unit() {
+        test_output(
+            "10^24kg",
+            &[
+                num(10),
+                num(24),
+                op(OperatorTokenType::Pow),
+                apply_to_prev_token_unit("kg"),
             ],
         );
     }

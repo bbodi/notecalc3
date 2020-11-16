@@ -27,7 +27,7 @@ use helper::*;
 use crate::calc::{
     add_op, evaluate_tokens, CalcResult, CalcResultType, EvaluationResult, ShuntingYardResult,
 };
-use crate::consts::LINE_NUM_CONSTS;
+use crate::consts::{LINE_NUM_CONSTS, LINE_NUM_CONSTS2};
 use crate::editor::editor::{
     Editor, EditorInputEvent, InputModifiers, Pos, RowModificationType, Selection,
 };
@@ -50,7 +50,7 @@ pub mod editor;
 pub mod renderer;
 
 const MAX_EDITOR_WIDTH: usize = 120;
-const LEFT_GUTTER_WIDTH: usize = 1 + 2 + 1;
+const LEFT_GUTTER_MIN_WIDTH: usize = 2;
 pub const MAX_LINE_COUNT: usize = 64;
 const SCROLL_BAR_WIDTH: usize = 1;
 const RIGHT_GUTTER_WIDTH: usize = 2;
@@ -58,6 +58,7 @@ const CHANGE_RESULT_PULSE_START_COLOR: u32 = 0xFF88FF_AA;
 const CHANGE_RESULT_PULSE_END_COLOR: u32 = 0xFFFFFF_55;
 const REFERENCE_PULSE_PULSE_START_COLOR: u32 = 0x00FF7F_33;
 const MIN_RESULT_PANEL_WIDTH: usize = 7;
+const DEFAULT_RESULT_PANEL_WIDTH_PERCENT: usize = 70;
 const SUM_VARIABLE_INDEX: usize = MAX_LINE_COUNT;
 const MATRIX_ASCII_HEADER_FOOTER_LINE_COUNT: usize = 2;
 const ACTIVE_LINE_REF_HIGHLIGHT_COLORS: [u32; 9] = [
@@ -150,6 +151,7 @@ pub mod helper {
         }
     }
 
+    #[derive(Debug)]
     pub struct AppTokens<'a>([Option<Tokens<'a>>; MAX_LINE_COUNT]);
 
     impl<'a> AppTokens<'a> {
@@ -285,7 +287,8 @@ pub mod helper {
             left_gutter_width: usize,
             right_gutter_width: usize,
         ) -> GlobalRenderData {
-            let min_req_width = MIN_RESULT_PANEL_WIDTH + RIGHT_GUTTER_WIDTH + LEFT_GUTTER_WIDTH + 4;
+            let min_req_width =
+                MIN_RESULT_PANEL_WIDTH + RIGHT_GUTTER_WIDTH + LEFT_GUTTER_MIN_WIDTH + 4;
             if client_width < min_req_width {
                 panic!(
                     "client width is too small, it must be at least {} but it is {}",
@@ -536,6 +539,62 @@ pub mod helper {
     }
 }
 
+//, α, Ω, β
+// γ - 	Greek Small Letter Gamma[1]
+// δ Greek Small Letter Delta
+// ε Greek Small Letter Epsilon
+// ζ Greek Small Letter Zeta[
+// η Greek Small Letter Eta
+// θ Greek Small Letter Theta
+// λ Greek Small Letter Lamda
+// μ Greek Small Letter Mu
+// φ Greek Small Letter Phi
+// ω Greek Small Letter Omega
+// ψ Greek Small Letter Psi
+// τ Greek Small Letter Tau
+// ϕ Greek Phi Symbol
+struct AutoCompletionConst {
+    //const PREFIX: char = '.';
+    abbrev: &'static [char],
+    replace_to: &'static [char],
+    relative_new_cursor_pos: Option<usize>,
+}
+
+// "0,0,0;0,0,0;0,0,0".split("").map(x => '\'' + x + '\'').join(',')
+const AUTOCOMPLETION_CONSTS: [AutoCompletionConst; 5] = [
+    AutoCompletionConst {
+        abbrev: &['p', 'o', 'w'],
+        replace_to: &['^'],
+        relative_new_cursor_pos: None,
+    },
+    AutoCompletionConst {
+        abbrev: &['m', 'a', 't', '3'],
+        replace_to: &[
+            '[', '0', ',', '0', ',', '0', ';', '0', ',', '0', ',', '0', ';', '0', ',', '0', ',',
+            '0', ']',
+        ],
+        relative_new_cursor_pos: Some(1),
+    },
+    AutoCompletionConst {
+        abbrev: &['m', 'a', 't', '4'],
+        replace_to: &[
+            '[', '0', ',', '0', ',', '0', ',', '0', ';', '0', ',', '0', ',', '0', ',', '0', ';',
+            '0', ',', '0', ',', '0', ',', '0', ';', '0', ',', '0', ',', '0', ',', '0', ']',
+        ],
+        relative_new_cursor_pos: Some(1),
+    },
+    AutoCompletionConst {
+        abbrev: &['m', 'a', 't'],
+        replace_to: &['[', '0', ']'],
+        relative_new_cursor_pos: Some(1),
+    },
+    AutoCompletionConst {
+        abbrev: &['p', 'i'],
+        replace_to: &['π'],
+        relative_new_cursor_pos: None,
+    },
+];
+
 struct ScrollBarRenderInfo {
     scroll_bar_render_y: usize,
     scroll_bar_render_h: usize,
@@ -606,6 +665,7 @@ pub enum Layer {
     AboveText,
 }
 
+#[derive(Debug, PartialEq)]
 pub struct RenderBuckets<'a> {
     pub ascii_texts: Vec<RenderAsciiTextMsg<'a>>,
     pub utf8_texts: Vec<RenderUtf8TextMsg<'a>>,
@@ -708,7 +768,8 @@ pub enum ResultFormat {
 
 #[derive(Clone)]
 pub struct LineData {
-    line_id: usize,
+    // has to be pub because of external tests...
+    pub line_id: usize,
     result_format: ResultFormat,
 }
 
@@ -1024,7 +1085,8 @@ pub enum EditorObjectType {
 
 #[derive(Clone, Debug)]
 pub struct EditorObject {
-    typ: EditorObjectType,
+    // visible for testing
+    pub typ: EditorObjectType,
     row: ContentIndex,
     start_x: usize,
     end_x: usize,
@@ -1043,6 +1105,7 @@ pub struct Variable {
 type LineResult = Result<Option<CalcResult>, ()>;
 type Variables = [Option<Variable>];
 
+#[derive(Debug)]
 pub struct Tokens<'a> {
     tokens: Vec<Token<'a>>,
     shunting_output_stack: Vec<ShuntingYardResult>,
@@ -1074,6 +1137,8 @@ pub struct NoteCalcApp {
     pub updated_line_ref_obj_indices: Vec<EditorObjId>,
     pub editor_objs_referencing_current_line: Vec<EditorObjId>,
     pub render_data: GlobalRenderData,
+    // when pressing Ctrl-c without any selection, the result of the current line will be put into this clipboard
+    pub clipboard: Option<String>,
 }
 
 impl NoteCalcApp {
@@ -1093,16 +1158,19 @@ impl NoteCalcApp {
                 client_width,
                 client_height,
                 default_result_gutter_x(client_width),
-                LEFT_GUTTER_WIDTH,
+                LEFT_GUTTER_MIN_WIDTH,
                 RIGHT_GUTTER_WIDTH,
             ),
+            clipboard: None,
         }
     }
 
-    pub fn get_selected_text(&self) -> Option<String> {
+    pub fn get_selected_text_and_clear_app_clipboard(&mut self) -> Option<String> {
         // TODO: use fix buffer don't allocate
         let mut str = String::with_capacity(64);
-        return if let Some(matrix_editing) = &self.matrix_editing {
+        return if let Some(clipboard) = std::mem::replace(&mut self.clipboard, None) {
+            Some(clipboard)
+        } else if let Some(matrix_editing) = &self.matrix_editing {
             matrix_editing
                 .editor_content
                 .write_selection_into(matrix_editing.editor.get_selection(), &mut str);
@@ -1161,13 +1229,7 @@ impl NoteCalcApp {
             render_buckets,
             result_buffer,
         );
-        self.render_data.set_result_gutter_x(
-            self.client_width,
-            calc_result_gutter_x_wrt_result_lengths(
-                self.render_data.longest_rendered_result_len,
-                self.client_width,
-            ),
-        );
+        change_result_panel_size_wrt_result_len(self.client_width, &mut self.render_data);
     }
 
     pub fn calc_full_content_height(gr: &GlobalRenderData, content_len: usize) -> usize {
@@ -1203,7 +1265,6 @@ impl NoteCalcApp {
         editor_objs_referencing_current_line: &mut Vec<EditorObjId>,
     ) {
         // x, h
-
         let mut editor_y_to_render_w: [usize; MAX_LINE_COUNT] = [0; MAX_LINE_COUNT];
         {
             let mut r = PerLineRenderData::new();
@@ -1325,11 +1386,16 @@ impl NoteCalcApp {
                         render_buckets.set_color(Layer::Text, 0xADADAD_FF);
                     }
                     let vert_align_offset = (r.rendered_row_height - 1) / 2;
+                    let line_num_str = if r.editor_y.as_usize() < 9 {
+                        &(LINE_NUM_CONSTS[editor_y.as_usize()][..])
+                    } else {
+                        &(LINE_NUM_CONSTS2[(editor_y.as_usize()) - 9][..])
+                    };
                     render_buckets.draw_text(
                         Layer::Text,
-                        1,
+                        0,
                         render_y.add(vert_align_offset),
-                        &(LINE_NUM_CONSTS[editor_y.as_usize()][..]),
+                        line_num_str,
                     );
                 }
                 // } else if redraw_result_area.need(editor_y) {
@@ -1426,9 +1492,7 @@ impl NoteCalcApp {
             gr,
             Some(4),
         );
-        gr.longest_rendered_result_len = tmp.max_len;
-
-        create_render_commands_for_results(
+        tmp.max_len = create_render_commands_for_results_and_render_matrices(
             &tmp,
             units,
             results.as_slice(),
@@ -1436,7 +1500,9 @@ impl NoteCalcApp {
             result_buffer,
             gr,
             Some(4),
-        );
+        )
+        .max(tmp.max_len);
+        gr.longest_rendered_result_len = tmp.max_len;
 
         pulse_changed_results(
             render_buckets,
@@ -1519,7 +1585,7 @@ impl NoteCalcApp {
         result_buffer: &'b mut [u8],
     ) {
         let scroll_bar_x = self.render_data.result_gutter_x - SCROLL_BAR_WIDTH;
-        if x < LEFT_GUTTER_WIDTH {
+        if x < self.render_data.left_gutter_width {
             // clicked on left gutter
         } else if x < scroll_bar_x {
             self.handle_editor_area_click(
@@ -1603,7 +1669,7 @@ impl NoteCalcApp {
         render_buckets: &mut RenderBuckets<'b>,
         result_buffer: &'b mut [u8],
     ) {
-        let clicked_x = x - LEFT_GUTTER_WIDTH;
+        let clicked_x = x - self.render_data.left_gutter_width;
         let clicked_row = self.get_clicked_row_clamped(clicked_y);
 
         let matrix_row_index = if self.matrix_editing.is_some() {
@@ -1795,14 +1861,14 @@ impl NoteCalcApp {
             Some(MouseState::RightGutterIsDragged) => {
                 self.render_data.set_result_gutter_x(
                     self.client_width,
-                    calc_result_gutter_x(x, self.client_width),
+                    calc_result_gutter_x(x, self.client_width, self.render_data.left_gutter_width),
                 );
                 true
             }
             Some(MouseState::ClickedInEditor) => {
                 if let Some(y) = self.rendered_y_to_editor_y(y) {
                     self.editor.handle_drag(
-                        (x as isize - LEFT_GUTTER_WIDTH as isize).max(0) as usize,
+                        (x as isize - self.render_data.left_gutter_width as isize).max(0) as usize,
                         y.as_usize(),
                         &self.editor_content,
                     );
@@ -1884,14 +1950,13 @@ impl NoteCalcApp {
         render_buckets: &mut RenderBuckets<'b>,
         result_buffer: &'b mut [u8],
     ) {
+        if new_client_width
+            < LEFT_GUTTER_MIN_WIDTH + RIGHT_GUTTER_WIDTH + MIN_RESULT_PANEL_WIDTH + SCROLL_BAR_WIDTH
+        {
+            return;
+        }
         self.client_width = new_client_width;
-        self.render_data.set_result_gutter_x(
-            new_client_width,
-            calc_result_gutter_x_wrt_result_lengths(
-                self.render_data.longest_rendered_result_len,
-                new_client_width,
-            ),
-        );
+        change_result_panel_size_wrt_result_len(self.client_width, &mut self.render_data);
         self.generate_render_commands_and_fill_editor_objs(
             units,
             render_buckets,
@@ -1938,7 +2003,8 @@ impl NoteCalcApp {
         need_rerender
     }
 
-    pub fn get_normalized_content(&self) -> String {
+    pub fn get_line_ref_normalized_content(&self) -> String {
+        // TODO: no alloc
         let mut result: String = String::with_capacity(self.editor_content.line_count() * 40);
         for line in self.editor_content.lines() {
             let mut i = 0;
@@ -1949,7 +2015,7 @@ impl NoteCalcApp {
                     while end < line.len() {
                         if line[end] == ']' && num > 0 {
                             // which row has the id of 'num'?
-                            let row_index = self
+                            let referenced_row_index = self
                                 .editor_content
                                 .data()
                                 .iter()
@@ -1958,29 +2024,19 @@ impl NoteCalcApp {
                                 + 1; // '+1' line id cannot be 0
                             result.push('&');
                             result.push('[');
-                            let mut line_id = row_index;
-                            while line_id > 0 {
-                                let to_insert = line_id % 10;
-                                result.push((48 + to_insert as u8) as char);
-                                line_id /= 10;
-                            }
-                            // reverse the number
                             {
-                                let last_i = result.len() - 1;
-                                let replace_i = if row_index > 99 {
-                                    2
-                                } else if row_index > 9 {
-                                    1
-                                } else {
-                                    0
-                                };
-                                if replace_i != 0 {
-                                    unsafe {
-                                        let tmp = result.as_bytes()[last_i];
-                                        result.as_bytes_mut()[last_i] =
-                                            result.as_bytes()[last_i - replace_i];
-                                        result.as_bytes_mut()[last_i - replace_i] = tmp;
-                                    }
+                                // TODO: change this code if 64/99/etc line count limit is removed
+                                let mut tmp_arr = ['0', '0', '0'];
+                                let mut tmp_rev_index = 3;
+                                let mut line_id = referenced_row_index;
+                                while line_id > 0 {
+                                    tmp_rev_index -= 1;
+                                    let to_insert = line_id % 10;
+                                    tmp_arr[tmp_rev_index] = (48 + to_insert as u8) as char;
+                                    line_id /= 10;
+                                }
+                                for i in tmp_rev_index..=2 {
+                                    result.push(tmp_arr[i]);
                                 }
                             }
                             result.push(']');
@@ -2001,6 +2057,114 @@ impl NoteCalcApp {
         }
 
         return result;
+    }
+
+    pub fn normalize_line_refs_in_place(&mut self) {
+        let mut original_selection = self.editor.get_selection();
+        for line_i in 0..self.editor_content.line_count() {
+            let mut i = 0;
+            'i: while i < self.editor_content.line_len(line_i) {
+                //self.editor_content.get_line_valid_chars(line_i)
+                let start = i;
+                if i + 3 < self.editor_content.line_len(line_i)
+                    && self.editor_content.get_char(line_i, i) == '&'
+                    && self.editor_content.get_char(line_i, i + 1) == '['
+                {
+                    let mut end = i + 2;
+                    let mut num_inside_lineref: u32 = 0;
+                    while end < self.editor_content.line_len(line_i) {
+                        if self.editor_content.get_char(line_i, end) == ']'
+                            && num_inside_lineref > 0
+                        {
+                            let num_len = end - (start + 2); // start --> &[num] <- end
+
+                            // remove the number from the original line_ref text '&[x]' (remove only x)
+                            {
+                                let start_pos = Pos::from_row_column(line_i, start + 2);
+                                let end_pos = start_pos.with_column(end);
+                                self.editor.set_cursor_range(start_pos, end_pos);
+                                self.editor.handle_input(
+                                    EditorInputEvent::Del,
+                                    InputModifiers::none(),
+                                    &mut self.editor_content,
+                                );
+                            }
+                            {
+                                // which row has the id of 'num_inside_lineref'?
+                                let referenced_row_index = self
+                                    .editor_content
+                                    .data()
+                                    .iter()
+                                    .position(|it| it.line_id == num_inside_lineref as usize)
+                                    .unwrap_or(0)
+                                    + 1; // '+1' line id cannot be 0
+                                         // TODO: change this code if 64/99/etc line count limit is removed
+                                let mut tmp_arr = ['0', '0', '0'];
+                                let mut tmp_rev_index = 3;
+                                let mut line_id = referenced_row_index;
+                                while line_id > 0 {
+                                    tmp_rev_index -= 1;
+
+                                    let to_insert = line_id % 10;
+                                    tmp_arr[tmp_rev_index] = (48 + to_insert as u8) as char;
+                                    line_id /= 10;
+                                }
+
+                                i = start + 2;
+                                let mut align_selection = 0;
+                                if line_i == original_selection.start.row
+                                    && original_selection.start.column >= i
+                                {
+                                    original_selection.start.column -= num_len;
+                                    align_selection |= 1;
+                                }
+                                if let Some(end) = original_selection.end {
+                                    if line_i == end.row && end.column >= i {
+                                        original_selection.end.as_mut().expect("must").column -=
+                                            num_len;
+                                        align_selection |= 2;
+                                    }
+                                };
+                                for tmp_arr_i in tmp_rev_index..=2 {
+                                    self.editor.handle_input(
+                                        EditorInputEvent::Char(tmp_arr[tmp_arr_i]),
+                                        InputModifiers::none(),
+                                        &mut self.editor_content,
+                                    );
+                                    i += 1;
+                                    if (align_selection & 1) > 0 {
+                                        original_selection.start.column += 1;
+                                    }
+                                    if (align_selection & 2) > 0 {
+                                        original_selection.end.as_mut().expect("must").column += 1;
+                                    }
+                                }
+                                i += 1; // skip ']'
+                            }
+                            continue 'i;
+                        } else if let Some(digit) =
+                            self.editor_content.get_char(line_i, end).to_digit(10)
+                        {
+                            num_inside_lineref = if num_inside_lineref == 0 {
+                                digit
+                            } else {
+                                num_inside_lineref * 10 + digit
+                            };
+                        } else {
+                            break;
+                        }
+                        end += 1;
+                    }
+                }
+                i += 1;
+            }
+        }
+        for line_i in 0..self.editor_content.line_count() {
+            self.editor_content.mut_data(line_i).line_id = line_i + 1;
+        }
+        self.line_id_generator = self.editor_content.line_count() + 1;
+
+        self.editor.set_selection_save_col(original_selection);
     }
 
     pub fn alt_key_released<'b>(
@@ -2233,6 +2397,22 @@ impl NoteCalcApp {
                 Some(RowModificationType::SingleLine(prev_row))
             } else if let Some(modif_type) = self.handle_obj_deletion(&input, editor_objs) {
                 Some(modif_type)
+            } else if input == EditorInputEvent::Char('c')
+                && modifiers.ctrl
+                && self.editor.get_selection().is_range().is_none()
+            {
+                let row = self.editor.get_selection().get_cursor_pos().row;
+                if let Ok(Some(result)) = &results[content_y(row)] {
+                    self.clipboard = Some(render_result(
+                        &units,
+                        &result,
+                        &self.editor_content.get_data(row).result_format,
+                        false,
+                        Some(4),
+                        true,
+                    ));
+                }
+                None
             } else if input == EditorInputEvent::Char('b') && modifiers.ctrl {
                 self.handle_jump_to_definition(&input, modifiers, editor_objs);
                 None
@@ -2274,9 +2454,18 @@ impl NoteCalcApp {
                 if modif_type.is_none() {
                     // it is possible to step into a matrix only through navigation
                     self.check_stepping_into_matrix(prev_cursor_pos, editor_objs);
+                    // if there was no selection but now there is
+                    if prev_selection.is_range().is_none()
+                        && self.editor.get_selection().is_range().is_some()
+                    {
+                        self.normalize_line_refs_in_place();
+                        Some(RowModificationType::AllLinesFrom(0))
+                    } else {
+                        modif_type
+                    }
+                } else {
+                    modif_type
                 }
-
-                modif_type
             }
         };
 
@@ -2373,7 +2562,7 @@ impl NoteCalcApp {
                 match (&prev_result, new_result) {
                     (Ok(Some(_)), Err(_)) => true,
                     (Ok(Some(_)), Ok(None)) => true,
-                    (Ok(Some(prev_r)), Ok(Some(new_r))) => prev_r != new_r,
+                    (Ok(Some(prev_r)), Ok(Some(new_r))) => prev_r.typ != new_r.typ,
                     (Err(_), Err(_)) => false,
                     (Err(_), Ok(None)) => true,
                     (Err(_), Ok(Some(_))) => true,
@@ -2585,6 +2774,12 @@ impl NoteCalcApp {
             }
         }
 
+        if self.editor_content.line_count() > 9 {
+            self.render_data.left_gutter_width = LEFT_GUTTER_MIN_WIDTH + 1;
+        } else {
+            self.render_data.left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
+        }
+
         self.generate_render_commands_and_fill_editor_objs(
             units,
             render_buckets,
@@ -2687,45 +2882,53 @@ impl NoteCalcApp {
         units: &'b Units,
         render_buckets: &'b mut RenderBuckets<'b>,
         result_buffer: &'b mut [u8],
-        token_char_alloator: &'b Arena<char>,
+        tokens: &AppTokens<'b>,
+        vars: &Variables,
         results: &Results,
     ) -> String {
-        let sel = self.editor.get_selection();
-        let first_row = sel.get_first().row;
-        let second_row = sel.get_second().row;
+        render_buckets.clear();
+
+        let (first_row, second_row) =
+            if let Some((start, end)) = self.editor.get_selection().is_range() {
+                (start.row, end.row)
+            } else {
+                (0, self.editor_content.line_count() - 1)
+            };
         let row_nums = second_row - first_row + 1;
 
-        let vars = create_vars();
-        let mut tokens = Vec::with_capacity(128);
+        //let vars = create_vars();
+        //let mut tokens = Vec::with_capacity(128);
 
         let mut gr = GlobalRenderData::new(1024, 1000 /*dummy value*/, 1024 / 2, 0, 2);
         // evaluate all the lines so variables are defined even if they are not selected
         let mut render_height = 0;
         {
             let mut r = PerLineRenderData::new();
-            for (i, line) in self.editor_content.lines().enumerate() {
+            for i in first_row..=second_row {
                 let i = content_y(i);
                 // TODO "--"
-                tokens.clear();
-                TokenParser::parse_line(
-                    line,
-                    &vars[..],
-                    &mut tokens,
-                    &units,
-                    i.as_usize(),
-                    token_char_alloator,
-                );
+                // tokens.clear();
+                // TokenParser::parse_line(
+                //     line,
+                //     &vars[..],
+                //     &mut tokens,
+                //     &units,
+                //     i.as_usize(),
+                //     token_char_alloator,
+                // );
+                //
+                // let mut shunting_output_stack = Vec::with_capacity(32);
+                // ShuntingYard::shunting_yard(&mut tokens, &mut shunting_output_stack);
 
-                let mut shunting_output_stack = Vec::with_capacity(32);
-                ShuntingYard::shunting_yard(&mut tokens, &mut shunting_output_stack);
+                // tokens must be evaluated to register variables for line reference inlining in the output text
 
-                if i.as_usize() >= first_row && i.as_usize() <= second_row {
+                if let Some(tokens) = &tokens[i] {
                     r.new_line_started();
                     gr.set_render_y(r.editor_y, Some(r.render_y));
 
                     r.rendered_row_height = PerLineRenderData::calc_rendered_row_height(
                         &results[i],
-                        &tokens,
+                        &tokens.tokens,
                         &vars[..],
                         None,
                     );
@@ -2735,7 +2938,7 @@ impl NoteCalcApp {
                     render_height += r.rendered_row_height;
                     // Todo: refactor the parameters into a struct
                     render_tokens(
-                        &tokens,
+                        &tokens.tokens,
                         &mut r,
                         &mut gr,
                         render_buckets,
@@ -2743,7 +2946,6 @@ impl NoteCalcApp {
                         &mut Vec::new(),
                         &self.editor,
                         &self.matrix_editing,
-                        // TODO &mut code smell
                         &vars[..],
                         &units,
                         true, // force matrix rendering
@@ -2782,7 +2984,6 @@ impl NoteCalcApp {
         let mut tmp = ResultRender::new(SmallVec::with_capacity(MAX_LINE_COUNT));
 
         gr.result_gutter_x = max_len + 2;
-        //let result_gutter_x = max_len + 2;
         render_results_into_buf_and_calc_len(
             &units,
             &results.as_slice()[first_row..=second_row],
@@ -2794,7 +2995,7 @@ impl NoteCalcApp {
         );
         gr.longest_rendered_result_len = tmp.max_len;
 
-        create_render_commands_for_results(
+        create_render_commands_for_results_and_render_matrices(
             &tmp,
             units,
             &results.as_slice()[first_row..=second_row],
@@ -2804,16 +3005,6 @@ impl NoteCalcApp {
             None,
         );
 
-        // render_results(
-        //     &units,
-        //     render_buckets,
-        //     &results.as_slice()[first_row..=second_row],
-        //     result_buffer,
-        //     &self.editor_content,
-        //     &gr,
-        //     result_gutter_x,
-        //     None,
-        // );
         for i in 0..render_height {
             render_buckets.draw_char(
                 Layer::AboveText,
@@ -2848,127 +3039,131 @@ impl NoteCalcApp {
 
         // matrix autocompletion 'm' + tab
         let cursor_pos = cursor_pos.get_cursor_pos();
-        let line = self.editor_content.get_line_valid_chars(cursor_pos.row);
-        if cursor_pos.column > 3
-            && &line[cursor_pos.column - 4..cursor_pos.column] == &['.', 'p', 'o', 'w']
-        {
-            for _ in 0..4 {
+
+        for autocompl_const in &AUTOCOMPLETION_CONSTS {
+            let len = autocompl_const.abbrev.len();
+            if cursor_pos.column <= len {
+                continue;
+            }
+            let start_x = cursor_pos.column - (len + 1);
+            let autocompletion_match = {
+                let line = self.editor_content.get_line_valid_chars(cursor_pos.row);
+                line[start_x] == '.'
+                    && &line[start_x + 1..cursor_pos.column] == autocompl_const.abbrev
+            };
+            if autocompletion_match {
+                let start = cursor_pos.with_column(start_x);
+                self.editor
+                    .set_selection_save_col(Selection::range(start, cursor_pos));
                 self.editor.handle_input(
                     EditorInputEvent::Backspace,
                     InputModifiers::none(),
                     &mut self.editor_content,
                 );
-            }
-            self.editor.handle_input(
-                EditorInputEvent::Char('^'),
-                InputModifiers::none(),
-                &mut self.editor_content,
-            );
-            return true;
-        } else if line[cursor_pos.column - 1] == 'm'
-            && (cursor_pos.column == 1
-                || (!line[cursor_pos.column - 2].is_alphanumeric()
-                    && line[cursor_pos.column - 2] != '_'))
-        {
-            let prev_col = cursor_pos.column;
-            self.editor.handle_input(
-                EditorInputEvent::Backspace,
-                InputModifiers::none(),
-                &mut self.editor_content,
-            );
-            self.editor.handle_input(
-                EditorInputEvent::Char('['),
-                InputModifiers::none(),
-                &mut self.editor_content,
-            );
-            self.editor.handle_input(
-                EditorInputEvent::Char('0'),
-                InputModifiers::none(),
-                &mut self.editor_content,
-            );
-            self.editor.handle_input(
-                EditorInputEvent::Char(']'),
-                InputModifiers::none(),
-                &mut self.editor_content,
-            );
-            self.editor
-                .set_selection_save_col(Selection::single(cursor_pos.with_column(prev_col)));
-            editor_objects[content_y(cursor_pos.row)].push(EditorObject {
-                typ: EditorObjectType::Matrix {
-                    row_count: 1,
-                    col_count: 1,
-                },
-                row: content_y(cursor_pos.row),
-                start_x: prev_col - 1,
-                end_x: prev_col + 2,
-                rendered_x: 0,           // dummy
-                rendered_y: canvas_y(0), // dummy
-                rendered_w: 3,
-                rendered_h: 1,
-            });
-            self.check_stepping_into_matrix(Pos::from_row_column(0, 0), &editor_objects);
-            return true;
-        } else {
-            // check for autocompletion
-            // find space
-            let (begin_index, expected_len) = {
-                let mut begin_index = cursor_pos.column - 1;
-                let mut len = 1;
-                while begin_index > 0
-                    && (line[begin_index - 1].is_alphanumeric() || line[begin_index - 1] == '_')
-                {
-                    begin_index -= 1;
-                    len += 1;
-                }
-                (begin_index, len)
-            };
-            // find the best match
-            let mut matched_var_index = None;
-            for (var_i, var) in vars[0..cursor_pos.row].iter().enumerate() {
-                if var.is_none() {
-                    continue;
-                }
-                let mut match_len = 0;
-                for (var_ch, actual_ch) in var
-                    .as_ref()
-                    .unwrap()
-                    .name
-                    .iter()
-                    .zip(&line[begin_index..begin_index + expected_len])
-                {
-                    if *var_ch != *actual_ch {
-                        break;
-                    }
-                    match_len += 1;
-                }
-                if expected_len == match_len {
-                    if matched_var_index.is_some() {
-                        // multiple match, don't autocomplete
-                        matched_var_index = None;
-                        break;
-                    } else {
-                        matched_var_index = Some(var_i);
-                    }
-                }
-            }
-
-            if let Some(matched_var_index) = matched_var_index {
-                for ch in vars[matched_var_index]
-                    .as_ref()
-                    .unwrap()
-                    .name
-                    .iter()
-                    .skip(expected_len)
-                {
+                for ch in autocompl_const.replace_to {
                     self.editor.handle_input(
                         EditorInputEvent::Char(*ch),
                         InputModifiers::none(),
                         &mut self.editor_content,
                     );
                 }
+                if let Some(relative_new_cursor_pos) = autocompl_const.relative_new_cursor_pos {
+                    self.editor.set_selection_save_col(Selection::single(
+                        start.add_column(relative_new_cursor_pos),
+                    ));
+                }
+                if autocompl_const.abbrev.len() >= 3
+                    && &autocompl_const.abbrev[0..3] == &['m', 'a', 't']
+                {
+                    // remove the SimpleToken of the .mat string
+                    let size = if autocompl_const.abbrev.len() == 3 {
+                        1 // .mat
+                    } else if autocompl_const.abbrev[3] == '3' {
+                        3
+                    } else {
+                        4
+                    };
+                    editor_objects[content_y(cursor_pos.row)].pop();
+                    editor_objects[content_y(cursor_pos.row)].push(EditorObject {
+                        typ: EditorObjectType::Matrix {
+                            row_count: size,
+                            col_count: size,
+                        },
+                        row: content_y(cursor_pos.row),
+                        start_x,
+                        end_x: start_x + autocompl_const.replace_to.len(),
+                        rendered_x: 0,           // dummy
+                        rendered_y: canvas_y(0), // dummy
+                        rendered_w: size + 2,
+                        rendered_h: 1,
+                    });
+                    self.check_stepping_into_matrix(Pos::from_row_column(0, 0), &editor_objects);
+                }
                 return true;
             }
         }
+
+        let line = self.editor_content.get_line_valid_chars(cursor_pos.row);
+        // check for autocompletion
+        // find space
+        let (begin_index, expected_len) = {
+            let mut begin_index = cursor_pos.column - 1;
+            let mut len = 1;
+            while begin_index > 0
+                && (line[begin_index - 1].is_alphanumeric() || line[begin_index - 1] == '_')
+            {
+                begin_index -= 1;
+                len += 1;
+            }
+            (begin_index, len)
+        };
+        // find the best match
+        let mut matched_var_index = None;
+        for (var_i, var) in vars[0..cursor_pos.row].iter().enumerate() {
+            if var.is_none() {
+                continue;
+            }
+            let mut match_len = 0;
+            for (var_ch, actual_ch) in var
+                .as_ref()
+                .unwrap()
+                .name
+                .iter()
+                .zip(&line[begin_index..begin_index + expected_len])
+            {
+                if *var_ch != *actual_ch {
+                    break;
+                }
+                match_len += 1;
+            }
+            if expected_len == match_len {
+                if matched_var_index.is_some() {
+                    // multiple match, don't autocomplete
+                    matched_var_index = None;
+                    break;
+                } else {
+                    matched_var_index = Some(var_i);
+                }
+            }
+        }
+
+        if let Some(matched_var_index) = matched_var_index {
+            for ch in vars[matched_var_index]
+                .as_ref()
+                .unwrap()
+                .name
+                .iter()
+                .skip(expected_len)
+            {
+                self.editor.handle_input(
+                    EditorInputEvent::Char(*ch),
+                    InputModifiers::none(),
+                    &mut self.editor_content,
+                );
+            }
+            return true;
+        }
+
         return false;
     }
 
@@ -4569,7 +4764,7 @@ fn render_results_into_buf_and_calc_len<'text_ptr>(
         };
 }
 
-fn create_render_commands_for_results<'text_ptr>(
+fn create_render_commands_for_results_and_render_matrices<'text_ptr>(
     tmp: &ResultRender,
     units: &Units,
     results: &[LineResult],
@@ -4577,8 +4772,9 @@ fn create_render_commands_for_results<'text_ptr>(
     result_buffer: &'text_ptr [u8],
     gr: &GlobalRenderData,
     decimal_count: Option<usize>,
-) {
+) -> usize {
     let mut prev_result_matrix_length = None;
+    let mut matrix_len = 0;
     for result_tmp in tmp.result_ranges.iter() {
         let rendered_row_height = gr.get_rendered_height(result_tmp.editor_y);
         let render_y = gr.get_render_y(result_tmp.editor_y).expect("");
@@ -4692,7 +4888,7 @@ fn create_render_commands_for_results<'text_ptr>(
                             &results[result_tmp.editor_y.as_usize()..],
                         );
                     }
-                    let _width = render_matrix_result(
+                    let width = render_matrix_result(
                         units,
                         gr.result_gutter_x + RIGHT_GUTTER_WIDTH,
                         render_y,
@@ -4702,6 +4898,9 @@ fn create_render_commands_for_results<'text_ptr>(
                         gr.get_rendered_height(result_tmp.editor_y),
                         decimal_count,
                     );
+                    if width > matrix_len {
+                        matrix_len = width;
+                    }
                 }
                 _ => {
                     // no result but need rerender
@@ -4719,6 +4918,7 @@ fn create_render_commands_for_results<'text_ptr>(
             }
         }
     }
+    return matrix_len;
 }
 
 fn calc_consecutive_matrices_max_lengths(
@@ -5103,24 +5303,24 @@ fn render_selection_and_its_sum<'text_ptr>(
     }
 }
 
-fn calc_result_gutter_x(current_x: usize, client_width: usize) -> usize {
-    current_x
-        .min(client_width - (RIGHT_GUTTER_WIDTH + MIN_RESULT_PANEL_WIDTH).min(client_width))
-        .max(LEFT_GUTTER_WIDTH + 4)
+fn calc_result_gutter_x(current_x: usize, client_width: usize, left_gutter_width: usize) -> usize {
+    let default_x = default_result_gutter_x(client_width);
+    current_x.min(default_x).max(left_gutter_width + 4)
 }
 
 fn calc_result_gutter_x_wrt_result_lengths(
     longest_result_len: usize,
     client_width: usize,
+    left_gutter_width: usize,
 ) -> usize {
-    (client_width - (RIGHT_GUTTER_WIDTH + longest_result_len.max(MIN_RESULT_PANEL_WIDTH)))
-        .max(LEFT_GUTTER_WIDTH + 4)
+    let x_wrt_results =
+        client_width - (RIGHT_GUTTER_WIDTH + longest_result_len.max(MIN_RESULT_PANEL_WIDTH));
+    calc_result_gutter_x(x_wrt_results, client_width, left_gutter_width)
 }
 
 fn default_result_gutter_x(client_width: usize) -> usize {
-    (LEFT_GUTTER_WIDTH + MAX_EDITOR_WIDTH + SCROLL_BAR_WIDTH)
-        .min(client_width - (RIGHT_GUTTER_WIDTH + MIN_RESULT_PANEL_WIDTH).min(client_width))
-        .max(LEFT_GUTTER_WIDTH + 4)
+    (client_width * DEFAULT_RESULT_PANEL_WIDTH_PERCENT / 100)
+        .max(LEFT_GUTTER_MIN_WIDTH + SCROLL_BAR_WIDTH)
 }
 
 fn calc_rendered_height<'b>(
@@ -5234,9 +5434,14 @@ fn get_scroll_y_after_cursor_movement(
 }
 
 fn change_result_panel_size_wrt_result_len(client_width: usize, gr: &mut GlobalRenderData) {
-    let new_x =
-        calc_result_gutter_x_wrt_result_lengths(gr.longest_rendered_result_len, client_width);
-    if new_x < gr.result_gutter_x {
+    let new_x = calc_result_gutter_x_wrt_result_lengths(
+        gr.longest_rendered_result_len,
+        client_width,
+        gr.left_gutter_width,
+    );
+    if new_x < gr.result_gutter_x
+        || new_x >= (client_width * DEFAULT_RESULT_PANEL_WIDTH_PERCENT / 100)
+    {
         // there might be a new result which requires more space to render
 
         // TODO: this change will have an effect only in the next render cycle
@@ -5245,11 +5450,15 @@ fn change_result_panel_size_wrt_result_len(client_width: usize, gr: &mut GlobalR
 }
 
 #[cfg(test)]
-mod tests {
+mod main_tests {
+
     use super::*;
-    use std::ops::RangeInclusive;
 
     static mut RESULT_BUFFER: [u8; 2048] = [0; 2048];
+
+    const fn result_panel_w(client_width: usize) -> usize {
+        client_width * DEFAULT_RESULT_PANEL_WIDTH_PERCENT / 100
+    }
 
     struct RustIsShit {
         app_ptr: u64,
@@ -5800,8 +6009,8 @@ mod tests {
         test.render();
         test.input(EditorInputEvent::Char('c'), InputModifiers::ctrl());
         assert_eq!(
-            test.app()
-                .get_selected_text()
+            test.mut_app()
+                .get_selected_text_and_clear_app_clipboard()
                 .as_ref()
                 .map(|it| it.as_str()),
             Some("69")
@@ -5861,11 +6070,12 @@ mod tests {
         test.input(EditorInputEvent::Up, InputModifiers::none());
         let first_line_h = 5;
         let second_line_half = (5 / 2) + 1;
+        let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
         test.contains(
             &test.mut_render_bucket().custom_commands[Layer::AboveText as usize],
             1,
             OutputMessage::PulsingRectangle {
-                x: 9,
+                x: left_gutter_width + 5,
                 y: canvas_y(first_line_h + second_line_half),
                 w: 3,
                 h: 1,
@@ -6012,104 +6222,6 @@ mod tests {
     }
 
     #[test]
-    fn test_matrix_autocompletion() {
-        let test = create_app2(35);
-        test.paste("m");
-        test.input(EditorInputEvent::Tab, InputModifiers::none());
-        test.input(EditorInputEvent::Enter, InputModifiers::none());
-        assert_eq!("[0]", test.get_editor_content());
-    }
-
-    #[test]
-    fn test_matrix_autocompletion2() {
-        let test = create_app2(35);
-        test.paste("m m");
-        test.input(EditorInputEvent::Tab, InputModifiers::none());
-        test.input(EditorInputEvent::Enter, InputModifiers::none());
-        assert_eq!("m [0]", test.get_editor_content());
-    }
-
-    #[test]
-    fn test_matrix_autocompletion3() {
-        let test = create_app2(35);
-        test.paste("_m");
-        test.input(EditorInputEvent::Tab, InputModifiers::none());
-        test.input(EditorInputEvent::Enter, InputModifiers::none());
-        assert_eq!("_m  \n", test.get_editor_content());
-    }
-
-    #[test]
-    fn test_matrix_autocompletion4() {
-        let test = create_app2(35);
-        test.paste("am");
-        test.input(EditorInputEvent::Tab, InputModifiers::none());
-        test.input(EditorInputEvent::Enter, InputModifiers::none());
-        assert_eq!("am  \n", test.get_editor_content());
-    }
-
-    #[test]
-    fn test_pow_autocompletion() {
-        let test = create_app2(35);
-        test.paste(".pow");
-        test.input(EditorInputEvent::Tab, InputModifiers::none());
-        assert_eq!("^", test.get_editor_content());
-    }
-
-    #[test]
-    fn test_pow_autocompletion2() {
-        let test = create_app2(35);
-        test.paste("2.pow");
-        test.input(EditorInputEvent::Tab, InputModifiers::none());
-        assert_eq!("2^", test.get_editor_content());
-    }
-
-    #[test]
-    fn end_matrix_edit_by_right_key() {
-        let test = create_app2(35);
-        test.paste("");
-        test.input(EditorInputEvent::Char('m'), InputModifiers::none());
-        test.input(EditorInputEvent::Tab, InputModifiers::none());
-        test.input(EditorInputEvent::Right, InputModifiers::alt());
-        test.input(EditorInputEvent::Right, InputModifiers::alt());
-        test.input(EditorInputEvent::Right, InputModifiers::alt());
-        // inside the matrix
-        test.input(EditorInputEvent::End, InputModifiers::none());
-        test.input(EditorInputEvent::Right, InputModifiers::none());
-        test.input(EditorInputEvent::Right, InputModifiers::none());
-        assert_eq!(test.app().editor.get_selection().get_cursor_pos().column, 9);
-    }
-
-    #[test]
-    fn end_matrix_edit_by_tab_key() {
-        let test = create_app2(35);
-        test.paste("");
-        test.input(EditorInputEvent::Char('m'), InputModifiers::none());
-        test.input(EditorInputEvent::Tab, InputModifiers::none());
-        test.input(EditorInputEvent::Right, InputModifiers::alt());
-        test.input(EditorInputEvent::Right, InputModifiers::alt());
-        test.input(EditorInputEvent::Right, InputModifiers::alt());
-        // inside the matrix
-        test.input(EditorInputEvent::End, InputModifiers::none());
-        test.input(EditorInputEvent::Tab, InputModifiers::none());
-        assert_eq!(test.app().editor.get_selection().get_cursor_pos().column, 9);
-    }
-
-    #[test]
-    fn end_matrix_edit_by_end_key() {
-        let test = create_app2(35);
-        test.paste("");
-        test.input(EditorInputEvent::Char('m'), InputModifiers::none());
-        test.input(EditorInputEvent::Tab, InputModifiers::none());
-        test.input(EditorInputEvent::Right, InputModifiers::alt());
-        test.input(EditorInputEvent::Right, InputModifiers::alt());
-        test.input(EditorInputEvent::Right, InputModifiers::alt());
-        // inside the matrix
-        test.input(EditorInputEvent::End, InputModifiers::none());
-        test.input(EditorInputEvent::End, InputModifiers::none());
-        assert_eq!(test.app().editor.get_selection().get_cursor_pos().column, 9);
-    }
-
-    #[test]
     fn end_btn_matrix() {
         {
             let test = create_app2(35);
@@ -6238,86 +6350,42 @@ mod tests {
     }
 
     #[test]
-    fn test_line_ref_normalization() {
-        let test = create_app2(35);
-        test.paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n");
-        test.set_cursor_row_col(12, 2);
-        test.render();
-        // remove a line
-        test.input(EditorInputEvent::Up, InputModifiers::none());
-        test.input(EditorInputEvent::Up, InputModifiers::none());
-        test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
-
-        // Move to end
-        test.input(EditorInputEvent::PageDown, InputModifiers::none());
-        test.input(EditorInputEvent::End, InputModifiers::none());
-        // ALT
-        test.input(EditorInputEvent::Up, InputModifiers::alt());
-        test.alt_key_released();
-        test.input(EditorInputEvent::Up, InputModifiers::alt());
-        test.alt_key_released();
-        test.input(EditorInputEvent::Up, InputModifiers::alt());
-        test.alt_key_released();
-        assert_eq!(
-            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n12\n13\n&[13]&[13]&[13]",
-            &test.get_editor_content()
-        );
-        assert_eq!(
-            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n12\n13\n&[12]&[12]&[12]\n",
-            &test.app().get_normalized_content()
-        );
-    }
-
-    #[test]
-    fn test_line_ref_denormalization() {
-        let test = create_app2(35);
-        test.set_normalized_content("1111\n2222\n14 * &[2]&[2]&[2]\n");
-        let content = &test.app().editor_content;
-        assert_eq!(1, content.get_data(0).line_id);
-        assert_eq!(2, content.get_data(1).line_id);
-        assert_eq!(3, content.get_data(2).line_id);
-    }
-
-    #[test]
     fn test_empty_right_gutter_min_len() {
         let test = create_app2(35);
         test.set_normalized_content("");
-        assert_eq!(
-            test.get_render_data().result_gutter_x,
-            120 - (MIN_RESULT_PANEL_WIDTH + RIGHT_GUTTER_WIDTH)
-        );
+        assert_eq!(test.get_render_data().result_gutter_x, result_panel_w(120));
     }
 
     #[test]
     fn right_gutter_is_moving_if_there_would_be_enough_space_for_result() {
-        let test = create_app2(35);
+        let test = create_app3(40, 35);
         test.paste("1\n");
-        assert_eq!(
-            test.get_render_data().result_gutter_x,
-            120 - (MIN_RESULT_PANEL_WIDTH + RIGHT_GUTTER_WIDTH)
-        );
+        assert_eq!(test.get_render_data().result_gutter_x, result_panel_w(40));
 
         test.paste("999 999 999 999");
         assert_eq!(
             test.get_render_data().result_gutter_x,
-            120 - ("999 999 999 999".len() + RIGHT_GUTTER_WIDTH)
+            40 - ("999 999 999 999".len() + RIGHT_GUTTER_WIDTH)
         );
     }
 
     #[test]
     fn right_gutter_is_moving_if_there_would_be_enough_space_for_binary_result() {
-        let test = create_app2(35);
+        let test = create_app3(40, 35);
         test.paste("9999");
-        assert_eq!(
-            test.get_render_data().result_gutter_x,
-            120 - (MIN_RESULT_PANEL_WIDTH + RIGHT_GUTTER_WIDTH)
-        );
+        assert_eq!(test.get_render_data().result_gutter_x, result_panel_w(40),);
 
         test.input(EditorInputEvent::Left, InputModifiers::alt());
         assert_eq!(
             test.get_render_data().result_gutter_x,
-            120 - ("100111 00001111".len() + RIGHT_GUTTER_WIDTH)
+            40 - ("100111 00001111".len() + RIGHT_GUTTER_WIDTH)
         );
+    }
+
+    #[test]
+    fn right_gutter_calc_panic() {
+        let test = create_app3(176, 35);
+        test.paste("ok");
     }
 
     #[test]
@@ -6329,38 +6397,53 @@ mod tests {
 
     #[test]
     fn test_resize_keeps_result_width() {
-        let test = create_app2(35);
+        let test = create_app3(60, 35);
         test.set_normalized_content("80kg\n190cm\n0.0016\n0.128 kg");
         assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
         assert_eq!(
             test.get_render_data().result_gutter_x,
-            120 - (11 + RIGHT_GUTTER_WIDTH)
+            default_result_gutter_x(60)
         );
 
-        test.handle_resize(100);
+        test.handle_resize(50);
         assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
         assert_eq!(
             test.get_render_data().result_gutter_x,
-            100 - (11 + RIGHT_GUTTER_WIDTH)
+            default_result_gutter_x(50)
         );
 
-        test.handle_resize(120);
-        assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
-        assert_eq!(
-            test.get_render_data().result_gutter_x,
-            120 - (11 + RIGHT_GUTTER_WIDTH)
-        );
-
-        test.handle_resize(80);
-        assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
         test.handle_resize(60);
         assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
+        assert_eq!(
+            test.get_render_data().result_gutter_x,
+            default_result_gutter_x(60)
+        );
+
         test.handle_resize(40);
         assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
+        assert_eq!(
+            test.get_render_data().result_gutter_x,
+            40 - (11 + RIGHT_GUTTER_WIDTH)
+        );
+
+        test.handle_resize(30);
+        assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
+        assert_eq!(
+            test.get_render_data().result_gutter_x,
+            30 - (11 + RIGHT_GUTTER_WIDTH)
+        );
 
         test.handle_resize(20);
         assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
-        assert_eq!(test.get_render_data().result_gutter_x, 8);
+        assert_eq!(
+            test.get_render_data().result_gutter_x,
+            20 - (11 + RIGHT_GUTTER_WIDTH)
+        );
+
+        // too small
+        test.handle_resize(10);
+        assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
+        assert_eq!(test.get_render_data().result_gutter_x, 7);
     }
 
     #[test]
@@ -6608,7 +6691,7 @@ Fat intake
             RenderAsciiTextMsg { text, row, column } => {
                 assert_eq!(text, &[b'E', b'r', b'r']);
                 assert_eq!(*row, canvas_y(0));
-                assert_eq!(*column, 113);
+                assert_eq!(*column, result_panel_w(120) + RIGHT_GUTTER_WIDTH);
             }
         }
     }
@@ -6681,6 +6764,31 @@ sum",
         test.input(EditorInputEvent::Left, InputModifiers::shift());
         test.input(EditorInputEvent::Char('c'), InputModifiers::ctrl());
         assert_eq!("aaa", &test.app().editor.clipboard);
+        assert_eq!(&None, &test.app().clipboard);
+    }
+
+    #[test]
+    fn test_ctrl_c_without_selection() {
+        let test = create_app2(35);
+        test.paste("12*3");
+        test.input(EditorInputEvent::Char('c'), InputModifiers::ctrl());
+        assert_eq!(&Some("36".to_owned()), &test.app().clipboard);
+        assert!(test.app().editor.clipboard.is_empty());
+    }
+
+    #[test]
+    fn test_ctrl_c_without_selection2() {
+        let test = create_app2(35);
+        test.paste("12*3");
+        test.input(EditorInputEvent::Char('c'), InputModifiers::ctrl());
+        assert_eq!(
+            Some("36".to_owned()),
+            test.mut_app().get_selected_text_and_clear_app_clipboard()
+        );
+        assert_eq!(
+            None,
+            test.mut_app().get_selected_text_and_clear_app_clipboard()
+        );
     }
 
     #[test]
@@ -6709,156 +6817,6 @@ sum",
         test.render_get_result_buf(&mut result_buffer[..]);
         // both the first line and the 'sum' line renders a matrix, which leaves the result buffer empty
         assert_results(&["\u{0}"][..], &result_buffer);
-    }
-
-    #[test]
-    fn test_rich_copy() {
-        fn t(content: &str, expected: &str, selected_range: RangeInclusive<usize>) {
-            let test = create_app2(35);
-            test.paste(content);
-            test.set_selection(Selection::range(
-                Pos::from_row_column(*selected_range.start(), 0),
-                Pos::from_row_column(*selected_range.end(), 0),
-            ));
-            let mut result_buffer = [0; 256];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            fn trimmed_compare(a: &str, b: &str) {
-                assert_eq!(a.lines().count(), b.lines().count(), "{} != {}", a, b);
-
-                let a_lines = a.lines();
-                let b_lines = b.lines();
-                for (a_line, b_line) in a_lines.zip(b_lines) {
-                    assert_eq!(a_line.trim_start(), b_line.trim_start());
-                }
-            }
-            let mut result_buffer = [0; 256];
-            trimmed_compare(
-                expected,
-                &test.mut_app().copy_selected_rows_with_result_to_clipboard(
-                    &test.units(),
-                    &mut RenderBuckets::new(),
-                    &mut result_buffer,
-                    &test.allocator(),
-                    &test.mut_results(),
-                ),
-            );
-        }
-        t("1", "1  █ 1\n", 0..=0);
-        t("1 + 2", "1 + 2  █ 3\n", 0..=0);
-        t("23", "23  █ 23\n", 0..=0);
-        t(
-            "1\n\
-               23",
-            "1   █  1\n\
-                 23  █ 23\n",
-            0..=1,
-        );
-        t(
-            "1\n\
-               23\n\
-               99999.66666",
-            "1   █  1\n\
-                     23  █ 23\n",
-            0..=1,
-        );
-        t(
-            "1\n\
-               23\n\
-               99999.66666",
-            "1            █      1\n\
-                 23           █     23\n\
-                 99999.66666  █ 99 999.66666\n",
-            0..=2,
-        );
-        t("[1]", "[1]  █ [1]\n", 0..=0);
-        t(
-            "[1]\n\
-                 [23]",
-            "[1]  █ [1]\n",
-            0..=0,
-        );
-        t(
-            "[1]\n\
-                 [23]",
-            "[1]   █ [ 1]\n\
-                 [23]  █ [23]\n",
-            0..=1,
-        );
-        t("[1,2,3]", "[1  2  3]  █ [1  2  3]\n", 0..=0);
-        t(
-            "[1,2,3]\n[33, 44, 55]",
-            "[1  2  3]     █ [ 1   2   3]\n\
-                 [33  44  55]  █ [33  44  55]\n",
-            0..=1,
-        );
-        t(
-            "[1;2;3]",
-            "┌ ┐  █ ┌ ┐\n\
-                 │1│  █ │1│\n\
-                 │2│  █ │2│\n\
-                 │3│  █ │3│\n\
-                 └ ┘  █ └ ┘\n",
-            0..=0,
-        );
-        t(
-            "[1, 2, 3] * [1;2;3]",
-            "            ┌ ┐  █\n\
-                             │1│  █\n\
-                 [1  2  3] * │2│  █ [14]\n\
-                             │3│  █\n\
-                             └ ┘  █\n",
-            0..=0,
-        );
-        // test alignment
-        t(
-            "[1, 2, 3]\n'asd\n[1, 2, 3]\n[10, 20, 30]",
-            "[1  2  3]     █ [1  2  3]\n\
-                 'asd          █\n\
-                 [1  2  3]     █ [ 1   2   3]\n\
-                 [10  20  30]  █ [10  20  30]\n",
-            0..=3,
-        );
-
-        // test alignment + thousand grouping
-        t(
-            "[1;2.3;2222;4km;50000]",
-            // Result
-            "┌     ┐  █ ┌           ┐\n\
-                 │    1│  █ │     1.0   │\n\
-                 │  2.3│  █ │     2.3   │\n\
-                 │ 2222│  █ │ 2 222.0   │\n\
-                 │  4km│  █ │     4.0 km│\n\
-                 │50000│  █ │50 000.0   │\n\
-                 └     ┘  █ └           ┘\n",
-            0..=0,
-        );
-        // test selecting only a single line
-        t(
-            "[1, 2, 3]\n'asd\n[1, 2, 3]\n[10, 20, 30]",
-            "[1  2  3]  █ [1  2  3]\n",
-            2..=2,
-        );
-        t(
-            "_999
-    22222
-    3
-    4
-    2
-    &[4]
-    722
-    alma = 3
-    alma * 2
-    alma * &[7] + &[6]
-    &[7]
-    2222222222222222222722.22222
-    ^
-    human brain: 10^16 op/s
-    so far 100 000 000 000 humans lived
-    avg. human lifespan is 50 years
-    total human brain activity is &[14] * &[15] * (&[16]/1s)",
-            "2222222222222222222722.22222  █ 2 222 222 222 222 222 222 722.22222\n",
-            11..=11,
-        );
     }
 
     #[test]
@@ -6908,307 +6866,13 @@ sum",
     }
 
     #[test]
-    fn test_pressing_tab_on_m_char() {
-        {
-            let test = create_app2(35);
-            test.paste("m");
-            test.render();
-            test.input(EditorInputEvent::Tab, InputModifiers::none());
-            test.render();
-            assert_eq!("[0]", test.get_editor_content());
-        }
-        {
-            let test = create_app2(35);
-            test.paste("am");
-            test.render();
-            test.input(EditorInputEvent::Tab, InputModifiers::none());
-            test.render();
-            assert_eq!("am  ", test.get_editor_content());
-        }
-        {
-            let test = create_app2(35);
-            test.paste("a m");
-            test.render();
-            test.input(EditorInputEvent::Tab, InputModifiers::none());
-            test.render();
-            assert_eq!("a [0]", test.get_editor_content());
-        }
-    }
-
-    #[test]
-    fn test_that_cursor_is_inside_matrix_on_creation() {
-        let test = create_app2(35);
-        test.paste("m");
-        test.input(EditorInputEvent::Tab, InputModifiers::none());
-        test.input(EditorInputEvent::Char('1'), InputModifiers::none());
-        test.input(EditorInputEvent::Enter, InputModifiers::none());
-        assert_eq!("[1]", test.get_editor_content());
-    }
-
-    #[test]
-    fn test_matrix_alt_plus_right() {
-        {
-            let test = create_app2(35);
-            test.paste("[1]");
-            test.render();
-            test.input(EditorInputEvent::Left, InputModifiers::none());
-            test.render();
-            test.input(EditorInputEvent::Right, InputModifiers::alt());
-            test.input(EditorInputEvent::Enter, InputModifiers::none());
-            assert_eq!("[1,0]", test.get_editor_content());
-        }
-        {
-            let test = create_app2(35);
-            test.paste("[1]");
-            test.render();
-            test.input(EditorInputEvent::Left, InputModifiers::none());
-            test.render();
-            test.input(EditorInputEvent::Right, InputModifiers::alt());
-            test.input(EditorInputEvent::Right, InputModifiers::alt());
-            test.input(EditorInputEvent::Right, InputModifiers::alt());
-            test.input(EditorInputEvent::Enter, InputModifiers::none());
-            assert_eq!("[1,0,0,0]", test.get_editor_content());
-        }
-        {
-            let test = create_app2(35);
-            test.paste("[1;2]");
-            test.render();
-            test.input(EditorInputEvent::Left, InputModifiers::none());
-            test.render();
-            test.input(EditorInputEvent::Right, InputModifiers::alt());
-            test.input(EditorInputEvent::Enter, InputModifiers::none());
-            assert_eq!("[1,0;2,0]", test.get_editor_content());
-        }
-    }
-
-    #[test]
-    fn test_matrix_alt_plus_left() {
-        {
-            let test = create_app2(35);
-            test.paste("[1]");
-            test.render();
-            test.input(EditorInputEvent::Left, InputModifiers::none());
-            test.render();
-            test.input(EditorInputEvent::Left, InputModifiers::alt());
-            test.input(EditorInputEvent::Enter, InputModifiers::none());
-            assert_eq!("[1]", test.get_editor_content());
-        }
-        {
-            let test = create_app2(35);
-            test.paste("[1, 2, 3]");
-            test.render();
-            test.input(EditorInputEvent::Left, InputModifiers::none());
-            test.render();
-            test.input(EditorInputEvent::Left, InputModifiers::alt());
-            test.input(EditorInputEvent::Enter, InputModifiers::none());
-            assert_eq!("[1,2]", test.get_editor_content());
-        }
-        {
-            let test = create_app2(35);
-            test.paste("[1, 2, 3]");
-            test.render();
-            test.input(EditorInputEvent::Left, InputModifiers::none());
-            test.render();
-            test.input(EditorInputEvent::Left, InputModifiers::alt());
-            test.input(EditorInputEvent::Left, InputModifiers::alt());
-            test.input(EditorInputEvent::Enter, InputModifiers::none());
-            assert_eq!("[1]", test.get_editor_content());
-        }
-        {
-            let test = create_app2(35);
-            test.paste("[1, 2, 3; 4,5,6]");
-            test.render();
-            test.input(EditorInputEvent::Left, InputModifiers::none());
-            test.render();
-            test.input(EditorInputEvent::Left, InputModifiers::alt());
-            test.input(EditorInputEvent::Enter, InputModifiers::none());
-            assert_eq!("[1,2;4,5]", test.get_editor_content());
-        }
-    }
-
-    #[test]
-    fn test_matrix_alt_plus_down() {
-        {
-            let test = create_app2(35);
-            test.paste("[1]");
-            test.render();
-            test.input(EditorInputEvent::Left, InputModifiers::none());
-            test.render();
-            test.input(EditorInputEvent::Down, InputModifiers::alt());
-            test.input(EditorInputEvent::Enter, InputModifiers::none());
-            assert_eq!("[1;0]", test.get_editor_content());
-        }
-        {
-            let test = create_app2(35);
-            test.paste("[1]");
-            test.render();
-            test.input(EditorInputEvent::Left, InputModifiers::none());
-            test.render();
-            test.input(EditorInputEvent::Down, InputModifiers::alt());
-            test.input(EditorInputEvent::Down, InputModifiers::alt());
-            test.input(EditorInputEvent::Down, InputModifiers::alt());
-            test.input(EditorInputEvent::Enter, InputModifiers::none());
-            assert_eq!("[1;0;0;0]", test.get_editor_content());
-        }
-        {
-            let test = create_app2(35);
-            test.paste("[1,2]");
-            test.render();
-            test.input(EditorInputEvent::Left, InputModifiers::none());
-            test.render();
-            test.input(EditorInputEvent::Down, InputModifiers::alt());
-            // this render is important, it tests a bug!
-            test.render();
-            test.input(EditorInputEvent::Enter, InputModifiers::none());
-            assert_eq!("[1,2;0,0]", test.get_editor_content());
-        }
-    }
-
-    #[test]
-    fn test_matrix_alt_plus_up() {
-        {
-            let test = create_app2(35);
-            test.paste("[1]");
-            test.render();
-            test.input(EditorInputEvent::Left, InputModifiers::none());
-            test.render();
-            test.input(EditorInputEvent::Up, InputModifiers::alt());
-            test.input(EditorInputEvent::Enter, InputModifiers::none());
-            assert_eq!("[1]", test.get_editor_content());
-        }
-        {
-            let test = create_app2(35);
-            test.paste("[1; 2; 3]");
-            test.render();
-            test.input(EditorInputEvent::Left, InputModifiers::none());
-            test.render();
-            test.input(EditorInputEvent::Up, InputModifiers::alt());
-            test.input(EditorInputEvent::Enter, InputModifiers::none());
-            assert_eq!("[1;2]", test.get_editor_content());
-        }
-        {
-            let test = create_app2(35);
-            test.paste("[1; 2; 3]");
-            test.render();
-            test.input(EditorInputEvent::Left, InputModifiers::none());
-            test.render();
-            test.input(EditorInputEvent::Up, InputModifiers::alt());
-            test.input(EditorInputEvent::Up, InputModifiers::alt());
-            test.input(EditorInputEvent::Enter, InputModifiers::none());
-            assert_eq!("[1]", test.get_editor_content());
-        }
-        {
-            let test = create_app2(35);
-            test.paste("[1, 2, 3; 4,5,6]");
-            test.render();
-            test.input(EditorInputEvent::Left, InputModifiers::none());
-            test.render();
-            test.input(EditorInputEvent::Up, InputModifiers::alt());
-            test.input(EditorInputEvent::Enter, InputModifiers::none());
-            assert_eq!("[1,2,3]", test.get_editor_content());
-        }
-    }
-
-    #[test]
-    fn test_autocompletion_single() {
-        let test = create_app2(35);
-        test.paste("apple = 12$");
-        test.render();
-        test.input(EditorInputEvent::Enter, InputModifiers::none());
-        test.input(EditorInputEvent::Char('a'), InputModifiers::none());
-        test.input(EditorInputEvent::Tab, InputModifiers::none());
-        assert_eq!("apple = 12$\napple", test.get_editor_content());
-    }
-
-    #[test]
-    fn test_autocompletion_var_name_with_space() {
-        let test = create_app2(35);
-        test.paste("some apples = 12$");
-        test.render();
-        test.input(EditorInputEvent::Enter, InputModifiers::none());
-        test.input(EditorInputEvent::Char('s'), InputModifiers::none());
-        test.input(EditorInputEvent::Char('o'), InputModifiers::none());
-        test.input(EditorInputEvent::Tab, InputModifiers::none());
-        assert_eq!("some apples = 12$\nsome apples", test.get_editor_content());
-    }
-
-    #[test]
-    fn test_autocompletion_var_name_with_space2() {
-        let test = create_app2(35);
-        test.paste("some apples = 12$");
-        test.render();
-        test.input(EditorInputEvent::Enter, InputModifiers::none());
-        test.input(EditorInputEvent::Char('s'), InputModifiers::none());
-        test.input(EditorInputEvent::Char('o'), InputModifiers::none());
-        test.input(EditorInputEvent::Char('m'), InputModifiers::none());
-        test.input(EditorInputEvent::Char('e'), InputModifiers::none());
-        test.input(EditorInputEvent::Tab, InputModifiers::none());
-        assert_eq!("some apples = 12$\nsome apples", test.get_editor_content());
-    }
-
-    #[test]
-    fn test_autocompletion_var_name_with_space3() {
-        let test = create_app2(35);
-        test.paste("men BMR = 12");
-        test.render();
-        test.input(EditorInputEvent::Enter, InputModifiers::none());
-        test.input(EditorInputEvent::Char('m'), InputModifiers::none());
-        test.input(EditorInputEvent::Char('e'), InputModifiers::none());
-        test.input(EditorInputEvent::Char('n'), InputModifiers::none());
-        test.input(EditorInputEvent::Char(' '), InputModifiers::none());
-        test.input(EditorInputEvent::Left, InputModifiers::none());
-        test.input(EditorInputEvent::Tab, InputModifiers::none());
-        assert_eq!("men BMR = 12\nmen BMR ", test.get_editor_content());
-    }
-
-    #[test]
-    fn test_autocompletion_only_above_vars() {
-        let test = create_app2(35);
-        test.paste("apple = 12$");
-        test.render();
-        test.input(EditorInputEvent::Home, InputModifiers::none());
-        test.input(EditorInputEvent::Enter, InputModifiers::none());
-        test.input(EditorInputEvent::Up, InputModifiers::none());
-        test.input(EditorInputEvent::Char('a'), InputModifiers::none());
-        test.input(EditorInputEvent::Tab, InputModifiers::none());
-        assert_eq!("a   \napple = 12$", test.get_editor_content());
-    }
-
-    #[test]
-    fn test_autocompletion_two_vars() {
-        let test = create_app2(35);
-        test.paste("apple = 12$\nbanana = 7$\n");
-        test.render();
-        test.input(EditorInputEvent::Char('a'), InputModifiers::none());
-        test.input(EditorInputEvent::Tab, InputModifiers::none());
-        assert_eq!("apple = 12$\nbanana = 7$\napple", test.get_editor_content());
-
-        test.input(EditorInputEvent::Char(' '), InputModifiers::none());
-        test.input(EditorInputEvent::Char('b'), InputModifiers::none());
-        test.input(EditorInputEvent::Tab, InputModifiers::none());
-        assert_eq!(
-            "apple = 12$\nbanana = 7$\napple banana",
-            test.get_editor_content()
-        );
-    }
-
-    #[test]
-    fn test_that_no_autocompletion_for_multiple_results() {
-        let test = create_app2(35);
-        test.paste("apple = 12$\nananas = 7$\n");
-        test.render();
-        test.input(EditorInputEvent::Char('a'), InputModifiers::none());
-        test.input(EditorInputEvent::Tab, InputModifiers::none());
-        assert_eq!("apple = 12$\nananas = 7$\na   ", test.get_editor_content());
-    }
-
-    #[test]
     fn test_click_1() {
         let test = create_app2(35);
         test.paste("'1st row\n[1;2;3] some text\n'3rd row");
         test.render();
         // click after the vector in 2nd row
-        test.click(LEFT_GUTTER_WIDTH + 4, 2);
+        let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
+        test.click(left_gutter_width + 4, 2);
         test.input(EditorInputEvent::Char('X'), InputModifiers::none());
         assert_eq!(
             "'1st row\n[1;2;3] Xsome text\n'3rd row",
@@ -7222,11 +6886,12 @@ sum",
         test.paste("'1st row\nsome text [1;2;3]\n'3rd row");
         test.render();
         // click after the vector in 2nd row
-        test.click(LEFT_GUTTER_WIDTH + 4, 2);
+        let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
+        test.click(left_gutter_width + 4, 2);
         test.input(EditorInputEvent::Char('X'), InputModifiers::none());
         assert_eq!(
-            "'1st row\nsomeX text [1;2;3]\n'3rd row",
-            test.get_editor_content()
+            test.get_editor_content(),
+            "'1st row\nsomeX text [1;2;3]\n'3rd row"
         );
     }
 
@@ -7235,7 +6900,8 @@ sum",
         let test = create_app2(35);
         test.paste("'1st row\n[1;2;3] some text\n'3rd row");
         test.render();
-        test.click(LEFT_GUTTER_WIDTH + 40, 2);
+        let left_gutter_width = 1;
+        test.click(left_gutter_width + 40, 2);
         test.input(EditorInputEvent::Char('X'), InputModifiers::none());
         assert_eq!(
             "'1st row\n[1;2;3] some textX\n'3rd row",
@@ -7248,7 +6914,8 @@ sum",
         let test = create_app2(35);
         test.paste("'1st row\n[1;2;3] some text\n'3rd row");
         test.render();
-        test.click(LEFT_GUTTER_WIDTH + 40, 40);
+        let left_gutter_width = 1;
+        test.click(left_gutter_width + 40, 40);
         test.input(EditorInputEvent::Char('X'), InputModifiers::none());
         assert_eq!(
             "'1st row\n[1;2;3] some text\n'3rd rowX",
@@ -7456,7 +7123,7 @@ sum",
             assert_eq!(
                 render_commands[2],
                 OutputMessage::PulsingRectangle {
-                    x: 113,
+                    x: default_result_gutter_x(120) + RIGHT_GUTTER_WIDTH,
                     y: canvas_y(0),
                     w: 2,
                     h: 1,
@@ -7468,7 +7135,7 @@ sum",
             assert_eq!(
                 render_commands[3],
                 OutputMessage::PulsingRectangle {
-                    x: 113,
+                    x: default_result_gutter_x(120) + RIGHT_GUTTER_WIDTH,
                     y: canvas_y(1),
                     w: 2,
                     h: 1,
@@ -7510,7 +7177,7 @@ sum",
             assert_eq!(
                 render_bucket[4],
                 OutputMessage::PulsingRectangle {
-                    x: 4,
+                    x: LEFT_GUTTER_MIN_WIDTH,
                     y: canvas_y(1),
                     w: 2,
                     h: 1,
@@ -7547,10 +7214,11 @@ sum",
                 &test.mut_render_bucket().custom_commands[Layer::AboveText as usize];
             assert_eq!(render_bucket.len(), 8);
 
+            let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
             assert_eq!(
                 render_bucket[4],
                 OutputMessage::PulsingRectangle {
-                    x: 4,
+                    x: left_gutter_width,
                     y: canvas_y(1),
                     w: 2,
                     h: 1,
@@ -7562,7 +7230,7 @@ sum",
             assert_eq!(
                 render_bucket[5],
                 OutputMessage::PulsingRectangle {
-                    x: 7,
+                    x: left_gutter_width + 3,
                     y: canvas_y(1),
                     w: 2,
                     h: 1,
@@ -7575,7 +7243,7 @@ sum",
             assert_eq!(
                 render_bucket[6],
                 OutputMessage::PulsingRectangle {
-                    x: 4,
+                    x: left_gutter_width,
                     y: canvas_y(1),
                     w: 2,
                     h: 1,
@@ -7587,7 +7255,7 @@ sum",
             assert_eq!(
                 render_bucket[7],
                 OutputMessage::PulsingRectangle {
-                    x: 7,
+                    x: left_gutter_width + 3,
                     y: canvas_y(1),
                     w: 2,
                     h: 1,
@@ -7628,10 +7296,11 @@ sum",
                 &test.mut_render_bucket().custom_commands[Layer::AboveText as usize];
             assert_eq!(render_bucket.len(), 9);
 
+            let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
             assert_eq!(
                 render_bucket[5],
                 OutputMessage::PulsingRectangle {
-                    x: 4,
+                    x: left_gutter_width,
                     y: canvas_y(1),
                     w: 2,
                     h: 1,
@@ -7643,7 +7312,7 @@ sum",
             assert_eq!(
                 render_bucket[6],
                 OutputMessage::PulsingRectangle {
-                    x: 4,
+                    x: left_gutter_width,
                     y: canvas_y(2),
                     w: 2,
                     h: 1,
@@ -7656,7 +7325,7 @@ sum",
             assert_eq!(
                 render_bucket[7],
                 OutputMessage::PulsingRectangle {
-                    x: 4,
+                    x: left_gutter_width,
                     y: canvas_y(1),
                     w: 2,
                     h: 1,
@@ -7668,7 +7337,7 @@ sum",
             assert_eq!(
                 render_bucket[8],
                 OutputMessage::PulsingRectangle {
-                    x: 4,
+                    x: left_gutter_width,
                     y: canvas_y(2),
                     w: 2,
                     h: 1,
@@ -7711,7 +7380,7 @@ sum",
             assert_eq!(
                 render_bucket[2],
                 OutputMessage::PulsingRectangle {
-                    x: 4,
+                    x: LEFT_GUTTER_MIN_WIDTH,
                     y: canvas_y(1),
                     w: 1,
                     h: 1,
@@ -7759,7 +7428,7 @@ sum",
             assert_eq!(
                 render_bucket[2],
                 OutputMessage::PulsingRectangle {
-                    x: 4,
+                    x: LEFT_GUTTER_MIN_WIDTH,
                     y: canvas_y(1),
                     w: 1,
                     h: 1,
@@ -7771,7 +7440,7 @@ sum",
             assert_eq!(
                 render_bucket[3],
                 OutputMessage::PulsingRectangle {
-                    x: 5,
+                    x: LEFT_GUTTER_MIN_WIDTH + 1,
                     y: canvas_y(1),
                     w: 1,
                     h: 1,
@@ -7808,7 +7477,7 @@ sum",
             assert_eq!(
                 render_bucket[2],
                 OutputMessage::PulsingRectangle {
-                    x: 4,
+                    x: LEFT_GUTTER_MIN_WIDTH,
                     y: canvas_y(1),
                     w: 3,
                     h: 1,
@@ -7820,7 +7489,7 @@ sum",
             assert_eq!(
                 render_bucket[3],
                 OutputMessage::PulsingRectangle {
-                    x: LEFT_GUTTER_WIDTH + 5,
+                    x: LEFT_GUTTER_MIN_WIDTH + 5,
                     y: canvas_y(2),
                     w: 3,
                     h: 1,
@@ -7856,7 +7525,7 @@ sum",
             assert_eq!(
                 render_bucket[2],
                 OutputMessage::PulsingRectangle {
-                    x: 4,
+                    x: LEFT_GUTTER_MIN_WIDTH,
                     y: canvas_y(1),
                     w: 3,
                     h: 1,
@@ -8148,6 +7817,24 @@ sum",
     }
 
     #[test]
+    fn test_that_result_is_not_changing_if_tokens_change_before_it() {
+        let test = create_app2(35);
+        test.paste("111");
+
+        test.input(EditorInputEvent::Home, InputModifiers::none());
+        test.input(EditorInputEvent::Char(' '), InputModifiers::none());
+
+        let render_commands = &test.mut_render_bucket().custom_commands[Layer::AboveText as usize];
+        // expect no pulsing since there were no value change
+        for command in render_commands {
+            match command {
+                OutputMessage::PulsingRectangle { .. } => assert!(false, "{:?}", render_commands),
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
     fn test_variable_redefine() {
         let test = create_app2(35);
         test.paste("apple = 12");
@@ -8235,25 +7922,21 @@ sum",
         let mut result_buffer = [0; 128];
 
         test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
-        let mut ok = vec![];
-        for command in &render_buckets.custom_commands[Layer::AboveText as usize] {
-            match command {
-                OutputMessage::RenderChar(x, y, ch) => {
-                    if *x == 8 && *y == 1 && *ch == '⎫' {
-                        ok.push('a');
-                    } else if *x == 8 && *y == 2 && *ch == '⎭' {
-                        ok.push('b');
-                    }
-                }
-                OutputMessage::RenderString(RenderStringMsg { text, row, column }) => {
-                    if text == " ∑ = 5" && row.as_usize() == 1 && *column == 8 {
-                        ok.push('c');
-                    }
-                }
-                _ => {}
-            }
-        }
-        assert_eq!(vec!['a', 'b', 'c'], ok);
+        let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
+        let expected_x = left_gutter_width + 4;
+        let commands = &render_buckets.custom_commands[Layer::AboveText as usize];
+        dbg!(commands);
+        test.contains(commands, 1, OutputMessage::RenderChar(expected_x, 1, '⎫'));
+        test.contains(commands, 1, OutputMessage::RenderChar(expected_x, 2, '⎭'));
+        test.contains(
+            commands,
+            1,
+            OutputMessage::RenderString(RenderStringMsg {
+                text: " ∑ = 5".to_owned(),
+                row: canvas_y(1),
+                column: expected_x,
+            }),
+        );
     }
 
     #[test]
@@ -8334,7 +8017,8 @@ sum",
         test.set_cursor_row_col(0, 0);
         test.render();
         assert_eq!(test.get_cursor_pos().row, 0);
-        test.click(LEFT_GUTTER_WIDTH + 50, 13);
+        let left_gutter_width = 1;
+        test.click(left_gutter_width + 50, 13);
         assert_eq!(test.get_cursor_pos().row, 5);
     }
 
@@ -8353,7 +8037,8 @@ sum",
         // SimpleToken if it is selected), so the cursor is set accordingly,
         // but as soon as the selection is cancelled by the click, we render a matrix,
         // and the cursor is inside the matrix, which is not OK.
-        test.click(LEFT_GUTTER_WIDTH + 7, 2);
+        let left_gutter_width = 1;
+        test.click(left_gutter_width + 7, 2);
 
         // typing should append after the matrix
         test.input(EditorInputEvent::Char('X'), InputModifiers::none());
@@ -8400,8 +8085,9 @@ sum",
         test.render();
         assert_eq!(test.get_cursor_pos().column, 0);
 
+        let left_gutter_width = 1;
         for i in 0..5 {
-            test.click(LEFT_GUTTER_WIDTH + 13 + i, 5);
+            test.click(left_gutter_width + 13 + i, 5);
             assert_eq!(test.get_cursor_pos().column, 25);
         }
     }
@@ -8413,7 +8099,8 @@ sum",
         test.set_cursor_row_col(0, 0);
         test.render();
         // click into 1st matrix to edit it
-        test.click(LEFT_GUTTER_WIDTH + 1, 5);
+        let left_gutter_width = 1;
+        test.click(left_gutter_width + 1, 5);
         test.render();
         // write 333 into the first cell
         for _ in 0..3 {
@@ -8421,10 +8108,10 @@ sum",
         }
         test.render();
         // click into 2nd matrix
-        test.click(LEFT_GUTTER_WIDTH + 1, 15);
+        test.click(left_gutter_width + 1, 15);
         test.render();
         // click back into 1nd matrix
-        test.click(LEFT_GUTTER_WIDTH + 1, 5);
+        test.click(left_gutter_width + 1, 5);
         test.render();
     }
 
@@ -8435,7 +8122,8 @@ sum",
         test.set_cursor_row_col(0, 0);
         test.render();
         // click into 1st matrix to edit it
-        test.click(LEFT_GUTTER_WIDTH + 1, 5);
+        let left_gutter_width = 1;
+        test.click(left_gutter_width + 1, 5);
         test.render();
         // write 333 into the first cell
         for _ in 0..3 {
@@ -8443,7 +8131,7 @@ sum",
         }
         test.render();
         // click into 2nd matrix
-        test.click(LEFT_GUTTER_WIDTH + 1, 15);
+        test.click(left_gutter_width + 1, 15);
         test.render();
         assert_eq!(test.editor_objects()[content_y(2)][0].rendered_w, 8);
     }
@@ -8454,8 +8142,8 @@ sum",
         test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
         test.set_cursor_row_col(0, 0);
         test.render();
-
-        test.click(LEFT_GUTTER_WIDTH + 1, 5);
+        let left_gutter_width = 1;
+        test.click(left_gutter_width + 1, 5);
         assert!(test.app().matrix_editing.is_some());
     }
 
@@ -8465,8 +8153,8 @@ sum",
         test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
         test.set_cursor_row_col(0, 0);
         test.render();
-
-        test.click(LEFT_GUTTER_WIDTH + 7, 0);
+        let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
+        test.click(left_gutter_width + 7, 0);
         test.handle_drag(0, 0);
         assert_eq!(
             test.get_selection().is_range(),
@@ -8510,10 +8198,11 @@ sum",
         test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
         test.set_cursor_row_col(0, 0);
         test.render();
-        test.click(LEFT_GUTTER_WIDTH + 4, 0);
+        let left_gutter_width = 2;
+        test.click(left_gutter_width + 4, 0);
         test.render();
 
-        test.handle_drag(3, 1);
+        test.handle_drag(left_gutter_width + 0, 1);
 
         let mut render_buckets = RenderBuckets::new();
         let mut result_buffer = [0; 128];
@@ -8528,7 +8217,7 @@ sum",
         assert_eq!(
             render_buckets.custom_commands(Layer::BehindText)[pos + 1],
             OutputMessage::RenderRectangle {
-                x: 8,
+                x: left_gutter_width + 4,
                 y: canvas_y(0),
                 w: 3,
                 h: 1
@@ -8537,7 +8226,7 @@ sum",
         assert_eq!(
             render_buckets.custom_commands(Layer::BehindText)[pos + 2],
             OutputMessage::RenderRectangle {
-                x: 4,
+                x: left_gutter_width,
                 y: canvas_y(1),
                 w: 0,
                 h: 1
@@ -9232,7 +8921,7 @@ sum",
             &render_buckets.custom_commands[Layer::BehindText as usize],
             1,
             OutputMessage::RenderRectangle {
-                x: 110,
+                x: result_panel_w(120) - SCROLL_BAR_WIDTH,
                 y: canvas_y(0),
                 w: 1,
                 h: 19,
@@ -9661,10 +9350,11 @@ sum",
         assert_eq!(render_bucket.len(), 3);
         // SetColor(
         // RenderChar(
+        let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
         assert_eq!(
             render_bucket[2],
             OutputMessage::PulsingRectangle {
-                x: 4,
+                x: left_gutter_width,
                 y: canvas_y(1),
                 w: 3,
                 h: 1,
@@ -9699,6 +9389,7 @@ sum",
             let mut result_buffer = [0; 128];
             test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
 
+            let left_gutter_w = LEFT_GUTTER_MIN_WIDTH;
             let render_commands = &render_buckets.custom_commands[Layer::AboveText as usize];
             assert_eq!(render_commands.len(), 4);
             test.contains(
@@ -9710,7 +9401,7 @@ sum",
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: 4,
+                    x: left_gutter_w,
                     y: canvas_y(0),
                     w: "223456".len(),
                     h: 1,
@@ -9727,9 +9418,9 @@ sum",
                 &render_buckets.custom_commands[Layer::BehindText as usize],
                 1,
                 OutputMessage::RenderRectangle {
-                    x: 8,
+                    x: left_gutter_w + 4,
                     y: canvas_y(1),
-                    w: 7, /*223456 --> 223 456*/
+                    w: "223 456".len(),
                     h: 1,
                 },
             );
@@ -9762,11 +9453,12 @@ sum",
                 1,
                 OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x33),
             );
+            let left_gutter_w = LEFT_GUTTER_MIN_WIDTH;
             test.contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: 4,
+                    x: left_gutter_w,
                     y: canvas_y(0),
                     w: "234".len(),
                     h: 1,
@@ -9781,7 +9473,7 @@ sum",
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: 4,
+                    x: left_gutter_w,
                     y: canvas_y(1),
                     w: "356789".len(),
                     h: 1,
@@ -9798,9 +9490,9 @@ sum",
                 &render_buckets.custom_commands[Layer::BehindText as usize],
                 1,
                 OutputMessage::RenderRectangle {
-                    x: 8,
+                    x: left_gutter_w + 4,
                     y: canvas_y(2),
-                    w: 3,
+                    w: "234".len(),
                     h: 1,
                 },
             );
@@ -9813,9 +9505,9 @@ sum",
                 &render_buckets.custom_commands[Layer::BehindText as usize],
                 1,
                 OutputMessage::RenderRectangle {
-                    x: 14,
+                    x: left_gutter_w + 10,
                     y: canvas_y(2),
-                    w: 7,
+                    w: "356 789".len(),
                     h: 1,
                 },
             );
@@ -9847,11 +9539,12 @@ sum",
                 1,
                 OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x33),
             );
+            let left_gutter_w = LEFT_GUTTER_MIN_WIDTH;
             test.contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: 4,
+                    x: left_gutter_w,
                     y: canvas_y(0),
                     w: "2345".len(),
                     h: 1,
@@ -9868,7 +9561,7 @@ sum",
                 &render_buckets.custom_commands[Layer::BehindText as usize],
                 1,
                 OutputMessage::RenderRectangle {
-                    x: 8,
+                    x: left_gutter_w + 4,
                     y: canvas_y(1),
                     w: 5,
                     h: 1,
@@ -9878,7 +9571,7 @@ sum",
                 &render_buckets.custom_commands[Layer::BehindText as usize],
                 1,
                 OutputMessage::RenderRectangle {
-                    x: 16,
+                    x: left_gutter_w + 12,
                     y: canvas_y(1),
                     w: 5,
                     h: 1,
@@ -9912,11 +9605,12 @@ sum",
                 1,
                 OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x33),
             );
+            let left_gutter_w = LEFT_GUTTER_MIN_WIDTH;
             test.contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: 4,
+                    x: left_gutter_w,
                     y: canvas_y(0),
                     w: "2345".len(),
                     h: 1,
@@ -9931,7 +9625,7 @@ sum",
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: 4,
+                    x: left_gutter_w,
                     y: canvas_y(1),
                     w: "123".len(),
                     h: 1,
@@ -9948,7 +9642,7 @@ sum",
                 &render_buckets.custom_commands[Layer::BehindText as usize],
                 1,
                 OutputMessage::RenderRectangle {
-                    x: 8,
+                    x: left_gutter_w + 4,
                     y: canvas_y(2),
                     w: 5,
                     h: 1,
@@ -9958,7 +9652,7 @@ sum",
                 &render_buckets.custom_commands[Layer::BehindText as usize],
                 1,
                 OutputMessage::RenderRectangle {
-                    x: 16,
+                    x: left_gutter_w + 12,
                     y: canvas_y(2),
                     w: 5,
                     h: 1,
@@ -9973,7 +9667,7 @@ sum",
                 &render_buckets.custom_commands[Layer::BehindText as usize],
                 1,
                 OutputMessage::RenderRectangle {
-                    x: 24,
+                    x: left_gutter_w + 20,
                     y: canvas_y(2),
                     w: 3,
                     h: 1,
@@ -10019,6 +9713,7 @@ sum",
             let mut result_buffer = [0; 128];
             test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
             let render_commands = &render_buckets.custom_commands[Layer::AboveText as usize];
+            let left_gutter_w = LEFT_GUTTER_MIN_WIDTH;
             assert_eq!(render_commands.len(), 8);
             test.contains(
                 render_commands,
@@ -10029,7 +9724,7 @@ sum",
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: 4,
+                    x: left_gutter_w,
                     y: canvas_y(0),
                     w: "2".len(),
                     h: 1,
@@ -10044,7 +9739,7 @@ sum",
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: 4,
+                    x: left_gutter_w,
                     y: canvas_y(1),
                     w: "3".len(),
                     h: 1,
@@ -10059,7 +9754,7 @@ sum",
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: 4,
+                    x: left_gutter_w,
                     y: canvas_y(2),
                     w: "var = 4".len(),
                     h: 1,
@@ -10107,11 +9802,12 @@ monthly payment = r/(1 - (1 + r)^(-n)) *finance amount",
                 1,
                 OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x33),
             );
+            let left_gutter_w = LEFT_GUTTER_MIN_WIDTH + 1;
             test.contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: 4,
+                    x: left_gutter_w,
                     y: canvas_y(10),
                     w: "price = 350k$".len(),
                     h: 1,
@@ -10331,5 +10027,62 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
             ][..],
             &result_buffer,
         );
+    }
+
+    #[test]
+    fn test_if_number_is_too_big_for_binary_repr_show_err() {
+        let test = create_app2(35);
+        test.paste("10e24");
+        test.input(EditorInputEvent::Left, InputModifiers::alt());
+        let mut result_buffer = [0; 128];
+        test.render_get_result_buf(&mut result_buffer[..]);
+
+        assert_results(&["Err"][..], &result_buffer);
+    }
+
+    #[test]
+    fn test_if_number_is_too_big_for_hex_repr_show_err() {
+        let test = create_app2(35);
+        test.paste("10e24");
+        test.input(EditorInputEvent::Right, InputModifiers::alt());
+        let mut result_buffer = [0; 128];
+        test.render_get_result_buf(&mut result_buffer[..]);
+
+        assert_results(&["Err"][..], &result_buffer);
+    }
+
+    #[test]
+    fn integration_test_for_rich_copy() {
+        let test = create_app2(35);
+        test.paste(
+            "price = 350 000$
+down payment = price * 20%
+finance amount = price - down payment
+
+interest rate = 3.7%/year
+term = 30year
+
+n = term * 12/year
+r = interest rate / (12/year)
+
+monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
+        );
+        test.input(EditorInputEvent::Char('c'), InputModifiers::ctrl_shift());
+    }
+
+    #[test]
+    fn test_percentage_output() {
+        let test = create_app2(35);
+        test.paste("20%");
+        let mut result_buffer = [0; 128];
+        test.render_get_result_buf(&mut result_buffer[..]);
+
+        assert_results(&["20 %"][..], &result_buffer);
+    }
+
+    #[test]
+    fn test_parsing_panic_20201116() {
+        let test = create_app2(35);
+        test.paste("2^63-1\n6*13\nennyi staging entity lehet &[1] / 50\n\nnaponta ennyit kell beszurni, hogy \'1 év alatt megteljen: &[1] / 365\n\nennyi évig üzemel, ha napi ezer sor szurodik be: &[1] / (365*1000)\n120 * 100 = \n1.23e20\n\n500$ / 20$/hour in hour\n1km + 1000m\n3 kg * 3 liter\n3 hours + 5minutes + 10 seconds in seconds\n20%\n\n1t in kg\nmass of earth = 5.972e18 Gg\n\n20%\n");
     }
 }

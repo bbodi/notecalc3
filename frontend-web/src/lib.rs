@@ -171,7 +171,7 @@ pub fn handle_resize(app_ptr: u32, new_client_width: usize) {
 #[wasm_bindgen]
 pub fn get_compressed_encoded_content(app_ptr: u32) -> String {
     let app = AppPointers::mut_app(app_ptr);
-    let content = app.get_normalized_content();
+    let content = app.get_line_ref_normalized_content();
     {
         use flate2::write::ZlibEncoder;
         use flate2::Compression;
@@ -298,8 +298,8 @@ pub fn get_clipboard_text(app_ptr: u32) -> String {
 }
 
 #[wasm_bindgen]
-pub fn get_selected_text(app_ptr: u32) -> Option<String> {
-    return AppPointers::app(app_ptr).get_selected_text();
+pub fn get_selected_text_and_clear_app_clipboard(app_ptr: u32) -> Option<String> {
+    return AppPointers::mut_app(app_ptr).get_selected_text_and_clear_app_clipboard();
 }
 
 #[wasm_bindgen]
@@ -330,7 +330,8 @@ pub fn get_selected_rows_with_results(app_ptr: u32) -> String {
         units,
         AppPointers::mut_render_bucket(app_ptr),
         unsafe { &mut RESULT_BUFFER },
-        AppPointers::allocator(app_ptr),
+        AppPointers::mut_tokens(app_ptr),
+        AppPointers::mut_vars(app_ptr),
         AppPointers::mut_results(app_ptr),
     );
 }
