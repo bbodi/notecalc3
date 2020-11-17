@@ -76,7 +76,7 @@ fn fn_nth<'text_ptr>(
     fn_token_index: usize,
 ) -> bool {
     if arg_count < 2 || stack.len() < 2 {
-        tokens[fn_token_index].has_error = true;
+        Token::set_token_error_flag_by_index(fn_token_index, tokens);
         false
     } else {
         let index_token = &stack[stack.len() - 1];

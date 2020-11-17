@@ -5495,6 +5495,19 @@ mod tests {
     }
 
     #[test]
+    fn test_insert_char_selection_when_the_first_row_is_empty() {
+        test(
+            "❱\n\
+            \n\
+            3\n\
+            ❰",
+            &[EditorInputEvent::Char('h')],
+            InputModifiers::none(),
+            "h█",
+        );
+    }
+
+    #[test]
     fn test_ctrl_d() {
         test(
             "aaa█aa12s aa\n\

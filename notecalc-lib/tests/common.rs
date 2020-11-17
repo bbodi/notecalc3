@@ -1,9 +1,9 @@
+pub use bumpalo::Bump;
 pub use notecalc_lib::editor::editor::*;
 pub use notecalc_lib::helper::*;
 pub use notecalc_lib::units::units::Units;
 pub use notecalc_lib::*;
 pub use std::ops::RangeInclusive;
-pub use typed_arena::Arena;
 
 static mut RESULT_BUFFER: [u8; 2048] = [0; 2048];
 
@@ -60,8 +60,8 @@ impl RustIsShit {
         unsafe { &mut (&mut *(self.vars_ptr as *mut [Option<Variable>; MAX_LINE_COUNT + 1]))[..] }
     }
 
-    pub fn allocator<'a>(&self) -> &'a Arena<char> {
-        unsafe { &*(self.allocator as *const Arena<char>) }
+    pub fn allocator<'a>(&self) -> &'a Bump {
+        unsafe { &*(self.allocator as *const Bump) }
     }
 
     pub fn render(&self) {
@@ -330,7 +330,7 @@ pub fn create_app3<'a>(client_width: usize, client_height: usize) -> RustIsShit 
         results_ptr: to_box_ptr(results),
         vars_ptr: to_box_ptr(vars),
         editor_objects_ptr: to_box_ptr(editor_objects),
-        allocator: to_box_ptr(Arena::<char>::with_capacity(MAX_LINE_COUNT * 120)),
+        allocator: to_box_ptr(Bump::with_capacity(MAX_LINE_COUNT * 120)),
     };
 }
 

@@ -49,7 +49,7 @@ pub fn render_result_into(
                 num_to_string(f, &num, &ResultFormat::Dec, decimal_count, use_grouping)
             } else {
                 let denormalized_num = unit.from_base_to_this_unit(num);
-                if let Ok(denormalized_num) = denormalized_num {
+                if let Some(denormalized_num) = denormalized_num {
                     let mut lens = num_to_string(
                         f,
                         &denormalized_num,

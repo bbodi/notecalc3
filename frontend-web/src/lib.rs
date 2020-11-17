@@ -15,6 +15,7 @@ clippy::all
 use wasm_bindgen::prelude::*;
 
 use crate::utils::set_panic_hook;
+use bumpalo::Bump;
 use notecalc_lib::editor::editor::{EditorInputEvent, InputModifiers};
 use notecalc_lib::helper::*;
 use notecalc_lib::units::units::Units;
@@ -22,7 +23,6 @@ use notecalc_lib::{
     Layer, NoteCalcApp, OutputMessage, OutputMessageCommandId, RenderAsciiTextMsg, RenderBuckets,
     RenderStringMsg, RenderUtf8TextMsg, Variable, MAX_LINE_COUNT,
 };
-use typed_arena::Arena;
 
 mod utils;
 
@@ -96,9 +96,14 @@ impl AppPointers {
         }
     }
 
-    fn allocator<'a>(ptr: u32) -> &'a Arena<char> {
+    fn allocator<'a>(ptr: u32) -> &'a Bump {
         let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
-        unsafe { &*(ptr_holder.allocator as *const Arena<char>) }
+        unsafe { &*(ptr_holder.allocator as *const Bump) }
+    }
+
+    fn mut_allocator<'a>(ptr: u32) -> &'a mut Bump {
+        let ptr_holder = unsafe { &*(ptr as *mut AppPointers) };
+        unsafe { &mut *(ptr_holder.allocator as *mut Bump) }
     }
 }
 
@@ -121,7 +126,7 @@ pub fn create_app(client_width: usize, client_height: usize) -> u32 {
         results_ptr: to_box_ptr(results),
         vars_ptr: to_box_ptr(vars),
         editor_objects_ptr: to_box_ptr(editor_objects),
-        allocator: to_box_ptr(Arena::<char>::with_capacity(MAX_LINE_COUNT * 120)),
+        allocator: to_box_ptr(Bump::with_capacity(MAX_LINE_COUNT * 120)),
     })
 }
 
@@ -251,8 +256,8 @@ pub fn handle_drag(app_ptr: u32, x: usize, y: usize) -> bool {
 }
 
 #[wasm_bindgen]
-pub fn get_allocated_bytes(app_ptr: u32) -> usize {
-    return AppPointers::allocator(app_ptr).len();
+pub fn get_allocated_bytes_count(app_ptr: u32) -> usize {
+    return AppPointers::allocator(app_ptr).allocated_bytes();
 }
 
 #[wasm_bindgen]
@@ -317,6 +322,33 @@ pub fn handle_paste(app_ptr: u32, input: String) {
     );
 }
 
+// HACK: there is a memory leak in the app, so call this method every N second
+// which clears the allocator, but it is only possible if after it everything is reparsed
+// and rerendered.
+// The reasons is that basically I could not solve that Tokens and RenderCommands both refer
+// to the editor's canvas as a slice because of Rust's borrow checker, so I had to allocate them
+// separately, and that separate allocation should be freed.
+// But unfortunately the allocation from parsing and rendering are mixed, so
+// we can't just free it up anywhere.
+// It would be possible to free it up in the lib, but for that we would need a mut allocator,
+// and again, Rust's borrow checker does not like it.
+#[wasm_bindgen]
+pub fn reparse_everything(app_ptr: u32) {
+    AppPointers::mut_allocator(app_ptr).reset();
+    let app = AppPointers::mut_app(app_ptr);
+
+    app.reparse_everything(
+        AppPointers::allocator(app_ptr),
+        AppPointers::units(app_ptr),
+        AppPointers::mut_tokens(app_ptr),
+        AppPointers::mut_results(app_ptr),
+        AppPointers::mut_vars(app_ptr),
+        AppPointers::mut_editor_objects(app_ptr),
+        AppPointers::mut_render_bucket(app_ptr),
+        unsafe { &mut RESULT_BUFFER },
+    );
+}
+
 #[wasm_bindgen]
 pub fn render(app_ptr: u32) {
     send_render_commands_to_js(AppPointers::mut_render_bucket(app_ptr));
@@ -334,6 +366,19 @@ pub fn get_selected_rows_with_results(app_ptr: u32) -> String {
         AppPointers::mut_vars(app_ptr),
         AppPointers::mut_results(app_ptr),
     );
+}
+
+#[wasm_bindgen]
+pub fn get_plain_content(app_ptr: u32) -> String {
+    let app = AppPointers::mut_app(app_ptr);
+    app.editor_content.get_content()
+}
+
+#[wasm_bindgen]
+pub fn get_cursor(app_ptr: u32) -> String {
+    let app = AppPointers::mut_app(app_ptr);
+    let sel = app.editor.get_selection();
+    format!("{:?}", sel)
 }
 
 #[wasm_bindgen]

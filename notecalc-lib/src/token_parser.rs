@@ -1,9 +1,9 @@
 use crate::functions::FnType;
 use crate::units::units::{UnitOutput, Units};
 use crate::{Variables, SUM_VARIABLE_INDEX};
+use bumpalo::Bump;
 use rust_decimal::prelude::*;
 use std::str::FromStr;
-use typed_arena::Arena;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum TokenType {
@@ -33,6 +33,19 @@ impl<'text_ptr> Token<'text_ptr> {
 
     pub fn is_string(&self) -> bool {
         matches!(self.typ, TokenType::StringLiteral)
+    }
+
+    pub fn has_error(&self) -> bool {
+        self.has_error
+    }
+
+    pub fn set_token_error_flag_by_index(index: usize, tokens: &mut [Token]) {
+        // TODO I could not reproduce it but it happened runtime, so I use 'get_mut'
+        // later when those indices will be used correctly (now they are just dummy values lot of times),
+        // we can use direct indexing
+        if let Some(t) = tokens.get_mut(index) {
+            t.has_error = true
+        }
     }
 }
 
@@ -148,13 +161,13 @@ impl TokenParser {
         dst: &mut Vec<Token<'text_ptr>>,
         units: &Units,
         line_index: usize,
-        allocator: &'text_ptr Arena<char>,
+        allocator: &'text_ptr Bump,
     ) {
         let mut index = 0;
         let mut can_be_unit = CanBeUnit::Not;
         if line.starts_with(&['-', '-']) {
             dst.push(Token {
-                ptr: allocator.alloc_extend(line.iter().map(|it| *it)),
+                ptr: allocator.alloc_slice_fill_iter(line.iter().map(|it| *it)),
                 typ: TokenType::StringLiteral,
                 has_error: false,
             });
@@ -222,7 +235,7 @@ impl TokenParser {
 
     pub fn try_extract_number_literal<'text_ptr>(
         str: &[char],
-        allocator: &'text_ptr Arena<char>,
+        allocator: &'text_ptr Bump,
     ) -> Option<Token<'text_ptr>> {
         let mut number_str = [b'0'; 256];
         let mut number_str_index = 0;
@@ -244,7 +257,7 @@ impl TokenParser {
             return Some(Token {
                 typ: TokenType::NumberLiteral(PI),
                 // ptr: &str[0..i],
-                ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(1)),
+                ptr: allocator.alloc_slice_fill_iter(str.iter().map(|it| *it).take(1)),
                 has_error: false,
             });
         }
@@ -275,7 +288,7 @@ impl TokenParser {
                 Some(Token {
                     typ: TokenType::NumberLiteral(num.into()),
                     // ptr: &str[0..i],
-                    ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(i)),
+                    ptr: allocator.alloc_slice_fill_iter(str.iter().map(|it| *it).take(i)),
                     has_error: false,
                 })
             } else {
@@ -316,7 +329,7 @@ impl TokenParser {
                 Some(Token {
                     typ: TokenType::NumberLiteral(num.into()),
                     // ptr: &str[0..i],
-                    ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(i)),
+                    ptr: allocator.alloc_slice_fill_iter(str.iter().map(|it| *it).take(i)),
                     has_error: false,
                 })
             } else {
@@ -402,19 +415,34 @@ impl TokenParser {
                     })
                 };
                 if let Ok(num) = num {
-                    Some(Token {
-                        typ: TokenType::NumberLiteral(
-                            multiplier.map(|it| Decimal::from(it) * &num).unwrap_or(num),
-                        ),
-                        // ptr: &str[0..i],
-                        ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(i)),
-                        has_error: false,
-                    })
+                    if let Some(multiplier) = multiplier {
+                        if let Some(result) = Decimal::from(multiplier).checked_mul(&num) {
+                            Some(Token {
+                                typ: TokenType::NumberLiteral(result),
+                                ptr: allocator
+                                    .alloc_slice_fill_iter(str.iter().map(|it| *it).take(i)),
+                                has_error: false,
+                            })
+                        } else {
+                            Some(Token {
+                                typ: TokenType::NumberErr,
+                                ptr: allocator
+                                    .alloc_slice_fill_iter(str.iter().map(|it| *it).take(i)),
+                                has_error: true,
+                            })
+                        }
+                    } else {
+                        Some(Token {
+                            typ: TokenType::NumberLiteral(num),
+                            ptr: allocator.alloc_slice_fill_iter(str.iter().map(|it| *it).take(i)),
+                            has_error: false,
+                        })
+                    }
                 } else {
                     Some(Token {
                         typ: TokenType::NumberErr,
                         // ptr: &str[0..i],
-                        ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(i)),
+                        ptr: allocator.alloc_slice_fill_iter(str.iter().map(|it| *it).take(i)),
                         has_error: true,
                     })
                 }
@@ -430,7 +458,7 @@ impl TokenParser {
         str: &[char],
         unit: &Units,
         can_be_unit: CanBeUnit,
-        allocator: &'text_ptr Arena<char>,
+        allocator: &'text_ptr Bump,
     ) -> Option<Token<'text_ptr>> {
         if matches!(can_be_unit, CanBeUnit::Not) || str[0].is_ascii_whitespace() {
             return None;
@@ -444,7 +472,7 @@ impl TokenParser {
             while i > 0 && str[i - 1].is_ascii_whitespace() {
                 i -= 1;
             }
-            let ptr = allocator.alloc_extend(str.iter().map(|it| *it).take(i));
+            let ptr = allocator.alloc_slice_fill_iter(str.iter().map(|it| *it).take(i));
             match can_be_unit {
                 CanBeUnit::Not => panic!("impossible"),
                 CanBeUnit::ApplyToPrevToken => Some(Token {
@@ -465,14 +493,14 @@ impl TokenParser {
         str: &[char],
         vars: &Variables,
         row_index: usize,
-        allocator: &'text_ptr Arena<char>,
+        allocator: &'text_ptr Bump,
     ) -> Option<Token<'text_ptr>> {
         if str.starts_with(&['s', 'u', 'm']) && str.get(3).map(|it| *it == ' ').unwrap_or(true) {
             return Some(Token {
                 typ: TokenType::Variable {
                     var_index: SUM_VARIABLE_INDEX,
                 },
-                ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(3)),
+                ptr: allocator.alloc_slice_fill_iter(str.iter().map(|it| *it).take(3)),
                 has_error: false,
             });
         }
@@ -521,7 +549,7 @@ impl TokenParser {
             };
             Some(Token {
                 typ,
-                ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(longest_match)),
+                ptr: allocator.alloc_slice_fill_iter(str.iter().map(|it| *it).take(longest_match)),
                 has_error: false,
             })
         } else {
@@ -531,7 +559,7 @@ impl TokenParser {
 
     fn try_extract_string_literal<'text_ptr>(
         str: &[char],
-        allocator: &'text_ptr Arena<char>,
+        allocator: &'text_ptr Bump,
     ) -> Option<Token<'text_ptr>> {
         let mut i = 0;
         for ch in str {
@@ -546,7 +574,7 @@ impl TokenParser {
             // alphabetical literal
             return Some(Token {
                 typ: TokenType::StringLiteral,
-                ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(i)),
+                ptr: allocator.alloc_slice_fill_iter(str.iter().map(|it| *it).take(i)),
                 // ptr: &str[0..i],
                 has_error: false,
             });
@@ -562,7 +590,7 @@ impl TokenParser {
                 Some(Token {
                     typ: TokenType::StringLiteral,
                     // ptr: &str[0..i],
-                    ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(i)),
+                    ptr: allocator.alloc_slice_fill_iter(str.iter().map(|it| *it).take(i)),
                     has_error: false,
                 })
             } else {
@@ -573,18 +601,18 @@ impl TokenParser {
 
     fn try_extract_operator<'text_ptr>(
         str: &[char],
-        allocator: &'text_ptr Arena<char>,
+        allocator: &'text_ptr Bump,
     ) -> Option<Token<'text_ptr>> {
         fn op<'text_ptr>(
             typ: OperatorTokenType,
             str: &[char],
             len: usize,
-            allocator: &'text_ptr Arena<char>,
+            allocator: &'text_ptr Bump,
         ) -> Option<Token<'text_ptr>> {
             return Some(Token {
                 typ: TokenType::Operator(typ),
                 // ptr: &str[0..len],
-                ptr: allocator.alloc_extend(str.iter().map(|it| *it).take(len)),
+                ptr: allocator.alloc_slice_fill_iter(str.iter().map(|it| *it).take(len)),
                 has_error: false,
             });
         }
@@ -648,7 +676,7 @@ mod tests {
             let mut vec = vec![];
             let temp = str.chars().collect::<Vec<_>>();
             let units = Units::new();
-            let arena = Arena::new();
+            let arena = Bump::new();
             TokenParser::parse_line(&temp, &create_vars(), &mut vec, &units, 0, &arena);
             match vec.get(0) {
                 Some(Token {
@@ -667,7 +695,7 @@ mod tests {
             let mut vec = vec![];
             let temp = str.chars().collect::<Vec<_>>();
             let units = Units::new();
-            let arena = Arena::new();
+            let arena = Bump::new();
             TokenParser::parse_line(&temp, &create_vars(), &mut vec, &units, 0, &arena);
             match vec.get(0) {
                 Some(Token {
@@ -721,7 +749,7 @@ mod tests {
         let mut vec = vec![];
         let temp = text.chars().collect::<Vec<_>>();
         let units = Units::new();
-        let arena = Arena::new();
+        let arena = Bump::new();
         // line index is 10 so the search for the variable does not stop at 0
         TokenParser::parse_line(&temp, &var_names, &mut vec, &units, 10, &arena);
         assert_eq!(
@@ -747,6 +775,9 @@ mod tests {
                     let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
                     let expected_chars = str_slice.chars().collect::<Vec<char>>();
                     assert_eq!(expected_chars.as_slice(), actual_token.ptr)
+                }
+                (TokenType::NumberErr, _) => {
+                    assert_eq!(actual_token.typ, expected_token.typ);
                 }
                 (TokenType::Operator(etyp), TokenType::Operator(atyp)) => assert_eq!(etyp, atyp),
                 (TokenType::StringLiteral, TokenType::StringLiteral) => {
@@ -1556,6 +1587,60 @@ mod tests {
                 op(OperatorTokenType::Comma),
                 num(1),
                 op(OperatorTokenType::ParenClose),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_multiple_equal_signs() {
+        test(
+            "z=1=2",
+            &[
+                str("z"),
+                op(OperatorTokenType::Assign),
+                num(1),
+                op(OperatorTokenType::Assign),
+                num(2),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_huge_number_no_panic() {
+        test("017327229991661686687892454247286090975M", &[num_err()]);
+    }
+
+    #[test]
+    fn test_huge_unit_exponent_no_panic() {
+        test(
+            "3T^81",
+            &[num(3), str("T"), op(OperatorTokenType::Pow), num(81)],
+        );
+    }
+
+    #[test]
+    fn parsing_too_big_unit2() {
+        test(
+            "6K^61595",
+            &[num(6), str("K"), op(OperatorTokenType::Pow), num(61595)],
+        );
+    }
+
+    #[test]
+    fn test_fuzzing_issue_1() {
+        test(
+            "90-J7qt799/9b^72u5KYD76O26w6^4f2z",
+            &[
+                num(90),
+                op(OperatorTokenType::Sub),
+                str("J7qt799"),
+                op(OperatorTokenType::Div),
+                num(9),
+                apply_to_prev_token_unit("b^72"),
+                str("u5KYD76O26w6"),
+                op(OperatorTokenType::Pow),
+                num(4),
+                str("f2z"),
             ],
         );
     }

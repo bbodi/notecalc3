@@ -866,12 +866,10 @@ impl Editor {
                 selected_text: _,
             } => {
                 let first = selection.get_first();
-                let modif_type = content.remove_selection(Selection::range(
-                    first.with_next_col(),
-                    selection.get_second(),
-                ));
+                let modif_type =
+                    content.remove_selection(Selection::range(first, selection.get_second()));
                 if modif_type.is_some() {
-                    content.set_char(first.row, first.column, *ch);
+                    content.insert_char(first.row, first.column, *ch);
 
                     self.set_selection_save_col(Selection::single(
                         selection.get_first().with_next_col(),

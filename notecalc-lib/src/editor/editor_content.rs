@@ -247,6 +247,10 @@ impl<T: Default + Clone> EditorContent<T> {
         let from = self.get_char_pos(row_index, column_index);
         let len = self.line_lens[row_index];
         let to = self.get_char_pos(row_index, len);
+        if from == 1 && to == 0 {
+            let _j = 0;
+            let _j = 0;
+        }
         self.canvas.copy_within(from..to, from + 1);
         self.canvas[from] = ch;
         self.line_lens[row_index] += 1;
@@ -364,7 +368,6 @@ impl<T: Default + Clone> EditorContent<T> {
             for _ in first.row + 1..second.row {
                 self.remove_line_at(first.row + 1);
             }
-            dbg!(self.get_content());
             if first.column == 0 {
                 self.remove_selection(Selection::range(
                     Pos::from_row_column(first.row + 1, 0),
@@ -374,10 +377,8 @@ impl<T: Default + Clone> EditorContent<T> {
                 Some(RowModificationType::AllLinesFrom(first.row))
             } else {
                 if self.merge_with_next_row(first.row, first.column, second.column) {
-                    dbg!(self.get_content());
                     Some(RowModificationType::AllLinesFrom(first.row))
                 } else {
-                    dbg!(self.get_content());
                     None
                 }
             }

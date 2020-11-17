@@ -47,12 +47,12 @@ impl CalcResult {
     }
 
     pub fn set_token_error_flag<'text_ptr>(&self, tokens: &mut [Token<'text_ptr>]) {
-        // TODO I could not reproduce it but it happened runtime
-        if let Some(t) = tokens.get_mut(self.index_into_tokens) {
-            t.has_error = true
-        }
-        if let Some(i) = self.index2_into_tokens {
-            tokens[i].has_error = true;
+        // TODO I could not reproduce it but it happened runtime, so I use 'get_mut'
+        // later when those indices will be used correctly (now they are just dummy values lot of times),
+        // we can use direct indexing
+        Token::set_token_error_flag_by_index(self.index_into_tokens, tokens);
+        if let Some(i2) = self.index2_into_tokens {
+            Token::set_token_error_flag_by_index(i2, tokens);
         }
     }
 
@@ -203,7 +203,7 @@ fn apply_operation<'text_ptr>(
                 } else {
                     lhs.set_token_error_flag(tokens);
                     rhs.set_token_error_flag(tokens);
-                    tokens[op_token_index].has_error = true;
+                    Token::set_token_error_flag_by_index(op_token_index, tokens);
                     false
                 }
             } else {
@@ -252,7 +252,11 @@ fn apply_operation<'text_ptr>(
         OperatorTokenType::ParenOpen
         | OperatorTokenType::ParenClose
         | OperatorTokenType::BracketOpen
-        | OperatorTokenType::BracketClose => panic!(),
+        | OperatorTokenType::BracketClose => {
+            // this branch was executed during fuzz testing, don't panic here
+            // check test_panic_fuzz_3
+            return false;
+        }
         OperatorTokenType::ApplyUnit(target_unit) => {
             let maybe_top = stack.last();
             if let Some(result) = maybe_top.and_then(|top| unit_conversion(top, &target_unit)) {
@@ -279,10 +283,9 @@ fn unit_conversion(top: &CalcResult, target_unit: &UnitOutput) -> Option<CalcRes
             let norm = target_unit.normalize(num);
             if target_unit.dimensions == EMPTY_UNIT_DIMENSIONS {
                 // the units cancelled each other, e.g. km/m
-                norm.ok()
-                    .map(|norm| CalcResult::new(CalcResultType::Number(norm), 0))
+                norm.map(|norm| CalcResult::new(CalcResultType::Number(norm), 0))
             } else {
-                norm.ok().map(|norm| {
+                norm.map(|norm| {
                     CalcResult::new(CalcResultType::Quantity(norm, target_unit.clone()), 0)
                 })
             }
@@ -504,16 +507,16 @@ fn pow_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
             rhs.to_i64()
                 .and_then(|rhs| {
                     let p = pow(lhs.clone(), rhs);
-                    p.ok()
+                    p
                 })
                 .map(|pow| CalcResult::new(CalcResultType::Number(pow), 0))
         }
         (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Number(rhs)) => {
             let p = rhs.to_i64()?;
-            let num_powered = pow(lhs.clone(), p).ok()?;
+            let num_powered = pow(lhs.clone(), p)?;
             let unit_powered = lhs_unit.pow(p);
             Some(CalcResult::new(
-                CalcResultType::Quantity(num_powered, unit_powered),
+                CalcResultType::Quantity(num_powered, unit_powered?),
                 0,
             ))
         }
@@ -548,7 +551,7 @@ pub fn multiply_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         (CalcResultType::Number(lhs), CalcResultType::Percentage(rhs)) => {
             // 100 * 50%
             Some(CalcResult::new(
-                CalcResultType::Number(percentage_of(rhs, lhs)),
+                CalcResultType::Number(percentage_of(rhs, lhs)?),
                 0,
             ))
         }
@@ -569,8 +572,8 @@ pub fn multiply_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
             // 2s * 3s
             let new_unit = lhs_unit * rhs_unit;
             if new_unit.is_unitless() {
-                if let Ok(lhs_num) = lhs_unit.from_base_to_this_unit(lhs_num) {
-                    if let Ok(rhs_num) = rhs_unit.from_base_to_this_unit(rhs_num) {
+                if let Some(lhs_num) = lhs_unit.from_base_to_this_unit(lhs_num) {
+                    if let Some(rhs_num) = rhs_unit.from_base_to_this_unit(rhs_num) {
                         lhs_num
                             .checked_mul(&rhs_num)
                             .map(|num| CalcResult::new(CalcResultType::Number(num), 0))
@@ -589,7 +592,7 @@ pub fn multiply_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Percentage(rhs)) => {
             // e.g. 2m * 50%
             Some(CalcResult::new(
-                CalcResultType::Quantity(percentage_of(rhs, lhs), lhs_unit.clone()),
+                CalcResultType::Quantity(percentage_of(rhs, lhs)?, lhs_unit.clone()),
                 0,
             ))
         }
@@ -600,21 +603,25 @@ pub fn multiply_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         (CalcResultType::Percentage(lhs), CalcResultType::Number(rhs)) => {
             // 5% * 10
             Some(CalcResult::new(
-                CalcResultType::Number(percentage_of(lhs, rhs)),
+                CalcResultType::Number(percentage_of(lhs, rhs)?),
                 0,
             ))
         }
         (CalcResultType::Percentage(lhs), CalcResultType::Quantity(rhs, rhs_unit)) => {
             // 5% * 10km
             Some(CalcResult::new(
-                CalcResultType::Quantity(percentage_of(lhs, rhs), rhs_unit.clone()),
+                CalcResultType::Quantity(percentage_of(lhs, rhs)?, rhs_unit.clone()),
                 0,
             ))
         }
         (CalcResultType::Percentage(lhs), CalcResultType::Percentage(rhs)) => {
             // 50% * 50%
+
             Some(CalcResult::new(
-                CalcResultType::Percentage((lhs / dec(100)) * (rhs / dec(100))),
+                CalcResultType::Percentage(
+                    (lhs.checked_div(&DECIMAL_100)?)
+                        .checked_mul(&rhs.checked_div(&DECIMAL_100)?)?,
+                ),
                 0,
             ))
         }
@@ -683,7 +690,10 @@ pub fn add_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         //////////////
         (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             // 12 + 3
-            Some(CalcResult::new(CalcResultType::Number(lhs + rhs), 0))
+            Some(CalcResult::new(
+                CalcResultType::Number(lhs.checked_add(&rhs)?),
+                0,
+            ))
         }
         (CalcResultType::Number(_lhs), CalcResultType::Quantity(_rhs, _unit)) => {
             // 12 + 3 km
@@ -691,9 +701,11 @@ pub fn add_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         }
         (CalcResultType::Number(lhs), CalcResultType::Percentage(rhs)) => {
             // 100 + 50%
-            let x_percent_of_left_hand_side = lhs / &dec(100) * rhs;
+            let x_percent_of_left_hand_side = lhs
+                .checked_div(&DECIMAL_100)
+                .and_then(|it| it.checked_mul(rhs))?;
             Some(CalcResult::new(
-                CalcResultType::Number(lhs + x_percent_of_left_hand_side),
+                CalcResultType::Number(lhs.checked_add(&x_percent_of_left_hand_side)?),
                 0,
             ))
         }
@@ -711,14 +723,16 @@ pub fn add_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
                 None
             } else {
                 Some(CalcResult::new(
-                    CalcResultType::Quantity(lhs + rhs, lhs_unit.clone()),
+                    CalcResultType::Quantity(lhs.checked_add(rhs)?, lhs_unit.clone()),
                     0,
                 ))
             }
         }
         (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Percentage(rhs)) => {
             // e.g. 2m + 50%
-            let x_percent_of_left_hand_side = lhs / dec(100) * rhs;
+            let x_percent_of_left_hand_side = lhs
+                .checked_div(&DECIMAL_100)
+                .and_then(|it| it.checked_mul(rhs))?;
             Some(CalcResult::new(
                 CalcResultType::Quantity(lhs + x_percent_of_left_hand_side, lhs_unit.clone()),
                 0,
@@ -783,7 +797,10 @@ fn sub_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         //////////////
         (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             // 12 - 3
-            Some(CalcResult::new(CalcResultType::Number(lhs - rhs), 0))
+            Some(CalcResult::new(
+                CalcResultType::Number(lhs.checked_sub(&rhs)?),
+                0,
+            ))
         }
         (CalcResultType::Number(_lhs), CalcResultType::Quantity(_rhs, _unit)) => {
             // 12 - 3 km
@@ -791,9 +808,11 @@ fn sub_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         }
         (CalcResultType::Number(lhs), CalcResultType::Percentage(rhs)) => {
             // 100 - 50%
-            let x_percent_of_left_hand_side = lhs / dec(100) * rhs;
+            let x_percent_of_left_hand_side = lhs
+                .checked_div(&DECIMAL_100)
+                .and_then(|it| it.checked_mul(rhs))?;
             Some(CalcResult::new(
-                CalcResultType::Number(lhs - x_percent_of_left_hand_side),
+                CalcResultType::Number(lhs.checked_sub(&x_percent_of_left_hand_side)?),
                 0,
             ))
         }
@@ -811,16 +830,21 @@ fn sub_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
                 None
             } else {
                 Some(CalcResult::new(
-                    CalcResultType::Quantity(lhs - rhs, lhs_unit.clone()),
+                    CalcResultType::Quantity(lhs.checked_sub(rhs)?, lhs_unit.clone()),
                     0,
                 ))
             }
         }
         (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Percentage(rhs)) => {
             // e.g. 2m - 50%
-            let x_percent_of_left_hand_side = lhs / dec(100) * rhs;
+            let x_percent_of_left_hand_side = lhs
+                .checked_div(&DECIMAL_100)
+                .and_then(|it| it.checked_mul(rhs))?;
             Some(CalcResult::new(
-                CalcResultType::Quantity(lhs - x_percent_of_left_hand_side, lhs_unit.clone()),
+                CalcResultType::Quantity(
+                    lhs.checked_sub(&x_percent_of_left_hand_side)?,
+                    lhs_unit.clone(),
+                ),
                 0,
             ))
         }
@@ -838,7 +862,10 @@ fn sub_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         }
         (CalcResultType::Percentage(lhs), CalcResultType::Percentage(rhs)) => {
             // 50% - 50%
-            Some(CalcResult::new(CalcResultType::Percentage(lhs - rhs), 0))
+            Some(CalcResult::new(
+                CalcResultType::Percentage(lhs.checked_sub(&rhs)?),
+                0,
+            ))
         }
         (CalcResultType::Percentage(..), CalcResultType::Matrix(..)) => None,
         ///////////
@@ -881,7 +908,7 @@ pub fn divide_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         (CalcResultType::Quantity(lhs_num, lhs_unit), CalcResultType::Unit(rhs_unit)) => {
             let new_unit = lhs_unit / rhs_unit;
             if new_unit.is_unitless() {
-                if let Ok(lhs_num) = lhs_unit.from_base_to_this_unit(lhs_num) {
+                if let Some(lhs_num) = lhs_unit.from_base_to_this_unit(lhs_num) {
                     Some(CalcResult::new(CalcResultType::Number(lhs_num), 0))
                 } else {
                     None
@@ -894,8 +921,8 @@ pub fn divide_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
             }
         }
         (CalcResultType::Number(num), CalcResultType::Unit(unit)) => {
-            let new_unit = unit.pow(-1);
-            let num_part = new_unit.normalize(&num).ok()?;
+            let new_unit = unit.pow(-1)?;
+            let num_part = new_unit.normalize(&num)?;
             Some(CalcResult::new(
                 CalcResultType::Quantity(num_part, new_unit),
                 0,
@@ -905,8 +932,8 @@ pub fn divide_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         // 5% / year
         //////////////
         (CalcResultType::Percentage(num), CalcResultType::Unit(unit)) => {
-            let new_unit = unit.pow(-1);
-            let num_part = new_unit.normalize(&num.checked_div(dec(100))?).ok()?;
+            let new_unit = unit.pow(-1)?;
+            let num_part = new_unit.normalize(&num.checked_div(&DECIMAL_100)?)?;
             Some(CalcResult::new(
                 CalcResultType::Quantity(num_part, new_unit),
                 0,
@@ -917,21 +944,20 @@ pub fn divide_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         //////////////
         (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             // 100 / 2
-            if rhs.is_zero() {
-                None
-            } else {
-                Some(CalcResult::new(CalcResultType::Number(lhs / rhs), 0))
-            }
+            Some(CalcResult::new(
+                CalcResultType::Number(lhs.checked_div(&rhs)?),
+                0,
+            ))
         }
         (CalcResultType::Number(lhs), CalcResultType::Quantity(rhs, unit)) => {
             // 100 / 2km => 100 / (2 km)
-            let new_unit = unit.pow(-1);
+            let new_unit = unit.pow(-1)?;
 
-            let denormalized_num = unit.from_base_to_this_unit(rhs).ok()?;
+            let denormalized_num = unit.from_base_to_this_unit(rhs)?;
             if denormalized_num.is_zero() {
                 return None;
             }
-            let num_part = new_unit.normalize(&(lhs / &denormalized_num)).ok()?;
+            let num_part = new_unit.normalize(&(lhs / &denormalized_num))?;
             Some(CalcResult::new(
                 CalcResultType::Quantity(num_part, new_unit.clone()),
                 0,
@@ -943,7 +969,7 @@ pub fn divide_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
             }
             // 100 / 50%
             Some(CalcResult::new(
-                CalcResultType::Percentage(lhs / rhs * dec(100)),
+                CalcResultType::Percentage(lhs.checked_div(rhs)?.checked_mul(&DECIMAL_100)?),
                 0,
             ))
         }
@@ -1009,7 +1035,10 @@ pub fn divide_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     };
 }
 
-pub fn pow(this: Decimal, mut exp: i64) -> Result<Decimal, ()> {
+pub fn pow(this: Decimal, mut exp: i64) -> Option<Decimal> {
+    if this.is_zero() && exp.is_negative() {
+        return None;
+    }
     let mut base = this.clone();
     let mut acc = Decimal::one();
     let neg = exp < 0;
@@ -1018,32 +1047,38 @@ pub fn pow(this: Decimal, mut exp: i64) -> Result<Decimal, ()> {
 
     while exp > 1 {
         if (exp & 1) == 1 {
-            acc = acc.checked_mul(&base).ok_or(())?;
+            acc = acc.checked_mul(&base)?;
         }
         exp /= 2;
         // TODO improve square
-        base = base.checked_mul(&base).ok_or(())?;
+        base = base.checked_mul(&base)?;
     }
 
     if exp == 1 {
-        acc = acc.checked_mul(&base).ok_or(())?;
+        acc = acc.checked_mul(&base)?;
     }
 
-    Ok(if neg { Decimal::one() / acc } else { acc })
+    Some(if neg {
+        Decimal::one().checked_div(&acc)?
+    } else {
+        acc
+    })
 }
 
 pub fn dec(num: i64) -> Decimal {
     Decimal::from_i64(num).unwrap()
 }
 
-fn percentage_of(this: &Decimal, base: &Decimal) -> Decimal {
-    base / &dec(100) * this
+const DECIMAL_100: Decimal = Decimal::from_parts(100, 0, 0, false, 0);
+
+fn percentage_of(this: &Decimal, base: &Decimal) -> Option<Decimal> {
+    base.checked_div(&DECIMAL_100)?.checked_mul(this)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::shunting_yard::tests::{
-        apply_to_prev_token_unit, num, num_err, op, op_err, str, unit,
+        apply_to_prev_token_unit, num, num_with_err, op, op_err, str, unit,
     };
     use crate::units::units::Units;
     use crate::{ResultFormat, Variable, Variables};
@@ -1054,8 +1089,8 @@ mod tests {
     use crate::helper::create_vars;
     use crate::renderer::render_result;
     use crate::token_parser::{OperatorTokenType, Token};
+    use bumpalo::Bump;
     use rust_decimal::prelude::*;
-    use typed_arena::Arena;
 
     const DECIMAL_COUNT: usize = 4;
 
@@ -1066,7 +1101,7 @@ mod tests {
         let temp = text.chars().collect::<Vec<char>>();
         let mut tokens = vec![];
         let vars = create_vars();
-        let arena = Arena::new();
+        let arena = Bump::new();
         let mut shunting_output = crate::shunting_yard::tests::do_shunting_yard(
             &temp,
             &units,
@@ -1087,7 +1122,7 @@ mod tests {
         let units = Units::new();
 
         let mut tokens = vec![];
-        let arena = Arena::new();
+        let arena = Bump::new();
         let mut shunting_output =
             crate::shunting_yard::tests::do_shunting_yard(&temp, &units, &mut tokens, vars, &arena);
 
@@ -1107,7 +1142,6 @@ mod tests {
         })) = &result
         {
             assert_eq!(
-                expected,
                 render_result(
                     &units,
                     &result.as_ref().unwrap().as_ref().unwrap().result,
@@ -1115,7 +1149,8 @@ mod tests {
                     *there_was_unit_conversion,
                     Some(dec_count),
                     false,
-                )
+                ),
+                expected
             );
         } else if let Ok(..) = &result {
             assert_eq!(
@@ -1726,7 +1761,7 @@ mod tests {
                 num(1),
                 op(OperatorTokenType::BracketClose),
                 op(OperatorTokenType::Comma),
-                num_err(5),
+                num_with_err(5),
                 op(OperatorTokenType::ParenClose),
             ],
         )
@@ -1770,12 +1805,17 @@ mod tests {
         test_tokens(
             "30^5%",
             &[
-                num_err(30),
+                num_with_err(30),
                 op_err(OperatorTokenType::Pow),
-                num_err(5),
+                num_with_err(5),
                 op_err(OperatorTokenType::Perc),
             ],
         );
+    }
+
+    #[test]
+    fn test_zero_negativ_pow() {
+        test("0^-1", "Err");
     }
 
     #[test]
@@ -1856,5 +1896,83 @@ mod tests {
     #[test]
     fn test_pi() {
         test("π", "3.1416");
+    }
+
+    #[test]
+    fn test_multiple_equal_signs2() {
+        test("=(Blq9h/Oq=7y^$o[/kR]*$*oReyMo-M++]", "7");
+    }
+
+    #[test]
+    fn no_panic_huge_num_vs_num() {
+        test(
+            "79 228 162 514 264 337 593 543 950 335",
+            "79228162514264337593543950335",
+        );
+        test(
+            "79228162514264337593543950335 + 79228162514264337593543950335",
+            "Err",
+        );
+        test(
+            "-79228162514264337593543950335 - 79228162514264337593543950335",
+            "Err",
+        );
+        test("10^28 * 10^28", "Err");
+        test("10^28 / 10^-28", "Err");
+    }
+
+    #[test]
+    fn no_panic_huge_num_vs_perc() {
+        test("10^28 + 1000%", "Err");
+        test("79228162514264337593543950335 + 1%", "Err");
+        test("-79228162514264337593543950335 - (-1%)", "Err");
+        test("10^28 - 1000%", "Err");
+        test("10^28 * 1000%", "Err");
+        test("10^28 / 1000%", "1000000000000000000000000000 %");
+    }
+
+    #[test]
+    fn no_panic_huge_unit_vs_perc() {
+        test("10^28m + 1000%", "Err");
+        test("10^28m - 1000%", "Err");
+        test("-79228162514264337593543950335m - (-1%)", "Err");
+        test("10^28m * 1000%", "Err");
+        test("10^28m / 1000%", "Err");
+    }
+
+    #[test]
+    fn no_panic_huge_perc_vs_perc() {
+        test("10^28% + 1000%", "Err");
+        test("10^28% - 1000%", "Err");
+        test("10^28% * 1000%", "Err");
+        test("10^28% / 1000%", "Err");
+        test("-79228162514264337593543950335% - 1%", "Err");
+    }
+
+    #[test]
+    fn no_panic_huge_unit_vs_unit() {
+        test(
+            "79228162514264337593543950335s + 79228162514264337593543950335s",
+            "Err",
+        );
+        test(
+            "-79228162514264337593543950335s - 79228162514264337593543950335s",
+            "Err",
+        );
+    }
+
+    #[test]
+    fn test_multiplying_bug_numbers_via_unit_no_panic() {
+        test("909636Yl", "909636 Yl");
+    }
+
+    #[test]
+    fn test_huge_unit_exponent() {
+        test("6K^61595", "Err");
+    }
+
+    #[test]
+    fn test_fuzzing_issue() {
+        test("90-/9b^72^4", "Err");
     }
 }

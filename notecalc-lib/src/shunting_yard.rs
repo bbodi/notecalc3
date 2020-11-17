@@ -528,7 +528,6 @@ impl ShuntingYard {
                             v.assign_op_input_token_pos = Some(input_index as usize);
                             // assignment op should be part of valid tokens
                             v.reset(output_stack.len(), input_index);
-                            to_out2(output_stack, TokenType::Operator(op.clone()), input_index);
                         }
                         operator_stack.clear();
                         continue;
@@ -757,7 +756,9 @@ impl ShuntingYard {
             );
         }
 
-        if v.is_valid_assignment_expression() {
+        // output_stack can be empty since the Assign operator is put
+        // to the end of  the list at the end of this method
+        if v.is_valid_assignment_expression() && !output_stack.is_empty() {
             // close it
             // set everything to string which is in front of this expr
             v.close_valid_range(output_stack.len(), input_index, operator_stack.len());
@@ -803,6 +804,18 @@ impl ShuntingYard {
             output_stack.drain(0..last_valid_start_index);
         } else {
             output_stack.clear();
+        }
+
+        // in calc, the assignment operator does nothing else but flag
+        // the expression as "assignment", so we can put it to the end of the stack,
+        // it is simpler and won't cause any trouble
+        if !output_stack.is_empty() && v.assign_op_input_token_pos.is_some() {
+            if let Some(assign_op_input_token_pos) = v.assign_op_input_token_pos {
+                output_stack.push(ShuntingYardResult::new(
+                    TokenType::Operator(OperatorTokenType::Assign),
+                    assign_op_input_token_pos,
+                ))
+            }
         }
     }
 
@@ -995,8 +1008,8 @@ pub mod tests {
     use crate::token_parser::TokenParser;
     use crate::units::units::{UnitOutput, Units};
     use crate::{Variable, Variables, MAX_LINE_COUNT};
+    use bumpalo::Bump;
     use rust_decimal::prelude::*;
-    use typed_arena::Arena;
 
     pub fn num<'text_ptr>(n: i64) -> Token<'text_ptr> {
         Token {
@@ -1006,10 +1019,18 @@ pub mod tests {
         }
     }
 
-    pub fn num_err<'text_ptr>(n: i64) -> Token<'text_ptr> {
+    pub fn num_with_err<'text_ptr>(n: i64) -> Token<'text_ptr> {
         Token {
             ptr: &[],
             typ: TokenType::NumberLiteral(n.into()),
+            has_error: true,
+        }
+    }
+
+    pub fn num_err<'text_ptr>() -> Token<'text_ptr> {
+        Token {
+            ptr: &[],
+            typ: TokenType::NumberErr,
             has_error: true,
         }
     }
@@ -1167,7 +1188,7 @@ pub mod tests {
         units: &'units Units,
         tokens: &mut Vec<Token<'text_ptr>>,
         vars: &'b Variables,
-        allocator: &'text_ptr Arena<char>,
+        allocator: &'text_ptr Bump,
     ) -> Vec<ShuntingYardResult> {
         let mut output = vec![];
         TokenParser::parse_line(&text, vars, tokens, &units, 10, allocator);
@@ -1195,7 +1216,7 @@ pub mod tests {
         let temp = text.chars().collect::<Vec<char>>();
         let units = Units::new();
         let mut tokens = vec![];
-        let output = do_shunting_yard(&temp, &units, &mut tokens, &var_names, &Arena::new());
+        let output = do_shunting_yard(&temp, &units, &mut tokens, &var_names, &Bump::new());
         compare_tokens(
             expected_tokens,
             output
@@ -1220,7 +1241,7 @@ pub mod tests {
         let temp = text.chars().collect::<Vec<char>>();
         let units = Units::new();
         let mut tokens = vec![];
-        let arena = Arena::new();
+        let arena = Bump::new();
         let mut vars = create_vars();
         vars[0] = Some(Variable {
             name: Box::from(&['b', '0'][..]),
@@ -1894,7 +1915,7 @@ pub mod tests {
                 num(12),
             ],
         );
-        test_output("a = 12", &[op(OperatorTokenType::Assign), num(12)]);
+        test_output("a = 12", &[num(12), op(OperatorTokenType::Assign)]);
 
         test_tokens(
             "alfa béta = 12*4",
@@ -1913,10 +1934,10 @@ pub mod tests {
         test_output(
             "alfa béta = 12*4",
             &[
-                op(OperatorTokenType::Assign),
                 num(12),
                 num(4),
                 op(OperatorTokenType::Mult),
+                op(OperatorTokenType::Assign),
             ],
         );
 
@@ -1935,7 +1956,7 @@ pub mod tests {
                 num(13),
             ],
         );
-        test_output("var(12*4) = 13", &[op(OperatorTokenType::Assign), num(13)]);
+        test_output("var(12*4) = 13", &[num(13), op(OperatorTokenType::Assign)]);
     }
 
     #[test]
@@ -2005,7 +2026,7 @@ pub mod tests {
         test_output_vars(
             &[&['b'], &['b', '0']],
             "b0 = 100",
-            &[op(OperatorTokenType::Assign), num(100)],
+            &[num(100), op(OperatorTokenType::Assign)],
         );
     }
 
@@ -2274,6 +2295,37 @@ pub mod tests {
                 num(24),
                 op(OperatorTokenType::Pow),
                 apply_to_prev_token_unit("kg"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_multiple_equal_signs() {
+        test_output("z=1=2", &[num(1)]);
+    }
+
+    #[test]
+    fn test_multiple_equal_signs2() {
+        test_output(
+            "=(Blq9h/Oq=7y^$o[/kR]*$*oReyMo-M++]",
+            &[num(7), op(OperatorTokenType::Assign)],
+        );
+    }
+
+    #[test]
+    fn test_yl_parsing() {
+        test_output("909636Yl", &[num(909636), apply_to_prev_token_unit("Yl")]);
+    }
+
+    #[test]
+    fn test_fuzzing_issue1() {
+        test_output(
+            "90-/9b^72^4",
+            &[
+                num(9),
+                apply_to_prev_token_unit("b^72"),
+                num(4),
+                op(OperatorTokenType::Pow),
             ],
         );
     }

@@ -18,9 +18,9 @@ use std::mem::MaybeUninit;
 use std::ops::Range;
 use std::time::Duration;
 
+use bumpalo::Bump;
 use smallvec::SmallVec;
 use strum_macros::EnumDiscriminants;
-use typed_arena::Arena;
 
 use helper::*;
 
@@ -1188,7 +1188,7 @@ impl NoteCalcApp {
         &mut self,
         mut text: &str,
         units: &Units,
-        allocator: &'b Arena<char>,
+        allocator: &'b Bump,
         tokens: &mut AppTokens<'b>,
         results: &mut Results,
         vars: &mut Variables,
@@ -1256,7 +1256,7 @@ impl NoteCalcApp {
         result_buffer: &'b mut [u8],
         result_change_flag: EditorRowFlags,
         gr: &mut GlobalRenderData,
-        allocator: &'b Arena<char>,
+        allocator: &'b Bump,
         tokens: &AppTokens<'b>,
         results: &Results,
         vars: &Variables,
@@ -1531,7 +1531,7 @@ impl NoteCalcApp {
         dir: usize,
         editor_objs: &mut EditorObjects,
         units: &Units,
-        allocator: &'b Arena<char>,
+        allocator: &'b Bump,
         tokens: &mut AppTokens<'b>,
         results: &mut Results,
         vars: &mut Variables,
@@ -1577,7 +1577,7 @@ impl NoteCalcApp {
         clicked_y: CanvasY,
         editor_objs: &mut EditorObjects,
         units: &Units,
-        allocator: &'b Arena<char>,
+        allocator: &'b Bump,
         tokens: &mut AppTokens<'b>,
         results: &mut Results,
         vars: &mut Variables,
@@ -1662,7 +1662,7 @@ impl NoteCalcApp {
         clicked_y: CanvasY,
         editor_objs: &mut EditorObjects,
         units: &Units,
-        allocator: &'b Arena<char>,
+        allocator: &'b Bump,
         tokens: &mut AppTokens<'b>,
         results: &mut Results,
         vars: &mut Variables,
@@ -1783,7 +1783,7 @@ impl NoteCalcApp {
     pub fn get_clicked_row_clamped<'a>(&self, render_y: CanvasY) -> ContentIndex {
         let latest_bottom_i = self
             .render_data
-            .calc_bottom_y(self.editor_content.line_count());
+            .calc_bottom_y(self.editor_content.line_count().min(MAX_LINE_COUNT - 1));
         return if render_y >= latest_bottom_i {
             content_y(self.editor_content.line_count() - 1)
         } else if let Some(editor_y) = self.rendered_y_to_editor_y(render_y) {
@@ -1850,7 +1850,7 @@ impl NoteCalcApp {
         y: CanvasY,
         editor_objs: &mut EditorObjects,
         units: &Units,
-        allocator: &'b Arena<char>,
+        allocator: &'b Bump,
         tokens: &mut AppTokens<'b>,
         results: &mut Results,
         vars: &mut Variables,
@@ -1943,7 +1943,7 @@ impl NoteCalcApp {
         new_client_width: usize,
         editor_objs: &mut EditorObjects,
         units: &Units,
-        allocator: &'b Arena<char>,
+        allocator: &'b Bump,
         tokens: &mut AppTokens<'b>,
         results: &mut Results,
         vars: &mut Variables,
@@ -1974,7 +1974,7 @@ impl NoteCalcApp {
         &mut self,
         now: u32,
         units: &Units,
-        allocator: &'b Arena<char>,
+        allocator: &'b Bump,
         tokens: &mut AppTokens<'b>,
         results: &mut Results,
         vars: &mut Variables,
@@ -2170,7 +2170,7 @@ impl NoteCalcApp {
     pub fn alt_key_released<'b>(
         &mut self,
         units: &Units,
-        allocator: &'b Arena<char>,
+        allocator: &'b Bump,
         tokens: &mut AppTokens<'b>,
         results: &mut Results,
         vars: &mut Variables,
@@ -2199,7 +2199,7 @@ impl NoteCalcApp {
     fn insert_line_ref<'b>(
         &mut self,
         units: &Units,
-        allocator: &'b Arena<char>,
+        allocator: &'b Bump,
         tokens: &mut AppTokens<'b>,
         results: &mut Results,
         vars: &mut Variables,
@@ -2261,7 +2261,7 @@ impl NoteCalcApp {
         &mut self,
         text: String,
         units: &Units,
-        allocator: &'b Arena<char>,
+        allocator: &'b Bump,
         tokens: &mut AppTokens<'b>,
         results: &mut Results,
         vars: &mut Variables,
@@ -2290,11 +2290,35 @@ impl NoteCalcApp {
         };
     }
 
+    pub fn reparse_everything<'b, 'q>(
+        &'q mut self,
+        allocator: &'b Bump,
+        units: &Units,
+        tokens: &mut AppTokens<'b>,
+        results: &mut Results,
+        vars: &mut Variables,
+        editor_objs: &mut EditorObjects,
+        render_buckets: &mut RenderBuckets<'b>,
+        result_buffer: &'b mut [u8],
+    ) {
+        self.process_and_render_tokens(
+            RowModificationType::AllLinesFrom(0),
+            units,
+            allocator,
+            tokens,
+            results,
+            vars,
+            editor_objs,
+            render_buckets,
+            result_buffer,
+        );
+    }
+
     pub fn handle_input<'b, 'q>(
         &'q mut self,
         input: EditorInputEvent,
         modifiers: InputModifiers,
-        allocator: &'b Arena<char>,
+        allocator: &'b Bump,
         units: &Units,
         tokens: &mut AppTokens<'b>,
         results: &mut Results,
@@ -2511,7 +2535,7 @@ impl NoteCalcApp {
         &mut self,
         input_effect: RowModificationType,
         units: &Units,
-        allocator: &'b Arena<char>,
+        allocator: &'b Bump,
         tokens: &mut AppTokens<'b>,
         results: &mut Results,
         vars: &mut Variables,
@@ -2523,7 +2547,7 @@ impl NoteCalcApp {
             editor_content: &EditorContent<LineData>,
             line: &[char],
             units: &Units,
-            allocator: &'a Arena<char>,
+            allocator: &'a Bump,
             tokens_per_lines: &mut AppTokens<'a>,
             results: &mut Results,
             vars: &mut Variables,
@@ -3509,7 +3533,7 @@ impl NoteCalcApp {
         units: &Units,
         render_buckets: &mut RenderBuckets<'b>,
         result_buffer: &'b mut [u8],
-        allocator: &'b Arena<char>,
+        allocator: &'b Bump,
         tokens: &AppTokens<'b>,
         results: &Results,
         vars: &Variables,
@@ -3697,7 +3721,7 @@ pub fn parse_tokens<'b>(
     editor_y: usize,
     units: &Units,
     vars: &Variables,
-    allocator: &'b Arena<char>,
+    allocator: &'b Bump,
 ) -> Tokens<'b> {
     // TODO optimize vec allocations
     let mut tokens = Vec::with_capacity(128);
@@ -3718,7 +3742,7 @@ fn render_simple_text_line<'text_ptr>(
     r: &mut PerLineRenderData,
     gr: &mut GlobalRenderData,
     render_buckets: &mut RenderBuckets<'text_ptr>,
-    allocator: &'text_ptr Arena<char>,
+    allocator: &'text_ptr Bump,
 ) {
     r.set_fix_row_height(1);
     gr.set_rendered_height(r.editor_y, 1);
@@ -3726,7 +3750,7 @@ fn render_simple_text_line<'text_ptr>(
     let text_len = line.len().min(gr.current_editor_width);
 
     render_buckets.utf8_texts.push(RenderUtf8TextMsg {
-        text: allocator.alloc_extend(line.iter().map(|it| *it).take(text_len)),
+        text: allocator.alloc_slice_fill_iter(line.iter().map(|it| *it).take(text_len)),
         row: r.render_y,
         column: gr.left_gutter_width,
     });
@@ -4048,6 +4072,12 @@ fn evaluate_tokens_and_save_result<'text_ptr>(
         if result.assignment {
             let var_name = {
                 let mut i = 0;
+                if line[0] == '=' {
+                    // it might happen that there are more '=' in a line.
+                    // To avoid panic, start the index from 1, so if the first char is
+                    // '=', it will be ignored.
+                    i += 1;
+                }
                 // skip whitespaces
                 while line[i].is_ascii_whitespace() {
                     i += 1;
@@ -4201,7 +4231,7 @@ fn evaluate_selection(
     editor_content: &EditorContent<LineData>,
     vars: &Variables,
     results: &[LineResult],
-    allocator: &Arena<char>,
+    allocator: &Bump,
 ) -> Option<String> {
     let sel = editor.get_selection();
     // TODO optimize vec allocations
@@ -4272,7 +4302,7 @@ fn evaluate_text<'text_ptr>(
     vars: &Variables,
     tokens: &mut Vec<Token<'text_ptr>>,
     editor_y: usize,
-    allocator: &'text_ptr Arena<char>,
+    allocator: &'text_ptr Bump,
 ) -> Result<Option<EvaluationResult>, ()> {
     TokenParser::parse_line(text, vars, tokens, &units, editor_y, allocator);
     let mut shunting_output_stack = Vec::with_capacity(4);
@@ -5022,7 +5052,7 @@ fn draw_token<'text_ptr>(
     left_gutter_width: usize,
     render_buckets: &mut RenderBuckets<'text_ptr>,
 ) {
-    let dst = if token.has_error {
+    let dst = if token.has_error() {
         &mut render_buckets.number_errors
     } else {
         match &token.typ {
@@ -5142,7 +5172,7 @@ fn render_selection_and_its_sum<'text_ptr>(
     editor_content: &EditorContent<LineData>,
     gr: &GlobalRenderData,
     vars: &Variables,
-    allocator: &'text_ptr Arena<char>,
+    allocator: &'text_ptr Bump,
 ) {
     render_buckets.set_color(Layer::BehindText, 0xA6D2FF_FF);
     if let Some((start, end)) = editor.get_selection().is_range() {
@@ -5514,8 +5544,8 @@ mod main_tests {
             }
         }
 
-        fn allocator<'a>(&self) -> &'a Arena<char> {
-            unsafe { &*(self.allocator as *const Arena<char>) }
+        fn allocator<'a>(&self) -> &'a Bump {
+            unsafe { &*(self.allocator as *const Bump) }
         }
 
         fn render(&self) {
@@ -5776,7 +5806,7 @@ mod main_tests {
             results_ptr: to_box_ptr(results),
             vars_ptr: to_box_ptr(vars),
             editor_objects_ptr: to_box_ptr(editor_objects),
-            allocator: to_box_ptr(Arena::<char>::with_capacity(MAX_LINE_COUNT * 120)),
+            allocator: to_box_ptr(Bump::with_capacity(MAX_LINE_COUNT * 120)),
         };
     }
 
@@ -9960,7 +9990,17 @@ monthly payment = r/(1 - (1 + r)^(-n)) *finance amount",
         let mut result_buffer = [0; 128];
         test.render_get_result_buf(&mut result_buffer[..]);
 
-        assert_results(&["year"][..], &result_buffer);
+        assert_results(&[""][..], &result_buffer);
+    }
+
+    #[test]
+    fn test_itself_unit_rendering2() {
+        let test = create_app2(35);
+        test.paste("a = 2/year");
+        let mut result_buffer = [0; 128];
+        test.render_get_result_buf(&mut result_buffer[..]);
+
+        assert_results(&["2 year^-1"][..], &result_buffer);
     }
 
     #[test]

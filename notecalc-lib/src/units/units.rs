@@ -9,6 +9,7 @@ use smallvec::alloc::fmt::{Debug, Display, Formatter};
 use smallvec::SmallVec;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::fmt::Write;
 use std::str::FromStr;
 
@@ -84,7 +85,6 @@ impl Units {
                 c = skip_whitespaces(c);
             }
 
-            //let value = parse_number(&mut c);
             let value = parse_char(&mut c, '1');
 
             c = skip_whitespaces(c);
@@ -122,21 +122,37 @@ impl Units {
                 last_valid_cursor_pos = Units::calc_parsed_len(text, c);
             }
 
-            let mut power = power_multiplier_current * power_multiplier_stack_product;
+            let mut power = if let Some(power) =
+                power_multiplier_current.checked_mul(power_multiplier_stack_product)
+            {
+                power
+            } else {
+                break 'main_loop;
+            };
             // Is there a "^ number"?
             c = skip_whitespaces(c);
             if parse_char(&mut c, '^') {
                 c = skip_whitespaces(c);
                 let p = parse_number(&mut c);
                 if let Some(p) = p {
-                    power *= p as UnitDimensionExponent;
+                    power = if let Some(mul) =
+                        i8::try_from(p).ok().and_then(|b| power.checked_mul(b))
+                    {
+                        mul
+                    } else {
+                        return (output, 0);
+                    };
                 } else {
                     // No valid number found for the power!
-                    output.add_unit(UnitInstance::new(res.0, res.1, power));
+                    if !output.add_unit(UnitInstance::new(res.0, res.1, power)) {
+                        return (output, 0);
+                    }
                     break 'main_loop;
                 }
             }
-            output.add_unit(UnitInstance::new(res.0, res.1, power));
+            if !output.add_unit(UnitInstance::new(res.0, res.1, power)) {
+                return (output, 0);
+            }
             // Add the unit to the list
 
             c = skip_whitespaces(c);
@@ -424,11 +440,17 @@ impl UnitOutput {
         }
     }
 
-    pub fn add_unit(&mut self, unit: UnitInstance) {
+    #[must_use]
+    pub fn add_unit(&mut self, unit: UnitInstance) -> bool {
         for i in 0..BASE_UNIT_DIMENSION_COUNT {
-            self.dimensions[i] += unit.unit.borrow().base[i] * unit.power;
+            if let Some(num) = unit.unit.borrow().base[i].checked_mul(unit.power) {
+                self.dimensions[i] += num;
+            } else {
+                return false;
+            }
         }
         self.units.push(unit);
+        return true;
     }
 
     pub fn is_unitless(&self) -> bool {
@@ -534,7 +556,7 @@ impl PartialEq for UnitOutput {
 }
 
 impl UnitOutput {
-    pub fn normalize(&self, value: &Decimal) -> Result<Decimal, ()> {
+    pub fn normalize(&self, value: &Decimal) -> Option<Decimal> {
         if self.is_derived() {
             let mut result = value.clone();
             for unit in &self.units {
@@ -542,11 +564,9 @@ impl UnitOutput {
                 let prefix_val = &unit.prefix.borrow().value;
                 let power = unit.power;
 
-                result = result
-                    .checked_mul(&pow(base_value * prefix_val, power as i64)?)
-                    .ok_or(())?;
+                result = result.checked_mul(&pow(base_value * prefix_val, power as i64)?)?;
             }
-            return Ok(result);
+            return Some(result);
         } else {
             let base_value = &self.units[0].unit.borrow().value;
             let offset = &self.units[0].unit.borrow().offset;
@@ -554,21 +574,21 @@ impl UnitOutput {
 
             let a = value + offset;
             let b = base_value * prefix_val;
-            return a.checked_mul(&b).ok_or(());
+            return a.checked_mul(&b);
         }
     }
 
-    pub fn from_base_to_this_unit(&self, value: &Decimal) -> Result<Decimal, ()> {
+    pub fn from_base_to_this_unit(&self, value: &Decimal) -> Option<Decimal> {
         return if self.is_derived() {
             let mut result = value.clone();
             for unit in &self.units {
                 let base_value = &unit.unit.borrow().value;
                 let prefix_val = &unit.prefix.borrow().value;
                 let power = unit.power;
-                let pow = pow(base_value * prefix_val, power as i64)?;
-                result = result.checked_div(pow).ok_or(())?;
+                let pow = pow(base_value.checked_mul(prefix_val)?, power as i64)?;
+                result = result.checked_div(&pow)?;
             }
-            Ok(result)
+            Some(result)
         } else {
             // az előző ág az a current numra hivodik meg mivel az a km/h*h unitot számolja
             // ki, ami derived, viszont a /h*h miatt eltünik a m/sbol fakadó
@@ -581,21 +601,28 @@ impl UnitOutput {
             let borrow_prefix = self.units[0].prefix.borrow();
             let prefix_val = &borrow_prefix.value;
 
-            let a = value / base_value;
-            Ok(((a) / prefix_val) - offset)
+            use rust_decimal::prelude::One;
+            if base_value < &Decimal::one() {
+                let denom = prefix_val.checked_mul(base_value)?;
+                value.checked_div(&denom)?.checked_sub(offset)
+            } else {
+                let a = value.checked_div(base_value)?;
+                a.checked_div(&prefix_val)?.checked_sub(offset)
+            }
         };
     }
 
-    pub fn pow(&self, p: i64) -> UnitOutput {
+    pub fn pow(&self, p: i64) -> Option<UnitOutput> {
         let mut result = self.clone();
+        let p = i8::try_from(p).ok()?;
         for dim in &mut result.dimensions {
-            *dim *= p as UnitDimensionExponent;
+            *dim = dim.checked_mul(p)?;
         }
         for unit in &mut result.units {
-            unit.power *= p as UnitDimensionExponent;
+            unit.power = unit.power.checked_mul(p)?;
         }
 
-        return result;
+        return Some(result);
     }
 
     pub fn is_derived(&self) -> bool {
@@ -1073,6 +1100,30 @@ mod tests {
         let units = Units::new();
 
         let unit1 = parse("12/year", &units);
+        assert_eq!(0, unit1.units.len());
+    }
+
+    #[test]
+    fn test_too_big_exponent() {
+        let units = Units::new();
+
+        let unit1 = parse("T^81", &units);
+        assert_eq!(0, unit1.units.len());
+    }
+
+    #[test]
+    fn test_too_big_exponent2() {
+        let units = Units::new();
+
+        let unit1 = parse("T^-81", &units);
+        assert_eq!(0, unit1.units.len());
+    }
+
+    #[test]
+    fn parsing_bug_fuzz() {
+        let units = Units::new();
+
+        let unit1 = parse("K^61595", &units);
         assert_eq!(0, unit1.units.len());
     }
 }
