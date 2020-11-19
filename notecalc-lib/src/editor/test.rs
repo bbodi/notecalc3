@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use crate::editor::editor::{Editor, EditorInputEvent, InputModifiers, Pos, Selection};
+    use crate::editor::editor::{
+        Editor, EditorInputEvent, InputModifiers, Pos, RowModificationType, Selection,
+    };
     use crate::editor::editor_content::EditorContent;
 
     const CURSOR_MARKER: char = '█';
@@ -202,7 +204,11 @@ mod tests {
                         "row: {}, column: {}, chars: {:?}",
                         row_index,
                         expected_row_len,
-                        content.get_line_chars(row_index)
+                        content
+                            .get_line_chars(row_index)
+                            .iter()
+                            .take_while(|it| **it as u8 != 0)
+                            .collect::<String>()
                     );
                     expected_row_len += 1;
                 }
@@ -211,7 +217,8 @@ mod tests {
             assert_eq!(
                 params.expected_content.lines().count(),
                 content.line_count(),
-                "expected line count"
+                "Expected line count differs. Current content: {}",
+                content.get_content()
             );
             assert!(
                 content.line_lens[row_index] <= expected_row_len,
@@ -5811,5 +5818,319 @@ interest rate / (12 (1/year))
             InputModifiers::none(),
             "p█",
         );
+    }
+
+    #[test]
+    fn test_insert_char_selection_should_not_set_cursor_pos_if_command_is_rejected() {
+        let mut content = EditorContent::<usize>::new(120);
+        let mut editor = Editor::new(&mut content);
+
+        editor.insert_text(&"a".repeat(100), &mut content);
+        editor.handle_input(
+            EditorInputEvent::Enter,
+            InputModifiers::none(),
+            &mut content,
+        );
+        editor.insert_text(&"b".repeat(100), &mut content);
+        editor.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut content);
+        editor.handle_input(EditorInputEvent::End, InputModifiers::none(), &mut content);
+        editor.handle_input(
+            EditorInputEvent::Right,
+            InputModifiers::shift(),
+            &mut content,
+        );
+        editor.handle_input(
+            EditorInputEvent::Right,
+            InputModifiers::shift(),
+            &mut content,
+        );
+        editor.handle_input(
+            EditorInputEvent::Char('o'),
+            InputModifiers::none(),
+            &mut content,
+        );
+        // the previous command was rejected due to line len limitation, but this command should not
+        // cause panic
+        editor.handle_input(
+            EditorInputEvent::Char('X'),
+            InputModifiers::none(),
+            &mut content,
+        );
+    }
+
+    #[test]
+    fn test_that_undo_stack_is_cleared() {
+        let mut content = EditorContent::<usize>::new(120);
+        let mut editor = Editor::new(&mut content);
+
+        editor.handle_input(
+            EditorInputEvent::Char('X'),
+            InputModifiers::none(),
+            &mut content,
+        );
+
+        content.init_with("");
+        editor.set_cursor_pos_r_c(0, 0);
+
+        assert_eq!(content.undo_stack.len(), 0);
+        assert_eq!(content.redo_stack.len(), 0);
+
+        // no panic
+        editor.handle_input(
+            EditorInputEvent::Char('z'),
+            InputModifiers::ctrl(),
+            &mut content,
+        );
+    }
+
+    #[test]
+    fn test_ctrl_z_case_insensitive() {
+        let mut content = EditorContent::<usize>::new(120);
+        let mut editor = Editor::new(&mut content);
+
+        assert_eq!(&content.get_content(), "");
+        editor.handle_input(
+            EditorInputEvent::Char('X'),
+            InputModifiers::none(),
+            &mut content,
+        );
+        assert_eq!(&content.get_content(), "X");
+        editor.handle_input(
+            EditorInputEvent::Char('Z'),
+            InputModifiers::ctrl(),
+            &mut content,
+        );
+        assert_eq!(&content.get_content(), "");
+    }
+
+    #[test]
+    fn test_ctrl_shift_z_case_insensitive() {
+        let mut content = EditorContent::<usize>::new(120);
+        let mut editor = Editor::new(&mut content);
+
+        assert_eq!(&content.get_content(), "");
+        editor.handle_input(
+            EditorInputEvent::Char('X'),
+            InputModifiers::none(),
+            &mut content,
+        );
+        assert_eq!(&content.get_content(), "X");
+        editor.handle_input(
+            EditorInputEvent::Char('Z'),
+            InputModifiers::ctrl(),
+            &mut content,
+        );
+        assert_eq!(&content.get_content(), "");
+        editor.handle_input(
+            EditorInputEvent::Char('Z'),
+            InputModifiers::ctrl_shift(),
+            &mut content,
+        );
+        assert_eq!(&content.get_content(), "X");
+    }
+
+    #[test]
+    fn test_that_redo_is_cleared_if_new_undo_inserted() {
+        let mut content = EditorContent::<usize>::new(120);
+        let mut editor = Editor::new(&mut content);
+
+        // go to the second row to put an invalid row index (1) to the redo stack
+        editor.handle_input(
+            EditorInputEvent::Enter,
+            InputModifiers::none(),
+            &mut content,
+        );
+        editor.handle_tick(5000); // to put it into a separate undo group
+        editor.handle_input(
+            EditorInputEvent::Char('X'),
+            InputModifiers::none(),
+            &mut content,
+        );
+        assert_eq!(content.redo_stack.len(), 0);
+
+        editor.handle_tick(10000); // to put it into a separate undo group
+        editor.handle_input(
+            EditorInputEvent::Char('z'),
+            InputModifiers::ctrl(),
+            &mut content,
+        );
+        assert_eq!(content.redo_stack.len(), 1);
+
+        // remove the 2nd row so the '1' row index becomes invalid
+        editor.handle_tick(15000); // to put it into a separate undo group
+        editor.handle_input(
+            EditorInputEvent::Backspace,
+            InputModifiers::none(),
+            &mut content,
+        );
+        assert_eq!(content.redo_stack.len(), 0);
+
+        editor.handle_tick(20000); // to put it into a separate undo group
+        editor.handle_input(
+            EditorInputEvent::Char('Y'),
+            InputModifiers::none(),
+            &mut content,
+        );
+        assert_eq!(content.redo_stack.len(), 0);
+
+        // no panic, and no content change
+        editor.handle_tick(25000); // to put it into a separate undo group
+        editor.handle_input(
+            EditorInputEvent::Char('z'),
+            InputModifiers::ctrl_shift(),
+            &mut content,
+        );
+        assert_eq!(&content.get_content(), "Y");
+    }
+
+    #[test]
+    fn test_merging_to_rows_to_maxlen_by_inserting_char_is_prohibited() {
+        // test editor maxlen is 80
+        test(
+            "\
+            01234567890❱0123456789001234567890\n\
+            01234567890123456789012345678901234567890123456789012345678901234567890123456789\n\
+            01234567890❰123456789012345678901234567890123456789012345678901234567890123456789",
+            &[EditorInputEvent::Char('p')],
+            InputModifiers::none(),
+            "\
+            01234567890❱0123456789001234567890\n\
+            01234567890123456789012345678901234567890123456789012345678901234567890123456789\n\
+            01234567890❰123456789012345678901234567890123456789012345678901234567890123456789",
+        );
+    }
+
+    #[test]
+    fn test_merging_to_rows_to_maxlen() {
+        // test editor maxlen is 80
+        test(
+            "\
+            01234567890❱0123456789001234567890\n\
+            01234567890123456789012345678901234567890123456789012345678901234567890123456789\n\
+            01234567890❰123456789012345678901234567890123456789012345678901234567890123456789",
+            &[EditorInputEvent::Del],
+            InputModifiers::none(),
+            "01234567890█123456789012345678901234567890123456789012345678901234567890123456789",
+        );
+    }
+
+    #[test]
+    fn test_merging_to_rows_to_more_than_maxlen() {
+        // test editor maxlen is 80
+        // expect no change
+        test(
+            "\
+            012345678900❱123456789001234567890\n\
+            01234567890123456789012345678901234567890123456789012345678901234567890123456789\n\
+            01234567890❰123456789012345678901234567890123456789012345678901234567890123456789",
+            &[EditorInputEvent::Char('X')],
+            InputModifiers::none(),
+            "\
+            012345678900❱123456789001234567890\n\
+            01234567890123456789012345678901234567890123456789012345678901234567890123456789\n\
+            01234567890❰123456789012345678901234567890123456789012345678901234567890123456789",
+        );
+    }
+
+    #[test]
+    fn insert_three_times_as_the_max_len() {
+        let mut content = EditorContent::<usize>::new(120);
+        let mut editor = Editor::new(&mut content);
+
+        editor.insert_text(
+            &("a".repeat(120) + &"b".repeat(120) + &"c".repeat(120)),
+            &mut content,
+        );
+        assert_eq!(content.get_content().lines().next().unwrap(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert_eq!(content.get_content().lines().skip(1).next().unwrap(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        assert_eq!(content.get_content().lines().skip(2).next().unwrap(), "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
+        assert_eq!(content.line_count(), 3);
+    }
+
+    #[test]
+    fn insert_three_times_as_the_max_len_with_text_overflow() {
+        let mut content = EditorContent::<usize>::new(120);
+        let mut editor = Editor::new(&mut content);
+
+        editor.insert_text("this will be overflowed", &mut content);
+        editor.set_cursor_pos_r_c(0, 0);
+
+        editor.insert_text(
+            &("a".repeat(120) + &"b".repeat(120) + &"c".repeat(120)),
+            &mut content,
+        );
+        assert_eq!(content.get_content().lines().next().unwrap(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert_eq!(content.get_content().lines().skip(1).next().unwrap(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        assert_eq!(content.get_content().lines().skip(2).next().unwrap(), "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
+        assert_eq!(
+            content.get_content().lines().skip(3).next().unwrap(),
+            "this will be overflowed"
+        );
+        assert_eq!(content.line_count(), 4);
+    }
+
+    #[test]
+    fn insert_three_times_as_the_max_len_with_text_overflow2() {
+        let mut content = EditorContent::<usize>::new(120);
+        let mut editor = Editor::new(&mut content);
+
+        editor.insert_text("this will not be overflowed", &mut content);
+
+        editor.insert_text(
+            &("a".repeat(120) + &"b".repeat(120) + &"c".repeat(120)),
+            &mut content,
+        );
+        assert_eq!(content.get_content().lines().next().unwrap(), "this will not be overflowedaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert_eq!(content.get_content().lines().skip(1).next().unwrap(), "aaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        assert_eq!(content.get_content().lines().skip(2).next().unwrap(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
+        assert_eq!(
+            content.get_content().lines().skip(3).next().unwrap(),
+            "ccccccccccccccccccccccccccc"
+        );
+        assert_eq!(content.line_count(), 4);
+    }
+
+    #[test]
+    fn test_that_if_row_overflows_than_modif_is_all_lines_from_0() {
+        let mut content = EditorContent::<usize>::new(120);
+        let mut editor = Editor::new(&mut content);
+
+        editor.insert_text("this will be overflowed", &mut content);
+        editor.set_cursor_pos_r_c(0, 0);
+
+        assert_eq!(
+            editor.insert_text(&("a".repeat(100)), &mut content),
+            Some(RowModificationType::AllLinesFrom(0))
+        );
+        assert_eq!(content.get_content().lines().skip(0).next().unwrap(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaathis will be overflo");
+        assert_eq!(content.get_content().lines().skip(1).next().unwrap(), "wed");
+        assert_eq!(content.line_count(), 2);
+    }
+
+    #[test]
+    fn test_that_if_row_overflows_than_modif_is_all_lines_from_1() {
+        let mut content = EditorContent::<usize>::new(120);
+        let mut editor = Editor::new(&mut content);
+
+        editor.insert_text(
+            "The first row is untouched\nthis will be overflowed",
+            &mut content,
+        );
+        editor.set_cursor_pos_r_c(1, 0);
+
+        assert_eq!(
+            editor.insert_text(&("a".repeat(100)), &mut content),
+            Some(RowModificationType::AllLinesFrom(1))
+        );
+        assert_eq!(
+            content.get_content().lines().skip(0).next().unwrap(),
+            "The first row is untouched"
+        );
+        assert_eq!(
+            content.get_content().lines().skip(1).next().unwrap(),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaathis will be overflo"
+        );
+        assert_eq!(content.get_content().lines().skip(2).next().unwrap(), "wed");
+        assert_eq!(content.line_count(), 3);
     }
 }

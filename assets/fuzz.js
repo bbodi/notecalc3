@@ -160,9 +160,7 @@ function generate_random_events() {
     }
     return events;
 }
-nocheckin
-nocheckin
-nocheckin
+
 function simulate_input() {
     if (!fuzzing_is_running) {
         return;

@@ -1644,4 +1644,32 @@ mod tests {
             ],
         );
     }
+
+    #[test]
+    fn test_huge_unit_number_no_panic() {
+        test(
+            "11822$^917533673846412864165166106750540",
+            &[
+                num(11822),
+                apply_to_prev_token_unit("$"),
+                op(OperatorTokenType::Pow),
+                num_err(),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_parsing_too_big_unit_exponent() {
+        test(
+            "2S^42/T",
+            &[
+                num(2),
+                str("S"),
+                op(OperatorTokenType::Pow),
+                num(42),
+                op(OperatorTokenType::Div),
+                unit("T"),
+            ],
+        );
+    }
 }

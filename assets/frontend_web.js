@@ -182,8 +182,8 @@ __exports.handle_drag = function(app_ptr, x, y) {
 * @param {number} app_ptr
 * @returns {number}
 */
-__exports.get_allocated_bytes = function(app_ptr) {
-    var ret = wasm.get_allocated_bytes(app_ptr);
+__exports.get_allocated_bytes_count = function(app_ptr) {
+    var ret = wasm.get_allocated_bytes_count(app_ptr);
     return ret >>> 0;
 };
 
@@ -232,8 +232,8 @@ __exports.get_clipboard_text = function(app_ptr) {
 * @param {number} app_ptr
 * @returns {string | undefined}
 */
-__exports.get_selected_text = function(app_ptr) {
-    wasm.get_selected_text(8, app_ptr);
+__exports.get_selected_text_and_clear_app_clipboard = function(app_ptr) {
+    wasm.get_selected_text_and_clear_app_clipboard(8, app_ptr);
     var r0 = getInt32Memory0()[8 / 4 + 0];
     var r1 = getInt32Memory0()[8 / 4 + 1];
     let v0;
@@ -257,6 +257,13 @@ __exports.handle_paste = function(app_ptr, input) {
 /**
 * @param {number} app_ptr
 */
+__exports.reparse_everything = function(app_ptr) {
+    wasm.reparse_everything(app_ptr);
+};
+
+/**
+* @param {number} app_ptr
+*/
 __exports.render = function(app_ptr) {
     wasm.render(app_ptr);
 };
@@ -268,6 +275,51 @@ __exports.render = function(app_ptr) {
 __exports.get_selected_rows_with_results = function(app_ptr) {
     try {
         wasm.get_selected_rows_with_results(8, app_ptr);
+        var r0 = getInt32Memory0()[8 / 4 + 0];
+        var r1 = getInt32Memory0()[8 / 4 + 1];
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_free(r0, r1);
+    }
+};
+
+/**
+* @param {number} app_ptr
+* @returns {string}
+*/
+__exports.get_plain_content = function(app_ptr) {
+    try {
+        wasm.get_plain_content(8, app_ptr);
+        var r0 = getInt32Memory0()[8 / 4 + 0];
+        var r1 = getInt32Memory0()[8 / 4 + 1];
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_free(r0, r1);
+    }
+};
+
+/**
+* @param {number} app_ptr
+* @returns {string}
+*/
+__exports.get_cursor = function(app_ptr) {
+    try {
+        wasm.get_cursor(8, app_ptr);
+        var r0 = getInt32Memory0()[8 / 4 + 0];
+        var r1 = getInt32Memory0()[8 / 4 + 1];
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_free(r0, r1);
+    }
+};
+
+/**
+* @param {number} app_ptr
+* @returns {string}
+*/
+__exports.get_top_of_undo_stack = function(app_ptr) {
+    try {
+        wasm.get_top_of_undo_stack(8, app_ptr);
         var r0 = getInt32Memory0()[8 / 4 + 0];
         var r1 = getInt32Memory0()[8 / 4 + 1];
         return getStringFromWasm0(r0, r1);

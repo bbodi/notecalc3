@@ -7,7 +7,7 @@ pub use std::ops::RangeInclusive;
 
 static mut RESULT_BUFFER: [u8; 2048] = [0; 2048];
 
-pub struct RustIsShit {
+pub struct BorrowCheckerFighter {
     app_ptr: u64,
     units_ptr: u64,
     render_bucket_ptr: u64,
@@ -19,7 +19,7 @@ pub struct RustIsShit {
 }
 
 #[allow(dead_code)]
-impl RustIsShit {
+impl BorrowCheckerFighter {
     pub fn mut_app<'a>(&self) -> &'a mut NoteCalcApp {
         unsafe { &mut *(self.app_ptr as *mut NoteCalcApp) }
     }
@@ -62,6 +62,10 @@ impl RustIsShit {
 
     pub fn allocator<'a>(&self) -> &'a Bump {
         unsafe { &*(self.allocator as *const Bump) }
+    }
+
+    pub fn mut_allocator<'a>(&self) -> &'a mut Bump {
+        unsafe { &mut *(self.allocator as *mut Bump) }
     }
 
     pub fn render(&self) {
@@ -312,7 +316,7 @@ impl RustIsShit {
     }
 }
 
-pub fn create_app3<'a>(client_width: usize, client_height: usize) -> RustIsShit {
+pub fn create_app3<'a>(client_width: usize, client_height: usize) -> BorrowCheckerFighter {
     let app = NoteCalcApp::new(client_width, client_height);
     let editor_objects = EditorObjects::new();
     let tokens = AppTokens::new();
@@ -322,7 +326,7 @@ pub fn create_app3<'a>(client_width: usize, client_height: usize) -> RustIsShit 
         let ptr = Box::into_raw(Box::new(t)) as u64;
         ptr
     }
-    return RustIsShit {
+    return BorrowCheckerFighter {
         app_ptr: to_box_ptr(app),
         units_ptr: to_box_ptr(Units::new()),
         render_bucket_ptr: to_box_ptr(RenderBuckets::new()),
@@ -334,6 +338,6 @@ pub fn create_app3<'a>(client_width: usize, client_height: usize) -> RustIsShit 
     };
 }
 
-pub fn create_app2<'a>(client_height: usize) -> RustIsShit {
+pub fn create_app2<'a>(client_height: usize) -> BorrowCheckerFighter {
     create_app3(120, client_height)
 }

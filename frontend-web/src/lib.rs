@@ -370,15 +370,21 @@ pub fn get_selected_rows_with_results(app_ptr: u32) -> String {
 
 #[wasm_bindgen]
 pub fn get_plain_content(app_ptr: u32) -> String {
-    let app = AppPointers::mut_app(app_ptr);
+    let app = AppPointers::app(app_ptr);
     app.editor_content.get_content()
 }
 
 #[wasm_bindgen]
 pub fn get_cursor(app_ptr: u32) -> String {
-    let app = AppPointers::mut_app(app_ptr);
+    let app = AppPointers::app(app_ptr);
     let sel = app.editor.get_selection();
     format!("{:?}", sel)
+}
+
+#[wasm_bindgen]
+pub fn get_top_of_undo_stack(app_ptr: u32) -> String {
+    let app = AppPointers::app(app_ptr);
+    format!("{:?}", app.editor_content.undo_stack.last())
 }
 
 #[wasm_bindgen]

@@ -49,6 +49,7 @@ pub mod consts;
 pub mod editor;
 pub mod renderer;
 
+const LINE_REF_BACKGROUND_COLOR: u32 = 0xDCE2F7_FF;
 const MAX_EDITOR_WIDTH: usize = 120;
 const LEFT_GUTTER_MIN_WIDTH: usize = 2;
 pub const MAX_LINE_COUNT: usize = 64;
@@ -76,7 +77,7 @@ pub mod helper {
     use std::ops::{Index, IndexMut};
 
     use crate::calc::CalcResultType;
-    use crate::{MAX_LINE_COUNT, *};
+    pub use crate::{MAX_LINE_COUNT, *};
 
     pub fn create_vars() -> [Option<Variable>; MAX_LINE_COUNT + 1] {
         let mut vars = [None; MAX_LINE_COUNT + 1];
@@ -759,14 +760,14 @@ impl<'a> RenderBuckets<'a> {
     }
 }
 
-#[derive(Eq, PartialEq, Copy, Clone)]
+#[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub enum ResultFormat {
     Bin,
     Dec,
     Hex,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LineData {
     // has to be pub because of external tests...
     pub line_id: usize,
@@ -869,7 +870,7 @@ impl MatrixEditing {
         let cell_index = mat_edit.current_cell.row * col_count + mat_edit.current_cell.column;
         mat_edit
             .editor_content
-            .set_content(&mat_edit.cell_strings[cell_index]);
+            .init_with(&mat_edit.cell_strings[cell_index]);
         // select all
         mat_edit.editor.set_cursor_range(
             Pos::from_row_column(0, 0),
@@ -931,7 +932,7 @@ impl MatrixEditing {
         self.save_editor_content();
 
         let new_content = &self.cell_strings[new_pos.row * self.col_count + new_pos.column];
-        self.editor_content.set_content(new_content);
+        self.editor_content.init_with(new_content);
 
         self.current_cell = new_pos;
         // select all
@@ -1141,6 +1142,8 @@ pub struct NoteCalcApp {
     pub clipboard: Option<String>,
 }
 
+pub const EMPTY_FILE_DEFUALT_CONTENT: &'static str = "\n\n\n\n\n\n\n\n\n\n";
+
 impl NoteCalcApp {
     pub fn new(client_width: usize, client_height: usize) -> NoteCalcApp {
         let mut editor_content = EditorContent::new(MAX_EDITOR_WIDTH);
@@ -1197,9 +1200,9 @@ impl NoteCalcApp {
         result_buffer: &'b mut [u8],
     ) {
         if text.is_empty() {
-            text = "\n\n\n\n\n\n\n\n\n\n";
+            text = EMPTY_FILE_DEFUALT_CONTENT;
         }
-        self.editor_content.set_content(text);
+        self.editor_content.init_with(text);
         self.editor.set_cursor_pos_r_c(0, 0);
         for (i, data) in self.editor_content.data_mut().iter_mut().enumerate() {
             data.line_id = i + 1;
@@ -1229,7 +1232,7 @@ impl NoteCalcApp {
             render_buckets,
             result_buffer,
         );
-        change_result_panel_size_wrt_result_len(self.client_width, &mut self.render_data);
+        change_result_panel_width_wrt_result_len(self.client_width, &mut self.render_data);
     }
 
     pub fn calc_full_content_height(gr: &GlobalRenderData, content_len: usize) -> usize {
@@ -1332,7 +1335,12 @@ impl NoteCalcApp {
                     );
                     // don't highlight refs in the current row as they will be pulsing in different colors
                     if editor.get_selection().get_cursor_pos().row != r.editor_y.as_usize() {
-                        highlight_line_refs(&editor_objs[editor_y], render_buckets, &r, gr);
+                        highlight_line_ref_background(
+                            &editor_objs[editor_y],
+                            render_buckets,
+                            &r,
+                            gr,
+                        );
                     } else {
                         highlight_active_line_refs(&editor_objs[editor_y], render_buckets, &r, gr);
                     }
@@ -1861,7 +1869,7 @@ impl NoteCalcApp {
             Some(MouseState::RightGutterIsDragged) => {
                 self.render_data.set_result_gutter_x(
                     self.client_width,
-                    calc_result_gutter_x(x, self.client_width, self.render_data.left_gutter_width),
+                    limit_result_gutter_x(x, self.render_data.left_gutter_width),
                 );
                 true
             }
@@ -1956,7 +1964,6 @@ impl NoteCalcApp {
             return;
         }
         self.client_width = new_client_width;
-        change_result_panel_size_wrt_result_len(self.client_width, &mut self.render_data);
         self.generate_render_commands_and_fill_editor_objs(
             units,
             render_buckets,
@@ -2525,7 +2532,7 @@ impl NoteCalcApp {
                 EditorRowFlags::empty(),
             );
             // because of ALT+left or ALT+right, result len can change
-            change_result_panel_size_wrt_result_len(self.client_width, &mut self.render_data);
+            change_result_panel_width_wrt_result_len(self.client_width, &mut self.render_data);
         }
 
         return modif;
@@ -2818,7 +2825,7 @@ impl NoteCalcApp {
 
         // is there any change
         if result_change_flag.as_u64() > 0 {
-            change_result_panel_size_wrt_result_len(self.client_width, &mut self.render_data);
+            change_result_panel_width_wrt_result_len(self.client_width, &mut self.render_data);
         }
     }
 
@@ -3759,7 +3766,7 @@ fn render_simple_text_line<'text_ptr>(
 }
 
 #[inline]
-fn highlight_line_refs<'text_ptr>(
+fn highlight_line_ref_background<'text_ptr>(
     editor_objs: &Vec<EditorObject>,
     render_buckets: &mut RenderBuckets<'text_ptr>,
     r: &PerLineRenderData,
@@ -3768,7 +3775,7 @@ fn highlight_line_refs<'text_ptr>(
     for editor_obj in editor_objs.iter() {
         if matches!(editor_obj.typ, EditorObjectType::LineReference{..}) {
             let vert_align_offset = (r.rendered_row_height - editor_obj.rendered_h) / 2;
-            render_buckets.set_color(Layer::BehindText, 0xFFCCCC_FF);
+            render_buckets.set_color(Layer::BehindText, LINE_REF_BACKGROUND_COLOR);
             render_buckets.draw_rect(
                 Layer::BehindText,
                 gr.left_gutter_width + editor_obj.rendered_x,
@@ -5333,9 +5340,12 @@ fn render_selection_and_its_sum<'text_ptr>(
     }
 }
 
-fn calc_result_gutter_x(current_x: usize, client_width: usize, left_gutter_width: usize) -> usize {
-    let default_x = default_result_gutter_x(client_width);
-    current_x.min(default_x).max(left_gutter_width + 4)
+fn limit_result_gutter_x(current_x: usize, left_gutter_width: usize) -> usize {
+    current_x.max(left_gutter_width + 4)
+}
+
+fn calc_result_panel_width_wrt_results_len(longest_result_len: usize) -> usize {
+    RIGHT_GUTTER_WIDTH + longest_result_len.max(MIN_RESULT_PANEL_WIDTH)
 }
 
 fn calc_result_gutter_x_wrt_result_lengths(
@@ -5343,9 +5353,8 @@ fn calc_result_gutter_x_wrt_result_lengths(
     client_width: usize,
     left_gutter_width: usize,
 ) -> usize {
-    let x_wrt_results =
-        client_width - (RIGHT_GUTTER_WIDTH + longest_result_len.max(MIN_RESULT_PANEL_WIDTH));
-    calc_result_gutter_x(x_wrt_results, client_width, left_gutter_width)
+    let x_wrt_results = client_width - calc_result_panel_width_wrt_results_len(longest_result_len);
+    limit_result_gutter_x(x_wrt_results, left_gutter_width)
 }
 
 fn default_result_gutter_x(client_width: usize) -> usize {
@@ -5463,15 +5472,13 @@ fn get_scroll_y_after_cursor_movement(
     }
 }
 
-fn change_result_panel_size_wrt_result_len(client_width: usize, gr: &mut GlobalRenderData) {
+fn change_result_panel_width_wrt_result_len(client_width: usize, gr: &mut GlobalRenderData) {
     let new_x = calc_result_gutter_x_wrt_result_lengths(
         gr.longest_rendered_result_len,
         client_width,
         gr.left_gutter_width,
     );
-    if new_x < gr.result_gutter_x
-        || new_x >= (client_width * DEFAULT_RESULT_PANEL_WIDTH_PERCENT / 100)
-    {
+    if new_x < gr.result_gutter_x {
         // there might be a new result which requires more space to render
 
         // TODO: this change will have an effect only in the next render cycle
@@ -5490,7 +5497,7 @@ mod main_tests {
         client_width * DEFAULT_RESULT_PANEL_WIDTH_PERCENT / 100
     }
 
-    struct RustIsShit {
+    struct BorrowCheckerFighter {
         app_ptr: u64,
         units_ptr: u64,
         render_bucket_ptr: u64,
@@ -5501,7 +5508,7 @@ mod main_tests {
         allocator: u64,
     }
 
-    impl RustIsShit {
+    impl BorrowCheckerFighter {
         fn mut_app<'a>(&self) -> &'a mut NoteCalcApp {
             unsafe { &mut *(self.app_ptr as *mut NoteCalcApp) }
         }
@@ -5788,7 +5795,7 @@ mod main_tests {
         }
     }
 
-    fn create_app3<'a>(client_width: usize, client_height: usize) -> RustIsShit {
+    fn create_app3<'a>(client_width: usize, client_height: usize) -> BorrowCheckerFighter {
         let app = NoteCalcApp::new(client_width, client_height);
         let editor_objects = EditorObjects::new();
         let tokens = AppTokens::new();
@@ -5798,7 +5805,7 @@ mod main_tests {
             let ptr = Box::into_raw(Box::new(t)) as u64;
             ptr
         }
-        return RustIsShit {
+        return BorrowCheckerFighter {
             app_ptr: to_box_ptr(app),
             units_ptr: to_box_ptr(Units::new()),
             render_bucket_ptr: to_box_ptr(RenderBuckets::new()),
@@ -5810,7 +5817,7 @@ mod main_tests {
         };
     }
 
-    fn create_app2<'a>(client_height: usize) -> RustIsShit {
+    fn create_app2<'a>(client_height: usize) -> BorrowCheckerFighter {
         create_app3(120, client_height)
     }
 
@@ -6429,51 +6436,50 @@ mod main_tests {
     fn test_resize_keeps_result_width() {
         let test = create_app3(60, 35);
         test.set_normalized_content("80kg\n190cm\n0.0016\n0.128 kg");
-        assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
-        assert_eq!(
-            test.get_render_data().result_gutter_x,
-            default_result_gutter_x(60)
-        );
+        let longest_result_len = 11;
+        let check_longest_line_did_not_change = || {
+            assert_eq!(
+                test.get_render_data().longest_rendered_result_len,
+                longest_result_len
+            );
+        };
+        let asset_result_x_pos = |expected: usize| {
+            assert_eq!(test.get_render_data().result_gutter_x, expected);
+        };
 
+        check_longest_line_did_not_change();
+        asset_result_x_pos(default_result_gutter_x(60));
+
+        // if the window is resized, keep the result position
         test.handle_resize(50);
-        assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
-        assert_eq!(
-            test.get_render_data().result_gutter_x,
-            default_result_gutter_x(50)
-        );
+        asset_result_x_pos(default_result_gutter_x(60));
+        check_longest_line_did_not_change();
 
+        // if the window is resized, keep the result position
         test.handle_resize(60);
-        assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
-        assert_eq!(
-            test.get_render_data().result_gutter_x,
-            default_result_gutter_x(60)
-        );
+        check_longest_line_did_not_change();
+        asset_result_x_pos(default_result_gutter_x(60));
+
+        // if the window is resized, keep the result position
+        test.handle_resize(100);
+        check_longest_line_did_not_change();
+        asset_result_x_pos(default_result_gutter_x(60));
 
         test.handle_resize(40);
-        assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
-        assert_eq!(
-            test.get_render_data().result_gutter_x,
-            40 - (11 + RIGHT_GUTTER_WIDTH)
-        );
+        check_longest_line_did_not_change();
+        asset_result_x_pos(default_result_gutter_x(60));
 
         test.handle_resize(30);
-        assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
-        assert_eq!(
-            test.get_render_data().result_gutter_x,
-            30 - (11 + RIGHT_GUTTER_WIDTH)
-        );
+        check_longest_line_did_not_change();
+        asset_result_x_pos(default_result_gutter_x(60));
 
         test.handle_resize(20);
-        assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
-        assert_eq!(
-            test.get_render_data().result_gutter_x,
-            20 - (11 + RIGHT_GUTTER_WIDTH)
-        );
+        asset_result_x_pos(default_result_gutter_x(60));
 
         // too small
         test.handle_resize(10);
-        assert_eq!(test.get_render_data().longest_rendered_result_len, 11);
-        assert_eq!(test.get_render_data().result_gutter_x, 7);
+        check_longest_line_did_not_change();
+        asset_result_x_pos(default_result_gutter_x(60));
     }
 
     #[test]

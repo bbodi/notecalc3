@@ -315,6 +315,9 @@ fn parse_number(text: &mut &[char]) -> Option<isize> {
         0
     };
     while i < text.len() && text[i].is_ascii_digit() {
+        if i >= 32 {
+            return None;
+        }
         tmp[i] = text[i] as u8;
         i += 1;
     }
@@ -444,7 +447,11 @@ impl UnitOutput {
     pub fn add_unit(&mut self, unit: UnitInstance) -> bool {
         for i in 0..BASE_UNIT_DIMENSION_COUNT {
             if let Some(num) = unit.unit.borrow().base[i].checked_mul(unit.power) {
-                self.dimensions[i] += num;
+                if let Some(a) = self.dimensions[i].checked_add(num) {
+                    self.dimensions[i] = a;
+                } else {
+                    return false;
+                }
             } else {
                 return false;
             }
@@ -1125,5 +1132,16 @@ mod tests {
 
         let unit1 = parse("K^61595", &units);
         assert_eq!(0, unit1.units.len());
+    }
+
+    #[test]
+    fn test_parsing_huge_number_no_panic() {
+        let units = Units::new();
+
+        let unit1 = parse("$^917533673846412864165166106750540", &units);
+        dbg!(&unit1.units);
+        assert_eq!(unit1.units.len(), 1);
+        assert_eq!(unit1.units[0].unit.borrow().name, &['$']);
+        assert_eq!(unit1.units[0].power, 1);
     }
 }

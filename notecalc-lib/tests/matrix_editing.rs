@@ -1,4 +1,3 @@
-// I hate Rust
 mod common;
 
 use crate::common::create_app2;

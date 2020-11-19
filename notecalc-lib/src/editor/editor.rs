@@ -1,9 +1,10 @@
 use crate::editor::editor_content::{EditorCommand, EditorContent, JumpMode};
+use smallvec::alloc::fmt::Debug;
 use std::ops::{Range, RangeInclusive};
 
 pub const EDITOR_CURSOR_TICK_MS: u32 = 500;
 
-#[derive(Eq, PartialEq, Debug, Clone)]
+#[derive(Eq, PartialEq, Debug, Clone, Copy)]
 pub enum EditorInputEvent {
     Left,
     Right,
@@ -248,7 +249,7 @@ impl Selection {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RowModificationType {
     SingleLine(usize),
     AllLinesFrom(usize),
@@ -287,7 +288,7 @@ pub struct Editor {
 }
 
 impl Editor {
-    pub fn new<T: Default + Clone>(content: &mut EditorContent<T>) -> Editor {
+    pub fn new<T: Default + Clone + Debug>(content: &mut EditorContent<T>) -> Editor {
         let ed = Editor {
             time: 0,
             selection: Selection::single_r_c(0, 0),
@@ -301,7 +302,7 @@ impl Editor {
         return ed;
     }
 
-    pub fn is_cursor_at_eol<T: Default + Clone>(&self, content: &EditorContent<T>) -> bool {
+    pub fn is_cursor_at_eol<T: Default + Clone + Debug>(&self, content: &EditorContent<T>) -> bool {
         let cur_pos = self.selection.get_cursor_pos();
         cur_pos.column == content.line_len(cur_pos.row)
     }
@@ -311,7 +312,7 @@ impl Editor {
         cur_pos.column == 0
     }
 
-    pub fn send_selection_to_clipboard<T: Default + Clone>(
+    pub fn send_selection_to_clipboard<T: Default + Clone + Debug>(
         &mut self,
         selection: Selection,
         content: &EditorContent<T>,
@@ -326,7 +327,7 @@ impl Editor {
         self.selection
     }
 
-    pub fn handle_click<T: Default + Clone>(
+    pub fn handle_click<T: Default + Clone + Debug>(
         &mut self,
         x: usize,
         y: usize,
@@ -339,7 +340,7 @@ impl Editor {
         self.set_cursor_pos_r_c(y, col);
     }
 
-    pub fn handle_drag<T: Default + Clone>(
+    pub fn handle_drag<T: Default + Clone + Debug>(
         &mut self,
         x: usize,
         y: usize,
@@ -354,7 +355,7 @@ impl Editor {
         self.set_selection_save_col(self.selection.extend(Pos::from_row_column(y, col)));
     }
 
-    pub fn get_selected_text_single_line<T: Default + Clone>(
+    pub fn get_selected_text_single_line<T: Default + Clone + Debug>(
         selection: Selection,
         content: &EditorContent<T>,
     ) -> Option<&[char]> {
@@ -367,7 +368,7 @@ impl Editor {
         };
     }
 
-    pub fn clone_range<T: Default + Clone>(
+    pub fn clone_range<T: Default + Clone + Debug>(
         start: Pos,
         end: Pos,
         content: &EditorContent<T>,
@@ -397,6 +398,7 @@ impl Editor {
     pub fn set_selection_save_col(&mut self, selection: Selection) {
         self.selection = selection;
         self.last_column_index = selection.get_cursor_pos().column;
+        debug_assert!(self.last_column_index <= 120, "{}", self.last_column_index);
     }
 
     pub fn is_cursor_shown(&self) -> bool {
@@ -419,7 +421,7 @@ impl Editor {
         };
     }
 
-    fn create_command<T: Default + Clone>(
+    fn create_command<T: Default + Clone + Debug>(
         &self,
         input: &EditorInputEvent,
         modifiers: InputModifiers,
@@ -436,6 +438,7 @@ impl Editor {
             EditorInputEvent::Tab => {
                 let target_pos = ((cur_pos.column / 4) + 1) * 4;
                 let space_count = target_pos - cur_pos.column;
+                // TODO every tab is a string allocation :(
                 let str = std::iter::repeat(' ').take(space_count).collect::<String>();
                 Some(EditorCommand::InsertText {
                     pos: cur_pos,
@@ -602,9 +605,9 @@ impl Editor {
                     })
                 } else if *ch == 'a' && modifiers.ctrl {
                     None
-                } else if *ch == 'z' && modifiers.ctrl && modifiers.shift {
+                } else if ch.to_ascii_lowercase() == 'z' && modifiers.ctrl && modifiers.shift {
                     None
-                } else if *ch == 'z' && modifiers.ctrl {
+                } else if ch.to_ascii_lowercase() == 'z' && modifiers.ctrl {
                     None
                 } else if let Some((start, end)) = selection.is_range() {
                     Some(EditorCommand::InsertCharSelection {
@@ -626,7 +629,7 @@ impl Editor {
         };
     }
 
-    pub fn insert_text<T: Default + Clone>(
+    pub fn insert_text<T: Default + Clone + Debug>(
         &mut self,
         str: &str,
         content: &mut EditorContent<T>,
@@ -656,7 +659,7 @@ impl Editor {
         return self.execute_user_input(command, content);
     }
 
-    pub fn handle_input<T: Default + Clone>(
+    pub fn handle_input<T: Default + Clone + Debug>(
         &mut self,
         input: EditorInputEvent,
         modifiers: InputModifiers,
@@ -668,21 +671,29 @@ impl Editor {
             self.send_selection_to_clipboard(self.selection, content);
         }
 
-        if input == EditorInputEvent::Char('z') && modifiers.is_ctrl_shift() {
-            self.redo(content)
-        } else if input == EditorInputEvent::Char('z') && modifiers.ctrl {
-            self.undo(content)
-        } else if let Some(command) = self.create_command(&input, modifiers, content) {
-            self.execute_user_input(command, content)
-        } else {
-            self.next_blink_at = self.time + EDITOR_CURSOR_TICK_MS;
-            self.show_cursor = true;
-            self.handle_navigation_input(&input, modifiers, content);
-            None
+        match input {
+            EditorInputEvent::Char(ch)
+                if ch.to_ascii_lowercase() == 'z' && modifiers.is_ctrl_shift() =>
+            {
+                self.redo(content)
+            }
+            EditorInputEvent::Char(ch) if ch.to_ascii_lowercase() == 'z' && modifiers.ctrl => {
+                self.undo(content)
+            }
+            _ => {
+                if let Some(command) = self.create_command(&input, modifiers, content) {
+                    self.execute_user_input(command, content)
+                } else {
+                    self.next_blink_at = self.time + EDITOR_CURSOR_TICK_MS;
+                    self.show_cursor = true;
+                    self.handle_navigation_input(&input, modifiers, content);
+                    None
+                }
+            }
         }
     }
 
-    fn execute_user_input<T: Default + Clone>(
+    fn execute_user_input<T: Default + Clone + Debug>(
         &mut self,
         command: EditorCommand<T>,
         content: &mut EditorContent<T>,
@@ -696,12 +707,13 @@ impl Editor {
                 content.undo_stack.push(Vec::with_capacity(4));
             }
             content.undo_stack.last_mut().unwrap().push(command);
+            content.redo_stack.clear();
             self.modif_time_treshold_expires_at = self.time + EDITOR_CURSOR_TICK_MS;
         }
         modif_type
     }
 
-    fn do_command<T: Default + Clone>(
+    fn do_command<T: Default + Clone + Debug>(
         &mut self,
         command: &EditorCommand<T>,
         content: &mut EditorContent<T>,
@@ -709,12 +721,12 @@ impl Editor {
         self.show_cursor = true;
         match command {
             EditorCommand::InsertText { pos, text, .. } => {
-                let new_pos = content.insert_str_at(*pos, &text);
+                let (new_pos, overflow) = content.insert_str_at(*pos, &text);
                 self.set_selection_save_col(Selection::single(new_pos));
-                if new_pos.row == pos.row {
-                    Some(RowModificationType::SingleLine(pos.row))
-                } else {
+                if overflow || new_pos.row != pos.row {
                     Some(RowModificationType::AllLinesFrom(pos.row))
+                } else {
+                    Some(RowModificationType::SingleLine(pos.row))
                 }
             }
             EditorCommand::InsertTextSelection {
@@ -722,10 +734,10 @@ impl Editor {
             } => {
                 content.remove_selection(*selection);
                 let first = selection.get_first();
-                let new_pos = content.insert_str_at(first, &text);
+                let (new_pos, overflow) = content.insert_str_at(first, &text);
                 let second = selection.get_second();
                 self.set_selection_save_col(Selection::single(new_pos));
-                if new_pos.row == first.row && first.row == second.row {
+                if !overflow && (new_pos.row == first.row && first.row == second.row) {
                     Some(RowModificationType::SingleLine(first.row))
                 } else {
                     Some(RowModificationType::AllLinesFrom(first.row))
@@ -866,16 +878,25 @@ impl Editor {
                 selected_text: _,
             } => {
                 let first = selection.get_first();
-                let modif_type =
-                    content.remove_selection(Selection::range(first, selection.get_second()));
-                if modif_type.is_some() {
-                    content.insert_char(first.row, first.column, *ch);
-
-                    self.set_selection_save_col(Selection::single(
-                        selection.get_first().with_next_col(),
-                    ));
+                let second = selection.get_second();
+                if first.column == content.max_line_len {
+                    None
+                } else {
+                    let merged_len_then_inserted_len =
+                        first.column + (content.line_len(second.row) - second.column) + 1;
+                    if merged_len_then_inserted_len > content.max_line_len {
+                        return None;
+                    }
+                    let modif_type =
+                        content.remove_selection(Selection::range(first, selection.get_second()));
+                    if modif_type.is_some() {
+                        content.insert_char(first.row, first.column, *ch);
+                        self.set_selection_save_col(Selection::single(
+                            selection.get_first().with_next_col(),
+                        ));
+                    }
+                    modif_type
                 }
-                modif_type
             }
             EditorCommand::CutLine {
                 pos,
@@ -931,7 +952,7 @@ impl Editor {
         return Pos::from_row_column(row, col);
     }
 
-    pub fn handle_navigation_input<T: Default + Clone>(
+    pub fn handle_navigation_input<T: Default + Clone + Debug>(
         &mut self,
         input: &EditorInputEvent,
         modifiers: InputModifiers,
@@ -1112,7 +1133,7 @@ impl Editor {
         };
     }
 
-    pub(super) fn undo<T: Default + Clone>(
+    pub(super) fn undo<T: Default + Clone + Debug>(
         &mut self,
         content: &mut EditorContent<T>,
     ) -> Option<RowModificationType> {
@@ -1131,7 +1152,7 @@ impl Editor {
         sum_modif_type
     }
 
-    pub(super) fn redo<T: Default + Clone>(
+    pub(super) fn redo<T: Default + Clone + Debug>(
         &mut self,
         content: &mut EditorContent<T>,
     ) -> Option<RowModificationType> {
@@ -1150,7 +1171,7 @@ impl Editor {
         sum_modif_type
     }
 
-    fn undo_command<T: Default + Clone>(
+    fn undo_command<T: Default + Clone + Debug>(
         &mut self,
         command: &EditorCommand<T>,
         content: &mut EditorContent<T>,
@@ -1187,8 +1208,8 @@ impl Editor {
             }
             EditorCommand::DelCtrl { removed_text, pos } => {
                 let modif_type = if let Some(removed_text) = removed_text {
-                    let new_pos = content.insert_str_at(*pos, removed_text);
-                    if new_pos.row == pos.row {
+                    let (new_pos, overflow) = content.insert_str_at(*pos, removed_text);
+                    if !overflow && new_pos.row == pos.row {
                         Some(RowModificationType::SingleLine(pos.row))
                     } else {
                         Some(RowModificationType::AllLinesFrom(pos.row))
@@ -1252,8 +1273,9 @@ impl Editor {
             EditorCommand::BackspaceCtrl { removed_text, pos } => {
                 let modif_type = if let Some(removed_text) = removed_text {
                     let col = pos.column - removed_text.chars().count();
-                    let new_pos = content.insert_str_at(pos.with_column(col), removed_text);
-                    if new_pos.row == pos.row {
+                    let (new_pos, overflow) =
+                        content.insert_str_at(pos.with_column(col), removed_text);
+                    if !overflow && new_pos.row == pos.row {
                         Some(RowModificationType::SingleLine(pos.row))
                     } else {
                         Some(RowModificationType::AllLinesFrom(pos.row))
@@ -1336,7 +1358,7 @@ impl Editor {
                     Editor::get_str_range(text, first.row, first.column, content.max_line_len()),
                 );
                 content.remove_selection(inserted_text_range);
-                let end_pos = content.insert_str_at(first, removed_text);
+                let (end_pos, _overflow) = content.insert_str_at(first, removed_text);
                 if *is_there_line_overflow {
                     //originally the next line was part of this line, so merge them
                     content.merge_with_next_row(end_pos.row, content.line_len(end_pos.row), 0);
@@ -1353,7 +1375,7 @@ impl Editor {
         }
     }
 
-    fn handle_enter<T: Default + Clone>(
+    fn handle_enter<T: Default + Clone + Debug>(
         &mut self,
         selection: Selection,
         content: &mut EditorContent<T>,

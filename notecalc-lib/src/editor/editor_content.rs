@@ -1,11 +1,11 @@
 use crate::editor::editor::{Pos, RowModificationType, Selection};
+use smallvec::alloc::fmt::Debug;
 
 pub type Canvas = Vec<char>;
 type EditorCommandGroup<T> = Vec<EditorCommand<T>>;
-// asda
-// type EditorCommandGroup<T: Default + Clone> = Vec<EditorCommand<T>>;
 
-pub enum EditorCommand<T: Default + Clone> {
+#[derive(Debug)]
+pub enum EditorCommand<T: Default + Clone + Debug> {
     SwapLineUpwards(Pos),
     SwapLineDownards(Pos),
     Del {
@@ -82,8 +82,9 @@ pub enum JumpMode {
     BlockOnWhitespace,
 }
 
-pub struct EditorContent<T: Default + Clone> {
-    pub(super) undo_stack: Vec<EditorCommandGroup<T>>,
+pub struct EditorContent<T: Default + Clone + Debug> {
+    // TODO: need for fuzz testing, set it back to priv later
+    pub undo_stack: Vec<EditorCommandGroup<T>>,
     pub(super) redo_stack: Vec<EditorCommandGroup<T>>,
     pub(super) max_line_len: usize,
     pub(super) line_lens: Vec<usize>,
@@ -91,7 +92,7 @@ pub struct EditorContent<T: Default + Clone> {
     pub(super) line_data: Vec<T>,
 }
 
-impl<T: Default + Clone> EditorContent<T> {
+impl<T: Default + Clone + Debug> EditorContent<T> {
     pub fn new(max_len: usize) -> EditorContent<T> {
         EditorContent {
             undo_stack: Vec::with_capacity(32),
@@ -246,11 +247,8 @@ impl<T: Default + Clone> EditorContent<T> {
         }
         let from = self.get_char_pos(row_index, column_index);
         let len = self.line_lens[row_index];
+        debug_assert!(len <= self.max_line_len);
         let to = self.get_char_pos(row_index, len);
-        if from == 1 && to == 0 {
-            let _j = 0;
-            let _j = 0;
-        }
         self.canvas.copy_within(from..to, from + 1);
         self.canvas[from] = ch;
         self.line_lens[row_index] += 1;
@@ -267,10 +265,11 @@ impl<T: Default + Clone> EditorContent<T> {
 
     pub fn clear(&mut self) {
         self.line_lens.clear();
+        self.undo_stack.clear();
+        self.redo_stack.clear();
     }
 
-    // self.set_cursor_pos_r_c(0, 0);
-    pub fn set_content(&mut self, text: &str) {
+    pub fn init_with(&mut self, text: &str) {
         self.clear();
         self.push_line();
         self.set_str_at(text, 0, 0);
@@ -300,12 +299,14 @@ impl<T: Default + Clone> EditorContent<T> {
                 continue;
             } else if ch == '\n' {
                 self.line_lens[row] = col;
+                debug_assert!(self.line_lens[row] <= self.max_line_len);
                 row += 1;
                 self.insert_line_at(row);
                 col = 0;
                 continue;
             } else if col == self.max_line_len {
                 self.line_lens[row] = col;
+                debug_assert!(self.line_lens[row] <= self.max_line_len);
                 row += 1;
                 self.insert_line_at(row);
                 col = 0;
@@ -314,6 +315,7 @@ impl<T: Default + Clone> EditorContent<T> {
             col += 1;
         }
         self.line_lens[row] = col;
+        debug_assert!(self.line_lens[row] <= self.max_line_len);
         return Pos::from_row_column(row, col);
     }
 
@@ -326,8 +328,10 @@ impl<T: Default + Clone> EditorContent<T> {
             let to = self.get_char_pos(row_index, self.line_lens[row_index]);
             self.canvas.copy_within(from..to, new_line_pos);
             self.line_lens[row_index + 1] = to - from;
+            debug_assert!(self.line_lens[row_index + 1] <= self.max_line_len);
         }
         self.line_lens[row_index] = split_at;
+        debug_assert!(self.line_lens[row_index] <= self.max_line_len);
     }
 
     pub fn merge_with_next_row(
@@ -336,10 +340,8 @@ impl<T: Default + Clone> EditorContent<T> {
         first_row_col: usize,
         second_row_col: usize,
     ) -> bool {
-        if ((self.line_lens[row_index] as isize - first_row_col as isize)
-            + (self.line_lens[row_index + 1] as isize - second_row_col as isize))
-            > self.max_line_len as isize
-        {
+        let merged_len = first_row_col + (self.line_len(row_index + 1) - second_row_col);
+        if merged_len > self.max_line_len {
             return false;
         }
         if self.line_lens[row_index] == 0 && second_row_col == 0 {
@@ -352,8 +354,13 @@ impl<T: Default + Clone> EditorContent<T> {
             let dst = self.get_char_pos(row_index, first_row_col);
             let src_from = self.get_char_pos(row_index + 1, second_row_col);
             let src_to = self.get_char_pos(row_index + 1, self.line_lens[row_index + 1]);
+            let new_line_len = first_row_col + (src_to - src_from);
+            if new_line_len > self.max_line_len {
+                return false;
+            }
             self.canvas.copy_within(src_from..src_to, dst);
-            self.line_lens[row_index] = first_row_col + (src_to - src_from);
+            self.line_lens[row_index] = new_line_len;
+            debug_assert!(self.line_lens[row_index] <= self.max_line_len);
             self.remove_line_at(row_index + 1);
         }
 
@@ -365,6 +372,12 @@ impl<T: Default + Clone> EditorContent<T> {
         let first = selection.get_first();
         let second = selection.get_second();
         return if second.row > first.row {
+            // check if there is enough space for the merged row in the line (< maxlen)
+            let merged_len = first.column + (self.line_len(second.row) - second.column);
+            if merged_len > self.max_line_len {
+                return None;
+            }
+
             for _ in first.row + 1..second.row {
                 self.remove_line_at(first.row + 1);
             }
@@ -391,7 +404,9 @@ impl<T: Default + Clone> EditorContent<T> {
         };
     }
 
-    pub fn insert_str_at(&mut self, pos: Pos, str: &str) -> Pos {
+    /// returns the new cursor pos after inserting the text,
+    /// and whether there was a text overflow or not.
+    pub fn insert_str_at(&mut self, pos: Pos, str: &str) -> (Pos, bool) {
         // save the content of first row which will be moved
         let mut text_to_move_buf: [u8; 4 * 128] = [0; 4 * 128];
         let mut text_to_move_buf_index = 0;
@@ -411,8 +426,9 @@ impl<T: Default + Clone> EditorContent<T> {
                 new_pos.column,
             );
             self.line_lens[p.row] = p.column;
+            debug_assert!(self.line_lens[p.row] <= self.max_line_len);
         }
-        return new_pos;
+        return (new_pos, text_to_move_buf_index > 0);
     }
 
     pub fn swap_lines_upward(&mut self, lower_row: usize) {
