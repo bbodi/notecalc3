@@ -1,4 +1,2 @@
-cd frontend-web
-wasm-pack build --debug --target no-modules
-cd ..
+wasm-pack build --dev --target no-modules frontend-web
 serve .
