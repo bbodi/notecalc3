@@ -3,3 +3,9 @@ members = [
   "notecalc-lib",
   "frontend-web",
 ]
+
+[profile.release]
+lto = true
+
+[profile.release.package.frontend-web]
+opt-level = "s" # Tell `rustc` to optimize for small code size.

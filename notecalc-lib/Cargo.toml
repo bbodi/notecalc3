@@ -4,9 +4,6 @@ version = "0.1.0"
 authors = ["bbodi <bodidev@gmail.com>"]
 edition = "2018"
 
-[profile.release]
-lto = true
-
 [dependencies]
 bigdecimal = "0.2.0"
 smallvec = "1.2.0"
