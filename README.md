@@ -31,7 +31,7 @@ git clone https://github.com/bbodi/notecalc3.git
 ./compile_and_run.bat
 ```
 
-Then, open your browser and go to  [http://localhost:5000/notecalc]().
+Then, open your browser and go to  [http://localhost:5000/notecalc](http://localhost:5000/notecalc).
 
 ## Libraries used
 Huge thanks for the following libraries
