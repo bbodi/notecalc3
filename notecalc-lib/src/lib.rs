@@ -1112,13 +1112,21 @@ pub struct Tokens<'a> {
     shunting_output_stack: Vec<ShuntingYardResult>,
 }
 
-pub enum MouseState {
+pub enum MouseClickType {
     ClickedInEditor,
     ClickedInScrollBar {
         original_click_y: CanvasY,
         original_scroll_y: usize,
     },
     RightGutterIsDragged,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum MouseHoverType {
+    Normal,
+    Scrollbar,
+    RightGutter,
+    Result,
 }
 
 #[derive(Debug)]
@@ -1134,7 +1142,8 @@ pub struct NoteCalcApp {
     pub matrix_editing: Option<MatrixEditing>,
     pub line_reference_chooser: Option<ContentIndex>,
     pub line_id_generator: usize,
-    pub mouse_state: Option<MouseState>,
+    pub mouse_state: Option<MouseClickType>,
+    pub mouse_hover_type: MouseHoverType,
     pub updated_line_ref_obj_indices: Vec<EditorObjId>,
     pub editor_objs_referencing_current_line: Vec<EditorObjId>,
     pub render_data: GlobalRenderData,
@@ -1155,6 +1164,7 @@ impl NoteCalcApp {
             matrix_editing: None,
             line_id_generator: 1,
             mouse_state: None,
+            mouse_hover_type: MouseHoverType::Normal,
             updated_line_ref_obj_indices: Vec::with_capacity(16),
             editor_objs_referencing_current_line: Vec::with_capacity(8),
             render_data: GlobalRenderData::new(
@@ -1266,6 +1276,7 @@ impl NoteCalcApp {
         editor_objs: &mut EditorObjects,
         updated_line_ref_obj_indices: &[EditorObjId],
         editor_objs_referencing_current_line: &mut Vec<EditorObjId>,
+        mouse_hover_type: MouseHoverType,
     ) {
         // x, h
         let mut editor_y_to_render_w: [usize; MAX_LINE_COUNT] = [0; MAX_LINE_COUNT];
@@ -1468,7 +1479,12 @@ impl NoteCalcApp {
         if let Some(scrollbar_info) =
             NoteCalcApp::get_scrollbar_info(gr, editor_content.line_count())
         {
-            render_buckets.set_color(Layer::BehindText, 0xFFCCCC_FF);
+            let color = if mouse_hover_type == MouseHoverType::Scrollbar {
+                0xFFBBBB_FF
+            } else {
+                0xFFCCCC_FF
+            };
+            render_buckets.set_color(Layer::BehindText, color);
             render_buckets.draw_rect(
                 Layer::BehindText,
                 gr.result_gutter_x - SCROLL_BAR_WIDTH,
@@ -1610,12 +1626,12 @@ impl NoteCalcApp {
             );
         } else if self.mouse_state.is_none() {
             self.mouse_state = if x - scroll_bar_x < SCROLL_BAR_WIDTH {
-                Some(MouseState::ClickedInScrollBar {
+                Some(MouseClickType::ClickedInScrollBar {
                     original_click_y: clicked_y,
                     original_scroll_y: self.render_data.scroll_y,
                 })
             } else if x - self.render_data.result_gutter_x < RIGHT_GUTTER_WIDTH {
-                Some(MouseState::RightGutterIsDragged)
+                Some(MouseClickType::RightGutterIsDragged)
             } else {
                 // clicked in result
                 if let Some(editor_y) = self.rendered_y_to_editor_y(clicked_y) {
@@ -1638,9 +1654,9 @@ impl NoteCalcApp {
 
     pub fn handle_mouse_up(&mut self) {
         match self.mouse_state {
-            Some(MouseState::RightGutterIsDragged) => {}
-            Some(MouseState::ClickedInEditor) => {}
-            Some(MouseState::ClickedInScrollBar {
+            Some(MouseClickType::RightGutterIsDragged) => {}
+            Some(MouseClickType::ClickedInEditor) => {}
+            Some(MouseClickType::ClickedInScrollBar {
                 original_click_y, ..
             }) => {
                 let gr = &mut self.render_data;
@@ -1740,7 +1756,7 @@ impl NoteCalcApp {
         self.editor.blink_cursor();
 
         if self.mouse_state.is_none() {
-            self.mouse_state = Some(MouseState::ClickedInEditor);
+            self.mouse_state = Some(MouseClickType::ClickedInEditor);
         }
 
         if let Some(matrix_row_index) = matrix_row_index {
@@ -1852,6 +1868,52 @@ impl NoteCalcApp {
             .find(|editor_obj| (editor_obj.start_x + 1..editor_obj.end_x).contains(&x));
     }
 
+    pub fn handle_mouse_move<'b>(
+        &mut self,
+        x: usize,
+        _y: CanvasY,
+        editor_objs: &mut EditorObjects,
+        units: &Units,
+        allocator: &'b Bump,
+        tokens: &AppTokens<'b>,
+        results: &Results,
+        vars: &Variables,
+        render_buckets: &mut RenderBuckets<'b>,
+        result_buffer: &'b mut [u8],
+    ) -> usize {
+        let scroll_bar_x = self.render_data.result_gutter_x - SCROLL_BAR_WIDTH;
+        let new_mouse_state = if x < self.render_data.left_gutter_width {
+            MouseHoverType::Normal
+        } else if x < scroll_bar_x {
+            // editor
+            MouseHoverType::Normal
+        } else if (x as isize - scroll_bar_x as isize) < (SCROLL_BAR_WIDTH as isize) {
+            MouseHoverType::Scrollbar
+        } else if (x as isize - self.render_data.result_gutter_x as isize)
+            < (RIGHT_GUTTER_WIDTH as isize)
+        {
+            MouseHoverType::RightGutter
+        } else {
+            // result
+            return MouseHoverType::Result as usize;
+        };
+        if self.mouse_hover_type != new_mouse_state {
+            self.mouse_hover_type = new_mouse_state;
+            self.generate_render_commands_and_fill_editor_objs(
+                units,
+                render_buckets,
+                result_buffer,
+                allocator,
+                tokens,
+                results,
+                vars,
+                editor_objs,
+                EditorRowFlags::empty(),
+            );
+        }
+        return self.mouse_hover_type as usize;
+    }
+
     pub fn handle_drag<'b>(
         &mut self,
         x: usize,
@@ -1859,21 +1921,21 @@ impl NoteCalcApp {
         editor_objs: &mut EditorObjects,
         units: &Units,
         allocator: &'b Bump,
-        tokens: &mut AppTokens<'b>,
-        results: &mut Results,
-        vars: &mut Variables,
+        tokens: &AppTokens<'b>,
+        results: &Results,
+        vars: &Variables,
         render_buckets: &mut RenderBuckets<'b>,
         result_buffer: &'b mut [u8],
     ) -> bool {
         let need_render = match self.mouse_state {
-            Some(MouseState::RightGutterIsDragged) => {
+            Some(MouseClickType::RightGutterIsDragged) => {
                 self.render_data.set_result_gutter_x(
                     self.client_width,
                     limit_result_gutter_x(x, self.render_data.left_gutter_width),
                 );
                 true
             }
-            Some(MouseState::ClickedInEditor) => {
+            Some(MouseClickType::ClickedInEditor) => {
                 if let Some(y) = self.rendered_y_to_editor_y(y) {
                     self.editor.handle_drag(
                         (x as isize - self.render_data.left_gutter_width as isize).max(0) as usize,
@@ -1886,7 +1948,7 @@ impl NoteCalcApp {
                     false
                 }
             }
-            Some(MouseState::ClickedInScrollBar {
+            Some(MouseClickType::ClickedInScrollBar {
                 original_click_y,
                 original_scroll_y,
             }) => {
@@ -3565,6 +3627,7 @@ impl NoteCalcApp {
             editor_objs,
             &self.updated_line_ref_obj_indices,
             &mut self.editor_objs_referencing_current_line,
+            self.mouse_hover_type,
         );
         self.updated_line_ref_obj_indices.clear();
     }
@@ -5508,6 +5571,7 @@ mod main_tests {
         allocator: u64,
     }
 
+    #[allow(dead_code)]
     impl BorrowCheckerFighter {
         fn mut_app<'a>(&self) -> &'a mut NoteCalcApp {
             unsafe { &mut *(self.app_ptr as *mut NoteCalcApp) }
@@ -5710,6 +5774,21 @@ mod main_tests {
 
         fn handle_drag(&self, x: usize, y: isize) {
             self.mut_app().handle_drag(
+                x,
+                canvas_y(y),
+                self.mut_editor_objects(),
+                self.units(),
+                self.allocator(),
+                self.mut_tokens(),
+                self.mut_results(),
+                self.mut_vars(),
+                self.mut_render_bucket(),
+                unsafe { &mut RESULT_BUFFER },
+            );
+        }
+
+        fn handle_mouse_move(&self, x: usize, y: isize) {
+            self.mut_app().handle_mouse_move(
                 x,
                 canvas_y(y),
                 self.mut_editor_objects(),

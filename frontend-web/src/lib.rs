@@ -79,9 +79,19 @@ impl AppPointers {
         unsafe { &mut *(ptr_holder.tokens_ptr as *mut AppTokens) }
     }
 
+    fn tokens<'a>(ptr: u32) -> &'a AppTokens<'a> {
+        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
+        unsafe { &*(ptr_holder.tokens_ptr as *const AppTokens) }
+    }
+
     fn mut_results<'a>(ptr: u32) -> &'a mut Results {
         let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
         unsafe { &mut *(ptr_holder.results_ptr as *mut Results) }
+    }
+
+    fn results<'a>(ptr: u32) -> &'a Results {
+        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
+        unsafe { &*(ptr_holder.results_ptr as *const Results) }
     }
 
     fn mut_editor_objects<'a>(ptr: u32) -> &'a mut EditorObjects {
@@ -94,6 +104,11 @@ impl AppPointers {
         unsafe {
             &mut (&mut *(ptr_holder.vars_ptr as *mut [Option<Variable>; MAX_LINE_COUNT + 1]))[..]
         }
+    }
+
+    fn vars<'a>(ptr: u32) -> &'a [Option<Variable>] {
+        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
+        unsafe { &(&*(ptr_holder.vars_ptr as *const [Option<Variable>; MAX_LINE_COUNT + 1]))[..] }
     }
 
     fn allocator<'a>(ptr: u32) -> &'a Bump {
@@ -240,6 +255,22 @@ pub fn handle_time(app_ptr: u32, now: u32) -> bool {
 }
 
 #[wasm_bindgen]
+pub fn handle_mouse_move(app_ptr: u32, x: usize, y: usize) -> usize {
+    return AppPointers::mut_app(app_ptr).handle_mouse_move(
+        x,
+        CanvasY::new(y as isize),
+        AppPointers::mut_editor_objects(app_ptr),
+        AppPointers::units(app_ptr),
+        AppPointers::allocator(app_ptr),
+        AppPointers::tokens(app_ptr),
+        AppPointers::results(app_ptr),
+        AppPointers::vars(app_ptr),
+        AppPointers::mut_render_bucket(app_ptr),
+        unsafe { &mut RESULT_BUFFER },
+    );
+}
+
+#[wasm_bindgen]
 pub fn handle_drag(app_ptr: u32, x: usize, y: usize) -> bool {
     return AppPointers::mut_app(app_ptr).handle_drag(
         x,
@@ -247,9 +278,9 @@ pub fn handle_drag(app_ptr: u32, x: usize, y: usize) -> bool {
         AppPointers::mut_editor_objects(app_ptr),
         AppPointers::units(app_ptr),
         AppPointers::allocator(app_ptr),
-        AppPointers::mut_tokens(app_ptr),
-        AppPointers::mut_results(app_ptr),
-        AppPointers::mut_vars(app_ptr),
+        AppPointers::tokens(app_ptr),
+        AppPointers::results(app_ptr),
+        AppPointers::vars(app_ptr),
         AppPointers::mut_render_bucket(app_ptr),
         unsafe { &mut RESULT_BUFFER },
     );
