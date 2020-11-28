@@ -388,12 +388,10 @@ impl<T: Default + Clone + Debug> EditorContent<T> {
                 ));
                 self.remove_line_at(first.row);
                 Some(RowModificationType::AllLinesFrom(first.row))
+            } else if self.merge_with_next_row(first.row, first.column, second.column) {
+                Some(RowModificationType::AllLinesFrom(first.row))
             } else {
-                if self.merge_with_next_row(first.row, first.column, second.column) {
-                    Some(RowModificationType::AllLinesFrom(first.row))
-                } else {
-                    None
-                }
+                None
             }
         } else {
             self.get_mut_line_chars(first.row)

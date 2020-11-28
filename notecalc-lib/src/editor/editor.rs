@@ -615,15 +615,13 @@ impl Editor {
                         selection,
                         selected_text: Editor::clone_range(start, end, content),
                     })
+                } else if content.line_len(cur_pos.row) == content.max_line_len() {
+                    None
                 } else {
-                    if content.line_len(cur_pos.row) == content.max_line_len() {
-                        None
-                    } else {
-                        Some(EditorCommand::InsertChar {
-                            pos: cur_pos,
-                            ch: *ch,
-                        })
-                    }
+                    Some(EditorCommand::InsertChar {
+                        pos: cur_pos,
+                        ch: *ch,
+                    })
                 }
             }
         };
@@ -1017,12 +1015,10 @@ impl Editor {
                 };
                 let selection = if modifiers.shift {
                     self.selection.extend(new_pos)
+                } else if let Some((_start, end)) = self.selection.is_range() {
+                    Selection::single(end)
                 } else {
-                    if let Some((_start, end)) = self.selection.is_range() {
-                        Selection::single(end)
-                    } else {
-                        Selection::single(new_pos)
-                    }
+                    Selection::single(new_pos)
                 };
                 self.set_selection_save_col(selection);
             }
@@ -1045,12 +1041,10 @@ impl Editor {
 
                 let selection = if modifiers.shift {
                     self.selection.extend(new_pos)
+                } else  if let Some((start, _end)) = self.selection.is_range() {
+                    Selection::single(start)
                 } else {
-                    if let Some((start, _end)) = self.selection.is_range() {
-                        Selection::single(start)
-                    } else {
-                        Selection::single(new_pos)
-                    }
+                    Selection::single(new_pos)
                 };
                 self.set_selection_save_col(selection);
             }

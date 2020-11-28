@@ -246,16 +246,14 @@ mod tests {
                 expected_selection_end,
                 "Selection end"
             );
+        } else if expected_cursor.is_range().is_none() && params.undo_count > 0 {
+            assert_eq!(
+                editor.get_selection().start.row,
+                expected_cursor.start.row,
+                "The cursor is not reverted back during undo"
+            );
         } else {
-            if expected_cursor.is_range().is_none() && params.undo_count > 0 {
-                assert_eq!(
-                    editor.get_selection().start.row,
-                    expected_cursor.start.row,
-                    "The cursor is not reverted back during undo"
-                );
-            } else {
-                assert_eq!(editor.get_selection(), expected_cursor, "Cursor");
-            }
+            assert_eq!(editor.get_selection(), expected_cursor, "Cursor");
         }
     }
 

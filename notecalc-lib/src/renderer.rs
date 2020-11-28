@@ -39,6 +39,16 @@ pub fn render_result_into(
 ) -> ResultLengths {
     match &result.typ {
         CalcResultType::Quantity(num, unit) => {
+            if *format != ResultFormat::Dec {
+                f.write_u8(b'E').expect("");
+                f.write_u8(b'r').expect("");
+                f.write_u8(b'r').expect("");
+                return ResultLengths {
+                    int_part_len: 3,
+                    frac_part_len: 0,
+                    unit_part_len: 0,
+                };
+            }
             let final_unit = if there_was_unit_conversion {
                 None
             } else {
@@ -93,11 +103,23 @@ pub fn render_result_into(
             num_to_string(f, num, format, decimal_count, use_grouping)
         }
         CalcResultType::Percentage(num) => {
-            let mut lens = num_to_string(f, num, &ResultFormat::Dec, decimal_count, use_grouping);
-            f.write_u8(b' ').expect("");
-            f.write_u8(b'%').expect("");
-            lens.unit_part_len += 1;
-            lens
+            if *format != ResultFormat::Dec {
+                f.write_u8(b'E').expect("");
+                f.write_u8(b'r').expect("");
+                f.write_u8(b'r').expect("");
+                return ResultLengths {
+                    int_part_len: 3,
+                    frac_part_len: 0,
+                    unit_part_len: 0,
+                };
+            } else {
+                let mut lens =
+                    num_to_string(f, num, &ResultFormat::Dec, decimal_count, use_grouping);
+                f.write_u8(b' ').expect("");
+                f.write_u8(b'%').expect("");
+                lens.unit_part_len += 1;
+                lens
+            }
         }
         CalcResultType::Matrix(mat) => {
             f.write_u8(b'[').expect("");
