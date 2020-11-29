@@ -2395,10 +2395,17 @@ impl NoteCalcApp {
         render_buckets: &mut RenderBuckets<'b>,
         result_buffer: &'b mut [u8],
     ) {
+        let prev_row = self.editor.get_selection().get_cursor_pos().row;
         match self.editor.insert_text(&text, &mut self.editor_content) {
             Some(modif) => {
                 if self.editor.get_selection().get_cursor_pos().row >= MAX_LINE_COUNT {
                     self.editor.set_cursor_pos_r_c(MAX_LINE_COUNT - 1, 0);
+                }
+                let cursor_pos = self.editor.get_selection().get_cursor_pos();
+                let scroll_y =
+                    get_scroll_y_after_cursor_movement(prev_row, cursor_pos.row, &self.render_data);
+                if let Some(scroll_y) = scroll_y {
+                    self.render_data.scroll_y = scroll_y;
                 }
                 self.process_and_render_tokens(
                     modif,
@@ -5551,22 +5558,33 @@ fn get_scroll_y_after_cursor_movement(
         if current_row < render_data.scroll_y {
             // scroll up
             Some(current_row)
-        } else if render_data
-            .get_render_y(content_y(current_row))
-            .map(|render_y| render_y.as_isize() >= (render_data.client_height as isize))
-            .unwrap_or(false)
-        {
-            // scroll down
-            Some(
-                render_data
-                    .get_render_y(content_y(current_row))
-                    .expect("must")
-                    .as_usize()
-                    + render_data.scroll_y
-                    - (render_data.client_height - 1),
-            )
         } else {
-            None
+            // scroll down
+            // if the new pos is 5. line and its height is 1, this var is 6
+            let new_pos_bottom_y =
+                if let Some(new_row_y) = render_data.get_render_y(content_y(current_row)) {
+                    let new_h = render_data.get_rendered_height(content_y(current_row));
+                    new_row_y.add(new_h)
+                } else {
+                    // find the last rendered line at the bottom
+                    let mut assumed_heights = 1;
+                    let mut prev_row_y = None;
+                    let mut prev_row_i = current_row as isize - 1;
+                    while prev_row_y.is_none() && prev_row_i >= 0 {
+                        prev_row_y = render_data.get_render_y(content_y(prev_row_i as usize));
+                        assumed_heights += 1;
+                        prev_row_i -= 1;
+                    }
+                    // we assume that the non-yet-rendered lines' height will be 1
+                    prev_row_y.unwrap_or(canvas_y(0)).add(assumed_heights)
+                };
+            let new_scroll_y = new_pos_bottom_y.as_isize() + render_data.scroll_y as isize
+                - (render_data.client_height as isize);
+            if new_scroll_y > render_data.scroll_y as isize {
+                Some(new_scroll_y as usize)
+            } else {
+                None
+            }
         }
     } else {
         None
@@ -6613,7 +6631,7 @@ mod main_tests {
         fn test_scrolling_by_single_click_in_scrollbar() {
             let test = create_app2(30);
             test.repeated_paste("1\n", 60);
-            test.render();
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
             assert_eq!(test.get_render_data().scroll_y, 0);
 
             for i in 0..4 {
@@ -6636,7 +6654,8 @@ mod main_tests {
         fn test_scrollbar_is_highlighted_on_mouse_hover() {
             let test = create_app2(30);
             test.repeated_paste("1\n", 60);
-            test.render();
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+
             let result_gutter_x = test.get_render_data().result_gutter_x;
             assert_eq!(test.app().mouse_hover_type, MouseHoverType::Normal);
             let commands = &test.render_bucket().custom_commands[Layer::Text as usize];
@@ -6688,12 +6707,11 @@ mod main_tests {
         fn stepping_down_to_unrendered_line_scrolls_down_the_screen() {
             let test = create_app2(35);
             test.repeated_paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n0", 6);
-            test.set_cursor_row_col(0, 0);
-            test.render();
-
+            assert_eq!(test.get_render_data().scroll_y, 20);
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
             assert_eq!(test.get_render_data().scroll_y, 0);
             test.input(EditorInputEvent::PageDown, InputModifiers::none());
-            assert_ne!(test.get_render_data().scroll_y, 0);
+            assert_eq!(test.get_render_data().scroll_y, 20);
         }
 
         #[test]
@@ -6803,6 +6821,31 @@ mod main_tests {
         }
 
         #[test]
+        fn test_that_scrollbar_stops_at_bottom2() {
+            let test = create_app2(36);
+            test.paste("");
+            test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
+            test.input(EditorInputEvent::Del, InputModifiers::none());
+
+            for _ in 0..100 {
+                test.input(EditorInputEvent::Enter, InputModifiers::none());
+            }
+
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+            assert_eq!(test.get_render_data().scroll_y, 0);
+            test.input(EditorInputEvent::PageDown, InputModifiers::none());
+            assert_eq!(test.get_render_data().scroll_y, 28);
+        }
+
+        #[test]
+        fn test_inserting_long_text_scrolls_down() {
+            let test = create_app2(32);
+            test.paste("a");
+            test.repeated_paste("asd\n", 40);
+            assert_eq!(test.get_render_data().scroll_y, 9);
+        }
+
+        #[test]
         fn test_that_no_overscrolling() {
             let test = create_app2(35);
             test.paste("1\n2\n3\n");
@@ -6854,6 +6897,39 @@ mod main_tests {
             assert_eq!(1, test.get_render_data().scroll_y);
             test.handle_wheel(1);
             assert_eq!(1, test.get_render_data().scroll_y);
+        }
+
+        #[test]
+        fn test_scrolling_down_on_enter_even() {
+            let test = create_app2(32);
+            test.paste("");
+            test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
+            test.input(EditorInputEvent::Del, InputModifiers::none());
+
+            for _i in 0..31 {
+                test.input(EditorInputEvent::Enter, InputModifiers::none());
+            }
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!(test.get_render_data().scroll_y, 1);
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            assert_eq!(test.get_render_data().scroll_y, 2);
+        }
+
+        #[test]
+        fn test_scroll_bug_when_scrolling_upwrads_from_bottom() {
+            let test = create_app2(32);
+            test.paste("");
+
+            test.input(EditorInputEvent::PageDown, InputModifiers::none());
+            for _i in 0..40 {
+                test.input(EditorInputEvent::Enter, InputModifiers::none());
+            }
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            let scroll_y_at_bottom = test.get_render_data().scroll_y;
+            test.handle_wheel(0);
+            assert_eq!(test.get_render_data().scroll_y, scroll_y_at_bottom - 1);
+            test.handle_wheel(0);
+            assert_eq!(test.get_render_data().scroll_y, scroll_y_at_bottom - 2);
         }
     }
 
@@ -8280,10 +8356,11 @@ sum",
         let test = create_app2(35);
         test.repeated_paste("1\n", 39);
         test.render();
-        test.click(test.get_render_data().result_gutter_x - SCROLLBAR_WIDTH, 0);
 
+        test.input(EditorInputEvent::PageUp, InputModifiers::none());
         assert_eq!(test.get_render_data().scroll_y, 0);
 
+        test.click(test.get_render_data().result_gutter_x - SCROLLBAR_WIDTH, 0);
         for i in 0..5 {
             test.handle_drag(
                 test.get_render_data().result_gutter_x - SCROLLBAR_WIDTH,
@@ -8301,7 +8378,7 @@ sum",
         let test = create_app2(35);
         test.repeated_paste("1\n", 39);
 
-        test.render();
+        test.input(EditorInputEvent::PageUp, InputModifiers::none());
         test.click(test.get_render_data().result_gutter_x - SCROLLBAR_WIDTH, 0);
 
         assert_eq!(test.get_render_data().scroll_y, 0);
@@ -8886,9 +8963,11 @@ sum",
         let test = create_app2(35);
         // editor height is 36 in tests, so create a 35 line text
         test.repeated_paste("a\n", 40);
-        test.set_cursor_row_col(3, 0);
+        test.input(EditorInputEvent::PageUp, InputModifiers::none());
+        test.input(EditorInputEvent::Down, InputModifiers::none());
+        test.input(EditorInputEvent::Down, InputModifiers::none());
+        test.input(EditorInputEvent::Down, InputModifiers::none());
 
-        test.render();
         assert_eq!(
             test.get_render_data().get_render_y(content_y(34)),
             Some(canvas_y(34))
@@ -8978,9 +9057,7 @@ sum",
         let client_height = 25;
         let test = create_app2(client_height);
         test.repeated_paste("1\n", client_height * 2);
-        test.set_cursor_row_col(0, 0);
-
-        test.render();
+        test.input(EditorInputEvent::PageUp, InputModifiers::none());
 
         // step into last-1 line
         for _i in 0..(client_height - 2) {
@@ -9031,8 +9108,7 @@ sum",
     fn test_that_unvisible_rows_have_height_1() {
         let test = create_app2(25);
         test.repeated_paste("1\n2\n\n[1;2;3;4]", 10);
-
-        test.render();
+        test.input(EditorInputEvent::PageUp, InputModifiers::none());
 
         for _ in 0..3 {
             test.handle_wheel(1);
@@ -9055,8 +9131,7 @@ sum",
     fn test_that_unvisible_rows_contribute_with_only_1_height_to_calc_content_height() {
         let test = create_app2(25);
         test.repeated_paste("1\n2\n\n[1;2;3;4]", 10);
-
-        test.render();
+        test.input(EditorInputEvent::PageUp, InputModifiers::none());
 
         for _ in 0..4 {
             test.handle_wheel(1);
@@ -9098,6 +9173,7 @@ sum",
             let test = create_app2(35);
             test.paste("1\n2\n3\n");
             test.repeated_paste("aaaaaaaaaaaa\n", 34);
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
 
             let mut result_buffer = [0; 128];
             test.render_get_result_buf(&mut result_buffer[..]);
@@ -9137,7 +9213,7 @@ sum",
             let test = create_app2(35);
             test.paste("1\n2\n3\n");
             test.repeated_paste("aaaaaaaaaaaa\n", 34);
-            test.render();
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
 
             test.handle_wheel(1);
             let mut result_buffer = [0; 128];
@@ -9175,7 +9251,7 @@ sum",
             let test = create_app2(35);
             test.paste("1\n2\n3\n");
             test.repeated_paste("aaaaaaaaaaaa\n", 34);
-            test.render();
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
 
             test.handle_wheel(1);
             test.handle_wheel(1);
@@ -9213,7 +9289,7 @@ sum",
             let test = create_app2(35);
             test.paste("1\n2\n3\n");
             test.repeated_paste("aaaaaaaaaaaa\n", 34);
-            test.render();
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
 
             test.handle_wheel(1);
             test.handle_wheel(1);
@@ -9252,7 +9328,7 @@ sum",
             let test = create_app2(35);
             test.paste("1\n2\n3\n");
             test.repeated_paste("aaaaaaaaaaaa\n", 34);
-            test.render();
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
 
             test.handle_wheel(1);
             test.handle_wheel(1);
@@ -9292,7 +9368,7 @@ sum",
             let test = create_app2(35);
             test.paste("1\n2\n3\n");
             test.repeated_paste("aaaaaaaaaaaa\n", 34);
-            test.render();
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
 
             test.handle_wheel(1);
             test.handle_wheel(1);
@@ -9334,7 +9410,7 @@ sum",
             let test = create_app2(35);
             test.paste("1\n2\n3\n");
             test.repeated_paste("aaaaaaaaaaaa\n", 34);
-            test.render();
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
 
             test.handle_wheel(1);
             test.handle_wheel(1);
@@ -9391,14 +9467,14 @@ sum",
 
     #[test]
     fn test_ctrl_b_jumps_to_var_def_and_moves_the_scrollbar() {
-        let test = create_app2(35);
+        let test = create_app2(32);
         test.paste("var = 2\n");
         test.repeated_paste("asd\n", 40);
         test.paste("var");
-        test.set_cursor_row_col(0, 0);
+        test.input(EditorInputEvent::PageUp, InputModifiers::none());
         assert_eq!(test.get_render_data().scroll_y, 0);
         test.input(EditorInputEvent::PageDown, InputModifiers::none());
-        assert_eq!(test.get_render_data().scroll_y, 7 /*42 - 35*/);
+        assert_eq!(test.get_render_data().scroll_y, 10 /*42 - 32*/);
         test.input(EditorInputEvent::Char('b'), InputModifiers::ctrl());
         assert_eq!(test.get_render_data().scroll_y, 0);
     }
