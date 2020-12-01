@@ -6,6 +6,7 @@
     <title>NoteCalc</title>
     <link rel="stylesheet" href="assets/bootstrap.min.css"/>
     <link rel="stylesheet" href="assets/bootstrap-grid.min.css"/>
+    <link rel="shortcut icon" type="image/png" href="assets/favico192.png"/>
     <style>
         .unsaved a::before {
             font-weight: bold;
@@ -322,6 +323,9 @@
 
     function on_mouse_down(e) {
         if (e.buttons === 1) {
+            reference_pulses_are_active_from_prev_frame = false;
+            change_result_pulses_are_active_from_prev_frame = false;
+
             const char_x = (e.offsetX) / font_width;
             const char_y = (e.offsetY) / line_height;
             wasm_bindgen.handle_click(app_ptr, char_x | 0, char_y | 0);
@@ -386,6 +390,8 @@
     }
 
     function doKeyDown(e) {
+        reference_pulses_are_active_from_prev_frame = false;
+        change_result_pulses_are_active_from_prev_frame = false;
         // console.log(e.key, 'alt', e.altKey, 'ctrl', e.ctrlKey, 'shift', e.shiftKey);
         let key;
         if (is_mobile && e.handled_for_mobile === undefined) {
@@ -640,14 +646,22 @@
         );
         for (const pulsing_rect of pulsing_rects) {
             let delta = (now - pulsing_rect.start_time) / pulsing_rect.duration_ms;
+            if (pulsing_rect.start_color === CHANGE_RESULT_PULSE_START_COLOR) {
+                change_result_pulses_are_active_from_prev_frame = false;
+            } else {
+                reference_pulses_are_active_from_prev_frame = false;
+            }
+            let removed = false;
             if (delta >= 1) {
-                if (pulsing_rect.start_color === CHANGE_RESULT_PULSE_START_COLOR) {
-                    change_result_pulses_are_active_from_prev_frame = false;
-                } else {
-                    reference_pulses_are_active_from_prev_frame = false;
-                }
                 pulsing_rects.shift();
+                removed = true;
                 continue;
+            }
+            // it sets the booleans to false/true depending if all was removed or not
+            if (pulsing_rect.start_color === CHANGE_RESULT_PULSE_START_COLOR) {
+                change_result_pulses_are_active_from_prev_frame = !removed;
+            } else {
+                reference_pulses_are_active_from_prev_frame = !removed;
             }
             let r = interp((pulsing_rect.start_color & 0xFF000000) >>> 24, (pulsing_rect.end_color & 0xFF000000) >>> 24, delta);
             let g = interp((pulsing_rect.start_color & 0x00FF0000) >>> 16, (pulsing_rect.end_color & 0x00FF0000) >>> 16, delta);

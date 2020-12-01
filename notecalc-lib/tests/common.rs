@@ -79,7 +79,7 @@ impl BorrowCheckerFighter {
                 self.mut_results(),
                 self.mut_vars(),
                 self.mut_editor_objects(),
-                EditorRowFlags::empty(),
+                BitFlag128::empty(),
             );
     }
 
@@ -108,7 +108,7 @@ impl BorrowCheckerFighter {
                 self.mut_results(),
                 self.mut_vars(),
                 self.mut_editor_objects(),
-                EditorRowFlags::empty(),
+                BitFlag128::empty(),
             );
     }
 
@@ -127,7 +127,7 @@ impl BorrowCheckerFighter {
                 self.mut_results(),
                 self.mut_vars(),
                 self.mut_editor_objects(),
-                EditorRowFlags::empty(),
+                BitFlag128::empty(),
             );
     }
 

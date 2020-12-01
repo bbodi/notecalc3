@@ -1139,7 +1139,6 @@ mod tests {
         let units = Units::new();
 
         let unit1 = parse("$^917533673846412864165166106750540", &units);
-        dbg!(&unit1.units);
         assert_eq!(unit1.units.len(), 1);
         assert_eq!(unit1.units[0].unit.borrow().name, &['$']);
         assert_eq!(unit1.units[0].power, 1);

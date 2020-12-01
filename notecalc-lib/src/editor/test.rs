@@ -32,11 +32,12 @@ mod tests {
         expected_content: &'a str,
     }
 
-    fn test_normal_undo_redo(params: TestParams2) {
+    fn test_normal_undo_redo(params: TestParams2) -> Vec<Option<RowModificationType>> {
         // normal test
         let mut content = EditorContent::<usize>::new(80);
         let mut editor = Editor::new(&mut content);
-        test0(
+        let mut modif_types: Vec<Option<RowModificationType>> = Vec::with_capacity(8);
+        modif_types.append(&mut test0(
             &mut editor,
             &mut content,
             TestParams {
@@ -49,11 +50,11 @@ mod tests {
                 redo_count: 0,
                 expected_content: params.expected_content,
             },
-        );
+        ));
         // undo test
         let mut content = EditorContent::<usize>::new(80);
         let mut editor = Editor::new(&mut content);
-        test0(
+        modif_types.append(&mut test0(
             &mut editor,
             &mut content,
             TestParams {
@@ -66,11 +67,11 @@ mod tests {
                 redo_count: 0,
                 expected_content: params.initial_content,
             },
-        );
+        ));
         // redo test
         let mut content = EditorContent::<usize>::new(80);
         let mut editor = Editor::new(&mut content);
-        test0(
+        modif_types.append(&mut test0(
             &mut editor,
             &mut content,
             TestParams {
@@ -83,7 +84,8 @@ mod tests {
                 redo_count: 1,
                 expected_content: params.expected_content,
             },
-        );
+        ));
+        return modif_types;
     }
 
     fn test_undo(params: TestParams) {
@@ -119,7 +121,11 @@ mod tests {
     /// the strings in the parameter list are kind of a markup language
     /// '|' marks the cursor's position. If there are two of them, then
     /// it means a selection's begin and end.
-    fn test0(editor: &mut Editor, content: &mut EditorContent<usize>, params: TestParams) {
+    fn test0(
+        editor: &mut Editor,
+        content: &mut EditorContent<usize>,
+        params: TestParams,
+    ) -> Vec<Option<RowModificationType>> {
         // we can assume here that it does not contain illegal or complex input
         // so we can just set it as it is
         let mut selection_found = false;
@@ -159,8 +165,10 @@ mod tests {
             editor.insert_text(text, content);
         }
         let mut now = 0;
+        let mut modification_types =
+            Vec::with_capacity(params.inputs.len() + params.undo_count + params.redo_count);
         for (i, input) in params.inputs.iter().enumerate() {
-            editor.handle_input(input.clone(), params.modifiers, content);
+            modification_types.push(editor.handle_input(input.clone(), params.modifiers, content));
             if i < params.delay_after_inputs.len() {
                 now += params.delay_after_inputs[i];
                 editor.handle_tick(now);
@@ -168,11 +176,13 @@ mod tests {
         }
 
         for _ in 0..params.undo_count {
-            editor.undo(content);
+            let modif_type = editor.undo(content);
+            modification_types.push(modif_type);
         }
 
         for _ in 0..params.redo_count {
-            editor.redo(content);
+            let modif_type = editor.redo(content);
+            modification_types.push(modif_type);
         }
 
         // assert
@@ -255,6 +265,7 @@ mod tests {
         } else {
             assert_eq!(editor.get_selection(), expected_cursor, "Cursor");
         }
+        return modification_types;
     }
 
     #[test]
@@ -5018,6 +5029,35 @@ mod tests {
             expected_content: "abcd█mnopqrstuvwxyz",
         });
 
+        {
+            let mut content = EditorContent::<usize>::new(80);
+            let mut editor = Editor::new(&mut content);
+            let modif_types = test0(
+                &mut editor,
+                &mut content,
+                TestParams {
+                    text_input: None,
+                    initial_content: "abcd❰efghijklmnopqrstuvwxyz\n\
+            abcdefghijkl❱mnopqrstuvwxyz",
+                    inputs: &[EditorInputEvent::Del],
+                    delay_after_inputs: &[],
+                    modifiers: InputModifiers::ctrl(),
+                    undo_count: 1,
+                    redo_count: 0,
+                    expected_content: "abcd❰efghijklmnopqrstuvwxyz\n\
+            abcdefghijkl❱mnopqrstuvwxyz",
+                },
+            );
+            assert_eq!(
+                modif_types,
+                vec![
+                    // press Del
+                    Some(RowModificationType::AllLinesFrom(0)),
+                    // press Ctrl-z
+                    Some(RowModificationType::AllLinesFrom(0)),
+                ]
+            );
+        }
         test_normal_undo_redo(TestParams2 {
             initial_content: "❰abcdefghijklmnopqrstuvwxyz\n\
             abcdefghijklmnopqrstuvwxyz❱",

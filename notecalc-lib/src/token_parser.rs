@@ -174,26 +174,34 @@ impl TokenParser {
             return;
         }
         while index < line.len() {
-            let parse_result = TokenParser::try_extract_variable_name(
-                &line[index..],
-                variable_names,
-                line_index,
-                allocator,
-            )
-            .or_else(|| {
-                TokenParser::try_extract_unit(&line[index..], units, can_be_unit, allocator)
-                    .or_else(|| {
-                        TokenParser::try_extract_operator(&line[index..], allocator).or_else(|| {
-                            TokenParser::try_extract_number_literal(&line[index..], allocator)
-                                .or_else(|| {
-                                    TokenParser::try_extract_string_literal(
+            let parse_result = TokenParser::try_extract_comment(&line[index..], allocator)
+                .or_else(|| {
+                    TokenParser::try_extract_variable_name(
+                        &line[index..],
+                        variable_names,
+                        line_index,
+                        allocator,
+                    )
+                })
+                .or_else(|| {
+                    TokenParser::try_extract_unit(&line[index..], units, can_be_unit, allocator)
+                        .or_else(|| {
+                            TokenParser::try_extract_operator(&line[index..], allocator).or_else(
+                                || {
+                                    TokenParser::try_extract_number_literal(
                                         &line[index..],
                                         allocator,
                                     )
-                                })
+                                    .or_else(|| {
+                                        TokenParser::try_extract_string_literal(
+                                            &line[index..],
+                                            allocator,
+                                        )
+                                    })
+                                },
+                            )
                         })
-                    })
-            });
+                });
             if let Some(token) = parse_result {
                 match &token.typ {
                     TokenType::StringLiteral => {
@@ -489,18 +497,33 @@ impl TokenParser {
         };
     }
 
+    fn try_extract_comment<'text_ptr>(
+        line: &[char],
+        allocator: &'text_ptr Bump,
+    ) -> Option<Token<'text_ptr>> {
+        return if line.starts_with(&['/', '/']) {
+            Some(Token {
+                typ: TokenType::StringLiteral,
+                ptr: allocator.alloc_slice_fill_iter(line.iter().map(|it| *it)),
+                has_error: false,
+            })
+        } else {
+            None
+        };
+    }
+
     fn try_extract_variable_name<'text_ptr>(
-        str: &[char],
+        line: &[char],
         vars: &Variables,
         row_index: usize,
         allocator: &'text_ptr Bump,
     ) -> Option<Token<'text_ptr>> {
-        if str.starts_with(&['s', 'u', 'm']) && str.get(3).map(|it| *it == ' ').unwrap_or(true) {
+        if line.starts_with(&['s', 'u', 'm']) && line.get(3).map(|it| *it == ' ').unwrap_or(true) {
             return Some(Token {
                 typ: TokenType::Variable {
                     var_index: SUM_VARIABLE_INDEX,
                 },
-                ptr: allocator.alloc_slice_fill_iter(str.iter().map(|it| *it).take(3)),
+                ptr: allocator.alloc_slice_fill_iter(line.iter().map(|it| *it).take(3)),
                 has_error: false,
             });
         }
@@ -512,12 +535,12 @@ impl TokenParser {
             }
             let var = var.as_ref().unwrap();
             for (i, ch) in var.name.iter().enumerate() {
-                if i >= str.len() || str[i] != *ch {
+                if i >= line.len() || line[i] != *ch {
                     continue 'asd;
                 }
             }
             // if the next char is '(', it can't be a var name
-            if str
+            if line
                 .get(var.name.len())
                 .map(|it| *it == '(')
                 .unwrap_or(false)
@@ -525,7 +548,7 @@ impl TokenParser {
                 continue 'asd;
             }
             // only full match allowed e.g. if there is variable 'b', it should not match "b0" as 'b' and '0'
-            let not_full_match = str
+            let not_full_match = line
                 .get(var.name.len())
                 .map(|it| it.is_alphanumeric())
                 .unwrap_or(false);
@@ -538,7 +561,7 @@ impl TokenParser {
             }
         }
         return if longest_match > 0 {
-            let typ = if longest_match > 2 && str[0] == '&' && str[1] == '[' {
+            let typ = if longest_match > 2 && line[0] == '&' && line[1] == '[' {
                 TokenType::LineReference {
                     var_index: longest_match_index,
                 }
@@ -549,7 +572,7 @@ impl TokenParser {
             };
             Some(Token {
                 typ,
-                ptr: allocator.alloc_slice_fill_iter(str.iter().map(|it| *it).take(longest_match)),
+                ptr: allocator.alloc_slice_fill_iter(line.iter().map(|it| *it).take(longest_match)),
                 has_error: false,
             })
         } else {
@@ -1670,6 +1693,24 @@ mod tests {
                 op(OperatorTokenType::Div),
                 unit("T"),
             ],
+        );
+    }
+
+    #[test]
+    fn test_comments() {
+        test("//", &[str("//")]);
+        test("//a", &[str("//a")]);
+        test("// a", &[str("// a")]);
+
+        test("// 1", &[str("// 1")]);
+        test("// 1+2", &[str("// 1+2")]);
+
+        test("a// 1+2", &[str("a"), str("// 1+2")]);
+
+        test("1// 1+2", &[num(1), str("// 1+2")]);
+        test(
+            "1+2// 1+2",
+            &[num(1), op(OperatorTokenType::Add), num(2), str("// 1+2")],
         );
     }
 }

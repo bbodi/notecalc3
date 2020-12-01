@@ -1041,7 +1041,7 @@ impl Editor {
 
                 let selection = if modifiers.shift {
                     self.selection.extend(new_pos)
-                } else  if let Some((start, _end)) = self.selection.is_range() {
+                } else if let Some((start, _end)) = self.selection.is_range() {
                     Selection::single(start)
                 } else {
                     Selection::single(new_pos)
@@ -1193,7 +1193,7 @@ impl Editor {
                 content.insert_str_at(selection.get_first(), &removed_text);
                 self.set_selection_save_col(*selection);
                 let first = selection.get_first();
-                let second = selection.get_first();
+                let second = selection.get_second();
                 if first.row == second.row {
                     Some(RowModificationType::SingleLine(first.row))
                 } else {
