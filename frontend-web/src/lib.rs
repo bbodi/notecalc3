@@ -32,7 +32,6 @@ mod utils;
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
-static mut RESULT_BUFFER: [u8; 2048] = [0; 2048];
 const RENDER_COMMAND_BUFFER_SIZE: usize = 1024 * 100;
 static mut RENDER_COMMAND_BUFFER: [u8; RENDER_COMMAND_BUFFER_SIZE] =
     [0; RENDER_COMMAND_BUFFER_SIZE];
@@ -169,7 +168,6 @@ pub fn alt_key_released(app_ptr: u32) {
         AppPointers::mut_vars(app_ptr),
         AppPointers::mut_editor_objects(app_ptr),
         rb,
-        unsafe { &mut RESULT_BUFFER },
     );
 }
 
@@ -184,7 +182,6 @@ pub fn handle_resize(app_ptr: u32, new_client_width: usize) {
         AppPointers::mut_results(app_ptr),
         AppPointers::mut_vars(app_ptr),
         AppPointers::mut_render_bucket(app_ptr),
-        unsafe { &mut RESULT_BUFFER },
     );
 }
 
@@ -232,7 +229,6 @@ pub fn set_compressed_encoded_content(app_ptr: u32, compressed_encoded: String) 
             AppPointers::mut_vars(app_ptr),
             AppPointers::mut_editor_objects(app_ptr),
             AppPointers::mut_render_bucket(app_ptr),
-            unsafe { &mut RESULT_BUFFER },
         );
     }
 }
@@ -248,7 +244,6 @@ pub fn handle_time(app_ptr: u32, now: u32) -> bool {
         AppPointers::mut_vars(app_ptr),
         AppPointers::mut_editor_objects(app_ptr),
         AppPointers::mut_render_bucket(app_ptr),
-        unsafe { &mut RESULT_BUFFER },
     );
 
     return rerender_needed;
@@ -266,7 +261,6 @@ pub fn handle_mouse_move(app_ptr: u32, x: usize, y: usize) -> usize {
         AppPointers::results(app_ptr),
         AppPointers::vars(app_ptr),
         AppPointers::mut_render_bucket(app_ptr),
-        unsafe { &mut RESULT_BUFFER },
     );
 }
 
@@ -282,7 +276,6 @@ pub fn handle_drag(app_ptr: u32, x: usize, y: usize) -> bool {
         AppPointers::results(app_ptr),
         AppPointers::vars(app_ptr),
         AppPointers::mut_render_bucket(app_ptr),
-        unsafe { &mut RESULT_BUFFER },
     );
 }
 
@@ -303,7 +296,6 @@ pub fn handle_click(app_ptr: u32, x: usize, y: usize) {
         AppPointers::mut_results(app_ptr),
         AppPointers::mut_vars(app_ptr),
         AppPointers::mut_render_bucket(app_ptr),
-        unsafe { &mut RESULT_BUFFER },
     );
 }
 
@@ -318,7 +310,6 @@ pub fn handle_wheel(app_ptr: u32, dir: usize) -> bool {
         AppPointers::mut_results(app_ptr),
         AppPointers::mut_vars(app_ptr),
         AppPointers::mut_render_bucket(app_ptr),
-        unsafe { &mut RESULT_BUFFER },
     );
 }
 
@@ -349,7 +340,6 @@ pub fn handle_paste(app_ptr: u32, input: String) {
         AppPointers::mut_vars(app_ptr),
         AppPointers::mut_editor_objects(app_ptr),
         AppPointers::mut_render_bucket(app_ptr),
-        unsafe { &mut RESULT_BUFFER },
     );
 }
 
@@ -376,8 +366,12 @@ pub fn reparse_everything(app_ptr: u32) {
         AppPointers::mut_vars(app_ptr),
         AppPointers::mut_editor_objects(app_ptr),
         AppPointers::mut_render_bucket(app_ptr),
-        unsafe { &mut RESULT_BUFFER },
     );
+}
+
+#[wasm_bindgen]
+pub fn rerender(app_ptr: u32) {
+    send_render_commands_to_js(AppPointers::mut_render_bucket(app_ptr));
 }
 
 #[wasm_bindgen]
@@ -392,7 +386,6 @@ pub fn get_selected_rows_with_results(app_ptr: u32) -> String {
     return app.copy_selected_rows_with_result_to_clipboard(
         units,
         AppPointers::mut_render_bucket(app_ptr),
-        unsafe { &mut RESULT_BUFFER },
         AppPointers::mut_tokens(app_ptr),
         AppPointers::mut_vars(app_ptr),
         AppPointers::mut_results(app_ptr),
@@ -459,7 +452,6 @@ pub fn handle_input(app_ptr: u32, input: u32, modifiers: u8) -> bool {
         AppPointers::mut_vars(app_ptr),
         AppPointers::mut_editor_objects(app_ptr),
         AppPointers::mut_render_bucket(app_ptr),
-        unsafe { &mut RESULT_BUFFER },
     );
 
     return modif.is_some();

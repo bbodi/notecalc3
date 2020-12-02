@@ -176,11 +176,16 @@ impl TokenParser {
         while index < line.len() {
             let parse_result = TokenParser::try_extract_comment(&line[index..], allocator)
                 .or_else(|| {
+                    let prev_was_lineref = dst
+                        .last()
+                        .map(|token| matches!(token.typ, TokenType::LineReference{..}))
+                        .unwrap_or(false);
                     TokenParser::try_extract_variable_name(
                         &line[index..],
                         variable_names,
                         line_index,
                         allocator,
+                        prev_was_lineref,
                     )
                 })
                 .or_else(|| {
@@ -517,6 +522,7 @@ impl TokenParser {
         vars: &Variables,
         row_index: usize,
         allocator: &'text_ptr Bump,
+        prev_was_lineref: bool,
     ) -> Option<Token<'text_ptr>> {
         if line.starts_with(&['s', 'u', 'm']) && line.get(3).map(|it| *it == ' ').unwrap_or(true) {
             return Some(Token {
@@ -560,23 +566,28 @@ impl TokenParser {
                 longest_match_index = var_index;
             }
         }
-        return if longest_match > 0 {
-            let typ = if longest_match > 2 && line[0] == '&' && line[1] == '[' {
-                TokenType::LineReference {
-                    var_index: longest_match_index,
+        if longest_match > 0 {
+            let is_line_ref = longest_match > 2 && line[0] == '&' && line[1] == '[';
+            let typ = if is_line_ref {
+                if prev_was_lineref {
+                    return None;
+                } else {
+                    TokenType::LineReference {
+                        var_index: longest_match_index,
+                    }
                 }
             } else {
                 TokenType::Variable {
                     var_index: longest_match_index,
                 }
             };
-            Some(Token {
+            return Some(Token {
                 typ,
                 ptr: allocator.alloc_slice_fill_iter(line.iter().map(|it| *it).take(longest_match)),
                 has_error: false,
-            })
+            });
         } else {
-            None
+            return None;
         };
     }
 
@@ -1537,6 +1548,25 @@ mod tests {
                 op(OperatorTokenType::Mult),
                 str(" "),
                 line_ref("&[21]"),
+            ],
+        );
+
+        // line refs requires space between them for readabality and avoiding confusion
+        test_vars(
+            &[&['&', '[', '2', '1', ']']],
+            "3 years * &[21]&[21]",
+            &[
+                num(3),
+                str(" "),
+                apply_to_prev_token_unit("years"),
+                str(" "),
+                op(OperatorTokenType::Mult),
+                str(" "),
+                line_ref("&[21]"),
+                str("&"),
+                op(OperatorTokenType::BracketOpen),
+                num(21),
+                op(OperatorTokenType::BracketClose),
             ],
         );
     }

@@ -27,12 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - the dots for matrices are now rendered for all the matrix's rows
     - sometimes the dots were not rendering for matrixes, fixed
   - '…' was not rendered correctly for Matrices
-  - ctrl-t is not absorbed by the frontend
-  - Undoing (ctrl-z) a selection removal with DEL button was buggy and only the first line of the selection was
+  - Ctrl-t is not absorbed by the frontend anymore
+  - Undoing (Ctrl-z) a selection removal with DEL button was buggy and only the first line of the selection was
     reparsed  
   - Pulses (which highlights the usage places of variable/lineref under the cursor)
     appeared too slowly when navigating with cursor or mouse, making it more difficult
     for the user to notice it immediately.
+  - Space is automatically inserted in front of a just-inserted line reference
+  - Right gutter alignment was a render pass late to the input which caused it
+  - Cursor was not visible at the right edge of the editor
+  - global static RESULT_BUFFER is now part of the lib and not of the frontend (introduces some unsafe code but less trouble with the borrow checker)
 ### Removed
   - local.html was removed, you can access now the debug functionality and local wasm file 
   via `host/notecalc?debug` 

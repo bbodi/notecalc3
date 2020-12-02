@@ -70,6 +70,13 @@ const ACTIVE_LINE_REF_HIGHLIGHT_COLORS: [u32; 9] = [
     0xFFD300, 0xDE3163, 0x73c2fb, 0xc7ea46, 0x702963, 0x997950, 0x777b73, 0xFC6600, 0xED2939,
 ];
 
+// I hate Rust's borrow checker
+// Double rendering was not possible in a single method since there is no
+// way to express my intentions and tell that it is safe to reuse this buffer
+// because the references to it are removed -_-'.
+// Because of this global var, only single thread test running is possible.
+static mut RESULT_BUFFER: [u8; 2048] = [0; 2048];
+
 #[allow(non_snake_case)]
 #[inline]
 pub fn NOT(a: bool) -> bool {
@@ -289,7 +296,6 @@ pub mod helper {
         pub left_gutter_width: usize,
         pub longest_visible_result_len: usize,
         pub longest_visible_editor_line_len: usize,
-
         pub current_editor_width: usize,
         pub current_result_panel_width: usize,
         editor_y_to_render_y: [Option<CanvasY>; MAX_LINE_COUNT],
@@ -1239,7 +1245,6 @@ impl NoteCalcApp {
         vars: &mut Variables,
         editor_objs: &mut EditorObjects,
         render_buckets: &mut RenderBuckets<'b>,
-        result_buffer: &'b mut [u8],
     ) {
         if text.is_empty() {
             text = EMPTY_FILE_DEFUALT_CONTENT;
@@ -1272,12 +1277,6 @@ impl NoteCalcApp {
             vars,
             editor_objs,
             render_buckets,
-            result_buffer,
-        );
-        set_editor_and_result_panel_widths(
-            self.client_width,
-            self.result_panel_width_percent,
-            &mut self.render_data,
         );
     }
 
@@ -1302,7 +1301,6 @@ impl NoteCalcApp {
         matrix_editing: &mut Option<MatrixEditing>,
         line_reference_chooser: &mut Option<ContentIndex>,
         render_buckets: &mut RenderBuckets<'b>,
-        result_buffer: &'b mut [u8],
         result_change_flag: BitFlag128,
         gr: &mut GlobalRenderData,
         allocator: &'b Bump,
@@ -1573,7 +1571,6 @@ impl NoteCalcApp {
         render_results_into_buf_and_calc_len(
             &units,
             results.as_slice(),
-            result_buffer,
             &mut tmp,
             &editor_content,
             gr,
@@ -1584,7 +1581,6 @@ impl NoteCalcApp {
             units,
             results.as_slice(),
             render_buckets,
-            result_buffer,
             gr,
             Some(RENDERED_RESULT_PRECISION),
         )
@@ -1623,7 +1619,6 @@ impl NoteCalcApp {
         results: &mut Results,
         vars: &mut Variables,
         render_buckets: &mut RenderBuckets<'b>,
-        result_buffer: &'b mut [u8],
     ) -> bool {
         let has_moved = if dir == 0 && self.render_data.scroll_y > 0 {
             self.render_data.scroll_y -= 1;
@@ -1646,7 +1641,6 @@ impl NoteCalcApp {
             self.generate_render_commands_and_fill_editor_objs(
                 units,
                 render_buckets,
-                result_buffer,
                 allocator,
                 tokens,
                 results,
@@ -1669,7 +1663,6 @@ impl NoteCalcApp {
         results: &mut Results,
         vars: &mut Variables,
         render_buckets: &mut RenderBuckets<'b>,
-        result_buffer: &'b mut [u8],
     ) {
         let scroll_bar_x = self.render_data.result_gutter_x - SCROLLBAR_WIDTH;
         if x < self.render_data.left_gutter_width {
@@ -1685,7 +1678,6 @@ impl NoteCalcApp {
                 results,
                 vars,
                 render_buckets,
-                result_buffer,
             );
         } else if self.mouse_state.is_none() {
             self.mouse_state = if x - scroll_bar_x < SCROLLBAR_WIDTH {
@@ -1707,7 +1699,6 @@ impl NoteCalcApp {
                         editor_y,
                         editor_objs,
                         render_buckets,
-                        result_buffer,
                     );
                 }
                 None
@@ -1754,7 +1745,6 @@ impl NoteCalcApp {
         results: &mut Results,
         vars: &mut Variables,
         render_buckets: &mut RenderBuckets<'b>,
-        result_buffer: &'b mut [u8],
     ) {
         let clicked_x = x - self.render_data.left_gutter_width;
         let clicked_row = self.get_clicked_row_clamped(clicked_y);
@@ -1832,13 +1822,11 @@ impl NoteCalcApp {
                 vars,
                 editor_objs,
                 render_buckets,
-                result_buffer,
             );
         } else {
             self.generate_render_commands_and_fill_editor_objs(
                 units,
                 render_buckets,
-                result_buffer,
                 allocator,
                 tokens,
                 results,
@@ -1942,7 +1930,6 @@ impl NoteCalcApp {
         results: &Results,
         vars: &Variables,
         render_buckets: &mut RenderBuckets<'b>,
-        result_buffer: &'b mut [u8],
     ) -> usize {
         let scroll_bar_x = self.render_data.result_gutter_x - SCROLLBAR_WIDTH;
         let new_mouse_state = if x < self.render_data.left_gutter_width {
@@ -1965,7 +1952,6 @@ impl NoteCalcApp {
             self.generate_render_commands_and_fill_editor_objs(
                 units,
                 render_buckets,
-                result_buffer,
                 allocator,
                 tokens,
                 results,
@@ -1988,7 +1974,6 @@ impl NoteCalcApp {
         results: &Results,
         vars: &Variables,
         render_buckets: &mut RenderBuckets<'b>,
-        result_buffer: &'b mut [u8],
     ) -> bool {
         let need_render = match self.mouse_state {
             Some(MouseClickType::RightGutterIsDragged) => {
@@ -2039,7 +2024,6 @@ impl NoteCalcApp {
             self.generate_render_commands_and_fill_editor_objs(
                 units,
                 render_buckets,
-                result_buffer,
                 allocator,
                 tokens,
                 results,
@@ -2086,7 +2070,6 @@ impl NoteCalcApp {
         results: &mut Results,
         vars: &mut Variables,
         render_buckets: &mut RenderBuckets<'b>,
-        result_buffer: &'b mut [u8],
     ) {
         if new_client_width
             < LEFT_GUTTER_MIN_WIDTH + RIGHT_GUTTER_WIDTH + MIN_RESULT_PANEL_WIDTH + SCROLLBAR_WIDTH
@@ -2102,7 +2085,6 @@ impl NoteCalcApp {
         self.generate_render_commands_and_fill_editor_objs(
             units,
             render_buckets,
-            result_buffer,
             allocator,
             tokens,
             results,
@@ -2122,7 +2104,6 @@ impl NoteCalcApp {
         vars: &mut Variables,
         editor_objs: &mut EditorObjects,
         render_buckets: &mut RenderBuckets<'b>,
-        result_buffer: &'b mut [u8],
     ) -> bool {
         let need_rerender = if let Some(mat_editor) = &mut self.matrix_editing {
             mat_editor.editor.handle_tick(now)
@@ -2133,7 +2114,6 @@ impl NoteCalcApp {
             self.generate_render_commands_and_fill_editor_objs(
                 units,
                 render_buckets,
-                result_buffer,
                 allocator,
                 tokens,
                 results,
@@ -2318,7 +2298,6 @@ impl NoteCalcApp {
         vars: &mut Variables,
         editor_objs: &mut EditorObjects,
         render_buckets: &mut RenderBuckets<'b>,
-        result_buffer: &'b mut [u8],
     ) {
         if let Some(line_ref_row) = self.line_reference_chooser {
             self.line_reference_chooser = None;
@@ -2331,7 +2310,6 @@ impl NoteCalcApp {
                 line_ref_row,
                 editor_objs,
                 render_buckets,
-                result_buffer,
             );
         } else {
             return;
@@ -2348,7 +2326,6 @@ impl NoteCalcApp {
         line_ref_row: ContentIndex,
         editor_objs: &mut EditorObjects,
         render_buckets: &mut RenderBuckets<'b>,
-        result_buffer: &'b mut [u8],
     ) {
         let cursor_row = self.editor.get_selection().get_cursor_pos().row;
         if cursor_row == line_ref_row.as_usize()
@@ -2357,7 +2334,6 @@ impl NoteCalcApp {
             self.generate_render_commands_and_fill_editor_objs(
                 units,
                 render_buckets,
-                result_buffer,
                 allocator,
                 tokens,
                 results,
@@ -2368,6 +2344,30 @@ impl NoteCalcApp {
             return;
         }
         if let Some(var) = &vars[line_ref_row.as_usize()] {
+            let pos = self.editor.get_selection().get_cursor_pos();
+            if pos.column > 0 {
+                let prev_ch = self.editor_content.get_char(pos.row, pos.column - 1);
+                let prev_token_is_lineref = pos.column > 3 /* smallest lineref is 4 char long '&[1]'*/
+                    && self.editor_content.get_char(pos.row, pos.column - 1) == ']' && {
+                    let mut i = (pos.column - 2) as  isize;
+                    while i > 1 {
+                        if NOT(self.editor_content.get_char(pos.row, i as usize).is_ascii_digit()) {
+                            break;
+                        }
+                        i -= 1;
+                    }
+                    i > 0
+                        && self.editor_content.get_char(pos.row, i as usize) == '['
+                        && self.editor_content.get_char(pos.row, (i-1) as usize) == '&'
+                };
+                if prev_ch.is_alphanumeric() || prev_ch == '_' || prev_token_is_lineref {
+                    self.editor.handle_input(
+                        EditorInputEvent::Char(' '),
+                        InputModifiers::none(),
+                        &mut self.editor_content,
+                    );
+                }
+            }
             for ch in var.name.iter() {
                 self.editor.handle_input(
                     EditorInputEvent::Char(*ch),
@@ -2395,7 +2395,6 @@ impl NoteCalcApp {
             vars,
             editor_objs,
             render_buckets,
-            result_buffer,
         );
     }
 
@@ -2409,7 +2408,6 @@ impl NoteCalcApp {
         vars: &mut Variables,
         editor_objs: &mut EditorObjects,
         render_buckets: &mut RenderBuckets<'b>,
-        result_buffer: &'b mut [u8],
     ) {
         let prev_row = self.editor.get_selection().get_cursor_pos().row;
         match self.editor.insert_text(&text, &mut self.editor_content) {
@@ -2432,7 +2430,6 @@ impl NoteCalcApp {
                     vars,
                     editor_objs,
                     render_buckets,
-                    result_buffer,
                 );
             }
             None => {}
@@ -2448,7 +2445,6 @@ impl NoteCalcApp {
         vars: &mut Variables,
         editor_objs: &mut EditorObjects,
         render_buckets: &mut RenderBuckets<'b>,
-        result_buffer: &'b mut [u8],
     ) {
         self.process_and_render_tokens(
             RowModificationType::AllLinesFrom(0),
@@ -2459,7 +2455,6 @@ impl NoteCalcApp {
             vars,
             editor_objs,
             render_buckets,
-            result_buffer,
         );
     }
 
@@ -2474,7 +2469,6 @@ impl NoteCalcApp {
         vars: &mut Variables,
         editor_objs: &mut EditorObjects,
         render_buckets: &mut RenderBuckets<'b>,
-        result_buffer: &'b mut [u8],
     ) -> Option<RowModificationType> {
         fn handle_input_with_alt<'b>(
             app: &mut NoteCalcApp,
@@ -2657,13 +2651,21 @@ impl NoteCalcApp {
                 vars,
                 editor_objs,
                 render_buckets,
-                result_buffer,
             );
         } else {
             self.generate_render_commands_and_fill_editor_objs(
                 units,
                 render_buckets,
-                result_buffer,
+                allocator,
+                tokens,
+                results,
+                vars,
+                editor_objs,
+                BitFlag128::empty(),
+            );
+            self.set_editor_and_result_panel_widths_and_rerender_if_necessary(
+                units,
+                render_buckets,
                 allocator,
                 tokens,
                 results,
@@ -2672,11 +2674,6 @@ impl NoteCalcApp {
                 BitFlag128::empty(),
             );
         }
-        set_editor_and_result_panel_widths(
-            self.client_width,
-            self.result_panel_width_percent,
-            &mut self.render_data,
-        );
 
         return modif;
     }
@@ -2691,7 +2688,6 @@ impl NoteCalcApp {
         vars: &mut Variables,
         editor_objs: &mut EditorObjects,
         render_buckets: &mut RenderBuckets<'b>,
-        result_buffer: &'b mut [u8],
     ) {
         fn eval_line<'a>(
             editor_content: &EditorContent<LineData>,
@@ -2960,7 +2956,6 @@ impl NoteCalcApp {
         self.generate_render_commands_and_fill_editor_objs(
             units,
             render_buckets,
-            result_buffer,
             allocator,
             tokens,
             results,
@@ -2968,13 +2963,50 @@ impl NoteCalcApp {
             editor_objs,
             result_change_flag,
         );
+        self.set_editor_and_result_panel_widths_and_rerender_if_necessary(
+            units,
+            render_buckets,
+            allocator,
+            tokens,
+            results,
+            vars,
+            editor_objs,
+            result_change_flag,
+        );
+    }
 
-        // is there any change
-        if result_change_flag.is_non_zero() {
-            set_editor_and_result_panel_widths(
-                self.client_width,
-                self.result_panel_width_percent,
-                &mut self.render_data,
+    fn set_editor_and_result_panel_widths_and_rerender_if_necessary<'b>(
+        &mut self,
+        units: &Units,
+        render_buckets: &mut RenderBuckets<'b>,
+        allocator: &'b Bump,
+        tokens: &AppTokens<'b>,
+        results: &Results,
+        vars: &Variables,
+        editor_objs: &mut EditorObjects,
+        result_change_flag: BitFlag128,
+    ) {
+        let current_result_g_x = self.render_data.result_gutter_x;
+        set_editor_and_result_panel_widths(
+            self.client_width,
+            self.result_panel_width_percent,
+            &mut self.render_data,
+        );
+        if self.render_data.result_gutter_x != current_result_g_x {
+            // HACKY
+            // we know the length of each line and results only after rendering them,
+            // so we can set the right gutter position only after a full render pass.
+            // If it turns out that the gutter has to/and can be moved,
+            // we rerender everything with the new gutter position.
+            self.generate_render_commands_and_fill_editor_objs(
+                units,
+                render_buckets,
+                allocator,
+                tokens,
+                results,
+                vars,
+                editor_objs,
+                result_change_flag,
             );
         }
     }
@@ -3063,7 +3095,6 @@ impl NoteCalcApp {
         &'b mut self,
         units: &'b Units,
         render_buckets: &'b mut RenderBuckets<'b>,
-        result_buffer: &'b mut [u8],
         tokens: &AppTokens<'b>,
         vars: &Variables,
         results: &Results,
@@ -3152,7 +3183,6 @@ impl NoteCalcApp {
         render_results_into_buf_and_calc_len(
             &units,
             &results.as_slice()[first_row..=second_row],
-            result_buffer,
             &mut tmp,
             &self.editor_content,
             &gr,
@@ -3165,7 +3195,6 @@ impl NoteCalcApp {
             units,
             &results.as_slice()[first_row..=second_row],
             render_buckets,
-            result_buffer,
             &gr,
             None,
         );
@@ -3671,7 +3700,6 @@ impl NoteCalcApp {
         &mut self,
         units: &Units,
         render_buckets: &mut RenderBuckets<'b>,
-        result_buffer: &'b mut [u8],
         allocator: &'b Bump,
         tokens: &AppTokens<'b>,
         results: &Results,
@@ -3687,7 +3715,6 @@ impl NoteCalcApp {
             &mut self.matrix_editing,
             &mut self.line_reference_chooser,
             render_buckets,
-            result_buffer,
             result_change_flag,
             &mut self.render_data,
             allocator,
@@ -3737,7 +3764,7 @@ fn draw_cursor(
         if editor.is_cursor_shown()
             && matrix_editing.is_none()
             && ((cursor_pos.column as isize + r.cursor_render_x_offset) as usize)
-                < gr.current_editor_width
+                <= gr.current_editor_width
         {
             render_buckets.draw_char(
                 Layer::AboveText,
@@ -4853,13 +4880,13 @@ impl ResultRender {
 fn render_results_into_buf_and_calc_len<'text_ptr>(
     units: &Units,
     results: &[LineResult],
-    result_buffer: &'text_ptr mut [u8],
     tmp: &mut ResultRender,
     editor_content: &EditorContent<LineData>,
     gr: &GlobalRenderData,
     decimal_count: Option<usize>,
 ) {
     let mut result_buffer_index = 0;
+    let result_buffer = unsafe { &mut RESULT_BUFFER };
     // calc max length and render results into buffer
     for (editor_y, result) in results.iter().enumerate() {
         let editor_y = content_y(editor_y);
@@ -4932,6 +4959,7 @@ fn render_results_into_buf_and_calc_len<'text_ptr>(
             });
         }
     }
+    result_buffer[result_buffer_index] = 0; // tests depend on it
     tmp.max_len = tmp.max_lengths.int_part_len
         + tmp.max_lengths.frac_part_len
         + if tmp.max_lengths.unit_part_len > 0 {
@@ -4946,12 +4974,12 @@ fn create_render_commands_for_results_and_render_matrices<'text_ptr>(
     units: &Units,
     results: &[LineResult],
     render_buckets: &mut RenderBuckets<'text_ptr>,
-    result_buffer: &'text_ptr [u8],
     gr: &GlobalRenderData,
     decimal_count: Option<usize>,
 ) -> usize {
     let mut prev_result_matrix_length = None;
     let mut matrix_len = 0;
+    let result_buffer = unsafe { &RESULT_BUFFER };
     for result_tmp in tmp.result_ranges.iter() {
         let rendered_row_height = gr.get_rendered_height(result_tmp.editor_y);
         let render_y = gr.get_render_y(result_tmp.editor_y).expect("");
@@ -5650,8 +5678,6 @@ mod main_tests {
 
     use super::*;
 
-    static mut RESULT_BUFFER: [u8; 2048] = [0; 2048];
-
     const fn result_panel_w(client_width: usize) -> usize {
         client_width * (100 - DEFAULT_RESULT_PANEL_WIDTH_PERCENT) / 100
     }
@@ -5783,7 +5809,6 @@ mod main_tests {
                 .generate_render_commands_and_fill_editor_objs(
                     self.units(),
                     self.mut_render_bucket(),
-                    unsafe { &mut RESULT_BUFFER },
                     self.allocator(),
                     self.mut_tokens(),
                     self.mut_results(),
@@ -5803,42 +5828,7 @@ mod main_tests {
                 self.mut_vars(),
                 self.mut_editor_objects(),
                 self.mut_render_bucket(),
-                unsafe { &mut RESULT_BUFFER },
             );
-        }
-
-        fn render_get_result_buf(&self, result_buffer: &mut [u8]) {
-            self.mut_app()
-                .generate_render_commands_and_fill_editor_objs(
-                    self.units(),
-                    self.mut_render_bucket(),
-                    result_buffer,
-                    self.allocator(),
-                    self.mut_tokens(),
-                    self.mut_results(),
-                    self.mut_vars(),
-                    self.mut_editor_objects(),
-                    BitFlag128::empty(),
-                );
-        }
-
-        fn render_get_result_commands<'b>(
-            &'b self,
-            render_buckets: &mut RenderBuckets<'b>,
-            result_buffer: &'b mut [u8],
-        ) {
-            self.mut_app()
-                .generate_render_commands_and_fill_editor_objs(
-                    self.units(),
-                    render_buckets,
-                    result_buffer,
-                    self.allocator(),
-                    self.mut_tokens(),
-                    self.mut_results(),
-                    self.mut_vars(),
-                    self.mut_editor_objects(),
-                    BitFlag128::empty(),
-                );
         }
 
         fn assert_no_highlighting_rectangle(&self) {
@@ -5848,6 +5838,39 @@ mod main_tests {
                     render_buckets,
                     0,
                     OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[i] << 8 | 0x33),
+                );
+            }
+        }
+
+        fn assert_results(&self, expected_results: &[&str]) {
+            let mut i = 0;
+            let mut ok_chars = Vec::with_capacity(32);
+            let expected_len = expected_results.iter().map(|it| it.len()).sum();
+            unsafe {
+                for (result_index, expected_result) in expected_results.iter().enumerate() {
+                    for ch in expected_result.bytes() {
+                        assert_eq!(
+                            RESULT_BUFFER[i] as char,
+                            ch as char,
+                            "{}. result, at char {}: {:?}, result_buffer: {:?}",
+                            result_index,
+                            i,
+                            String::from_utf8(ok_chars).unwrap(),
+                            &RESULT_BUFFER[0..expected_len]
+                                .iter()
+                                .map(|it| *it as char)
+                                .collect::<Vec<char>>()
+                        );
+                        ok_chars.push(ch);
+                        i += 1;
+                    }
+                    ok_chars.push(',' as u8);
+                    ok_chars.push(' ' as u8);
+                }
+                assert_eq!(
+                    RESULT_BUFFER[i], 0,
+                    "more results than expected at char {}.",
+                    i
                 );
             }
         }
@@ -5945,7 +5968,6 @@ mod main_tests {
                 self.mut_vars(),
                 self.mut_editor_objects(),
                 self.mut_render_bucket(),
-                unsafe { &mut RESULT_BUFFER },
             );
         }
 
@@ -5959,7 +5981,6 @@ mod main_tests {
                 self.mut_vars(),
                 self.mut_editor_objects(),
                 self.mut_render_bucket(),
-                unsafe { &mut RESULT_BUFFER },
             );
         }
 
@@ -5974,7 +5995,6 @@ mod main_tests {
                 self.mut_results(),
                 self.mut_vars(),
                 self.mut_render_bucket(),
-                unsafe { &mut RESULT_BUFFER },
             );
         }
 
@@ -5988,7 +6008,6 @@ mod main_tests {
                 self.mut_results(),
                 self.mut_vars(),
                 self.mut_render_bucket(),
-                unsafe { &mut RESULT_BUFFER },
             );
         }
 
@@ -6002,7 +6021,6 @@ mod main_tests {
                 self.mut_results(),
                 self.mut_vars(),
                 self.mut_render_bucket(),
-                unsafe { &mut RESULT_BUFFER },
             );
         }
 
@@ -6017,7 +6035,6 @@ mod main_tests {
                 self.mut_results(),
                 self.mut_vars(),
                 self.mut_render_bucket(),
-                unsafe { &mut RESULT_BUFFER },
             );
         }
 
@@ -6032,7 +6049,6 @@ mod main_tests {
                 self.mut_results(),
                 self.mut_vars(),
                 self.mut_render_bucket(),
-                unsafe { &mut RESULT_BUFFER },
             );
         }
 
@@ -6045,7 +6061,6 @@ mod main_tests {
                 self.mut_vars(),
                 self.mut_editor_objects(),
                 self.mut_render_bucket(),
-                unsafe { &mut RESULT_BUFFER },
             );
         }
 
@@ -6059,7 +6074,6 @@ mod main_tests {
                 self.mut_vars(),
                 self.mut_editor_objects(),
                 self.mut_render_bucket(),
-                unsafe { &mut RESULT_BUFFER },
             );
         }
 
@@ -6074,7 +6088,6 @@ mod main_tests {
                 self.mut_vars(),
                 self.mut_editor_objects(),
                 self.mut_render_bucket(),
-                unsafe { &mut RESULT_BUFFER },
             );
         }
 
@@ -6109,6 +6122,9 @@ mod main_tests {
     }
 
     fn create_app3<'a>(client_width: usize, client_height: usize) -> BorrowCheckerFighter {
+        for b in unsafe { &mut RESULT_BUFFER } {
+            *b = 0;
+        }
         let app = NoteCalcApp::new(client_width, client_height);
         let editor_objects = EditorObjects::new();
         let tokens = AppTokens::new();
@@ -6685,10 +6701,8 @@ mod main_tests {
         test.input(EditorInputEvent::Up, InputModifiers::alt());
         test.alt_key_released();
         assert_eq!("2\n3 * &[1]", test.get_editor_content());
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
 
-        assert_results(&["2", "6"][..], &result_buffer);
+        test.assert_results(&["2", "6"][..]);
     }
 
     #[test]
@@ -7331,9 +7345,8 @@ Fat intake
         test.render();
         test.set_cursor_row_col(0, 0);
         test.input(EditorInputEvent::Del, InputModifiers::none());
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&["Err"][..], &result_buffer);
+
+        test.assert_results(&["Err"][..]);
     }
 
     #[test]
@@ -7343,47 +7356,14 @@ Fat intake
         test.render();
         test.set_cursor_row_col(0, 0);
         test.input(EditorInputEvent::Del, InputModifiers::none());
-        let mut render_buckets = RenderBuckets::new();
-        let mut result_buffer = [0; 128];
-        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
-        match &render_buckets.ascii_texts[0] {
+
+        match &test.render_bucket().ascii_texts[0] {
             RenderAsciiTextMsg { text, row, column } => {
                 assert_eq!(text, &[b'E', b'r', b'r']);
                 assert_eq!(*row, canvas_y(0));
                 assert_eq!(*column, result_panel_w(120) + RIGHT_GUTTER_WIDTH);
             }
         }
-    }
-
-    fn assert_results(expected_results: &[&str], result_buffer: &[u8]) {
-        let mut i = 0;
-        let mut ok_chars = Vec::with_capacity(32);
-        let expected_len = expected_results.iter().map(|it| it.len()).sum();
-        for (result_index, expected_result) in expected_results.iter().enumerate() {
-            for ch in expected_result.bytes() {
-                assert_eq!(
-                    result_buffer[i] as char,
-                    ch as char,
-                    "{}. result, at char {}: {:?}, result_buffer: {:?}",
-                    result_index,
-                    i,
-                    String::from_utf8(ok_chars).unwrap(),
-                    &result_buffer[0..expected_len]
-                        .iter()
-                        .map(|it| *it as char)
-                        .collect::<Vec<char>>()
-                );
-                ok_chars.push(ch);
-                i += 1;
-            }
-            ok_chars.push(',' as u8);
-            ok_chars.push(' ' as u8);
-        }
-        assert_eq!(
-            result_buffer[i], 0,
-            "more results than expected at char {}.",
-            i
-        );
     }
 
     #[test]
@@ -7396,9 +7376,7 @@ Fat intake
 2
 sum",
         );
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&["6 m^2", "", "1", "2", "3"][..], &result_buffer);
+        test.assert_results(&["6 m^2", "", "1", "2", "3"][..]);
     }
 
     #[test]
@@ -7409,9 +7387,7 @@ sum",
                     4\n\
                     sum",
         );
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&["6 m^2", "4", "Err"][..], &result_buffer);
+        test.assert_results(&["6 m^2", "4", "Err"][..]);
     }
 
     #[test]
@@ -7464,19 +7440,15 @@ sum",
         test.input(EditorInputEvent::Up, InputModifiers::shift());
         test.input(EditorInputEvent::Left, InputModifiers::alt());
 
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&["10", "100", "101"][..], &result_buffer);
+        test.assert_results(&["10", "100", "101"][..]);
     }
 
     #[test]
     fn test_matrix_sum() {
         let test = create_app2(35);
         test.paste("[1,2,3]\nsum");
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
         // both the first line and the 'sum' line renders a matrix, which leaves the result buffer empty
-        assert_results(&["\u{0}"][..], &result_buffer);
+        test.assert_results(&["\u{0}"][..]);
     }
 
     #[test]
@@ -7509,6 +7481,48 @@ sum",
             test.input(EditorInputEvent::Del, InputModifiers::none());
             assert_eq!("16892313\n14 * [1]", test.get_editor_content());
         }
+    }
+
+    #[test]
+    fn test_space_is_inserted_before_lineref() {
+        let requires_space = &['4', 'a', '_'];
+        let does_not_requires_space = &['+', '*', '/', '(', ')', '[', ']'];
+        for ch in requires_space {
+            let test = create_app2(35);
+            test.paste("16892313\n");
+            test.input(EditorInputEvent::Char(*ch), InputModifiers::none());
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+            test.alt_key_released();
+
+            let mut expected: String = "16892313\n".to_owned();
+            expected.push(*ch);
+            expected.push_str(" &[1]");
+            assert_eq!(test.get_editor_content(), expected);
+        }
+
+        for ch in does_not_requires_space {
+            let test = create_app2(35);
+            test.paste("16892313\n");
+            test.input(EditorInputEvent::Char(*ch), InputModifiers::none());
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+            test.alt_key_released();
+
+            let mut expected: String = "16892313\n".to_owned();
+            expected.push(*ch);
+            expected.push_str("&[1]");
+            assert_eq!(test.get_editor_content(), expected);
+        }
+    }
+
+    #[test]
+    fn test_line_refs_are_automatically_separated_by_space() {
+        let test = create_app2(35);
+        test.paste("16892313\n");
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        assert_eq!("16892313\n&[1] &[1]", test.get_editor_content());
     }
 
     #[test]
@@ -7590,9 +7604,7 @@ sum",
         test.render();
         test.input(EditorInputEvent::Enter, InputModifiers::none());
         test.paste("apple + 2");
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&["12", "14"][..], &result_buffer);
+        test.assert_results(&["12", "14"][..]);
     }
 
     #[test]
@@ -7605,9 +7617,7 @@ sum",
         test.input(EditorInputEvent::Up, InputModifiers::none());
         test.paste("apple + 2");
 
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&["2", "12"][..], &result_buffer);
+        test.assert_results(&["2", "12"][..]);
     }
 
     #[test]
@@ -7619,15 +7629,11 @@ sum",
         test.render();
         test.input(EditorInputEvent::Enter, InputModifiers::none());
         test.input(EditorInputEvent::Up, InputModifiers::none());
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&["", "2"][..], &result_buffer);
+        test.assert_results(&["", "2"][..]);
         // now define the variable 'apple'
         test.paste("apple = 3");
 
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&["3", "6"][..], &result_buffer);
+        test.assert_results(&["3", "6"][..]);
     }
 
     #[test]
@@ -7639,15 +7645,12 @@ sum",
         test.render();
         test.input(EditorInputEvent::Enter, InputModifiers::none());
         test.input(EditorInputEvent::Up, InputModifiers::none());
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&["", "2"][..], &result_buffer);
+
+        test.assert_results(&["", "2"][..]);
         // now define the variable 'apple'
         test.paste("apple asd = 3");
 
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&["3", "6"][..], &result_buffer);
+        test.assert_results(&["3", "6"][..]);
     }
 
     #[test]
@@ -7656,16 +7659,12 @@ sum",
         test.paste("apple = 2\napple * 3");
         test.set_cursor_row_col(0, 0);
 
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&["2", "6"][..], &result_buffer);
+        test.assert_results(&["2", "6"][..]);
 
         // rename apple to aapple
         test.input(EditorInputEvent::Char('a'), InputModifiers::none());
 
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&["2", "3"][..], &result_buffer);
+        test.assert_results(&["2", "3"][..]);
     }
 
     #[test]
@@ -7675,9 +7674,7 @@ sum",
         // cursor is in 4th row
         test.set_cursor_row_col(3, 0);
 
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&["1", "2", "3", "", "", "50 year"][..], &result_buffer);
+        test.assert_results(&["1", "2", "3", "", "", "50 year"][..]);
 
         // insert linref of 1st line
         for _ in 0..3 {
@@ -7698,8 +7695,6 @@ sum",
         // insert linref of 3rd line
         test.input(EditorInputEvent::Up, InputModifiers::alt());
         test.alt_key_released();
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
 
         match &test.tokens()[content_y(3)] {
             Some(Tokens {
@@ -7729,7 +7724,7 @@ sum",
 
         test.input(EditorInputEvent::Enter, InputModifiers::none());
 
-        assert_results(&["1", "", "2", "3", "6", "", "50 year"][..], &result_buffer);
+        test.assert_results(&["1", "", "2", "3", "6", "", "50 year"][..]);
 
         match &test.tokens()[content_y(4)] {
             Some(Tokens {
@@ -7762,16 +7757,13 @@ sum",
             test.paste("2\n * 3");
             test.set_cursor_row_col(1, 0);
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["2", "3"][..], &result_buffer);
+            test.assert_results(&["2", "3"][..]);
 
             // insert linref of 1st line
             test.input(EditorInputEvent::Up, InputModifiers::alt());
             test.alt_key_released();
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["2", "6"][..], &result_buffer);
+
+            test.assert_results(&["2", "6"][..]);
 
             // now modify the first row
             test.input(EditorInputEvent::Up, InputModifiers::none());
@@ -7800,9 +7792,8 @@ sum",
                     1,
                 ),
             );
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["12", "36"][..], &result_buffer);
+
+            test.assert_results(&["12", "36"][..]);
         }
 
         #[test]
@@ -8173,11 +8164,11 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             // insert linref of 1st line
             test.input(EditorInputEvent::Up, InputModifiers::alt());
             test.alt_key_released();
-            test.render();
             test.input(EditorInputEvent::Char(' '), InputModifiers::alt());
-            test.render();
             test.input(EditorInputEvent::Up, InputModifiers::alt());
             test.alt_key_released();
+
+            // requires so the pulsings caused by the changes above are consumed
             test.render();
 
             // there should not be pulsing here yet
@@ -8196,7 +8187,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             assert_contains(
                 render_commands,
                 1,
-                pulsing_ref_rect(LEFT_GUTTER_MIN_WIDTH + 1, 1, 1, 1),
+                pulsing_ref_rect(LEFT_GUTTER_MIN_WIDTH + 2, 1, 1, 1),
             );
         }
 
@@ -8271,22 +8262,19 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
         // insert linref of 2st line
         test.input(EditorInputEvent::Up, InputModifiers::alt());
         test.alt_key_released();
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&["2", "3", "6"][..], &result_buffer);
+
+        test.assert_results(&["2", "3", "6"][..]);
 
         // now modify the 2nd row
         test.input(EditorInputEvent::Up, InputModifiers::none());
         test.input(EditorInputEvent::Home, InputModifiers::none());
         test.input(EditorInputEvent::Del, InputModifiers::none());
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&["2", "Err", ""][..], &result_buffer);
+
+        test.assert_results(&["2", "Err", ""][..]);
 
         test.input(EditorInputEvent::Char('4'), InputModifiers::none());
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&["2", "4", "8"][..], &result_buffer);
+
+        test.assert_results(&["2", "4", "8"][..]);
     }
 
     mod dependent_lines_recalculation_tests {
@@ -8299,16 +8287,13 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             test.paste("2\n * 3");
             test.set_cursor_row_col(1, 0);
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["2", "3"][..], &result_buffer);
+            test.assert_results(&["2", "3"][..]);
 
             // insert linref of 1st line
             test.input(EditorInputEvent::Up, InputModifiers::alt());
             test.alt_key_released();
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["2", "6"][..], &result_buffer);
+
+            test.assert_results(&["2", "6"][..]);
 
             // now modify the first row
             test.input(EditorInputEvent::Up, InputModifiers::none());
@@ -8330,9 +8315,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
                 pulsing_changed_content_rect(90, 1, 2, 1),
             );
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["2", "6"][..], &result_buffer);
+            test.assert_results(&["2", "6"][..]);
         }
 
         #[test]
@@ -8341,16 +8324,12 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             test.paste("apple = 2\naapple * 3");
             test.set_cursor_row_col(0, 0);
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["2", "3"][..], &result_buffer);
+            test.assert_results(&["2", "3"][..]);
 
             // rename apple to aapple
             test.input(EditorInputEvent::Char('a'), InputModifiers::none());
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["2", "6"][..], &result_buffer);
+            test.assert_results(&["2", "6"][..]);
         }
 
         #[test]
@@ -8359,18 +8338,14 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             test.paste("apple = 2\napple * 3");
             test.set_cursor_row_col(0, 0);
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["2", "6"][..], &result_buffer);
+            test.assert_results(&["2", "6"][..]);
 
             // remove the content of the first line
             test.input(EditorInputEvent::End, InputModifiers::shift());
 
             test.input(EditorInputEvent::Del, InputModifiers::none());
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["", "3"][..], &result_buffer);
+            test.assert_results(&["", "3"][..]);
         }
 
         #[test]
@@ -8379,16 +8354,12 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             test.paste("apple = 2\napple * 3");
             test.set_cursor_row_col(0, 9);
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["2", "6"][..], &result_buffer);
+            test.assert_results(&["2", "6"][..]);
 
             // change value of 'apple' from 2 to 24
             test.input(EditorInputEvent::Char('4'), InputModifiers::none());
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["24", "72"][..], &result_buffer);
+            test.assert_results(&["24", "72"][..]);
         }
 
         #[test]
@@ -8397,16 +8368,12 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             test.paste("2\n3\nsum");
             test.set_cursor_row_col(0, 1);
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["2", "3", "5"][..], &result_buffer);
+            test.assert_results(&["2", "3", "5"][..]);
 
             // change value from 2 to 21
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["21", "3", "24"][..], &result_buffer);
+            test.assert_results(&["21", "3", "24"][..]);
         }
 
         #[test]
@@ -8415,16 +8382,12 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             test.paste("2\n3\n4 * sum");
             test.set_cursor_row_col(0, 1);
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["2", "3", "20"][..], &result_buffer);
+            test.assert_results(&["2", "3", "20"][..]);
 
             // change value from 2 to 21
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["21", "3", "96"][..], &result_buffer);
+            test.assert_results(&["21", "3", "96"][..]);
         }
 
         #[test]
@@ -8433,16 +8396,12 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             test.paste("2\n3\n--\n5\nsum");
             test.set_cursor_row_col(0, 1);
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["2", "3", "", "5", "5"][..], &result_buffer);
+            test.assert_results(&["2", "3", "", "5", "5"][..]);
 
             // change value from 2 to 12
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["21", "3", "", "5", "5"][..], &result_buffer);
+            test.assert_results(&["21", "3", "", "5", "5"][..]);
         }
 
         #[test]
@@ -8451,16 +8410,12 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             test.paste("2\n3\n-- some comment\n5\nsum");
             test.set_cursor_row_col(0, 1);
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["2", "3", "", "5", "5"][..], &result_buffer);
+            test.assert_results(&["2", "3", "", "5", "5"][..]);
 
             // change value from 2 to 12
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["21", "3", "", "5", "5"][..], &result_buffer);
+            test.assert_results(&["21", "3", "", "5", "5"][..]);
         }
 
         #[test]
@@ -8469,21 +8424,11 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             test.paste("2\n3\n\n4\n5\nsum\n-- some comment\n24\n25\nsum");
             test.set_cursor_row_col(2, 0);
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(
-                &["2", "3", "", "4", "5", "14", "", "24", "25", "49"][..],
-                &result_buffer,
-            );
+            test.assert_results(&["2", "3", "", "4", "5", "14", "", "24", "25", "49"][..]);
 
             test.paste("sum");
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(
-                &["2", "3", "5", "4", "5", "19", "", "24", "25", "49"][..],
-                &result_buffer,
-            );
+            test.assert_results(&["2", "3", "5", "4", "5", "19", "", "24", "25", "49"][..]);
         }
 
         #[test]
@@ -8492,22 +8437,12 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             test.paste("2\n3\nsum\n4\n5\nsum\n-- some comment\n24\n25\nsum");
             test.set_cursor_row_col(0, 1);
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(
-                &["2", "3", "5", "4", "5", "19", "", "24", "25", "49"][..],
-                &result_buffer,
-            );
+            test.assert_results(&["2", "3", "5", "4", "5", "19", "", "24", "25", "49"][..]);
 
             // change value from 2 to 21
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(
-                &["21", "3", "24", "4", "5", "57", "", "24", "25", "49"][..],
-                &result_buffer,
-            );
+            test.assert_results(&["21", "3", "24", "4", "5", "57", "", "24", "25", "49"][..]);
         }
     }
 
@@ -8540,9 +8475,8 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
         test.paste("apple = 0");
         test.input(EditorInputEvent::Enter, InputModifiers::none());
         test.paste("apple + 3");
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&["12", "14", "0", "3"][..], &result_buffer);
+
+        test.assert_results(&["12", "14", "0", "3"][..]);
     }
 
     #[test]
@@ -8613,13 +8547,9 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
         test.render();
         test.input(EditorInputEvent::Up, InputModifiers::shift());
 
-        let mut render_buckets = RenderBuckets::new();
-        let mut result_buffer = [0; 128];
-
-        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
         let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
         let expected_x = left_gutter_width + 4;
-        let commands = &render_buckets.custom_commands[Layer::AboveText as usize];
+        let commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
         assert_contains(commands, 1, OutputMessage::RenderChar(expected_x, 1, '⎫'));
         assert_contains(commands, 1, OutputMessage::RenderChar(expected_x, 2, '⎭'));
         assert_contains(
@@ -8640,13 +8570,9 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
         test.render();
         test.input(EditorInputEvent::Up, InputModifiers::shift());
 
-        let mut render_buckets = RenderBuckets::new();
-        let mut result_buffer = [0; 128];
-
-        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
         let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
         let expected_x = left_gutter_width + 4;
-        let commands = &render_buckets.custom_commands[Layer::AboveText as usize];
+        let commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
         assert_contains(commands, 1, OutputMessage::RenderChar(expected_x, 1, '⎫'));
         assert_contains(commands, 1, OutputMessage::RenderChar(expected_x, 2, '⎭'));
         assert_contains(
@@ -8964,12 +8890,9 @@ ddd",
 
         test.handle_drag(left_gutter_width + 0, 1);
 
-        let mut render_buckets = RenderBuckets::new();
-        let mut result_buffer = [0; 128];
-
-        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
-
-        let pos = render_buckets
+        let render_buckets = test.render_bucket();
+        let pos = test
+            .render_bucket()
             .custom_commands(Layer::BehindText)
             .iter()
             .position(|it| matches!(it, OutputMessage::SetColor(0xA6D2FF_FF)))
@@ -9026,26 +8949,23 @@ ddd",
         {
             let test = create_app2(35);
             test.paste("1\n2\n3\nsum");
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["1", "2", "3", "6"][..], &result_buffer);
+
+            test.assert_results(&["1", "2", "3", "6"][..]);
         }
         {
             let test = create_app2(35);
             test.paste("1\n2\n3\nsum");
             test.input(EditorInputEvent::Up, InputModifiers::none());
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["1", "2", "3", "6"][..], &result_buffer);
+
+            test.assert_results(&["1", "2", "3", "6"][..]);
         }
         {
             let test = create_app2(35);
             test.paste("1\n2\n3\nsum");
             test.input(EditorInputEvent::Up, InputModifiers::none());
             test.input(EditorInputEvent::Up, InputModifiers::none());
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["1", "2", "3", "6"][..], &result_buffer);
+
+            test.assert_results(&["1", "2", "3", "6"][..]);
         }
         {
             let test = create_app2(35);
@@ -9053,9 +8973,8 @@ ddd",
             test.input(EditorInputEvent::Up, InputModifiers::none());
             test.input(EditorInputEvent::Up, InputModifiers::none());
             test.input(EditorInputEvent::Down, InputModifiers::none());
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["1", "2", "3", "6"][..], &result_buffer);
+
+            test.assert_results(&["1", "2", "3", "6"][..]);
         }
         {
             let test = create_app2(35);
@@ -9064,9 +8983,8 @@ ddd",
             test.input(EditorInputEvent::Up, InputModifiers::none());
             test.input(EditorInputEvent::Down, InputModifiers::none());
             test.input(EditorInputEvent::Down, InputModifiers::none());
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["1", "2", "3", "6"][..], &result_buffer);
+
+            test.assert_results(&["1", "2", "3", "6"][..]);
         }
     }
 
@@ -9075,44 +8993,39 @@ ddd",
         {
             let test = create_app2(35);
             test.paste("1\n'2\n3\nsum");
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["1", "3", "4"][..], &result_buffer);
+
+            test.assert_results(&["1", "3", "4"][..]);
         }
         {
             let test = create_app2(35);
             test.paste("1\n'2\n3\nsum");
             test.input(EditorInputEvent::Up, InputModifiers::none());
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["1", "3", "4"][..], &result_buffer);
+
+            test.assert_results(&["1", "3", "4"][..]);
         }
         {
             let test = create_app2(35);
             test.paste("1\n'2\n3\nsum");
             test.input(EditorInputEvent::Up, InputModifiers::none());
             test.input(EditorInputEvent::Up, InputModifiers::none());
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["1", "3", "4"][..], &result_buffer);
-        }
-        {
-            let test = create_app2(35);
-            test.paste("1\n'2\n3\nsum");
-            test.input(EditorInputEvent::Up, InputModifiers::none());
-            test.input(EditorInputEvent::Down, InputModifiers::none());
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["1", "3", "4"][..], &result_buffer);
+
+            test.assert_results(&["1", "3", "4"][..]);
         }
         {
             let test = create_app2(35);
             test.paste("1\n'2\n3\nsum");
             test.input(EditorInputEvent::Up, InputModifiers::none());
             test.input(EditorInputEvent::Down, InputModifiers::none());
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["1", "3", "4"][..], &result_buffer);
+
+            test.assert_results(&["1", "3", "4"][..]);
+        }
+        {
+            let test = create_app2(35);
+            test.paste("1\n'2\n3\nsum");
+            test.input(EditorInputEvent::Up, InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+
+            test.assert_results(&["1", "3", "4"][..]);
         }
     }
 
@@ -9121,17 +9034,15 @@ ddd",
         {
             let test = create_app2(35);
             test.paste("1\n--2\n3\nsum");
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["1", "3", "3"][..], &result_buffer);
+
+            test.assert_results(&["1", "3", "3"][..]);
         }
         {
             let test = create_app2(35);
             test.paste("1\n--2\n3\nsum");
             test.input(EditorInputEvent::Up, InputModifiers::none());
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["1", "3", "3"][..], &result_buffer);
+
+            test.assert_results(&["1", "3", "3"][..]);
         }
     }
 
@@ -9140,12 +9051,7 @@ ddd",
         let test = create_app2(35);
         test.paste("a\nb\na\nb\na\nb\na\nb\na\nb\na\nb\n1");
 
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(
-            &["", "", "", "", "", "", "", "", "", "", "", "1"][..],
-            &result_buffer,
-        );
+        test.assert_results(&["", "", "", "", "", "", "", "", "", "", "", "1"][..]);
     }
 
     #[test]
@@ -9156,11 +9062,7 @@ ddd",
         // set result to binary repr
         test.input(EditorInputEvent::Left, InputModifiers::alt());
 
-        let mut render_buckets = RenderBuckets::new();
-        let mut result_buffer = [0; 128];
-
-        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
-
+        let render_buckets = test.render_bucket();
         let base_x = render_buckets.ascii_texts[0].column;
         assert_eq!(render_buckets.ascii_texts[0].text, "1".as_bytes());
         assert_eq!(render_buckets.ascii_texts[0].row, canvas_y(0));
@@ -9197,10 +9099,7 @@ ddd",
     fn test_units_are_aligned_as_well() {
         let test = create_app2(35);
         test.paste("1cm\n2.3m\n2222.33 km\n4km\n50000 mm");
-        let mut render_buckets = RenderBuckets::new();
-        let mut result_buffer = [0; 128];
-
-        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
+        let render_buckets = test.render_bucket();
 
         let base_x = render_buckets.ascii_texts[1].column; // 1 cm
 
@@ -9234,10 +9133,7 @@ ddd",
         test.render();
         test.paste("4km");
 
-        let mut render_buckets = RenderBuckets::new();
-        let mut result_buffer = [0; 128];
-
-        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
+        let render_buckets = test.render_bucket();
 
         let base_x = render_buckets.ascii_texts[0].column;
         assert_eq!(render_buckets.ascii_texts[0].text, "1".as_bytes());
@@ -9263,12 +9159,7 @@ ddd",
         test.input(EditorInputEvent::Up, InputModifiers::shift());
         test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
 
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(
-            &["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"][..],
-            &result_buffer,
-        );
+        test.assert_results(&["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"][..]);
     }
 
     #[test]
@@ -9276,19 +9167,16 @@ ddd",
         let test = create_app2(35);
         test.paste("12");
         test.handle_time(1000);
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&["12"][..], &result_buffer);
+
+        test.assert_results(&["12"][..]);
 
         test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&[""][..], &result_buffer);
+
+        test.assert_results(&[""][..]);
 
         test.input(EditorInputEvent::Char('z'), InputModifiers::ctrl());
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&["12"][..], &result_buffer);
+
+        test.assert_results(&["12"][..]);
     }
 
     #[test]
@@ -9460,11 +9348,6 @@ ddd",
 
         test.input(EditorInputEvent::Char('1'), InputModifiers::none());
 
-        let mut render_buckets = RenderBuckets::new();
-        let mut result_buffer = [0; 128];
-
-        test.render_get_result_commands(&mut render_buckets, &mut result_buffer[..]);
-
         assert_eq!(
             None,
             test.app()
@@ -9544,9 +9427,7 @@ ddd",
             test.repeated_paste("aaaaaaaaaaaa\n", 34);
             test.input(EditorInputEvent::PageUp, InputModifiers::none());
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["1", "2", "3"][..], &result_buffer);
+            test.assert_results(&["1", "2", "3"][..]);
             assert_eq!(
                 test.get_render_data().get_render_y(content_y(0)),
                 Some(canvas_y(0))
@@ -9585,8 +9466,7 @@ ddd",
             test.input(EditorInputEvent::PageUp, InputModifiers::none());
 
             test.handle_wheel(1);
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
+
             assert_eq!(
                 test.get_render_data().get_render_y(content_y(0)),
                 Some(canvas_y(-1))
@@ -9613,7 +9493,7 @@ ddd",
                 Some(canvas_y(36))
             );
             assert_eq!(test.get_render_data().get_render_y(content_y(38)), None);
-            assert_results(&["2", "3"][..], &result_buffer);
+            test.assert_results(&["2", "3"][..]);
         }
 
         {
@@ -9624,9 +9504,8 @@ ddd",
 
             test.handle_wheel(1);
             test.handle_wheel(1);
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["3"][..], &result_buffer);
+
+            test.assert_results(&["3"][..]);
             assert_eq!(
                 test.get_render_data().get_render_y(content_y(0)),
                 Some(canvas_y(-2))
@@ -9663,9 +9542,8 @@ ddd",
             test.handle_wheel(1);
             test.handle_wheel(1);
             test.handle_wheel(1);
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&[""][..], &result_buffer);
+
+            test.assert_results(&[""][..]);
             assert_eq!(
                 test.get_render_data().get_render_y(content_y(0)),
                 Some(canvas_y(-3))
@@ -9703,9 +9581,8 @@ ddd",
             test.handle_wheel(1);
             test.handle_wheel(1);
             test.handle_wheel(0);
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["3"][..], &result_buffer);
+
+            test.assert_results(&["3"][..]);
             assert_eq!(
                 test.get_render_data().get_render_y(content_y(0)),
                 Some(canvas_y(-2))
@@ -9745,9 +9622,7 @@ ddd",
             test.handle_wheel(0);
             test.handle_wheel(0);
 
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["2", "3"][..], &result_buffer);
+            test.assert_results(&["2", "3"][..]);
             assert_eq!(
                 test.get_render_data().get_render_y(content_y(0)),
                 Some(canvas_y(-1))
@@ -9787,9 +9662,8 @@ ddd",
             test.handle_wheel(0);
             test.handle_wheel(0);
             test.handle_wheel(0);
-            let mut result_buffer = [0; 128];
-            test.render_get_result_buf(&mut result_buffer[..]);
-            assert_results(&["1", "2", "3"][..], &result_buffer);
+
+            test.assert_results(&["1", "2", "3"][..]);
             assert_eq!(
                 test.get_render_data().get_render_y(content_y(0)),
                 Some(canvas_y(0))
@@ -10395,9 +10269,7 @@ b = a * 20",
         test.input(EditorInputEvent::Char(' '), InputModifiers::none());
         test.input(EditorInputEvent::Char('h'), InputModifiers::none());
 
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&["573 390 s", "159.275 h"][..], &result_buffer);
+        test.assert_results(&["573 390 s", "159.275 h"][..]);
     }
 
     #[test]
@@ -10438,10 +10310,8 @@ monthly payment = r/(1 - (1 + r)^(-n)) *finance amount",
 t=4s
 0m+v0*t",
         );
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
 
-        assert_results(&["2 m / s", "4 s", "8 m"][..], &result_buffer);
+        test.assert_results(&["2 m / s", "4 s", "8 m"][..]);
     }
 
     #[test]
@@ -10454,13 +10324,8 @@ x0 = 490m
 t = 2s
 1/2*a*t^2 + v0*t + x0",
         );
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
 
-        assert_results(
-            &["-9.8 m / s^2", "100 m / s", "490 m", "2 s", "670.4 m"][..],
-            &result_buffer,
-        );
+        test.assert_results(&["-9.8 m / s^2", "100 m / s", "490 m", "2 s", "670.4 m"][..]);
     }
 
     #[test]
@@ -10497,20 +10362,16 @@ monthly payment = r/(1 - (1 + r)^(-n)) *finance amount",
     fn test_itself_unit_rendering() {
         let test = create_app2(35);
         test.paste("a = /year");
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
 
-        assert_results(&[""][..], &result_buffer);
+        test.assert_results(&[""][..]);
     }
 
     #[test]
     fn test_itself_unit_rendering2() {
         let test = create_app2(35);
         test.paste("a = 2/year");
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
 
-        assert_results(&["2 year^-1"][..], &result_buffer);
+        test.assert_results(&["2 year^-1"][..]);
     }
 
     #[test]
@@ -10558,10 +10419,8 @@ r = interest rate / (12/year)
 
 monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
         );
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
 
-        assert_results(
+        test.assert_results(
             &[
                 "350 000 $",
                 "70 000 $",
@@ -10575,7 +10434,6 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
                 "",
                 "1 288.792357188724336511790584 $",
             ][..],
-            &result_buffer,
         );
     }
 
@@ -10597,10 +10455,8 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
         let test = create_app2(35);
         test.paste("10e24");
         test.input(EditorInputEvent::Left, InputModifiers::alt());
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
 
-        assert_results(&["Err"][..], &result_buffer);
+        test.assert_results(&["Err"][..]);
     }
 
     #[test]
@@ -10608,10 +10464,8 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
         let test = create_app2(35);
         test.paste("10e24");
         test.input(EditorInputEvent::Right, InputModifiers::alt());
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
 
-        assert_results(&["Err"][..], &result_buffer);
+        test.assert_results(&["Err"][..]);
     }
 
     #[test]
@@ -10619,10 +10473,8 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
         let test = create_app2(35);
         test.paste("12km");
         test.input(EditorInputEvent::Left, InputModifiers::alt());
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
 
-        assert_results(&["Err"][..], &result_buffer);
+        test.assert_results(&["Err"][..]);
     }
 
     #[test]
@@ -10630,10 +10482,8 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
         let test = create_app2(35);
         test.paste("12km");
         test.input(EditorInputEvent::Right, InputModifiers::alt());
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
 
-        assert_results(&["Err"][..], &result_buffer);
+        test.assert_results(&["Err"][..]);
     }
 
     #[test]
@@ -10641,10 +10491,8 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
         let test = create_app2(35);
         test.paste("12%");
         test.input(EditorInputEvent::Left, InputModifiers::alt());
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
 
-        assert_results(&["Err"][..], &result_buffer);
+        test.assert_results(&["Err"][..]);
     }
 
     #[test]
@@ -10652,10 +10500,8 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
         let test = create_app2(35);
         test.paste("12%");
         test.input(EditorInputEvent::Right, InputModifiers::alt());
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
 
-        assert_results(&["Err"][..], &result_buffer);
+        test.assert_results(&["Err"][..]);
     }
 
     #[test]
@@ -10681,10 +10527,8 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
     fn test_percentage_output() {
         let test = create_app2(35);
         test.paste("20%");
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
 
-        assert_results(&["20 %"][..], &result_buffer);
+        test.assert_results(&["20 %"][..]);
     }
 
     #[test]
@@ -10856,8 +10700,24 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
         let test = create_app3(48, 32);
         test.paste("0.0000000001165124023817148381");
 
-        let mut result_buffer = [0; 128];
-        test.render_get_result_buf(&mut result_buffer[..]);
-        assert_results(&["0.0000000001165124023817148381"][..], &result_buffer);
+        test.assert_results(&["0.0000000001165124023817148381"][..]);
+    }
+
+    #[test]
+    fn test_that_cursor_is_rendered_at_the_end_of_the_editor() {
+        let test = create_app3(44, 32);
+        test.paste("1234567890123456");
+        assert_contains(
+            &test.render_bucket().custom_commands[Layer::AboveText as usize],
+            1,
+            OutputMessage::RenderChar(18, 0, '▏'),
+        );
+
+        test.input(EditorInputEvent::Char('7'), InputModifiers::none());
+        assert_contains(
+            &test.render_bucket().custom_commands[Layer::AboveText as usize],
+            1,
+            OutputMessage::RenderChar(19, 0, '▏'),
+        );
     }
 }

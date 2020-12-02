@@ -23,13 +23,11 @@ fn t(content: &str, expected: &str, selected_range: RangeInclusive<usize>) {
             assert_eq!(a_line.trim_start(), b_line.trim_start());
         }
     }
-    let mut result_buffer = [0; 256];
     trimmed_compare(
         expected,
         &test.mut_app().copy_selected_rows_with_result_to_clipboard(
             &test.units(),
             test.mut_render_bucket(),
-            &mut result_buffer,
             &test.tokens(),
             &test.mut_vars(),
             &test.mut_results(),

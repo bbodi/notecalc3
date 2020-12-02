@@ -5,8 +5,6 @@ pub use notecalc_lib::units::units::Units;
 pub use notecalc_lib::*;
 pub use std::ops::RangeInclusive;
 
-static mut RESULT_BUFFER: [u8; 2048] = [0; 2048];
-
 pub struct BorrowCheckerFighter {
     app_ptr: u64,
     units_ptr: u64,
@@ -73,7 +71,6 @@ impl BorrowCheckerFighter {
             .generate_render_commands_and_fill_editor_objs(
                 self.units(),
                 self.mut_render_bucket(),
-                unsafe { &mut RESULT_BUFFER },
                 self.allocator(),
                 self.mut_tokens(),
                 self.mut_results(),
@@ -93,42 +90,7 @@ impl BorrowCheckerFighter {
             self.mut_vars(),
             self.mut_editor_objects(),
             self.mut_render_bucket(),
-            unsafe { &mut RESULT_BUFFER },
         );
-    }
-
-    pub fn render_get_result_buf(&self, result_buffer: &mut [u8]) {
-        self.mut_app()
-            .generate_render_commands_and_fill_editor_objs(
-                self.units(),
-                self.mut_render_bucket(),
-                result_buffer,
-                self.allocator(),
-                self.mut_tokens(),
-                self.mut_results(),
-                self.mut_vars(),
-                self.mut_editor_objects(),
-                BitFlag128::empty(),
-            );
-    }
-
-    pub fn render_get_result_commands<'b>(
-        &'b self,
-        render_buckets: &mut RenderBuckets<'b>,
-        result_buffer: &'b mut [u8],
-    ) {
-        self.mut_app()
-            .generate_render_commands_and_fill_editor_objs(
-                self.units(),
-                render_buckets,
-                result_buffer,
-                self.allocator(),
-                self.mut_tokens(),
-                self.mut_results(),
-                self.mut_vars(),
-                self.mut_editor_objects(),
-                BitFlag128::empty(),
-            );
     }
 
     pub fn contains<'b>(
@@ -160,7 +122,6 @@ impl BorrowCheckerFighter {
             self.mut_vars(),
             self.mut_editor_objects(),
             self.mut_render_bucket(),
-            unsafe { &mut RESULT_BUFFER },
         );
     }
 
@@ -174,7 +135,6 @@ impl BorrowCheckerFighter {
             self.mut_vars(),
             self.mut_editor_objects(),
             self.mut_render_bucket(),
-            unsafe { &mut RESULT_BUFFER },
         );
     }
 
@@ -189,7 +149,6 @@ impl BorrowCheckerFighter {
             self.mut_results(),
             self.mut_vars(),
             self.mut_render_bucket(),
-            unsafe { &mut RESULT_BUFFER },
         );
     }
 
@@ -203,7 +162,6 @@ impl BorrowCheckerFighter {
             self.mut_results(),
             self.mut_vars(),
             self.mut_render_bucket(),
-            unsafe { &mut RESULT_BUFFER },
         );
     }
 
@@ -217,7 +175,6 @@ impl BorrowCheckerFighter {
             self.mut_results(),
             self.mut_vars(),
             self.mut_render_bucket(),
-            unsafe { &mut RESULT_BUFFER },
         );
     }
 
@@ -232,7 +189,6 @@ impl BorrowCheckerFighter {
             self.mut_results(),
             self.mut_vars(),
             self.mut_render_bucket(),
-            unsafe { &mut RESULT_BUFFER },
         );
     }
 
@@ -245,7 +201,6 @@ impl BorrowCheckerFighter {
             self.mut_vars(),
             self.mut_editor_objects(),
             self.mut_render_bucket(),
-            unsafe { &mut RESULT_BUFFER },
         );
     }
 
@@ -259,7 +214,6 @@ impl BorrowCheckerFighter {
             self.mut_vars(),
             self.mut_editor_objects(),
             self.mut_render_bucket(),
-            unsafe { &mut RESULT_BUFFER },
         );
     }
 
@@ -274,7 +228,6 @@ impl BorrowCheckerFighter {
             self.mut_vars(),
             self.mut_editor_objects(),
             self.mut_render_bucket(),
-            unsafe { &mut RESULT_BUFFER },
         );
     }
 
