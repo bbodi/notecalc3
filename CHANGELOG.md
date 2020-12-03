@@ -1,10 +1,9 @@
-# Changelog
-All notable changes to this project will be documented in this file.
-
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.2.0] - 2020-12-03
 ### Breaking Changes
 `--` does not set the `sum` variable to zero, but every header does
 ### Features
@@ -24,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     It might be inconvenient in some situations but will be fixed when rounding specifiers will be implemented.
     Though, NoteCalc tries its best to render a compact form (e.g. removes repetends etc)
 ### Changed
-  - Tutorial is updated with the new features and now stored in GIT 
+  - Tutorial is updated with the new features and now stored in GIT
+  - Leangains demo is updated 
 ### Fixes
   - In case a line reference was rendered outside of the editor area, '...' did not appear at the edge of the editor
   - Firefox tracking protection issue for webfont.js
