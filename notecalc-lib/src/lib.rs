@@ -5049,8 +5049,10 @@ fn create_render_commands_for_results_and_render_matrices<'text_ptr>(
     let mut result_count_in_this_region = tmp.result_counts_in_regions[0];
     let mut max_lens = &tmp.max_lengths[0];
     for result_tmp in tmp.result_ranges.iter() {
-        if result_count_in_this_region == 0 {
-            break;
+        while result_count_in_this_region == 0 {
+            region_index += 1;
+            result_count_in_this_region = tmp.result_counts_in_regions[region_index];
+            max_lens = &tmp.max_lengths[region_index];
         }
         let rendered_row_height = gr.get_rendered_height(result_tmp.editor_y);
         let render_y = gr.get_render_y(result_tmp.editor_y).expect("");
@@ -10911,6 +10913,18 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
         test.paste(
             "# Results must be rendered even if header is in the first line
 69",
+        );
+        test.assert_contains_result(1, |cmd| cmd.text == "69".as_bytes());
+    }
+
+    #[test]
+    fn results_must_be_rendered2() {
+        let test = create_app3(84, 36);
+        test.paste(
+            "empty row\n\
+            # Results must be rendered even if there are 2 headers below each other and an empty row in front of them\n\
+            # second header\n\
+            69",
         );
         test.assert_contains_result(1, |cmd| cmd.text == "69".as_bytes());
     }

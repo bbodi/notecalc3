@@ -868,9 +868,9 @@
 
     async function run() {
         if (is_debug) {
-            wasm = await wasm_bindgen('frontend-web/pkg/frontend_web_bg.wasm?v=1.0.0');
+            wasm = await wasm_bindgen('frontend-web/pkg/frontend_web_bg.wasm?v=0.2.0');
         } else {
-            wasm = await wasm_bindgen('assets/frontend_web_bg.wasm?v=1.0.0');
+            wasm = await wasm_bindgen('assets/frontend_web_bg.wasm?v=0.2.0');
         }
 
         const size = calc_client_width();
@@ -1027,7 +1027,7 @@
             if (is_debug) {
                load_script('assets/fuzz.js');
                load_script('assets/showcase.js');
-               load_script('frontend-web/pkg/frontend_web.js?v=1.0.0');
+               load_script('frontend-web/pkg/frontend_web.js?v=0.2.0');
 
                 const fuzz_btn = document.createElement('li');
                 fuzz_btn.className = 'nav-item'
@@ -1052,7 +1052,7 @@
                 tabs.appendChild(fuzz_btn);
                 tabs.appendChild(demo_btn);
             } else {
-                load_script('assets/frontend_web.js?v=1.0.0');
+                load_script('assets/frontend_web.js?v=0.2.0');
             }
             is_mobile = (function() {
                 let check = false;

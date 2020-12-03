@@ -171,6 +171,17 @@ __exports.handle_time = function(app_ptr, now) {
 * @param {number} app_ptr
 * @param {number} x
 * @param {number} y
+* @returns {number}
+*/
+__exports.handle_mouse_move = function(app_ptr, x, y) {
+    var ret = wasm.handle_mouse_move(app_ptr, x, y);
+    return ret >>> 0;
+};
+
+/**
+* @param {number} app_ptr
+* @param {number} x
+* @param {number} y
 * @returns {boolean}
 */
 __exports.handle_drag = function(app_ptr, x, y) {
@@ -259,6 +270,13 @@ __exports.handle_paste = function(app_ptr, input) {
 */
 __exports.reparse_everything = function(app_ptr) {
     wasm.reparse_everything(app_ptr);
+};
+
+/**
+* @param {number} app_ptr
+*/
+__exports.rerender = function(app_ptr) {
+    wasm.rerender(app_ptr);
 };
 
 /**
