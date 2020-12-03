@@ -458,6 +458,7 @@ pub fn handle_input(app_ptr: u32, input: u32, modifiers: u8) -> bool {
 }
 
 pub const COLOR_TEXT: u32 = 0x595959_FF;
+pub const COLOR_HEADER: u32 = 0x000000_FF;
 pub const COLOR_RESULTS: u32 = 0x000000_FF;
 pub const COLOR_NUMBER: u32 = 0xF92672_FF;
 pub const COLOR_NUMBER_ERROR: u32 = 0xFF0000_FF;
@@ -608,6 +609,12 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
                     .write_u16::<LittleEndian>(animation_time.as_millis() as u16)
                     .expect("");
             }
+            OutputMessage::FollowingTextCommandsAreHeaders(b) => {
+                js_command_buffer
+                    .write_u8(OutputMessageCommandId::FollowingTextCommandsAreHeaders as u8 + 1)
+                    .expect("");
+                js_command_buffer.write_u8(*b as u8).expect("");
+            }
         }
     }
 
@@ -632,6 +639,22 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
     if !render_buckets.utf8_texts.is_empty() {
         write_command(&mut js_command_buffer, &OutputMessage::SetColor(COLOR_TEXT));
         write_commands(&mut js_command_buffer, &render_buckets.utf8_texts);
+    }
+
+    if !render_buckets.headers.is_empty() {
+        write_command(
+            &mut js_command_buffer,
+            &OutputMessage::FollowingTextCommandsAreHeaders(true),
+        );
+        write_command(
+            &mut js_command_buffer,
+            &OutputMessage::SetColor(COLOR_HEADER),
+        );
+        write_commands(&mut js_command_buffer, &render_buckets.headers);
+        write_command(
+            &mut js_command_buffer,
+            &OutputMessage::FollowingTextCommandsAreHeaders(false),
+        );
     }
 
     if !render_buckets.ascii_texts.is_empty() {

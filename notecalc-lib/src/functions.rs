@@ -13,6 +13,7 @@ pub enum FnType {
     Sum,
     Transpose,
     Pi,
+    Ceil,
 }
 
 impl FnType {
@@ -35,6 +36,7 @@ impl FnType {
             FnType::Sum => &['s', 'u', 'm'],
             FnType::Transpose => &['t', 'r', 'a', 'n', 's', 'p', 'o', 's', 'e'],
             FnType::Pi => &['p', 'i'],
+            FnType::Ceil => &['c', 'e', 'i', 'l'],
         }
     }
 
@@ -53,6 +55,7 @@ impl FnType {
             FnType::Pi => fn_pi(arg_count, stack, fn_token_index),
             FnType::Sin => true,
             FnType::Cos => true,
+            FnType::Ceil => fn_ceil(arg_count, stack, tokens, fn_token_index),
         }
     }
 }
@@ -67,6 +70,33 @@ fn fn_pi(arg_count: usize, stack: &mut Vec<CalcResult>, token_index: usize) -> b
     ), token_index));
 
     true
+}
+
+fn fn_ceil<'text_ptr>(
+    arg_count: usize,
+    stack: &mut Vec<CalcResult>,
+    tokens: &mut [Token<'text_ptr>],
+    fn_token_index: usize,
+) -> bool {
+    if arg_count < 1 || stack.len() < 1 {
+        Token::set_token_error_flag_by_index(fn_token_index, tokens);
+        false
+    } else {
+        let param = &stack[stack.len() - 1];
+        match &param.typ {
+            CalcResultType::Number(num) => {
+                let result = num.ceil();
+                let token_index = param.get_index_into_tokens();
+                stack.pop();
+                stack.push(CalcResult::new(CalcResultType::Number(result), token_index));
+                true
+            }
+            _ => {
+                param.set_token_error_flag(tokens);
+                false
+            }
+        }
+    }
 }
 
 fn fn_nth<'text_ptr>(

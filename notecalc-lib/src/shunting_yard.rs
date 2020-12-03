@@ -257,6 +257,9 @@ impl ShuntingYard {
             input_index += 1; // it is here so it is incremented always when "continue"
             let input_token = &tokens[input_index as usize];
             match &input_token.typ {
+                TokenType::Header => {
+                    return;
+                }
                 TokenType::StringLiteral => {
                     if let Some(fn_type) = FnType::value_of(input_token.ptr) {
                         // next token is parenthesis
@@ -1059,6 +1062,14 @@ pub mod tests {
         }
     }
 
+    pub fn header<'text_ptr>(op_repr: &'static str) -> Token<'text_ptr> {
+        Token {
+            ptr: unsafe { std::mem::transmute(op_repr) },
+            typ: TokenType::Header,
+            has_error: false,
+        }
+    }
+
     pub fn apply_to_prev_token_unit<'text_ptr>(op_repr: &'static str) -> Token<'text_ptr> {
         Token {
             ptr: unsafe { std::mem::transmute(op_repr) },
@@ -1140,7 +1151,8 @@ pub mod tests {
                         }
                     }
                 }
-                (TokenType::StringLiteral, TokenType::StringLiteral) => {
+                (TokenType::StringLiteral, TokenType::StringLiteral)
+                | (TokenType::Header, TokenType::Header) => {
                     // expected_op is an &str
                     let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
                     let expected_chars = str_slice.chars().collect::<Vec<char>>();
@@ -2251,6 +2263,11 @@ pub mod tests {
                 str("]"),
             ],
         );
+    }
+
+    #[test]
+    fn test_header() {
+        test_tokens("# header", &[header("# header")]);
     }
 
     #[test]

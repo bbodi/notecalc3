@@ -1,0 +1,109 @@
+Notecalc is a handy calculator trying to bring the advantages of Soulver
+to the web.
+
+You can use it as a combination of a calculator and a notepad, mixing calculations,
+numbers, operators, units of measurement with meaningful, descriptive texts around them,
+providing context for your calculations. Results on the right are automatically
+updated when text changes.
+
+Text is automatically saved in your local browser, nothing is sent to the server.
+
+You can grab and move the right gutter  (the grey separator line between this editor
+and the results) with the mouse to resize the editor/result area.
+
+Some examples. Feel free to change them and play around.
+
+
+# Percentages
+100 + 10%
+200 * 5%
+200 - 20%
+
+
+# Numbers
+You don't have to count zeros 100k
+    or 10M
+Space separated numbers 10 000 000
+
+4e12
+3.14e-2
+
+
+# Binary and Hex
+Binary and Hex numbers 0xFF
+0b1100 + 0b0011
+bit shifting 0b0001 << 4
+16 XOR 255
+NOT(255) AND 0xFFFF
+
+The base of the result can be changed by pressing Left or Right cursor while
+holding down Alt key. The '0x' and '0b' on the right gutter tells you in which base
+the result appears.
+
+
+# Referencing lines
+You can reuse calculations by clicking them in the result panel,
+  or selecting them with the UP/DOWN keys while holding ALT.
+
+12 dollar bed * 3 beds
+price is 3 people * &[48]
+
+In the above line, 36 is a referenced value from line 38.
+Change anything in line 38, and it will be reflected in the referencing value.
+You can even move the referenced lines around.
+
+
+# Variables
+Bank of America = 50 000$/year + 5.25%
+Citibank = 50 000$/year + 6%
+Difference of Citibank - Bank of America
+&[59] * 3years
+
+## Autocompletion
+Citi
+Move the cursor at the end of the previous line and press TAB.
+The variable name will be automatically completed.
+
+There are some built in snippet that can be autocompleted, e.g.
+.pi
+.mat3
+(press Tab while the cursor is at the end of the previous lines)
+
+## Sum variable
+12$ for beer
+2*13$ for tickets
+all spending = sum
+
+sum always holds the sum of the previous calculations.
+Headers reset reset its value to zero.
+### This header sets sum to zero
+0
+sum is now zero
+
+
+# Units
+The road took 45minutes and the speed of the vehicle was * 12km/h
+(This is an example that comments can be anywhere in an expressions.
+The previous line works because it is basically a simple multiplication
+between 45minutes and 12km/h, but there are words between the operands and
+the operator, which, of course, are ignored when calculating the result)
+Downloading a 1GB file with / 10Mb/s in min
+or simply 1GB / 10Mb/s in min
+12 km/h in m/s
+5 m^2/s in km^2/h
+
+# Matrix and Vector
+[5,60,7,8] * [1,0,0,0;0,2,0,0;0,0,3,0;0,0,0,4]
+
+# Comments
+12 + 3 // the numbers and operatiors are ignored in comments: 12 * 3
+
+
+# Huge and Small numbers
+all possibilities = 99*98*97*96*95
+The chance to winning the lottery is 1/all possibilities
+If a ticket costs 300$
+buying that much ticket would cost all possibilities * &[105]
+If the prize of the lottery is 3.6e9$ (TODO 3.6 Mrd)
+Then it is (&[106] / &[107]) times
+more expensive to buy all the tickets than the reward itself.

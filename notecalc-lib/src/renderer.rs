@@ -206,7 +206,16 @@ fn num_to_string(
         }
     } else {
         // TODO to_string opt
-        let string = num.to_string();
+        let string = if num.scale() == 0 {
+            num.to_string()
+        } else {
+            if let Some(without_repeating_fract) = remove_repeatings(num) {
+                without_repeating_fract.to_string()
+            } else {
+                num.to_string()
+            }
+        };
+
         if let Some(pos) = string.bytes().position(|it| it == b'.') {
             let (int_part, fract_part) = string.split_at(pos);
             let int_len = apply_grouping(
@@ -242,6 +251,40 @@ fn num_to_string(
             }
         }
     };
+}
+
+fn remove_repeatings(num: &Decimal) -> Option<Decimal> {
+    let string = num.to_string();
+    if let Some(pos) = string.bytes().position(|it| it == b'.') {
+        let (_int_part, fract_part) = string.split_at(pos);
+        // TODO HACKY way for determining unrepresentable numbers
+        // if all the fractional digit except the last two consist the same number, reduce them
+        if (fract_part.len() - 1) > 4 {
+            let frac_buf = fract_part.as_bytes();
+            let mut checking_digit = *frac_buf.last().expect("must");
+            let mut i = fract_part.len() - 2;
+            let mut count = 1;
+            while i > 0 {
+                if frac_buf[i] != checking_digit {
+                    if i as isize > fract_part.len() as isize - 7 {
+                        // the last 5 digits can be different
+                        checking_digit = frac_buf[i];
+                        count = 0;
+                    } else {
+                        break;
+                    }
+                }
+                count += 1;
+                i -= 1;
+            }
+            if count > 15 || (count == (fract_part.len() - 1) && count > 5) {
+                let mut clone = num.clone();
+                clone.rescale(if i > 0 { i + 1 } else { 4 } as u32);
+                return Some(clone);
+            }
+        }
+    }
+    return None;
 }
 
 fn apply_grouping(f: &mut impl std::io::Write, ss: &str, group_size: usize) -> usize {

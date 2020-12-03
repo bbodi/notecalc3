@@ -138,7 +138,7 @@ pub fn evaluate_tokens<'text_ptr>(
                     return Err(());
                 }
             }
-            TokenType::StringLiteral => panic!(),
+            TokenType::StringLiteral | TokenType::Header => panic!(),
             TokenType::Variable { var_index } | TokenType::LineReference { var_index } => {
                 // TODO clone :(
                 match &variables[*var_index]
@@ -1209,13 +1209,13 @@ mod tests {
         test("1 ft * lbf * 2 rad", "2 ft lbf rad");
         test("1 ft * lbf * 2 rad in in*lbf*rad", "24 in lbf rad");
         test("(2/3)m", "0.6667 m");
-        test_with_dec_count(50, "(2/3)m", "0.6666666666666666666666666667 m");
-        test_with_dec_count(50, "2/3m", "0.6666666666666666666666666667 m^-1");
+        test_with_dec_count(50, "(2/3)m", "0.6667 m");
+        test_with_dec_count(50, "2/3m", "0.6667 m^-1");
 
         test("123 N in (kg m)/s^2", "123 (kg m) / s^2");
 
         test("1 km / 3000000 mm", "0.3333");
-        test_with_dec_count(100, "1 km / 3000000 mm", "0.3333333333333333333333333333");
+        test_with_dec_count(100, "1 km / 3000000 mm", "0.3333");
 
         test("5kg * 1", "5 kg");
         test("5 kg * 1", "5 kg");
@@ -1462,8 +1462,8 @@ mod tests {
         test("3 kg * m * 1 s^-2", "3 N");
 
         test("128PiB / 30Mb/s", "38430716586.6667 s");
-        test_with_dec_count(39, "128PiB / 30Mb/s", "38430716586.666666666666666666 s");
-        test_with_dec_count(40, "128PiB / 30Mb/s", "38430716586.666666666666666666 s");
+        test_with_dec_count(39, "128PiB / 30Mb/s", "38430716586.6667 s");
+        test_with_dec_count(40, "128PiB / 30Mb/s", "38430716586.6667 s");
     }
 
     #[test]
@@ -1789,6 +1789,16 @@ mod tests {
     fn test_func_pi() {
         test_with_dec_count(1000, "pi()", "3.1415926535897932384626433833");
         test("pi(1)", "Err");
+    }
+
+    #[test]
+    fn test_fraction_reduction_rounding() {
+        test_with_dec_count(1000, "0.0030899999999999999999999999", "0.003090");
+    }
+
+    #[test]
+    fn test_fraction_reduction_rounding2() {
+        test_with_dec_count(1000, "5 m^2/s in km^2/h", "0.0180 km^2 / h");
     }
 
     #[test]

@@ -8,6 +8,7 @@ use std::str::FromStr;
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum TokenType {
     StringLiteral,
+    Header,
     // index to the variable vec
     Variable { var_index: usize },
     LineReference { var_index: usize },
@@ -165,10 +166,10 @@ impl TokenParser {
     ) {
         let mut index = 0;
         let mut can_be_unit = CanBeUnit::Not;
-        if line.starts_with(&['-', '-']) {
+        if line.starts_with(&['#']) {
             dst.push(Token {
                 ptr: allocator.alloc_slice_fill_iter(line.iter().map(|it| *it)),
-                typ: TokenType::StringLiteral,
+                typ: TokenType::Header,
                 has_error: false,
             });
             return;
@@ -209,6 +210,10 @@ impl TokenParser {
                 });
             if let Some(token) = parse_result {
                 match &token.typ {
+                    TokenType::Header => {
+                        // the functions already returned in this case
+                        panic!();
+                    }
                     TokenType::StringLiteral => {
                         if token.ptr[0].is_ascii_whitespace() {
                             // keep can_be_unit as it was
@@ -808,28 +813,26 @@ mod tests {
                     //     expected_op is an &str
                     let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
                     let expected_chars = str_slice.chars().collect::<Vec<char>>();
-                    assert_eq!(expected_chars.as_slice(), actual_token.ptr)
+                    assert_eq!(actual_token.ptr, expected_chars.as_slice())
                 }
                 (TokenType::NumberErr, _) => {
                     assert_eq!(actual_token.typ, expected_token.typ);
                 }
                 (TokenType::Operator(etyp), TokenType::Operator(atyp)) => assert_eq!(etyp, atyp),
-                (TokenType::StringLiteral, TokenType::StringLiteral) => {
+                (TokenType::StringLiteral, TokenType::StringLiteral)
+                | (TokenType::Header, TokenType::Header) => {
                     // expected_op is an &str
                     let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
                     let expected_chars = str_slice.chars().collect::<Vec<char>>();
-                    assert_eq!(expected_chars.as_slice(), actual_token.ptr)
+                    assert_eq!(actual_token.ptr, expected_chars.as_slice())
                 }
                 (TokenType::Variable { .. }, TokenType::Variable { .. })
                 | (TokenType::LineReference { .. }, TokenType::LineReference { .. }) => {
                     // expected_op is an &str
                     let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
                     let expected_chars = str_slice.chars().collect::<Vec<char>>();
-                    assert_eq!(expected_chars.as_slice(), actual_token.ptr)
+                    assert_eq!(actual_token.ptr, expected_chars.as_slice())
                 }
-                // (Token::UnitOfMeasure(expected_op, ..), Token::UnitOfMeasure(actual_op, ..)) => {
-
-                // }
                 _ => panic!(
                     "'{}', {:?} != {:?}, actual tokens:\n {:?}",
                     text,
@@ -1742,5 +1745,17 @@ mod tests {
             "1+2// 1+2",
             &[num(1), op(OperatorTokenType::Add), num(2), str("// 1+2")],
         );
+    }
+
+    #[test]
+    fn test_header() {
+        test("#", &[header("#")]);
+        test("#a", &[header("#a")]);
+        test("# a", &[header("# a")]);
+        test("# 12 + 3", &[header("# 12 + 3")]);
+        test("a#", &[str("a#")]);
+        test(" #", &[str(" "), str("#")]);
+        test(" #a", &[str(" "), str("#a")]);
+        test(" # a", &[str(" "), str("#"), str(" "), str("a")]);
     }
 }

@@ -112,6 +112,8 @@
     let canvas_dirty = false;
     let can_scroll = true;
     let FONT_HEIGHT = 16;
+    let NORMAL_FONT = 'px JetBrainsMono-Regular';
+    let BOLD_FONT = 'px JetBrainsMono-ExtraBold';
     let FONT_VERT_PADDING = 1;
     let line_height = FONT_HEIGHT + 2 * FONT_VERT_PADDING;
     let CLIENT_WIDTH_IN_CHARS = 0;
@@ -127,6 +129,7 @@
     let reference_pulses_are_active_from_prev_frame = false;
     let change_result_pulses_are_active_from_prev_frame = false;
     let is_mobile = false;
+    let measure_start = 0;
     let is_debug = false;
     const CHANGE_RESULT_PULSE_START_COLOR = -7798870;
     const REFERENCE_PULSE_PULSE_START_COLOR = 0x00FF7F_33;
@@ -166,7 +169,7 @@
         let body = document.getElementsByTagName('body').item(0);
         body.className = '';
         body.style = "margin: 0";
-        ctx.font = FONT_HEIGHT + 'px JetBrainsMono-Regular';
+        ctx.font = FONT_HEIGHT + NORMAL_FONT;
         ctx.textBaseline = "bottom";
     }
 
@@ -226,6 +229,7 @@
         div.style.height = (canvas.height + 2 * line_height) + 'px';
 
         init_canvas();
+        measure_start = new Date().getTime();
         wasm_bindgen.handle_resize(app_ptr, CLIENT_WIDTH_IN_CHARS);
         set_canvas_dirty('resize canvas');
     }
@@ -246,8 +250,8 @@
                 update_selected_text();
             }
             let command_count = redraw(now);
-            let took = new Date().getTime() - now;
-            //console.log('render: ', took, ' ms, render command count: ', command_count, "memory: ", wasm_bindgen.get_allocated_bytes_count(app_ptr));
+            let took = new Date().getTime() - measure_start;
+            console.log('render: ', took, ' ms, render command count: ', command_count, "memory: ", wasm_bindgen.get_allocated_bytes_count(app_ptr));
             canvas_dirty = false;
             can_scroll = true;
         }
@@ -257,6 +261,7 @@
 
     function tick(_now) {
         let now = new Date().getTime();
+        measure_start = new Date().getTime();
         if (next_full_reparse_tick <= now) {
             console.log("FREE");
             console.log("memory: ", wasm_bindgen.get_allocated_bytes_count(app_ptr));
@@ -313,6 +318,7 @@
         } else {
             return;
         }
+        measure_start = new Date().getTime();
         if (wasm_bindgen.handle_wheel(app_ptr, dir) === true) {
             pulsing_rects.length = 0;
             can_scroll = false;
@@ -328,6 +334,7 @@
 
             const char_x = (e.offsetX) / font_width;
             const char_y = (e.offsetY) / line_height;
+            measure_start = new Date().getTime();
             wasm_bindgen.handle_click(app_ptr, char_x | 0, char_y | 0);
             set_canvas_dirty('click');
         }
@@ -359,12 +366,14 @@
         const char_y = ((e.offsetY) / line_height) | 0;
         if (e.buttons === 1) { //dragged with left mouse button
             const need_update = last_drag_event.x !== char_x || last_drag_event.y !== char_y;
+            measure_start = new Date().getTime();
             if (need_update && wasm_bindgen.handle_drag(app_ptr, char_x, char_y)) {
                 need_update_selected_text = true;
                 set_canvas_dirty('dragging');
                 last_drag_event = {x: char_x, y: char_y};
             }
         } else {
+            measure_start = new Date().getTime();
             overlay_canvas.style.cursor = cursor_styles[wasm_bindgen.handle_mouse_move(app_ptr, char_x, char_y)];
             set_canvas_dirty('mouse move');
         }
@@ -373,6 +382,7 @@
 
     function doKeyUp(e) {
         if (e.key === 'Alt') {
+            measure_start = new Date().getTime();
             wasm_bindgen.alt_key_released(app_ptr);
             set_content_was_modified();
             set_canvas_dirty('key up');
@@ -467,6 +477,7 @@
         }
 
         //console.log('key ' + key);
+        measure_start = new Date().getTime();
         let content_was_modified = wasm_bindgen.handle_input(app_ptr, key, modifiers);
         if (content_was_modified) {
             set_content_was_modified();
@@ -497,6 +508,7 @@
         let change_result_pulses_were_added = false;
         let reference_result_pulses_were_added = false;
         const debug_commands = [];
+        let is_header = false;
         while (true) {
             command_count += 1;
             const command_id = command_buffer[buf_index];
@@ -623,6 +635,18 @@
                     }
                     pulsing_rects.push(item);
                 }
+            } else if (command_id === 9) { // FollowingTextCommandsAreHeaders
+                is_header = read_u8(command_buffer, buf_index) === 1;
+                if (is_header)  {
+                    ctx.font = FONT_HEIGHT + BOLD_FONT;
+                } else {
+                    ctx.font = FONT_HEIGHT + NORMAL_FONT;
+                }
+                ctx.textBaseline = "bottom";
+                if (is_debug) {
+                    debug_commands.push('Set Header: ' + is_header);
+                }
+                buf_index += 1;
             }
         }
         change_result_pulses_are_active_from_prev_frame |= change_result_pulses_were_added;
@@ -696,6 +720,7 @@
     }
 
     function paste_from_clipboard(pasted_text) {
+        measure_start = new Date().getTime();
         wasm_bindgen.handle_paste(app_ptr, pasted_text);
         set_canvas_dirty('paste');
         save_content();
@@ -832,6 +857,7 @@
         let notecalc_data = JSON.parse(localStorage.getItem('notecalc'));
         let tabs = notecalc_data.tabs;
         set_active_tab_index(tab_index);
+        measure_start = new Date().getTime();
         wasm_bindgen.set_compressed_encoded_content(
             app_ptr,
             tabs[active_tab_index].encoded_content
@@ -983,7 +1009,7 @@
 <script>
     WebFont.load({
         custom: {
-            families: ['JetBrainsMono-Regular']
+            families: ['JetBrainsMono-Regular, JetBrainsMono-ExtraBold']
         },
         active: function () {
             is_debug = window.location.href.indexOf('debug') !== -1;
@@ -1039,13 +1065,13 @@
                 // on mobile, find a font size which allows only 45 chars in a row
                 font_width = 0;
                 while ((font_width*45) < window.innerWidth) {
-                    ctx.font = FONT_HEIGHT + 'px JetBrainsMono-Regular';
+                    ctx.font = FONT_HEIGHT + BOLD_FONT;
                     ctx.textBaseline = "bottom";
                     font_width = ctx.measureText('a').width;
                     FONT_HEIGHT += 1;
                 }
             } else {
-                ctx.font = FONT_HEIGHT + 'px JetBrainsMono-Regular';
+                ctx.font = FONT_HEIGHT + BOLD_FONT;
                 ctx.textBaseline = "bottom";
                 font_width = ctx.measureText('a').width;
             }
@@ -1085,6 +1111,10 @@
     @font-face {
         font-family: "JetBrainsMono-Regular";
         src: url("fonts/JetBrainsMono-Regular.woff") format("woff");
+    }
+    @font-face {
+        font-family: "JetBrainsMono-ExtraBold";
+        src: url("fonts/JetBrainsMono-ExtraBold.woff") format("woff");
     }
 </style>
 

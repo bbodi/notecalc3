@@ -1,2 +1,2 @@
-wasm-pack build --dev --target no-modules frontend-web
+wasm-pack build --release --target no-modules frontend-web
 serve .

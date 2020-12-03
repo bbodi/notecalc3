@@ -5,7 +5,7 @@ const EVENT_INTERVAL_MS = 0;
 
 const CHARACTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 const NUMBERS = '0123456789';
-const OPERATORS = '+-*/%[]()^$=';
+const OPERATORS = '+-*/%[]()^$=#';
 const NAVIGATION_EVENTS = ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown',
     'Home', 'End', 'PageUp', 'PageDown'];
 const CHARACTERS_LENGTH = CHARACTERS.length;

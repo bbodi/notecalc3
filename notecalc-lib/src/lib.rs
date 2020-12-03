@@ -694,6 +694,7 @@ pub enum OutputMessage<'a> {
         end_color: u32,
         animation_time: Duration,
     },
+    FollowingTextCommandsAreHeaders(bool),
 }
 
 #[repr(C)]
@@ -707,6 +708,7 @@ pub enum Layer {
 pub struct RenderBuckets<'a> {
     pub ascii_texts: Vec<RenderAsciiTextMsg<'a>>,
     pub utf8_texts: Vec<RenderUtf8TextMsg<'a>>,
+    pub headers: Vec<RenderUtf8TextMsg<'a>>,
     pub numbers: Vec<RenderUtf8TextMsg<'a>>,
     pub number_errors: Vec<RenderUtf8TextMsg<'a>>,
     pub units: Vec<RenderUtf8TextMsg<'a>>,
@@ -722,6 +724,7 @@ impl<'a> RenderBuckets<'a> {
         RenderBuckets {
             ascii_texts: Vec::with_capacity(128),
             utf8_texts: Vec::with_capacity(128),
+            headers: Vec::with_capacity(16),
             custom_commands: [
                 Vec::with_capacity(128),
                 Vec::with_capacity(128),
@@ -744,6 +747,7 @@ impl<'a> RenderBuckets<'a> {
     pub fn clear(&mut self) {
         self.ascii_texts.clear();
         self.utf8_texts.clear();
+        self.headers.clear();
         self.custom_commands[0].clear();
         self.custom_commands[1].clear();
         self.custom_commands[2].clear();
@@ -1639,6 +1643,16 @@ impl NoteCalcApp {
         };
         if has_moved {
             self.generate_render_commands_and_fill_editor_objs(
+                units,
+                render_buckets,
+                allocator,
+                tokens,
+                results,
+                vars,
+                editor_objs,
+                BitFlag128::empty(),
+            );
+            self.set_editor_and_result_panel_widths_and_rerender_if_necessary(
                 units,
                 render_buckets,
                 allocator,
@@ -2778,7 +2792,7 @@ impl NoteCalcApp {
                 if let Some(tokens) = tokens {
                     for token in &tokens.tokens {
                         match token.typ {
-                            TokenType::StringLiteral if token.ptr.starts_with(&['-', '-']) => {
+                            TokenType::Header => {
                                 break 'outer;
                             }
                             TokenType::Variable { var_index }
@@ -2923,7 +2937,7 @@ impl NoteCalcApp {
             if self
                 .editor_content
                 .get_line_valid_chars(editor_y)
-                .starts_with(&['-', '-'])
+                .starts_with(&['#'])
             {
                 sum_is_null = true;
             }
@@ -4009,127 +4023,146 @@ fn render_tokens<'text_ptr>(
     let mut token_index = 0;
     while token_index < tokens.len() {
         let token = &tokens[token_index];
-        if let (
-            TokenType::Operator(OperatorTokenType::Matrix {
-                row_count,
-                col_count,
-            }),
-            true,
-        ) = (&token.typ, need_matrix_renderer)
-        {
-            token_index = render_matrix(
-                token_index,
-                &tokens,
-                *row_count,
-                *col_count,
-                r,
-                gr,
-                render_buckets,
-                editor_objects,
-                &editor,
-                &matrix_editing,
-                decimal_count,
-            );
-        } else if let (TokenType::Variable { var_index }, true) = (&token.typ, need_matrix_renderer)
-        {
-            editor_objects.push(EditorObject {
-                typ: EditorObjectType::Variable {
-                    var_index: *var_index,
-                },
-                row: r.editor_y,
-                start_x: r.editor_x,
-                end_x: r.editor_x + token.ptr.len(),
-                rendered_x: r.render_x,
-                rendered_y: r.render_y,
-                rendered_w: token.ptr.len(),
-                rendered_h: r.rendered_row_height,
-            });
-            draw_token(
-                token,
-                r.render_x,
-                r.render_y.add(r.vert_align_offset),
-                gr.current_editor_width,
-                gr.left_gutter_width,
-                render_buckets,
-            );
 
+        if !need_matrix_renderer {
+            simple_draw(r, gr, render_buckets, editor_objects, token);
             token_index += 1;
-            r.token_render_done(token.ptr.len(), token.ptr.len(), 0);
-        } else if let (TokenType::LineReference { var_index }, true) =
-            (&token.typ, need_matrix_renderer)
-        {
-            let var = vars[*var_index].as_ref().unwrap();
-
-            let (rendered_width, rendered_height) = render_result_inside_editor(
-                units,
-                render_buckets,
-                &var.value,
-                r,
-                gr,
-                decimal_count,
-            );
-
-            let var_name_len = var.name.len();
-            editor_objects.push(EditorObject {
-                typ: EditorObjectType::LineReference {
-                    var_index: *var_index,
-                },
-                row: r.editor_y,
-                start_x: r.editor_x,
-                end_x: r.editor_x + var_name_len,
-                rendered_x: r.render_x,
-                rendered_y: r.render_y,
-                rendered_w: rendered_width,
-                rendered_h: rendered_height,
-            });
-
-            token_index += 1;
-            r.token_render_done(
-                var_name_len,
-                rendered_width,
-                if cursor_pos.column > r.editor_x {
-                    let diff = rendered_width as isize - var_name_len as isize;
-                    diff
-                } else {
-                    0
-                },
-            );
         } else {
-            if let Some(EditorObject {
-                typ: EditorObjectType::SimpleTokens,
-                end_x,
-                rendered_w,
-                ..
-            }) = editor_objects.last_mut()
-            {
-                // last token was a simple token too, extend it
-                *end_x += token.ptr.len();
-                *rendered_w += token.ptr.len();
-            } else {
-                editor_objects.push(EditorObject {
-                    typ: EditorObjectType::SimpleTokens,
-                    row: r.editor_y,
-                    start_x: r.editor_x,
-                    end_x: r.editor_x + token.ptr.len(),
-                    rendered_x: r.render_x,
-                    rendered_y: r.render_y,
-                    rendered_w: token.ptr.len(),
-                    rendered_h: r.rendered_row_height,
-                });
-            }
-            draw_token(
-                token,
-                r.render_x,
-                r.render_y.add(r.vert_align_offset),
-                gr.current_editor_width,
-                gr.left_gutter_width,
-                render_buckets,
-            );
+            match &token.typ {
+                TokenType::Operator(OperatorTokenType::Matrix {
+                    row_count,
+                    col_count,
+                }) => {
+                    token_index = render_matrix(
+                        token_index,
+                        &tokens,
+                        *row_count,
+                        *col_count,
+                        r,
+                        gr,
+                        render_buckets,
+                        editor_objects,
+                        &editor,
+                        &matrix_editing,
+                        decimal_count,
+                    );
+                }
+                TokenType::Variable { var_index } => {
+                    editor_objects.push(EditorObject {
+                        typ: EditorObjectType::Variable {
+                            var_index: *var_index,
+                        },
+                        row: r.editor_y,
+                        start_x: r.editor_x,
+                        end_x: r.editor_x + token.ptr.len(),
+                        rendered_x: r.render_x,
+                        rendered_y: r.render_y,
+                        rendered_w: token.ptr.len(),
+                        rendered_h: r.rendered_row_height,
+                    });
+                    draw_token(
+                        token,
+                        r.render_x,
+                        r.render_y.add(r.vert_align_offset),
+                        gr.current_editor_width,
+                        gr.left_gutter_width,
+                        render_buckets,
+                    );
 
-            token_index += 1;
-            r.token_render_done(token.ptr.len(), token.ptr.len(), 0);
+                    token_index += 1;
+                    r.token_render_done(token.ptr.len(), token.ptr.len(), 0);
+                }
+                TokenType::LineReference { var_index } => {
+                    let var = vars[*var_index].as_ref().unwrap();
+
+                    let (rendered_width, rendered_height) = render_result_inside_editor(
+                        units,
+                        render_buckets,
+                        &var.value,
+                        r,
+                        gr,
+                        decimal_count,
+                    );
+
+                    let var_name_len = var.name.len();
+                    editor_objects.push(EditorObject {
+                        typ: EditorObjectType::LineReference {
+                            var_index: *var_index,
+                        },
+                        row: r.editor_y,
+                        start_x: r.editor_x,
+                        end_x: r.editor_x + var_name_len,
+                        rendered_x: r.render_x,
+                        rendered_y: r.render_y,
+                        rendered_w: rendered_width,
+                        rendered_h: rendered_height,
+                    });
+
+                    token_index += 1;
+                    r.token_render_done(
+                        var_name_len,
+                        rendered_width,
+                        if cursor_pos.column > r.editor_x {
+                            let diff = rendered_width as isize - var_name_len as isize;
+                            diff
+                        } else {
+                            0
+                        },
+                    );
+                }
+                TokenType::StringLiteral
+                | TokenType::Header
+                | TokenType::NumberLiteral(_)
+                | TokenType::Operator(_)
+                | TokenType::Unit(_)
+                | TokenType::NumberErr => {
+                    simple_draw(r, gr, render_buckets, editor_objects, token);
+                    token_index += 1;
+                }
+            }
         }
     }
+}
+
+fn simple_draw<'text_ptr>(
+    r: &mut PerLineRenderData,
+    gr: &mut GlobalRenderData,
+    render_buckets: &mut RenderBuckets<'text_ptr>,
+    editor_objects: &mut Vec<EditorObject>,
+    token: &Token<'text_ptr>,
+) {
+    if let Some(EditorObject {
+        typ: EditorObjectType::SimpleTokens,
+        end_x,
+        rendered_w,
+        ..
+    }) = editor_objects.last_mut()
+    {
+        // last token was a simple token too, extend it
+        *end_x += token.ptr.len();
+        *rendered_w += token.ptr.len();
+    } else {
+        editor_objects.push(EditorObject {
+            typ: EditorObjectType::SimpleTokens,
+            row: r.editor_y,
+            start_x: r.editor_x,
+            end_x: r.editor_x + token.ptr.len(),
+            rendered_x: r.render_x,
+            rendered_y: r.render_y,
+            rendered_w: token.ptr.len(),
+            rendered_h: r.rendered_row_height,
+        });
+    }
+    draw_token(
+        token,
+        r.render_x,
+        r.render_y.add(r.vert_align_offset),
+        gr.current_editor_width,
+        gr.left_gutter_width,
+        render_buckets,
+    );
+
+    r.token_render_done(token.ptr.len(), token.ptr.len(), 0);
 }
 
 fn render_wrap_dots(
@@ -4257,13 +4290,15 @@ fn evaluate_tokens_and_save_result<'text_ptr>(
                 }
                 // remove trailing whitespaces
                 i -= 1;
-                while line[i].is_ascii_whitespace() {
+                while i > start && line[i].is_ascii_whitespace() {
                     i -= 1;
                 }
                 let end = i;
                 &line[start..=end]
             };
-            replace_or_insert_var(vars, var_name, result.result.clone(), editor_y);
+            if !var_name.is_empty() {
+                replace_or_insert_var(vars, var_name, result.result.clone(), editor_y);
+            }
         } else {
             let line_data = editor_content.get_data(editor_y);
             debug_assert!(line_data.line_id > 0);
@@ -4857,10 +4892,13 @@ struct ResultTmp {
     editor_y: ContentIndex,
     lengths: ResultLengths,
 }
+
+pub const MAX_VISIBLE_HEADER_COUNT: usize = 16;
 struct ResultRender {
     result_ranges: SmallVec<[ResultTmp; MAX_LINE_COUNT]>,
     max_len: usize,
-    max_lengths: ResultLengths,
+    max_lengths: [ResultLengths; MAX_VISIBLE_HEADER_COUNT],
+    result_counts_in_regions: [usize; MAX_VISIBLE_HEADER_COUNT],
 }
 
 impl ResultRender {
@@ -4868,11 +4906,12 @@ impl ResultRender {
         return ResultRender {
             result_ranges: vec,
             max_len: 0,
-            max_lengths: ResultLengths {
+            max_lengths: [ResultLengths {
                 int_part_len: 0,
                 frac_part_len: 0,
                 unit_part_len: 0,
-            },
+            }; 16],
+            result_counts_in_regions: [0; MAX_VISIBLE_HEADER_COUNT],
         };
     }
 }
@@ -4888,12 +4927,35 @@ fn render_results_into_buf_and_calc_len<'text_ptr>(
     let mut result_buffer_index = 0;
     let result_buffer = unsafe { &mut RESULT_BUFFER };
     // calc max length and render results into buffer
+    let mut region_index = 0;
+    let mut region_count_offset = 0;
     for (editor_y, result) in results.iter().enumerate() {
         let editor_y = content_y(editor_y);
-        if gr.get_render_y(editor_y).is_none() {
+        let render_y = if let Some(render_y) = gr.get_render_y(editor_y) {
+            render_y
+        } else {
             continue;
         };
         if !gr.is_visible(editor_y) {
+            continue;
+        }
+        if render_y.as_usize() != 0 && editor_content.get_char(editor_y.as_usize(), 0) == '#' {
+            let max_lens = &tmp.max_lengths[region_index];
+            tmp.max_len = max_lens.int_part_len
+                + max_lens.frac_part_len
+                + if max_lens.unit_part_len > 0 {
+                    max_lens.unit_part_len + 1
+                } else {
+                    0
+                }
+                .max(tmp.max_len);
+            tmp.result_counts_in_regions[region_index] =
+                tmp.result_ranges.len() - region_count_offset;
+            region_count_offset = tmp.result_ranges.len();
+            // TODO remove this limitation
+            if region_index < MAX_VISIBLE_HEADER_COUNT - 1 {
+                region_index += 1;
+            }
             continue;
         }
 
@@ -4938,7 +5000,7 @@ fn render_results_into_buf_and_calc_len<'text_ptr>(
                     );
                     let len = c.position() as usize;
                     let range = start..start + len;
-                    tmp.max_lengths.set_max(&lens);
+                    tmp.max_lengths[region_index].set_max(&lens);
                     tmp.result_ranges.push(ResultTmp {
                         buffer_ptr: Some(range),
                         editor_y,
@@ -4960,13 +5022,16 @@ fn render_results_into_buf_and_calc_len<'text_ptr>(
         }
     }
     result_buffer[result_buffer_index] = 0; // tests depend on it
-    tmp.max_len = tmp.max_lengths.int_part_len
-        + tmp.max_lengths.frac_part_len
-        + if tmp.max_lengths.unit_part_len > 0 {
-            tmp.max_lengths.unit_part_len + 1
+
+    tmp.result_counts_in_regions[region_index] = tmp.result_ranges.len() - region_count_offset;
+    tmp.max_len = (tmp.max_lengths[region_index].int_part_len
+        + tmp.max_lengths[region_index].frac_part_len
+        + if tmp.max_lengths[region_index].unit_part_len > 0 {
+            tmp.max_lengths[region_index].unit_part_len + 1
         } else {
             0
-        };
+        })
+    .max(tmp.max_len);
 }
 
 fn create_render_commands_for_results_and_render_matrices<'text_ptr>(
@@ -4980,7 +5045,13 @@ fn create_render_commands_for_results_and_render_matrices<'text_ptr>(
     let mut prev_result_matrix_length = None;
     let mut matrix_len = 0;
     let result_buffer = unsafe { &RESULT_BUFFER };
+    let mut region_index = 0;
+    let mut result_count_in_this_region = tmp.result_counts_in_regions[0];
+    let mut max_lens = &tmp.max_lengths[0];
     for result_tmp in tmp.result_ranges.iter() {
+        if result_count_in_this_region == 0 {
+            break;
+        }
         let rendered_row_height = gr.get_rendered_height(result_tmp.editor_y);
         let render_y = gr.get_render_y(result_tmp.editor_y).expect("");
         if let Some(result_range) = &result_tmp.buffer_ptr {
@@ -5003,14 +5074,13 @@ fn create_render_commands_for_results_and_render_matrices<'text_ptr>(
                 Ok(usize),
                 TooLong,
             }
-            let offset_x = if tmp.max_lengths.int_part_len < lengths.int_part_len {
+            let offset_x = if max_lens.int_part_len < lengths.int_part_len {
                 // it is an "Err"
                 ResultOffsetX::Err
             } else {
-                let offset_x = tmp.max_lengths.int_part_len - lengths.int_part_len;
-                let sum_len = lengths.int_part_len
-                    + tmp.max_lengths.frac_part_len
-                    + tmp.max_lengths.unit_part_len;
+                let offset_x = max_lens.int_part_len - lengths.int_part_len;
+                let sum_len =
+                    lengths.int_part_len + max_lens.frac_part_len + max_lens.unit_part_len;
                 if offset_x + sum_len > gr.current_result_panel_width {
                     if sum_len > gr.current_result_panel_width {
                         ResultOffsetX::TooLong
@@ -5048,14 +5118,14 @@ fn create_render_commands_for_results_and_render_matrices<'text_ptr>(
             if lengths.unit_part_len > 0 {
                 let from = result_range.start + lengths.int_part_len + lengths.frac_part_len + 1;
                 // e.g. in case of 2 units mm and m, m should be 1 coordinates right
-                let offset_x = tmp.max_lengths.unit_part_len - lengths.unit_part_len;
+                let offset_x = max_lens.unit_part_len - lengths.unit_part_len;
                 render_buckets.ascii_texts.push(RenderAsciiTextMsg {
                     text: &result_buffer[from..result_range.end],
                     row,
                     column: gr.result_gutter_x
                         + RIGHT_GUTTER_WIDTH
-                        + tmp.max_lengths.int_part_len
-                        + tmp.max_lengths.frac_part_len
+                        + max_lens.int_part_len
+                        + max_lens.frac_part_len
                         + 1
                         + offset_x,
                 });
@@ -5121,6 +5191,12 @@ fn create_render_commands_for_results_and_render_matrices<'text_ptr>(
                     );
                 }
             }
+        }
+        result_count_in_this_region -= 1;
+        if result_count_in_this_region == 0 {
+            region_index += 1;
+            result_count_in_this_region = tmp.result_counts_in_regions[region_index];
+            max_lens = &tmp.max_lengths[region_index];
         }
     }
     return matrix_len;
@@ -5239,6 +5315,7 @@ fn draw_token<'text_ptr>(
     } else {
         match &token.typ {
             TokenType::StringLiteral => &mut render_buckets.utf8_texts,
+            TokenType::Header => &mut render_buckets.headers,
             TokenType::Variable { .. } => &mut render_buckets.variable,
             TokenType::LineReference { .. } => &mut render_buckets.variable,
             TokenType::NumberLiteral(_) => &mut render_buckets.numbers,
@@ -5300,6 +5377,7 @@ fn render_buckets_into(buckets: &RenderBuckets, canvas: &mut [[char; 256]]) {
                 write_ascii(canvas, text.row, text.column, &text.text);
             }
             OutputMessage::PulsingRectangle { .. } => {}
+            OutputMessage::FollowingTextCommandsAreHeaders { .. } => {}
         }
     }
 
@@ -5908,6 +5986,24 @@ mod main_tests {
                 count, expected_count,
                 "Found {} times.\nExpected: {}\nin\n{:?}",
                 count, expected_count, operators
+            );
+        }
+
+        fn assert_contains_result<F>(&self, expected_count: usize, expected_command: F)
+        where
+            F: Fn(&RenderAsciiTextMsg) -> bool,
+        {
+            let mut count = 0;
+            let commands = &self.render_bucket().ascii_texts;
+            for cmd in commands {
+                if expected_command(cmd) {
+                    count += 1;
+                }
+            }
+            assert_eq!(
+                count, expected_count,
+                "Found {} times.\nExpected: {}\nin\n{:?}",
+                count, expected_count, commands
             );
         }
 
@@ -6837,7 +6933,7 @@ mod main_tests {
 32
 33
 34
---
+#
 1
 2
 3
@@ -7110,6 +7206,48 @@ mod main_tests {
             check_longest_line_did_not_change();
             asset_result_x_pos(default_result_gutter_x(10));
         }
+
+        #[test]
+        fn right_gutter_is_immediately_rendered_at_its_changed_position_after_scrolling() {
+            let test = create_app3(76, 10);
+            test.repeated_paste("1\n", 10);
+            test.paste("111111111111111111111");
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+            assert_eq!(
+                test.get_render_data().result_gutter_x,
+                default_result_gutter_x(76)
+            );
+
+            test.handle_wheel(1);
+
+            let expected_result_pos = 76 - ("111 111 111 111 111 111 111".len());
+            test.assert_contains_result(1, |cmd| {
+                cmd.text == "111 111 111 111 111 111 111".as_bytes()
+                    && cmd.row == canvas_y(9)
+                    && cmd.column == expected_result_pos
+            })
+        }
+
+        #[test]
+        fn right_gutter_is_immediately_rendered_at_its_changed_position_after_input() {
+            let test = create_app3(76, 10);
+            test.repeated_paste("1\n", 10);
+            test.paste("111111111111111111111");
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+            assert_eq!(
+                test.get_render_data().result_gutter_x,
+                default_result_gutter_x(76)
+            );
+
+            test.input(EditorInputEvent::PageDown, InputModifiers::none());
+
+            let expected_result_pos = 76 - ("111 111 111 111 111 111 111".len());
+            test.assert_contains_result(1, |cmd| {
+                cmd.text == "111 111 111 111 111 111 111".as_bytes()
+                    && cmd.row == canvas_y(9)
+                    && cmd.column == expected_result_pos
+            })
+        }
     }
 
     #[test]
@@ -7137,7 +7275,7 @@ weight = 80 kg
 height = 190 cm
 age = 30
 
--- Step 1: Calculate your  (Basal Metabolic Rate) (BMR)
+# Step 1: Calculate your  (Basal Metabolic Rate) (BMR)
 men BMR = 66 + (13.7 * weight/1kg) + (5 * height/1cm) - (6.8 * age)
 
 'STEP 2. FIND YOUR TDEE BY ADJUSTING FOR ACTIVITY
@@ -7216,7 +7354,7 @@ weight = 80 kg
 height = 190 cm
 age = 30
 
--- Step 1: Calculate your  (Basal Metabolic Rate) (BMR)
+# Step 1: Calculate your  (Basal Metabolic Rate) (BMR)
 men BMR = 66 + (13.7 * weight/1kg) + (5 * height/1cm) - (6.8 * age)
 
 'STEP 2. FIND YOUR TDEE BY ADJUSTING FOR ACTIVITY
@@ -7367,16 +7505,20 @@ Fat intake
     }
 
     #[test]
-    fn sum_can_be_nullified() {
+    fn sum_is_nulled_in_new_header_region() {
         let test = create_app2(35);
         test.paste(
             "3m * 2m
---
+# new header
 1
 2
+sum
+# new header
+4
+5
 sum",
         );
-        test.assert_results(&["6 m^2", "", "1", "2", "3"][..]);
+        test.assert_results(&["6 m^2", "", "1", "2", "3", "", "4", "5", "9"][..]);
     }
 
     #[test]
@@ -8393,7 +8535,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
         #[test]
         fn test_that_sum_is_not_recalculated_if_there_is_separator() {
             let test = create_app2(35);
-            test.paste("2\n3\n--\n5\nsum");
+            test.paste("2\n3\n#\n5\nsum");
             test.set_cursor_row_col(0, 1);
 
             test.assert_results(&["2", "3", "", "5", "5"][..]);
@@ -8407,7 +8549,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
         #[test]
         fn test_that_sum_is_not_recalculated_if_there_is_separator_with_comment() {
             let test = create_app2(35);
-            test.paste("2\n3\n-- some comment\n5\nsum");
+            test.paste("2\n3\n# some comment\n5\nsum");
             test.set_cursor_row_col(0, 1);
 
             test.assert_results(&["2", "3", "", "5", "5"][..]);
@@ -8421,7 +8563,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
         #[test]
         fn test_adding_sum_updates_lower_sums() {
             let test = create_app2(35);
-            test.paste("2\n3\n\n4\n5\nsum\n-- some comment\n24\n25\nsum");
+            test.paste("2\n3\n\n4\n5\nsum\n# some comment\n24\n25\nsum");
             test.set_cursor_row_col(2, 0);
 
             test.assert_results(&["2", "3", "", "4", "5", "14", "", "24", "25", "49"][..]);
@@ -8434,7 +8576,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
         #[test]
         fn test_updating_two_sums() {
             let test = create_app2(35);
-            test.paste("2\n3\nsum\n4\n5\nsum\n-- some comment\n24\n25\nsum");
+            test.paste("2\n3\nsum\n4\n5\nsum\n# some comment\n24\n25\nsum");
             test.set_cursor_row_col(0, 1);
 
             test.assert_results(&["2", "3", "5", "4", "5", "19", "", "24", "25", "49"][..]);
@@ -9033,13 +9175,13 @@ ddd",
     fn test_sum_rerender_with_sum_reset() {
         {
             let test = create_app2(35);
-            test.paste("1\n--2\n3\nsum");
+            test.paste("1\n#2\n3\nsum");
 
             test.assert_results(&["1", "3", "3"][..]);
         }
         {
             let test = create_app2(35);
-            test.paste("1\n--2\n3\nsum");
+            test.paste("1\n#2\n3\nsum");
             test.input(EditorInputEvent::Up, InputModifiers::none());
 
             test.assert_results(&["1", "3", "3"][..]);
@@ -9093,6 +9235,48 @@ ddd",
         assert_eq!(render_buckets.ascii_texts[6].text, "50 000".as_bytes());
         assert_eq!(render_buckets.ascii_texts[6].row, canvas_y(4));
         assert_eq!(render_buckets.ascii_texts[6].column, base_x - 5);
+    }
+
+    #[test]
+    fn test_results_have_same_alignment_only_within_single_region() {
+        let test = create_app2(35);
+        test.paste("1\n2.3\n2222\n4km\n50000\n# header\n123456789");
+        test.set_cursor_row_col(2, 0);
+
+        let render_commands = &test.render_bucket().ascii_texts;
+        let base_x = &test.get_render_data().result_gutter_x + RIGHT_GUTTER_WIDTH;
+        // the last row is in a separate region, it does not affect the alignment for the first (unnamed) region
+        assert_eq!(render_commands[0].text, "1".as_bytes());
+        assert_eq!(render_commands[0].row, canvas_y(0));
+        assert_eq!(render_commands[0].column, base_x + 5);
+
+        assert_eq!(render_commands[1].text, "2".as_bytes());
+        assert_eq!(render_commands[1].row, canvas_y(1));
+        assert_eq!(render_commands[1].column, base_x + 5);
+
+        assert_eq!(render_commands[2].text, ".3".as_bytes());
+        assert_eq!(render_commands[2].row, canvas_y(1));
+        assert_eq!(render_commands[2].column, base_x + 6);
+
+        assert_eq!(render_commands[3].text, "2 222".as_bytes());
+        assert_eq!(render_commands[3].row, canvas_y(2));
+        assert_eq!(render_commands[3].column, base_x + 1);
+
+        assert_eq!(render_commands[4].text, "4".as_bytes());
+        assert_eq!(render_commands[4].row, canvas_y(3));
+        assert_eq!(render_commands[4].column, base_x + 5);
+
+        assert_eq!(render_commands[5].text, "km".as_bytes());
+        assert_eq!(render_commands[5].row, canvas_y(3));
+        assert_eq!(render_commands[5].column, base_x + 5 + 4);
+
+        assert_eq!(render_commands[6].text, "50 000".as_bytes());
+        assert_eq!(render_commands[6].row, canvas_y(4));
+        assert_eq!(render_commands[6].column, base_x);
+
+        assert_eq!(render_commands[7].text, "123 456 789".as_bytes());
+        assert_eq!(render_commands[7].row, canvas_y(6));
+        assert_eq!(render_commands[7].column, base_x);
     }
 
     #[test]
@@ -10199,7 +10383,7 @@ finance amount = price - down payment
 
 interest rate = 0.037 (1/year)
 term = 30 years
--- n = term * 12 (1/year)
+// n = term * 12 (1/year)
 n = 360
 r = interest rate / (12 (1/year))
 
@@ -10282,7 +10466,7 @@ finance amount = price - down payment
 
 interest rate = 0.037 (1/year)
 term = 30 years
--- n = term * 12 (1/year)
+// n = term * 12 (1/year)
 n = 360
 r = interest rate / (12 (1/year))
 
@@ -10348,7 +10532,7 @@ finance amount = price - down payment
 
 interest rate = 0.037 (1/year)
 term = 30 years
--- n = term * 12 (1/year)
+// n = term * 12 (1/year)
 n = 36000
 r = interest rate / (12 (1/year))
 
@@ -10430,7 +10614,7 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
                 "30 year",
                 "",
                 "360",
-                "0.0030833333333333333333333333",
+                "0.003083",
                 "",
                 "1 288.792357188724336511790584 $",
             ][..],
@@ -10719,5 +10903,23 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
             1,
             OutputMessage::RenderChar(19, 0, '▏'),
         );
+    }
+
+    #[test]
+    fn results_must_be_rendered() {
+        let test = create_app3(84, 36);
+        test.paste(
+            "# Results must be rendered even if header is in the first line
+69",
+        );
+        test.assert_contains_result(1, |cmd| cmd.text == "69".as_bytes());
+    }
+
+    #[test]
+    fn empty_variable_name() {
+        let test = create_app3(84, 36);
+        test.paste("    =5$2*x-2044923+/I2(397-293496(6[/7k9]/^*6490^)(5/j=");
+        test.input(EditorInputEvent::Char('9'), InputModifiers::none());
+        assert!(test.mut_vars()[0].is_none());
     }
 }
