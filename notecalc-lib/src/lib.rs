@@ -1250,7 +1250,8 @@ impl NoteCalcApp {
         editor_objs: &mut EditorObjects,
         render_buckets: &mut RenderBuckets<'b>,
     ) {
-        if text.is_empty() {
+        let content_is_empty = text.is_empty();
+        if content_is_empty {
             text = EMPTY_FILE_DEFUALT_CONTENT;
         }
         self.editor_content.init_with(text);
@@ -1282,6 +1283,17 @@ impl NoteCalcApp {
             editor_objs,
             render_buckets,
         );
+        if !content_is_empty {
+            self.set_editor_and_result_panel_widths_wrt_editor_and_rerender_if_necessary(
+                units,
+                render_buckets,
+                allocator,
+                tokens,
+                results,
+                vars,
+                editor_objs,
+            );
+        }
     }
 
     pub fn calc_full_content_height(gr: &GlobalRenderData, content_len: usize) -> usize {
@@ -1488,7 +1500,6 @@ impl NoteCalcApp {
                 gr.longest_visible_editor_line_len =
                     gr.longest_visible_editor_line_len.max(r.render_x);
             }
-
             #[cfg(debug_assertions)]
             {
                 let chars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
@@ -1498,14 +1509,9 @@ impl NoteCalcApp {
                     + gr.current_result_panel_width)
                 {
                     let d = i + 1;
-                    render_buckets.draw_char(Layer::AboveText, i, r.render_y, chars[d % 10]);
+                    render_buckets.draw_char(Layer::AboveText, i, canvas_y(0), chars[d % 10]);
                     if d % 10 == 0 && d < 100 {
-                        render_buckets.draw_char(
-                            Layer::AboveText,
-                            i,
-                            r.render_y.add(1),
-                            chars[d / 10],
-                        );
+                        render_buckets.draw_char(Layer::AboveText, i, canvas_y(1), chars[d / 10]);
                     }
                 }
             }
@@ -2363,7 +2369,7 @@ impl NoteCalcApp {
                 let prev_ch = self.editor_content.get_char(pos.row, pos.column - 1);
                 let prev_token_is_lineref = pos.column > 3 /* smallest lineref is 4 char long '&[1]'*/
                     && self.editor_content.get_char(pos.row, pos.column - 1) == ']' && {
-                    let mut i = (pos.column - 2) as  isize;
+                    let mut i = (pos.column - 2) as isize;
                     while i > 1 {
                         if NOT(self.editor_content.get_char(pos.row, i as usize).is_ascii_digit()) {
                             break;
@@ -2372,7 +2378,7 @@ impl NoteCalcApp {
                     }
                     i > 0
                         && self.editor_content.get_char(pos.row, i as usize) == '['
-                        && self.editor_content.get_char(pos.row, (i-1) as usize) == '&'
+                        && self.editor_content.get_char(pos.row, (i - 1) as usize) == '&'
                 };
                 if prev_ch.is_alphanumeric() || prev_ch == '_' || prev_token_is_lineref {
                     self.editor.handle_input(
@@ -2987,6 +2993,37 @@ impl NoteCalcApp {
             editor_objs,
             result_change_flag,
         );
+    }
+
+    fn set_editor_and_result_panel_widths_wrt_editor_and_rerender_if_necessary<'b>(
+        &mut self,
+        units: &Units,
+        render_buckets: &mut RenderBuckets<'b>,
+        allocator: &'b Bump,
+        tokens: &AppTokens<'b>,
+        results: &Results,
+        vars: &Variables,
+        editor_objs: &mut EditorObjects,
+    ) {
+        let minimum_required_space_for_editor =
+            self.render_data.longest_visible_editor_line_len.max(20);
+
+        let desired_gutter_x = self.render_data.left_gutter_width +
+            minimum_required_space_for_editor + 1 /*scrollbar*/;
+        if desired_gutter_x < self.render_data.result_gutter_x {
+            self.result_panel_width_percent =
+                (self.client_width - desired_gutter_x) * 100 / self.client_width;
+            self.set_editor_and_result_panel_widths_and_rerender_if_necessary(
+                units,
+                render_buckets,
+                allocator,
+                tokens,
+                results,
+                vars,
+                editor_objs,
+                BitFlag128::empty(),
+            );
+        }
     }
 
     fn set_editor_and_result_panel_widths_and_rerender_if_necessary<'b>(
@@ -4894,6 +4931,7 @@ struct ResultTmp {
 }
 
 pub const MAX_VISIBLE_HEADER_COUNT: usize = 16;
+
 struct ResultRender {
     result_ranges: SmallVec<[ResultTmp; MAX_LINE_COUNT]>,
     max_len: usize,
@@ -4941,14 +4979,14 @@ fn render_results_into_buf_and_calc_len<'text_ptr>(
         }
         if render_y.as_usize() != 0 && editor_content.get_char(editor_y.as_usize(), 0) == '#' {
             let max_lens = &tmp.max_lengths[region_index];
-            tmp.max_len = max_lens.int_part_len
+            tmp.max_len = (max_lens.int_part_len
                 + max_lens.frac_part_len
                 + if max_lens.unit_part_len > 0 {
                     max_lens.unit_part_len + 1
                 } else {
                     0
-                }
-                .max(tmp.max_len);
+                })
+            .max(tmp.max_len);
             tmp.result_counts_in_regions[region_index] =
                 tmp.result_ranges.len() - region_count_offset;
             region_count_offset = tmp.result_ranges.len();
@@ -5755,7 +5793,6 @@ fn default_result_gutter_x(client_width: usize) -> usize {
 
 #[cfg(test)]
 mod main_tests {
-
     use super::*;
 
     const fn result_panel_w(client_width: usize) -> usize {
@@ -7164,41 +7201,47 @@ mod main_tests {
         fn test_resize_keeps_result_width() {
             let test = create_app3(60, 35);
             test.set_normalized_content("80kg\n190cm\n0.0016\n0.128 kg");
-            let longest_result_len = 11;
             let check_longest_line_did_not_change = || {
-                assert_eq!(
-                    test.get_render_data().longest_visible_result_len,
-                    longest_result_len
-                );
+                assert_eq!(test.get_render_data().longest_visible_result_len, 11);
             };
             let asset_result_x_pos = |expected: usize| {
                 assert_eq!(test.get_render_data().result_gutter_x, expected);
             };
 
+            let calc_result_gutter_x_wrt_client_width = |client_w: usize| {
+                // the result panel width will be 61% (60 - 23) * 100 / 60
+                let percent = 61f32;
+                (client_w as f32
+                    - ((client_w as f32 * percent / 100f32)
+                        .max((LEFT_GUTTER_MIN_WIDTH + SCROLLBAR_WIDTH) as f32)))
+                    as usize
+            };
+
             check_longest_line_did_not_change();
-            asset_result_x_pos(default_result_gutter_x(60));
+            // min editor w + left g + scroll
+            asset_result_x_pos(20 + 2 + 1);
 
             test.handle_resize(50);
-            asset_result_x_pos(default_result_gutter_x(50));
+            asset_result_x_pos(calc_result_gutter_x_wrt_client_width(50));
             check_longest_line_did_not_change();
 
             test.handle_resize(60);
             check_longest_line_did_not_change();
-            asset_result_x_pos(default_result_gutter_x(60));
+            asset_result_x_pos(calc_result_gutter_x_wrt_client_width(60));
 
             test.handle_resize(100);
             check_longest_line_did_not_change();
-            asset_result_x_pos(default_result_gutter_x(100));
+            asset_result_x_pos(calc_result_gutter_x_wrt_client_width(100));
 
             // there is no enough space for the panel,
             // so it becomes bigger than 30%
             test.handle_resize(40);
             check_longest_line_did_not_change();
-            asset_result_x_pos(27);
+            asset_result_x_pos(15);
 
             test.handle_resize(30);
             check_longest_line_did_not_change();
-            asset_result_x_pos(17);
+            asset_result_x_pos(12);
 
             test.handle_resize(20);
             asset_result_x_pos(7);
@@ -7206,7 +7249,7 @@ mod main_tests {
             // too small
             test.handle_resize(10);
             check_longest_line_did_not_change();
-            asset_result_x_pos(default_result_gutter_x(10));
+            asset_result_x_pos(7);
         }
 
         #[test]
@@ -7521,6 +7564,20 @@ sum
 sum",
         );
         test.assert_results(&["6 m^2", "", "1", "2", "3", "", "4", "5", "9"][..]);
+    }
+
+    #[test]
+    fn test_that_header_lengths_are_separate_and_not_add() {
+        let test = create_app3(79, 32);
+        test.set_normalized_content(
+            "# Header 0\n\
+                123\n\
+                # Header 1\n\
+                123\n\
+                # Header 2\n\
+                123",
+        );
+        assert_eq!(test.get_render_data().longest_visible_result_len, 3);
     }
 
     #[test]
@@ -7895,6 +7952,7 @@ sum",
     mod test_line_dependency_and_pulsing_on_change {
         use super::super::*;
         use super::*;
+
         #[test]
         fn test_modifying_a_lineref_recalcs_its_dependants() {
             let test = create_app2(35);
@@ -9047,7 +9105,7 @@ ddd",
                 x: left_gutter_width + 4,
                 y: canvas_y(0),
                 w: 3,
-                h: 1
+                h: 1,
             }
         );
         assert_eq!(
@@ -9056,7 +9114,7 @@ ddd",
                 x: left_gutter_width,
                 y: canvas_y(1),
                 w: 0,
-                h: 1
+                h: 1,
             }
         );
     }
@@ -9579,7 +9637,7 @@ ddd",
             46,
             NoteCalcApp::calc_full_content_height(
                 &test.get_render_data(),
-                test.app().editor_content.line_count()
+                test.app().editor_content.line_count(),
             )
         );
     }

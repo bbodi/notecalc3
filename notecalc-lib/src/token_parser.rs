@@ -271,6 +271,7 @@ impl TokenParser {
             i = 1;
         };
 
+        // TODO: make it a builtin variable?
         if str[0] == 'π' {
             return Some(Token {
                 typ: TokenType::NumberLiteral(PI),
@@ -319,17 +320,13 @@ impl TokenParser {
                 if str[i].is_ascii_hexdigit()
                     && str
                         .get(i + 1)
-                        .map(|it| {
-                            it.is_ascii_hexdigit()
-                                || it.is_ascii_whitespace()
-                                || !it.is_alphabetic()
-                        })
+                        .map(|it| it.is_ascii_hexdigit() || *it == '_' || !it.is_alphabetic())
                         .unwrap_or(true)
                 {
                     end_index_before_last_whitespace = i + 1;
                     number_str[number_str_index] = str[i] as u8;
                     number_str_index += 1;
-                } else if str[i].is_ascii_whitespace() {
+                } else if str[i] == '_' {
                     // allowed
                 } else {
                     break;
@@ -755,7 +752,7 @@ mod tests {
         test_parse("0b0101 101     1", 91);
 
         test_parse("0x1", 1);
-        test_parse("0xAB Cd e    f", 11_259_375);
+        test_parse("0xAB_Cd_e____f", 11_259_375);
 
         test_parse("1", 1);
         test_parse("123456", 123456);
@@ -1757,5 +1754,30 @@ mod tests {
         test(" #", &[str(" "), str("#")]);
         test(" #a", &[str(" "), str("#a")]);
         test(" # a", &[str(" "), str("#"), str(" "), str("a")]);
+    }
+
+    #[test]
+    fn test_spaces_are_not_allowed_in_hex() {
+        // e.g. 0xFF B
+        // is it 0xFFB or 0xFF byte?
+        test("0xAA BB", &[num(0xAA), str(" "), str("BB")]);
+        test(
+            "0xAA B",
+            &[num(0xAA), str(" "), apply_to_prev_token_unit("B")],
+        );
+        test("0xAABB", &[num(0xAABB)]);
+    }
+
+    #[test]
+    fn test_undorscore_is_allowed_in_hex() {
+        test("0xAA_B", &[num(0xAAB)]);
+        test("0xAA_BB", &[num(0xAABB)]);
+        test("0xA_A_B", &[num(0xAAB)]);
+        test("0x_AAB_", &[num(0xAAB), str("_")]);
+        test("0x_A_A_B_", &[num(0xAAB), str("_")]);
+        test(
+            "0xAA_B B",
+            &[num(0xAAB), str(" "), apply_to_prev_token_unit("B")],
+        );
     }
 }

@@ -1,7 +1,26 @@
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+### Breaking Changes
+### Features
+### Changed
+### Fixed
+### Removed
+
 
 ## [Unreleased]
+### Breaking Changes
+- Spaces is not allowed in hex numbers anymore but undorscores are.
+  It caused problems since 0xAA B could not be unambiguously parsed (e.g. it can be 0xAAB or 0xAA bytes, so make it explicit by writing 0xAA_B).
+### Features
+### Changed
+- When opening a not empty note, the result panel now tries
+to be as close to the editor as possible to have a better
+  overview about calculations and their results.
+- GitHub and website links were added to the NoteCalc page
+### Fixed
+- Longest visible result length was calculated wrongly when there were multiple headers
+in a note, which affected the result panel size.
+### Removed
 
 ## [0.2.0] - 2020-12-03
 ### Breaking Changes
