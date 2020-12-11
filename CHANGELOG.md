@@ -12,14 +12,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Spaces is not allowed in hex numbers anymore but undorscores are.
   It caused problems since 0xAA B could not be unambiguously parsed (e.g. it can be 0xAAB or 0xAA bytes, so make it explicit by writing 0xAA_B).
 ### Features
+- Dark Theme
+- Render command optimizations, reducing render command count by around 40%
+  (gutters, line number- and result abckround now
+  are rendered only once as a big rectangle and not line by line).
+- Active references (variables and line refs in the cursor's row) are now just underlined
+  and the referenced lines are not highlighted fully only their left and right gutter.
+  https://twitter.com/bodidev/status/1337363000261554182
+
 ### Changed
 - When opening a not empty note, the result panel now tries
 to be as close to the editor as possible to have a better
   overview about calculations and their results.
 - GitHub and website links were added to the NoteCalc page
+- Strings at the frontend are now rendered char by char. It is necessary
+to be able to place the cursor at the right place, since the text rendering
+  does not guarantee that a single char takes exactly 'char-width' pixels.
+
 ### Fixed
 - Longest visible result length was calculated wrongly when there were multiple headers
 in a note, which affected the result panel size.
+- `sum` variable get emptied at #Headers
+- Char width at the fonrend is now integer, ceiling upward. It caused issues
+with rendering (widths of recatngles were float as well and did not always fill up
+  the required space)
 ### Removed
 
 ## [0.2.0] - 2020-12-03

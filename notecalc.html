@@ -34,7 +34,7 @@
 </head>
 
 
-<body style="overflow: hidden;">
+<body id='body' class="" style="overflow: hidden;">
 
 <nav aria-label="" class="d-none d-md-block">
     <ul id="tabs" class="nav nav-tabs" style="margin-bottom: 0;margin-top: 0">
@@ -61,6 +61,18 @@
                 Export
             </a>
         </li>
+        &nbsp;
+        <li class="nav-item">
+            <a id="theme_selector_btn"
+               class="badge badge-light offset-1"
+               href="javascript: void(0)"
+               onclick="on_theme_btn_click()"
+            >
+                Light theme
+            </a>
+        </li>
+
+        &nbsp;
         &nbsp;
         <li class="nav-item">
             <a class="badge badge-secondary offset-1"
@@ -127,6 +139,11 @@
 <script src="assets/webfont_v1.6.26.js"></script>
 <script>
     let font_width;
+    const THEME_LIGHT = 0;
+    const THEME_DARK = 1;
+    const DARK_BG_COLOR = '#282a36';
+    const DARK_BG_COLOR_BRIGHTER = '#000000';
+    let theme = THEME_LIGHT;
     let canvas_dirty = false;
     let can_scroll = true;
     let FONT_HEIGHT = 16;
@@ -185,7 +202,6 @@
 
         // some browser extension add a class to the body, so rmeove them
         let body = document.getElementsByTagName('body').item(0);
-        body.className = '';
         body.style = "margin: 0";
         ctx.font = FONT_HEIGHT + NORMAL_FONT;
         ctx.textBaseline = "bottom";
@@ -210,6 +226,11 @@
         if (dpi <= 1) {
             dpi = 1;
         }
+        dpi = Math.ceil(dpi);
+        console.log(
+            'window.devicePixelRatio is', window.devicePixelRatio,
+            'canvas scale is', dpi
+        );
         canvas.width = size.width_px * dpi;
         canvas.height = size.height_px * dpi;
         ctx.scale(dpi, dpi);
@@ -303,7 +324,8 @@
         let notecalc_data = localStorage.getItem('notecalc');
         if (notecalc_data === null) {
             notecalc_data = {
-                tabs: []
+                tabs: [],
+                theme: THEME_LIGHT
             };
         } else {
             notecalc_data = JSON.parse(notecalc_data);
@@ -570,18 +592,19 @@
                 let str = '';
                 for (j = 0; j < len; j++) {
                     let ch = read_u32(command_buffer, buf_index);
-                    str += String.fromCharCode(ch);
+                    let rch = String.fromCharCode(ch);
+                    str += rch;
 
+                    ctx.fillText(
+                        rch,
+                        (column_i + j) * font_width,
+                        line_height * row_i + line_height - FONT_VERT_PADDING
+                    );
                     buf_index += 4;
                 }
                 if (is_debug) {
                     debug_commands.push([column_i, row_i, str]);
                 }
-                ctx.fillText(
-                    str,
-                    column_i * font_width,
-                    line_height * row_i + line_height - FONT_VERT_PADDING
-                );
             } else if (command_id === 5) { // RenderAsciiText
                 let row_i = read_u16(command_buffer, buf_index);
                 let column_i = read_u16(command_buffer, buf_index + 2);
@@ -591,19 +614,19 @@
                 let str = '';
                 for (j = 0; j < len; j++) {
                     let ch = read_u8(command_buffer, buf_index);
-                    str += String.fromCharCode(ch);
-
+                    let rch = String.fromCharCode(ch);
+                    str += rch;
+                    ctx.fillText(
+                        rch,
+                        (column_i + j) * font_width,
+                        line_height * row_i + line_height - FONT_VERT_PADDING
+                    );
                     buf_index += 1;
                 }
 
                 if (is_debug) {
                     debug_commands.push(str);
                 }
-                ctx.fillText(
-                    str,
-                    column_i * font_width,
-                    line_height * row_i + line_height - FONT_VERT_PADDING
-                );
             } else if (command_id === 7 || command_id === 8) { // RenderRectangle | PulsingRectangle
                 let x = command_buffer[buf_index + 0];
                 let y = command_buffer[buf_index + 1];
@@ -665,6 +688,20 @@
                     debug_commands.push('Set Header: ' + is_header);
                 }
                 buf_index += 1;
+            } else if (command_id === 10) { // RenderUnderline
+                let x = command_buffer[buf_index + 0];
+                let y = command_buffer[buf_index + 1];
+                let w = command_buffer[buf_index + 2];
+                let j;
+                for (j = 0; j < w; j++) {
+                    let rch = '▁';
+                    ctx.fillText(
+                        rch,
+                        (x + j) * font_width,
+                        line_height * y + line_height - FONT_VERT_PADDING
+                    );
+                }
+                buf_index += 3;
             }
         }
         change_result_pulses_are_active_from_prev_frame |= change_result_pulses_were_added;
@@ -755,10 +792,16 @@
             for (i = 0; i < tablinks.length; i++) {
                 tablinks[i].className = 'tablinks nav-item';
                 tablinks[i].children.item(0).className = 'nav-link';
+                tablinks[i].children.item(0).style.backgroundColor = null;
+                tablinks[i].children.item(0).style.borderColor = null;
             }
 
             tab_btn.className = 'tablinks nav-item';
             tab_btn.children.item(0).className = 'nav-link active';
+            if (theme === THEME_DARK) {
+                tab_btn.children.item(0).style.backgroundColor = '#A6B6E8';
+                tab_btn.children.item(0).style.borderColor = DARK_BG_COLOR_BRIGHTER + ' ' + DARK_BG_COLOR_BRIGHTER + ' ' + DARK_BG_COLOR;
+            }
         }
         reload_content(index);
     }
@@ -848,6 +891,41 @@
         document.getElementById('modal_content').innerText = str;
     }
 
+    function on_theme_btn_click() {
+        let notecalc_data = JSON.parse(localStorage.getItem('notecalc'));
+        let new_theme;
+        if (notecalc_data.theme === THEME_LIGHT) {
+            new_theme = THEME_DARK;
+        } else {
+            new_theme = THEME_LIGHT;
+        }
+        apply_theme(new_theme);
+    }
+
+    function apply_theme(new_theme) {
+        theme = new_theme;
+        let notecalc_data = JSON.parse(localStorage.getItem('notecalc'));
+        let btn = document.getElementById('theme_selector_btn');
+        notecalc_data.theme = theme;
+        if (theme === THEME_LIGHT) {
+            btn.className = "badge badge-dark offset-1";
+            btn.innerText = 'Dark theme'
+            document.getElementsByTagName('body')[0].style.backgroundColor = "#FFFFFF";
+            document.getElementById('tabs').style.borderBottom = null;
+            document.getElementById('body').className = '';
+        } else {
+            btn.className = "badge badge-light offset-1";
+            btn.innerText = 'Light theme'
+            document.getElementsByTagName('body')[0].style.backgroundColor = DARK_BG_COLOR;
+            document.getElementById('tabs').style.borderBottom = "1px solid " + DARK_BG_COLOR_BRIGHTER;
+            document.getElementById('body').className = 'bg-dark';
+        }
+        localStorage.setItem('notecalc', JSON.stringify(notecalc_data));
+        on_tab_click(active_tab_index);
+        wasm_bindgen.set_theme(app_ptr, theme);
+        set_canvas_dirty('THEME changed');
+    }
+
     function copy_modal_content_to_clipboard() {
         let content = document.getElementById('modal_content');
         content.focus();
@@ -907,12 +985,16 @@
 
         init_canvas();
 
-        var notecalc_data = JSON.parse(localStorage.getItem('notecalc'));
+        let notecalc_data = JSON.parse(localStorage.getItem('notecalc'));
         if (!notecalc_data) {
             notecalc_data = {
-                tabs: [{encoded_content: ''}]
+                tabs: [{encoded_content: ''}],
+                theme: THEME_LIGHT
             };
             localStorage.setItem('notecalc', JSON.stringify(notecalc_data));
+        }
+        if (notecalc_data.theme === undefined) {
+            notecalc_data.theme = THEME_LIGHT;
         }
 
         if (!is_mobile) {
@@ -943,6 +1025,7 @@
 
         add_event_listeners();
 
+        apply_theme(notecalc_data.theme);
         app_initialized = true;
         requestAnimationFrame(tick);
     }
@@ -1096,11 +1179,13 @@
                 ctx.textBaseline = "bottom";
                 font_width = ctx.measureText('a').width;
             }
+            font_width = Math.ceil(font_width);
+
             let max_h = 0;
             const find_max_char_h = function (ch) {
                 let m = ctx.measureText(ch);
                 let font_height = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent;
-                console.log(ch, ' ', ch.charCodeAt(0), ' ', font_height);
+                console.log(ch, ', code =', ch.charCodeAt(0), ', height =', font_height);
                 if (font_height > max_h) {
                     max_h = font_height;
                 }

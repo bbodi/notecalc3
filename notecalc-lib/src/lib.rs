@@ -49,25 +49,20 @@ pub mod consts;
 pub mod editor;
 pub mod renderer;
 
-const SCROLLBAR_HOVER_COLOR: u32 = 0xFFBBBB_FF;
-const SCROLLBAR_NORMAL_COLOR: u32 = 0xFFCCCC_FF;
 const SCROLLBAR_WIDTH: usize = 1;
 
 const RENDERED_RESULT_PRECISION: usize = 28;
-const LINE_REF_BACKGROUND_COLOR: u32 = 0xDCE2F7_FF;
 const MAX_EDITOR_WIDTH: usize = 120;
 const LEFT_GUTTER_MIN_WIDTH: usize = 2;
 pub const MAX_LINE_COUNT: usize = 128;
 const RIGHT_GUTTER_WIDTH: usize = 2;
-const CHANGE_RESULT_PULSE_START_COLOR: u32 = 0xFF88FF_AA;
-const CHANGE_RESULT_PULSE_END_COLOR: u32 = 0xFFFFFF_55;
-const REFERENCE_PULSE_PULSE_START_COLOR: u32 = 0x00FF7F_33;
 const MIN_RESULT_PANEL_WIDTH: usize = 7;
 const DEFAULT_RESULT_PANEL_WIDTH_PERCENT: usize = 30;
 const SUM_VARIABLE_INDEX: usize = MAX_LINE_COUNT;
 const MATRIX_ASCII_HEADER_FOOTER_LINE_COUNT: usize = 2;
 const ACTIVE_LINE_REF_HIGHLIGHT_COLORS: [u32; 9] = [
-    0xFFD300, 0xDE3163, 0x73c2fb, 0xc7ea46, 0x702963, 0x997950, 0x777b73, 0xFC6600, 0xED2939,
+    0xFFD300FF, 0xDE3163FF, 0x73c2fbFF, 0xc7ea46FF, 0x702963FF, 0x997950FF, 0x777b73FF, 0xFC6600FF,
+    0xED2939FF,
 ];
 
 // I hate Rust's borrow checker
@@ -76,6 +71,131 @@ const ACTIVE_LINE_REF_HIGHLIGHT_COLORS: [u32; 9] = [
 // because the references to it are removed -_-'.
 // Because of this global var, only single thread test running is possible.
 static mut RESULT_BUFFER: [u8; 2048] = [0; 2048];
+
+#[allow(dead_code)]
+pub struct Theme {
+    pub bg: u32,
+    pub result_bg_color: u32,
+    pub selection_color: u32,
+    pub sum_bg_color: u32,
+    pub sum_text_color: u32,
+    pub reference_pulse_start_color: u32,
+    pub reference_pulse_end_color: u32,
+    pub number: u32,
+    pub number_error: u32,
+    pub operator: u32,
+    pub unit: u32,
+    pub variable: u32,
+    pub result_text: u32,
+    pub header: u32,
+    pub text: u32,
+    pub cursor: u32,
+    pub matrix_edit_active_bg: u32,
+    pub matrix_edit_active_text: u32,
+    pub matrix_edit_inactive_text: u32,
+    pub result_gutter_bg: u32,
+    pub left_gutter_bg: u32,
+    pub line_num_active: u32,
+    pub line_num_simple: u32,
+    pub scrollbar_hovered: u32,
+    pub scrollbar_normal: u32,
+    pub line_ref_bg: u32,
+    pub line_ref_text: u32,
+    pub line_ref_selector: u32,
+    pub referenced_matrix_text: u32,
+    pub change_result_pulse_start: u32,
+    pub change_result_pulse_end: u32,
+    pub current_line_bg: u32,
+}
+
+#[allow(dead_code)]
+impl Theme {
+    const DRACULA_BG: u32 = 0x282a36_FF;
+    const DRACULA_CURRENT_LINE: u32 = 0x44475a_FF;
+    const DRACULA_FG: u32 = 0xf8f8f2_FF;
+    const DRACULA_CYAN: u32 = 0x8be9fd_FF;
+    const DRACULA_COMMENT: u32 = 0x6272a4_FF;
+    const DRACULA_GREEN: u32 = 0x50fa7b_FF;
+    const DRACULA_ORANGE: u32 = 0xffb86c_FF;
+    const DRACULA_PINK: u32 = 0xff79c6_FF;
+    const DRACULA_PURPLE: u32 = 0xbd93f9_FF;
+    const DRACULA_RED: u32 = 0xff5555_FF;
+    const DRACULA_YELLOW: u32 = 0xf1fa8c_FF;
+}
+
+pub const THEMES: [Theme; 2] = [
+    // LIGHT
+    Theme {
+        bg: 0xFFFFFF_FF,
+        result_bg_color: 0xF2F2F2_FF,
+        result_gutter_bg: 0xD2D2D2_FF,
+        selection_color: 0xA6D2FF_FF,
+        sum_bg_color: 0x008a0d_FF,
+        sum_text_color: 0x000000_FF,
+        reference_pulse_start_color: 0x00FF7F_33,
+        reference_pulse_end_color: 0x00FF7F_00,
+        number: 0x8963c4_FF,
+        number_error: 0xde353d_FF,
+        operator: 0x3a88e8_FF,
+        unit: 0x048395_FF,
+        variable: 0xc26406_FF,
+        result_text: 0x000000_FF,
+        header: 0x000000_FF,
+        text: 0x8393c7_FF,
+        cursor: 0x000000_FF,
+        matrix_edit_active_bg: 0xBBBBBB_55,
+        matrix_edit_active_text: 0x000000_FF,
+        matrix_edit_inactive_text: 0x000000_FF,
+        left_gutter_bg: 0xF2F2F2_FF,
+        line_num_active: 0x000000_FF,
+        line_num_simple: 0xADADAD_FF,
+        scrollbar_hovered: 0xFFBBBB_FF,
+        scrollbar_normal: 0xFFCCCC_FF,
+        line_ref_text: 0x000000_FF,
+        line_ref_bg: 0xDCE2F7_FF,
+        line_ref_selector: 0xFFCCCC_FF,
+        referenced_matrix_text: 0x000000_FF,
+        change_result_pulse_start: 0xFF88FF_AA,
+        change_result_pulse_end: 0xFFFFFF_55,
+        current_line_bg: 0xFFFFCC_FF,
+    },
+    // DARK
+    Theme {
+        bg: Theme::DRACULA_BG,
+        result_bg_color: 0x3c3f41_FF,
+        result_gutter_bg: 0x313335_FF,
+        selection_color: 0x214283_FF,
+        sum_bg_color: Theme::DRACULA_GREEN,
+        sum_text_color: 0x000000_FF,
+        reference_pulse_start_color: 0x00FF7F_33,
+        reference_pulse_end_color: 0x00FF7F_00,
+        number: Theme::DRACULA_PURPLE,
+        number_error: Theme::DRACULA_RED,
+        operator: 0x5bb0ff_FF, // Theme::DRACULA_YELLOW,
+        unit: Theme::DRACULA_CYAN,
+        variable: Theme::DRACULA_ORANGE,
+        result_text: Theme::DRACULA_FG,
+        header: Theme::DRACULA_FG,
+        text: Theme::DRACULA_COMMENT + 0x444444_00,
+        cursor: Theme::DRACULA_FG,
+        matrix_edit_active_bg: 0xBBBBBB_55,
+        matrix_edit_active_text: 0x000000_FF,
+        matrix_edit_inactive_text: 0x000000_FF,
+        left_gutter_bg: 0x3c3f41_FF,
+        line_num_active: 0xa3a2a0_FF,
+        line_num_simple: 0x4e6164_FF,
+        scrollbar_hovered: 0x4f4f4f_FF,
+        scrollbar_normal: 0x4b4b4b_FF,
+        //line_ref_bg: Theme::DRACULA_COMMENT,
+        line_ref_bg: Theme::DRACULA_BG + 0x333300_00,
+        line_ref_text: 0x000000_FF,
+        line_ref_selector: 0xFFCCCC_FF,
+        referenced_matrix_text: 0x000000_FF,
+        change_result_pulse_start: 0xFF88FF_AA,
+        change_result_pulse_end: 0xFFFFFF_55,
+        current_line_bg: Theme::DRACULA_CURRENT_LINE,
+    },
+];
 
 #[allow(non_snake_case)]
 #[inline]
@@ -300,6 +420,7 @@ pub mod helper {
         pub current_result_panel_width: usize,
         editor_y_to_render_y: [Option<CanvasY>; MAX_LINE_COUNT],
         editor_y_to_rendered_height: [usize; MAX_LINE_COUNT],
+        pub theme_index: usize,
     }
 
     impl GlobalRenderData {
@@ -329,6 +450,7 @@ pub mod helper {
                 editor_y_to_render_y: [None; MAX_LINE_COUNT],
                 editor_y_to_rendered_height: [0; MAX_LINE_COUNT],
                 client_height,
+                theme_index: 0,
             };
 
             r.current_editor_width = (result_gutter_x - left_gutter_width) - 1;
@@ -695,6 +817,11 @@ pub enum OutputMessage<'a> {
         animation_time: Duration,
     },
     FollowingTextCommandsAreHeaders(bool),
+    RenderUnderline {
+        x: usize,
+        y: CanvasY,
+        w: usize,
+    },
 }
 
 #[repr(C)]
@@ -705,7 +832,20 @@ pub enum Layer {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct Rect {
+    pub x: u16,
+    pub y: u16,
+    pub w: u16,
+    pub h: u16,
+}
+
+#[derive(Debug)]
 pub struct RenderBuckets<'a> {
+    pub current_line_highlight: Option<Rect>,
+    pub left_gutter_bg: Rect,
+    pub right_gutter_bg: Rect,
+    pub result_panel_bg: Rect,
+    pub scroll_bar: Option<(u32, Rect)>,
     pub ascii_texts: Vec<RenderAsciiTextMsg<'a>>,
     pub utf8_texts: Vec<RenderUtf8TextMsg<'a>>,
     pub headers: Vec<RenderUtf8TextMsg<'a>>,
@@ -716,12 +856,31 @@ pub struct RenderBuckets<'a> {
     pub variable: Vec<RenderUtf8TextMsg<'a>>,
     pub line_ref_results: Vec<RenderStringMsg>,
     pub custom_commands: [Vec<OutputMessage<'a>>; 3],
-    pub clear_commands: Vec<OutputMessage<'a>>,
 }
 
 impl<'a> RenderBuckets<'a> {
     pub fn new() -> RenderBuckets<'a> {
         RenderBuckets {
+            current_line_highlight: None,
+            left_gutter_bg: Rect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+            },
+            right_gutter_bg: Rect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+            },
+            result_panel_bg: Rect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+            },
+            scroll_bar: None,
             ascii_texts: Vec::with_capacity(128),
             utf8_texts: Vec::with_capacity(128),
             headers: Vec::with_capacity(16),
@@ -736,7 +895,6 @@ impl<'a> RenderBuckets<'a> {
             operators: Vec::with_capacity(32),
             variable: Vec::with_capacity(32),
             line_ref_results: Vec::with_capacity(32),
-            clear_commands: Vec::with_capacity(8),
         }
     }
 
@@ -757,7 +915,6 @@ impl<'a> RenderBuckets<'a> {
         self.operators.clear();
         self.variable.clear();
         self.line_ref_results.clear();
-        self.clear_commands.clear();
     }
 
     pub fn set_color(&mut self, layer: Layer, color: u32) {
@@ -790,6 +947,10 @@ impl<'a> RenderBuckets<'a> {
                 column: x,
             },
         ));
+    }
+
+    pub fn draw_underline(&mut self, layer: Layer, x: usize, y: CanvasY, w: usize) {
+        self.custom_commands[layer as usize].push(OutputMessage::RenderUnderline { x, y, w });
     }
 
     pub fn draw_string(&mut self, layer: Layer, x: usize, y: CanvasY, text: String) {
@@ -998,6 +1159,7 @@ impl MatrixEditing {
         left_gutter_width: usize,
         render_buckets: &mut RenderBuckets<'b>,
         rendered_row_height: usize,
+        theme: &Theme,
     ) -> usize {
         let vert_align_offset =
             (rendered_row_height - MatrixData::calc_render_height(self.row_count)) / 2;
@@ -1041,7 +1203,7 @@ impl MatrixEditing {
                 );
 
                 if self.current_cell == Pos::from_row_column(row_i, col_i) {
-                    render_buckets.set_color(Layer::BehindText, 0xBBBBBB_55);
+                    render_buckets.set_color(Layer::BehindText, theme.matrix_edit_active_bg);
                     render_buckets.draw_rect(
                         Layer::BehindText,
                         render_x + padding_x + left_gutter_width,
@@ -1050,7 +1212,7 @@ impl MatrixEditing {
                         1,
                     );
                     let chars = &self.editor_content.lines().next().unwrap();
-                    render_buckets.set_color(Layer::Text, 0x000000_FF);
+                    render_buckets.set_color(Layer::Text, theme.matrix_edit_active_text);
                     for (i, char) in chars.iter().enumerate() {
                         render_buckets.draw_char(
                             Layer::Text,
@@ -1062,7 +1224,7 @@ impl MatrixEditing {
                     let sel = self.editor.get_selection();
                     if let Some((first, second)) = sel.is_range() {
                         let len = second.column - first.column;
-                        render_buckets.set_color(Layer::BehindText, 0xA6D2FF_FF);
+                        render_buckets.set_color(Layer::BehindText, theme.selection_color);
                         render_buckets.draw_rect(
                             Layer::BehindText,
                             render_x + padding_x + left_gutter_width + first.column,
@@ -1073,7 +1235,7 @@ impl MatrixEditing {
                     }
                 } else {
                     let chars = &self.cell_strings[row_i * self.col_count + col_i];
-                    render_buckets.set_color(Layer::Text, 0x000000_FF);
+                    render_buckets.set_color(Layer::Text, theme.matrix_edit_inactive_text);
                     render_buckets.draw_string(
                         Layer::Text,
                         render_x + padding_x + left_gutter_width,
@@ -1085,7 +1247,7 @@ impl MatrixEditing {
                 if self.current_cell == Pos::from_row_column(row_i, col_i)
                     && self.editor.is_cursor_shown()
                 {
-                    render_buckets.set_color(Layer::Text, 0x000000_FF);
+                    render_buckets.set_color(Layer::Text, theme.cursor);
                     render_buckets.draw_char(
                         Layer::Text,
                         (self.editor.get_selection().get_cursor_pos().column + left_gutter_width)
@@ -1328,7 +1490,31 @@ impl NoteCalcApp {
         editor_objs_referencing_current_line: &mut Vec<EditorObjId>,
         mouse_hover_type: MouseHoverType,
     ) {
+        let theme = &THEMES[gr.theme_index];
         gr.longest_visible_editor_line_len = 0;
+
+        // result background
+        render_buckets.result_panel_bg = Rect {
+            x: (gr.result_gutter_x + RIGHT_GUTTER_WIDTH) as u16,
+            y: 0,
+            w: gr.current_result_panel_width as u16,
+            h: gr.client_height as u16,
+        };
+        // result gutter
+        render_buckets.right_gutter_bg = Rect {
+            x: gr.result_gutter_x as u16,
+            y: 0,
+            w: RIGHT_GUTTER_WIDTH as u16,
+            h: gr.client_height as u16,
+        };
+        // left gutter
+        render_buckets.left_gutter_bg = Rect {
+            x: 0,
+            y: 0,
+            w: gr.left_gutter_width as u16,
+            h: gr.client_height as u16,
+        };
+
         // x, h
         let mut editor_y_to_render_w: [usize; MAX_LINE_COUNT] = [0; MAX_LINE_COUNT];
         {
@@ -1368,8 +1554,6 @@ impl NoteCalcApp {
                 // "- 1" so if it is even, it always appear higher
                 r.vert_align_offset = (r.rendered_row_height - 1) / 2;
 
-                highlight_current_line(render_buckets, &r, editor, &gr);
-
                 if let Some(tokens) = &tokens[editor_y] {
                     // TODO: choose a better name
                     // it means that either we use the nice token rendering (e.g. for matrix it is the multiline matrix stuff),
@@ -1394,17 +1578,17 @@ impl NoteCalcApp {
                         &units,
                         need_matrix_renderer,
                         Some(RENDERED_RESULT_PRECISION),
+                        theme,
                     );
-                    // don't highlight refs in the current row as they will be pulsing in different colors
-                    if editor.get_selection().get_cursor_pos().row != r.editor_y.as_usize() {
-                        highlight_line_ref_background(
-                            &editor_objs[editor_y],
-                            render_buckets,
-                            &r,
-                            gr,
-                        );
-                    } else {
-                        highlight_active_line_refs(&editor_objs[editor_y], render_buckets, &r, gr);
+                    highlight_line_ref_background(
+                        &editor_objs[editor_y],
+                        render_buckets,
+                        &r,
+                        gr,
+                        theme,
+                    );
+                    if editor.get_selection().get_cursor_pos().row == r.editor_y.as_usize() {
+                        underline_active_line_refs(&editor_objs[editor_y], render_buckets, gr);
                     }
                 } else {
                     r.rendered_row_height = 1;
@@ -1419,100 +1603,78 @@ impl NoteCalcApp {
                     &gr,
                     &line_reference_chooser,
                     gr.result_gutter_x,
+                    theme,
                 );
 
-                draw_cursor(render_buckets, &r, &gr, &editor, &matrix_editing);
+                draw_cursor(render_buckets, &r, &gr, &editor, &matrix_editing, theme);
 
                 draw_right_gutter_num_prefixes(
                     render_buckets,
                     gr.result_gutter_x,
                     &editor_content,
                     &r,
-                );
-                // result gutter
-                render_buckets.set_color(Layer::AboveText, 0xD2D2D2_FF);
-                render_buckets.draw_rect(
-                    Layer::AboveText,
-                    gr.result_gutter_x,
-                    render_y,
-                    RIGHT_GUTTER_WIDTH,
-                    r.rendered_row_height,
+                    theme,
                 );
 
-                render_wrap_dots(render_buckets, &r, &gr);
+                render_wrap_dots(render_buckets, &r, &gr, theme);
 
-                // line number
-                {
-                    render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
-                    render_buckets.draw_rect(
-                        Layer::BehindText,
-                        0,
-                        render_y,
-                        gr.left_gutter_width,
-                        r.rendered_row_height,
-                    );
-                    if editor_y.as_usize() == editor.get_selection().get_cursor_pos().row {
-                        render_buckets.set_color(Layer::Text, 0x000000_FF);
-                    } else {
-                        render_buckets.set_color(Layer::Text, 0xADADAD_FF);
-                    }
-                    let vert_align_offset = (r.rendered_row_height - 1) / 2;
-                    let line_num_str = if r.editor_y.as_usize() < 9 {
-                        &(LINE_NUM_CONSTS[editor_y.as_usize()][..])
-                    } else if r.editor_y.as_usize() < 99 {
-                        &(LINE_NUM_CONSTS2[(editor_y.as_usize()) - 9][..])
-                    } else {
-                        &(LINE_NUM_CONSTS3[(editor_y.as_usize()) - 99][..])
-                    };
-                    render_buckets.draw_text(
-                        Layer::Text,
-                        0,
-                        render_y.add(vert_align_offset),
-                        line_num_str,
-                    );
-                }
-                // } else if redraw_result_area.need(editor_y) {
                 draw_right_gutter_num_prefixes(
                     render_buckets,
                     gr.result_gutter_x,
                     &editor_content,
                     &r,
-                );
-                // result background
-                render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
-                render_buckets.draw_rect(
-                    Layer::BehindText,
-                    gr.result_gutter_x + RIGHT_GUTTER_WIDTH,
-                    render_y,
-                    gr.current_result_panel_width,
-                    r.rendered_row_height,
-                );
-                // result gutter
-                render_buckets.set_color(Layer::BehindText, 0xD2D2D2_FF);
-                render_buckets.draw_rect(
-                    Layer::BehindText,
-                    gr.result_gutter_x,
-                    render_y,
-                    RIGHT_GUTTER_WIDTH,
-                    r.rendered_row_height,
+                    theme,
                 );
                 r.line_render_ended(gr.get_rendered_height(editor_y));
                 gr.longest_visible_editor_line_len =
                     gr.longest_visible_editor_line_len.max(r.render_x);
             }
-            #[cfg(debug_assertions)]
-            {
-                let chars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
-                for i in 0..(gr.left_gutter_width
-                    + (gr.current_editor_width + 1)
-                    + RIGHT_GUTTER_WIDTH
-                    + gr.current_result_panel_width)
-                {
-                    let d = i + 1;
-                    render_buckets.draw_char(Layer::AboveText, i, canvas_y(0), chars[d % 10]);
-                    if d % 10 == 0 && d < 100 {
-                        render_buckets.draw_char(Layer::AboveText, i, canvas_y(1), chars[d / 10]);
-                    }
+            // #[cfg(debug_assertions)]
+            // {
+            //     let chars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+            //     for i in 0..(gr.left_gutter_width
+            //         + (gr.current_editor_width + 1)
+            //         + RIGHT_GUTTER_WIDTH
+            //         + gr.current_result_panel_width)
+            //     {
+            //         let d = i + 1;
+            //         render_buckets.draw_char(Layer::AboveText, i, canvas_y(0), chars[d % 10]);
+            //         if d % 10 == 0 && d < 100 {
+            //             render_buckets.draw_char(Layer::AboveText, i, canvas_y(1), chars[d / 10]);
+            //         }
+            //     }
+            // }
+        }
+
+        highlight_current_line(render_buckets, editor, &gr, theme);
+
+        // line numbers
+        {
+            let mut target_y = canvas_y(0);
+            render_buckets.set_color(Layer::Text, theme.line_num_simple);
+            for i in 0..gr.client_height {
+                let y = gr.scroll_y + i;
+                if y == editor.get_selection().get_cursor_pos().row {
+                    render_buckets.set_color(Layer::Text, theme.line_num_active);
+                }
+                let row_height = gr.get_rendered_height(content_y(y)).max(1);
+                let vert_align_offset = (row_height - 1) / 2;
+                let line_num_str = if y < 9 {
+                    &(LINE_NUM_CONSTS[y][..])
+                } else if y < 99 {
+                    &(LINE_NUM_CONSTS2[y - 9][..])
+                } else {
+                    &(LINE_NUM_CONSTS3[y - 99][..])
+                };
+                render_buckets.draw_text(
+                    Layer::Text,
+                    0,
+                    target_y.add(vert_align_offset),
+                    line_num_str,
+                );
+                target_y = target_y.add(row_height);
+                if y == editor.get_selection().get_cursor_pos().row {
+                    render_buckets.set_color(Layer::Text, theme.line_num_simple);
                 }
             }
         }
@@ -1521,7 +1683,6 @@ impl NoteCalcApp {
             &editor_objs[content_y(editor.get_selection().get_cursor_pos().row)],
             gr,
             render_buckets,
-            &editor_y_to_render_w,
         );
 
         NoteCalcApp::fill_editor_objs_referencing_current_line(
@@ -1532,38 +1693,27 @@ impl NoteCalcApp {
             editor_content,
         );
 
-        render_buckets
-            .clear_commands
-            .push(OutputMessage::SetColor(0xFFFFFF_FF));
-
-        // clear the whole scrollbar area
-        render_buckets
-            .clear_commands
-            .push(OutputMessage::RenderRectangle {
-                x: gr.result_gutter_x - SCROLLBAR_WIDTH,
-                y: canvas_y(0),
-                w: SCROLLBAR_WIDTH,
-                h: gr.client_height,
-            });
-
         // TODO calc it once on content change (scroll_bar_h as well) (it is used in handle_drag)
-        if let Some(scrollbar_info) =
+        render_buckets.scroll_bar = if let Some(scrollbar_info) =
             NoteCalcApp::get_scrollbar_info(gr, editor_content.line_count())
         {
             let color = if mouse_hover_type == MouseHoverType::Scrollbar {
-                SCROLLBAR_HOVER_COLOR
+                theme.scrollbar_hovered
             } else {
-                SCROLLBAR_NORMAL_COLOR
+                theme.scrollbar_normal
             };
-            render_buckets.set_color(Layer::Text, color);
-            render_buckets.draw_rect(
-                Layer::Text,
-                gr.result_gutter_x - SCROLLBAR_WIDTH,
-                canvas_y(scrollbar_info.scroll_bar_render_y as isize),
-                SCROLLBAR_WIDTH,
-                scrollbar_info.scroll_bar_render_h,
-            );
-        }
+            Some((
+                color,
+                Rect {
+                    x: (gr.result_gutter_x - SCROLLBAR_WIDTH) as u16,
+                    y: scrollbar_info.scroll_bar_render_y as u16,
+                    w: SCROLLBAR_WIDTH as u16,
+                    h: scrollbar_info.scroll_bar_render_h as u16,
+                },
+            ))
+        } else {
+            None
+        };
 
         render_selection_and_its_sum(
             &units,
@@ -1574,6 +1724,7 @@ impl NoteCalcApp {
             &gr,
             vars,
             allocator,
+            theme,
         );
 
         let mut tmp = ResultRender::new(SmallVec::with_capacity(MAX_LINE_COUNT));
@@ -1593,6 +1744,7 @@ impl NoteCalcApp {
             render_buckets,
             gr,
             Some(RENDERED_RESULT_PRECISION),
+            theme,
         )
         .max(tmp.max_len);
         gr.longest_visible_result_len = tmp.max_len;
@@ -1602,6 +1754,7 @@ impl NoteCalcApp {
             gr,
             gr.longest_visible_result_len,
             &result_change_flag,
+            theme,
         );
 
         pulse_modified_line_references(
@@ -1609,6 +1762,7 @@ impl NoteCalcApp {
             gr,
             updated_line_ref_obj_indices,
             editor_objs,
+            theme,
         );
 
         pulse_editor_objs_referencing_current_line(
@@ -1616,6 +1770,7 @@ impl NoteCalcApp {
             gr,
             editor_objs_referencing_current_line,
             editor_objs,
+            theme,
         );
     }
 
@@ -2078,6 +2233,30 @@ impl NoteCalcApp {
         } else {
             None
         }
+    }
+
+    pub fn set_theme<'b>(
+        &mut self,
+        new_theme_index: usize,
+        editor_objs: &mut EditorObjects,
+        units: &Units,
+        allocator: &'b Bump,
+        tokens: &mut AppTokens<'b>,
+        results: &mut Results,
+        vars: &mut Variables,
+        render_buckets: &mut RenderBuckets<'b>,
+    ) {
+        self.render_data.theme_index = new_theme_index;
+        self.generate_render_commands_and_fill_editor_objs(
+            units,
+            render_buckets,
+            allocator,
+            tokens,
+            results,
+            vars,
+            editor_objs,
+            BitFlag128::empty(),
+        );
     }
 
     pub fn handle_resize<'b>(
@@ -2945,20 +3124,24 @@ impl NoteCalcApp {
                 .get_line_valid_chars(editor_y)
                 .starts_with(&['#'])
             {
+                vars[SUM_VARIABLE_INDEX] = Some(Variable {
+                    name: Box::from(&['s', 'u', 'm'][..]),
+                    value: Err(()),
+                });
                 sum_is_null = true;
-            }
-
-            match &results[content_y(editor_y)] {
-                Ok(Some(result)) => {
-                    sum_result(
-                        vars[SUM_VARIABLE_INDEX]
-                            .as_mut()
-                            .expect("SUM always exists"),
-                        result,
-                        &mut sum_is_null,
-                    );
+            } else {
+                match &results[content_y(editor_y)] {
+                    Ok(Some(result)) => {
+                        sum_result(
+                            vars[SUM_VARIABLE_INDEX]
+                                .as_mut()
+                                .expect("SUM always exists"),
+                            result,
+                            &mut sum_is_null,
+                        );
+                    }
+                    Err(_) | Ok(None) => {}
                 }
-                Err(_) | Ok(None) => {}
             }
         }
 
@@ -3151,7 +3334,7 @@ impl NoteCalcApp {
         results: &Results,
     ) -> String {
         render_buckets.clear();
-
+        let theme = &THEMES[self.render_data.theme_index];
         let (first_row, second_row) =
             if let Some((start, end)) = self.editor.get_selection().is_range() {
                 (start.row, end.row)
@@ -3197,6 +3380,7 @@ impl NoteCalcApp {
                         &units,
                         true, // force matrix rendering
                         None,
+                        theme,
                     );
                     r.line_render_ended(r.rendered_row_height);
                 }
@@ -3248,6 +3432,7 @@ impl NoteCalcApp {
             render_buckets,
             &gr,
             None,
+            theme,
         );
 
         for i in 0..render_height {
@@ -3808,10 +3993,11 @@ fn draw_cursor(
     gr: &GlobalRenderData,
     editor: &Editor,
     matrix_editing: &Option<MatrixEditing>,
+    theme: &Theme,
 ) {
     let cursor_pos = editor.get_selection().get_cursor_pos();
     if cursor_pos.row == r.editor_y.as_usize() {
-        render_buckets.set_color(Layer::AboveText, 0x000000_FF);
+        render_buckets.set_color(Layer::AboveText, theme.cursor);
         if editor.is_cursor_shown()
             && matrix_editing.is_none()
             && ((cursor_pos.column as isize + r.cursor_render_x_offset) as usize)
@@ -3833,6 +4019,7 @@ pub fn pulse_modified_line_references(
     gr: &GlobalRenderData,
     updated_line_ref_obj_indices: &[EditorObjId],
     editor_objects: &EditorObjects,
+    theme: &Theme,
 ) {
     // Pulsing changed line references
     for id in updated_line_ref_obj_indices {
@@ -3852,8 +4039,8 @@ pub fn pulse_modified_line_references(
                             y: *rendered_y,
                             w: *rendered_w,
                             h: *rendered_h,
-                            start_color: CHANGE_RESULT_PULSE_START_COLOR,
-                            end_color: CHANGE_RESULT_PULSE_END_COLOR,
+                            start_color: theme.change_result_pulse_start,
+                            end_color: theme.change_result_pulse_end,
                             animation_time: Duration::from_millis(2000),
                         },
                     );
@@ -3869,6 +4056,7 @@ pub fn pulse_editor_objs_referencing_current_line(
     gr: &GlobalRenderData,
     editor_objs_referencing_current_line: &[EditorObjId],
     editor_objects: &EditorObjects,
+    theme: &Theme,
 ) {
     for id in editor_objs_referencing_current_line {
         for ed_obj in &editor_objects[id.content_index] {
@@ -3894,8 +4082,8 @@ pub fn pulse_editor_objs_referencing_current_line(
                                 y: ed_obj.rendered_y.add(vert_align_offset),
                                 w: obj_end_x - obj_start_x,
                                 h: ed_obj.rendered_h,
-                                start_color: REFERENCE_PULSE_PULSE_START_COLOR,
-                                end_color: 0x00FF7F_00,
+                                start_color: theme.reference_pulse_start_color,
+                                end_color: theme.reference_pulse_end_color,
                                 animation_time: Duration::from_millis(1000),
                             },
                         );
@@ -3912,6 +4100,7 @@ pub fn pulse_changed_results(
     gr: &GlobalRenderData,
     longest_rendered_result_len: usize,
     result_change_flag: &BitFlag128,
+    theme: &Theme,
 ) {
     if gr.get_render_y(content_y(0)).is_none() {
         // there were no render yet
@@ -3928,8 +4117,8 @@ pub fn pulse_changed_results(
                         y: render_y,
                         w: longest_rendered_result_len,
                         h: gr.get_rendered_height(content_y(i)),
-                        start_color: CHANGE_RESULT_PULSE_START_COLOR,
-                        end_color: CHANGE_RESULT_PULSE_END_COLOR,
+                        start_color: theme.change_result_pulse_start,
+                        end_color: theme.change_result_pulse_end,
                         animation_time: Duration::from_millis(1000),
                     },
                 );
@@ -3986,11 +4175,12 @@ fn highlight_line_ref_background<'text_ptr>(
     render_buckets: &mut RenderBuckets<'text_ptr>,
     r: &PerLineRenderData,
     gr: &GlobalRenderData,
+    theme: &Theme,
 ) {
     for editor_obj in editor_objs.iter() {
         if matches!(editor_obj.typ, EditorObjectType::LineReference{..}) {
             let vert_align_offset = (r.rendered_row_height - editor_obj.rendered_h) / 2;
-            render_buckets.set_color(Layer::BehindText, LINE_REF_BACKGROUND_COLOR);
+            render_buckets.set_color(Layer::BehindText, theme.line_ref_bg);
             render_buckets.draw_rect(
                 Layer::BehindText,
                 gr.left_gutter_width + editor_obj.rendered_x,
@@ -4003,10 +4193,9 @@ fn highlight_line_ref_background<'text_ptr>(
 }
 
 #[inline]
-fn highlight_active_line_refs<'text_ptr>(
+fn underline_active_line_refs<'text_ptr>(
     editor_objs: &[EditorObject],
     render_buckets: &mut RenderBuckets<'text_ptr>,
-    r: &PerLineRenderData,
     gr: &GlobalRenderData,
 ) {
     let mut color_index = 0;
@@ -4020,20 +4209,18 @@ fn highlight_active_line_refs<'text_ptr>(
                 let color = if let Some(color) = colors[var_index] {
                     color
                 } else {
-                    let color = ACTIVE_LINE_REF_HIGHLIGHT_COLORS[color_index] << 8 | 0x55;
+                    let color = ACTIVE_LINE_REF_HIGHLIGHT_COLORS[color_index];
                     colors[var_index] = Some(color);
                     color_index = if color_index < 8 { color_index + 1 } else { 0 };
                     color
                 };
 
-                let vert_align_offset = (r.rendered_row_height - editor_obj.rendered_h) / 2;
                 render_buckets.set_color(Layer::BehindText, color);
-                render_buckets.draw_rect(
+                render_buckets.draw_underline(
                     Layer::BehindText,
                     gr.left_gutter_width + editor_obj.rendered_x,
-                    editor_obj.rendered_y.add(vert_align_offset),
+                    editor_obj.rendered_y.add(editor_obj.rendered_h - 1),
                     editor_obj.rendered_w,
-                    editor_obj.rendered_h,
                 );
             }
             _ => {}
@@ -4053,6 +4240,7 @@ fn render_tokens<'text_ptr>(
     units: &Units,
     need_matrix_renderer: bool,
     decimal_count: Option<usize>,
+    theme: &Theme,
 ) {
     editor_objects.clear();
     let cursor_pos = editor.get_selection().get_cursor_pos();
@@ -4119,6 +4307,7 @@ fn render_tokens<'text_ptr>(
                         r,
                         gr,
                         decimal_count,
+                        theme,
                     );
 
                     let var_name_len = var.name.len();
@@ -4206,16 +4395,17 @@ fn render_wrap_dots(
     render_buckets: &mut RenderBuckets,
     r: &PerLineRenderData,
     gr: &GlobalRenderData,
+    theme: &Theme,
 ) {
     if r.render_x > gr.current_editor_width {
         // gutter is above text so it has to be abovetext as well
-        render_buckets.set_color(Layer::AboveText, 0x000000_FF);
+        render_buckets.set_color(Layer::AboveText, theme.text);
         for y in 0..r.rendered_row_height {
             render_buckets.draw_char(
                 Layer::AboveText,
                 gr.result_gutter_x - 1,
                 r.render_y.add(y),
-                '…',
+                '…', // '...'
             );
         }
     }
@@ -4227,10 +4417,11 @@ fn draw_line_ref_chooser(
     gr: &GlobalRenderData,
     line_reference_chooser: &Option<ContentIndex>,
     result_gutter_x: usize,
+    theme: &Theme,
 ) {
     if let Some(selection_row) = line_reference_chooser {
         if *selection_row == r.editor_y {
-            render_buckets.set_color(Layer::Text, 0xFFCCCC_FF);
+            render_buckets.set_color(Layer::Text, theme.line_ref_selector);
             render_buckets.draw_rect(
                 Layer::Text,
                 0,
@@ -4247,14 +4438,15 @@ fn draw_right_gutter_num_prefixes(
     result_gutter_x: usize,
     editor_content: &EditorContent<LineData>,
     r: &PerLineRenderData,
+    theme: &Theme,
 ) {
     match editor_content.get_data(r.editor_y.as_usize()).result_format {
         ResultFormat::Hex => {
-            render_buckets.set_color(Layer::AboveText, 0x000000_FF);
+            render_buckets.set_color(Layer::AboveText, theme.cursor);
             render_buckets.draw_text(Layer::AboveText, result_gutter_x, r.render_y, &['0', 'x']);
         }
         ResultFormat::Bin => {
-            render_buckets.set_color(Layer::AboveText, 0x000000_FF);
+            render_buckets.set_color(Layer::AboveText, theme.cursor);
             render_buckets.draw_text(Layer::AboveText, result_gutter_x, r.render_y, &['0', 'b']);
         }
         ResultFormat::Dec => {}
@@ -4263,21 +4455,49 @@ fn draw_right_gutter_num_prefixes(
 
 fn highlight_current_line(
     render_buckets: &mut RenderBuckets,
-    r: &PerLineRenderData,
     editor: &Editor,
     gr: &GlobalRenderData,
+    theme: &Theme,
 ) {
-    let cursor_pos = editor.get_selection().get_cursor_pos();
-    if cursor_pos.row == r.editor_y.as_usize() {
-        render_buckets.set_color(Layer::Text, 0xFFFFCC_55);
-        render_buckets.draw_rect(
-            Layer::Text,
-            0,
-            r.render_y,
-            gr.result_gutter_x + RIGHT_GUTTER_WIDTH + gr.current_result_panel_width,
-            r.rendered_row_height,
-        );
-    }
+    let cursor_row = editor.get_selection().get_cursor_pos().row;
+    render_buckets.current_line_highlight =
+        if let Some(render_y) = gr.get_render_y(content_y(cursor_row)) {
+            let render_h = gr.get_rendered_height(content_y(cursor_row));
+            render_buckets.set_color(Layer::BehindText, theme.current_line_bg);
+            let result = Some(Rect {
+                x: 0,
+                y: render_y.as_usize() as u16,
+                w: (gr.result_gutter_x + RIGHT_GUTTER_WIDTH + gr.current_result_panel_width) as u16,
+                h: render_h as u16,
+            });
+            // render a blended rectangle to the right gutter as if the highlighting rectangle
+            // would blend into it (without it it hides the gutter and it is ugly).
+            let blended_color = {
+                let src_alpha = 0.5f32;
+                let dst_alpha = 1f32 - src_alpha;
+                let src_r = (theme.result_gutter_bg >> 24 & 0xFF) as f32;
+                let src_g = (theme.result_gutter_bg >> 16 & 0xFF) as f32;
+                let src_b = (theme.result_gutter_bg >> 8 & 0xFF) as f32;
+                let dst_r = (theme.current_line_bg >> 24 & 0xFF) as f32;
+                let dst_g = (theme.current_line_bg >> 16 & 0xFF) as f32;
+                let dst_b = (theme.current_line_bg >> 8 & 0xFF) as f32;
+                let out_r = (src_r * src_alpha + dst_r * dst_alpha) as u32;
+                let out_g = (src_g * src_alpha + dst_g * dst_alpha) as u32;
+                let out_b = (src_b * src_alpha + dst_b * dst_alpha) as u32;
+                (out_r << 24 | out_g << 16 | out_b << 8) | 0xFF
+            };
+            render_buckets.set_color(Layer::BehindText, blended_color);
+            render_buckets.draw_rect(
+                Layer::BehindText,
+                gr.result_gutter_x,
+                render_y,
+                RIGHT_GUTTER_WIDTH,
+                render_h,
+            );
+            result
+        } else {
+            None
+        };
 }
 
 fn evaluate_tokens_and_save_result<'text_ptr>(
@@ -4420,6 +4640,7 @@ fn render_matrix<'text_ptr>(
             gr.left_gutter_width,
             render_buckets,
             r.rendered_row_height,
+            &THEMES[gr.theme_index],
         )
     } else {
         render_matrix_obj(
@@ -4742,6 +4963,7 @@ fn render_matrix_result<'text_ptr>(
     prev_mat_result_lengths: Option<&ResultLengths>,
     rendered_row_height: usize,
     decimal_count: Option<usize>,
+    text_color: u32,
 ) -> usize {
     let start_x = render_x;
 
@@ -4787,7 +5009,7 @@ fn render_matrix_result<'text_ptr>(
         }
         max_lengths
     };
-    render_buckets.set_color(Layer::Text, 0x000000_FF);
+    render_buckets.set_color(Layer::Text, text_color);
 
     for col_i in 0..mat.col_count {
         for row_i in 0..mat.row_count {
@@ -4874,6 +5096,7 @@ fn render_result_inside_editor<'text_ptr>(
     r: &PerLineRenderData,
     gr: &GlobalRenderData,
     decimal_count: Option<usize>,
+    theme: &Theme,
 ) -> (usize, usize) {
     return match &result {
         Ok(CalcResult {
@@ -4889,6 +5112,7 @@ fn render_result_inside_editor<'text_ptr>(
                 None,
                 r.rendered_row_height,
                 decimal_count,
+                theme.referenced_matrix_text,
             );
             (rendered_width, mat.render_height())
         }
@@ -5079,6 +5303,7 @@ fn create_render_commands_for_results_and_render_matrices<'text_ptr>(
     render_buckets: &mut RenderBuckets<'text_ptr>,
     gr: &GlobalRenderData,
     decimal_count: Option<usize>,
+    theme: &Theme,
 ) -> usize {
     let mut prev_result_matrix_length = None;
     let mut matrix_len = 0;
@@ -5095,16 +5320,6 @@ fn create_render_commands_for_results_and_render_matrices<'text_ptr>(
         let rendered_row_height = gr.get_rendered_height(result_tmp.editor_y);
         let render_y = gr.get_render_y(result_tmp.editor_y).expect("");
         if let Some(result_range) = &result_tmp.buffer_ptr {
-            // result background
-            render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
-            render_buckets.draw_rect(
-                Layer::BehindText,
-                gr.result_gutter_x + RIGHT_GUTTER_WIDTH,
-                render_y,
-                gr.current_result_panel_width,
-                rendered_row_height,
-            );
-
             let lengths = &result_tmp.lengths;
             let from = result_range.start;
             let vert_align_offset = (rendered_row_height - 1) / 2;
@@ -5172,14 +5387,14 @@ fn create_render_commands_for_results_and_render_matrices<'text_ptr>(
             }
             match offset_x {
                 ResultOffsetX::TooLong => {
-                    render_buckets.set_color(Layer::AboveText, 0xF2F2F2_FF);
+                    render_buckets.set_color(Layer::AboveText, theme.result_bg_color);
                     render_buckets.draw_char(
                         Layer::AboveText,
                         gr.result_gutter_x + RIGHT_GUTTER_WIDTH + gr.current_result_panel_width - 1,
                         row,
                         '█',
                     );
-                    render_buckets.set_color(Layer::AboveText, 0xFF0000_FF);
+                    render_buckets.set_color(Layer::AboveText, theme.cursor);
                     render_buckets.draw_char(
                         Layer::AboveText,
                         gr.result_gutter_x + RIGHT_GUTTER_WIDTH + gr.current_result_panel_width - 1,
@@ -5212,6 +5427,7 @@ fn create_render_commands_for_results_and_render_matrices<'text_ptr>(
                         prev_result_matrix_length.as_ref(),
                         gr.get_rendered_height(result_tmp.editor_y),
                         decimal_count,
+                        theme.result_text,
                     );
                     if width > matrix_len {
                         matrix_len = width;
@@ -5219,16 +5435,7 @@ fn create_render_commands_for_results_and_render_matrices<'text_ptr>(
                 }
                 _ => {
                     // no result but need rerender
-                    // result background
                     prev_result_matrix_length = None;
-                    render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
-                    render_buckets.draw_rect(
-                        Layer::BehindText,
-                        gr.result_gutter_x + RIGHT_GUTTER_WIDTH,
-                        render_y,
-                        gr.current_result_panel_width,
-                        rendered_row_height,
-                    );
                 }
             }
         }
@@ -5304,7 +5511,6 @@ fn draw_line_refs_and_vars_referenced_from_cur_row<'b>(
     editor_objs: &[EditorObject],
     gr: &GlobalRenderData,
     render_buckets: &mut RenderBuckets<'b>,
-    editor_y_to_render_w: &[usize; MAX_LINE_COUNT],
 ) {
     let mut color_index = 0;
     let mut highlighted = BitFlag128::empty();
@@ -5325,13 +5531,23 @@ fn draw_line_refs_and_vars_referenced_from_cur_row<'b>(
                 };
                 let defined_at = content_y(var_index);
                 if let Some(render_y) = gr.get_render_y(defined_at) {
-                    render_buckets.custom_commands[Layer::AboveText as usize]
-                        .push(OutputMessage::SetColor(color << 8 | 0x33));
-                    render_buckets.custom_commands[Layer::AboveText as usize].push(
+                    // render a rectangle on the *left gutter*
+                    render_buckets.custom_commands[Layer::BehindText as usize]
+                        .push(OutputMessage::SetColor(color));
+                    render_buckets.custom_commands[Layer::BehindText as usize].push(
                         OutputMessage::RenderRectangle {
-                            x: gr.left_gutter_width,
+                            x: 0,
                             y: render_y,
-                            w: editor_y_to_render_w[defined_at.as_usize()],
+                            w: gr.left_gutter_width,
+                            h: gr.get_rendered_height(defined_at),
+                        },
+                    );
+                    // render a rectangle on the *left gutter*
+                    render_buckets.custom_commands[Layer::BehindText as usize].push(
+                        OutputMessage::RenderRectangle {
+                            x: gr.result_gutter_x,
+                            y: render_y,
+                            w: RIGHT_GUTTER_WIDTH,
                             h: gr.get_rendered_height(defined_at),
                         },
                     );
@@ -5418,6 +5634,7 @@ fn render_buckets_into(buckets: &RenderBuckets, canvas: &mut [[char; 256]]) {
             }
             OutputMessage::PulsingRectangle { .. } => {}
             OutputMessage::FollowingTextCommandsAreHeaders { .. } => {}
+            OutputMessage::RenderUnderline { .. } => {}
         }
     }
 
@@ -5473,8 +5690,9 @@ fn render_selection_and_its_sum<'text_ptr>(
     gr: &GlobalRenderData,
     vars: &Variables,
     allocator: &'text_ptr Bump,
+    theme: &Theme,
 ) {
-    render_buckets.set_color(Layer::BehindText, 0xA6D2FF_FF);
+    render_buckets.set_color(Layer::BehindText, theme.selection_color);
     if let Some((start, end)) = editor.get_selection().is_range() {
         if end.row > start.row {
             // first line
@@ -5539,7 +5757,7 @@ fn render_selection_and_its_sum<'text_ptr>(
                     let result_w = partial_result.chars().count();
                     let centered_x =
                         (selection_center as isize - (result_w / 2) as isize).max(0) as usize;
-                    render_buckets.set_color(Layer::AboveText, 0xAAFFAA_FF);
+                    render_buckets.set_color(Layer::AboveText, theme.sum_bg_color);
                     let rect_y = if start.row == 0 {
                         start_render_y.add(1)
                     } else {
@@ -5552,7 +5770,7 @@ fn render_selection_and_its_sum<'text_ptr>(
                         result_w,
                         1,
                     );
-                    render_buckets.set_color(Layer::AboveText, 0x000000_FF);
+                    render_buckets.set_color(Layer::AboveText, theme.sum_text_color);
                     render_buckets.draw_string(
                         Layer::AboveText,
                         gr.left_gutter_width + centered_x,
@@ -5578,7 +5796,7 @@ fn render_selection_and_its_sum<'text_ptr>(
                     - gr.get_render_y(frist_visible_row_index)
                         .expect("")
                         .as_usize();
-                render_buckets.set_color(Layer::AboveText, 0xAAFFAA_FF);
+                render_buckets.set_color(Layer::AboveText, theme.sum_bg_color);
                 render_buckets.draw_rect(
                     Layer::AboveText,
                     gr.left_gutter_width + x,
@@ -5587,7 +5805,7 @@ fn render_selection_and_its_sum<'text_ptr>(
                     inner_height + 1,
                 );
                 // draw the parenthesis
-                render_buckets.set_color(Layer::AboveText, 0x000000_FF);
+                render_buckets.set_color(Layer::AboveText, theme.sum_text_color);
 
                 render_buckets.draw_char(
                     Layer::AboveText,
@@ -5805,8 +6023,8 @@ mod main_tests {
             y: canvas_y(y as isize),
             w,
             h,
-            start_color: REFERENCE_PULSE_PULSE_START_COLOR,
-            end_color: 0x00FF7F_00,
+            start_color: THEMES[0].reference_pulse_start_color,
+            end_color: THEMES[0].reference_pulse_end_color,
             animation_time: Duration::from_millis(1000),
         }
     }
@@ -5817,8 +6035,8 @@ mod main_tests {
             y: canvas_y(y as isize),
             w,
             h,
-            start_color: CHANGE_RESULT_PULSE_START_COLOR,
-            end_color: CHANGE_RESULT_PULSE_END_COLOR,
+            start_color: THEMES[0].change_result_pulse_start,
+            end_color: THEMES[0].change_result_pulse_end,
             animation_time: Duration::from_millis(1000),
         }
     }
@@ -5834,8 +6052,8 @@ mod main_tests {
             y: canvas_y(y as isize),
             w,
             h,
-            start_color: CHANGE_RESULT_PULSE_START_COLOR,
-            end_color: CHANGE_RESULT_PULSE_END_COLOR,
+            start_color: THEMES[0].change_result_pulse_start,
+            end_color: THEMES[0].change_result_pulse_end,
             animation_time: Duration::from_millis(2000),
         }
     }
@@ -5954,7 +6172,7 @@ mod main_tests {
                 assert_contains(
                     render_buckets,
                     0,
-                    OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[i] << 8 | 0x33),
+                    OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[i]),
                 );
             }
         }
@@ -6882,48 +7100,46 @@ mod main_tests {
 
             let result_gutter_x = test.get_render_data().result_gutter_x;
             assert_eq!(test.app().mouse_hover_type, MouseHoverType::Normal);
-            let commands = &test.render_bucket().custom_commands[Layer::Text as usize];
-            assert_contains(commands, 0, OutputMessage::SetColor(SCROLLBAR_HOVER_COLOR));
-            assert_contains(commands, 1, OutputMessage::SetColor(SCROLLBAR_NORMAL_COLOR));
-            assert_contains(
-                commands,
-                1,
-                OutputMessage::RenderRectangle {
-                    x: result_gutter_x - SCROLLBAR_WIDTH,
-                    y: canvas_y(0),
-                    w: SCROLLBAR_WIDTH,
-                    h: 1,
-                },
+            assert_eq!(
+                test.render_bucket().scroll_bar,
+                Some((
+                    THEMES[0].scrollbar_normal,
+                    Rect {
+                        x: (result_gutter_x - SCROLLBAR_WIDTH) as u16,
+                        y: 0,
+                        w: SCROLLBAR_WIDTH as u16,
+                        h: 1,
+                    }
+                ))
             );
 
             test.handle_mouse_move(result_gutter_x - SCROLLBAR_WIDTH, 0);
-            assert_eq!(test.app().mouse_hover_type, MouseHoverType::Scrollbar);
-            assert_contains(commands, 1, OutputMessage::SetColor(SCROLLBAR_HOVER_COLOR));
-            assert_contains(commands, 0, OutputMessage::SetColor(SCROLLBAR_NORMAL_COLOR));
-            assert_contains(
-                commands,
-                1,
-                OutputMessage::RenderRectangle {
-                    x: result_gutter_x - SCROLLBAR_WIDTH,
-                    y: canvas_y(0),
-                    w: SCROLLBAR_WIDTH,
-                    h: 1,
-                },
+            assert_eq!(
+                test.render_bucket().scroll_bar,
+                Some((
+                    THEMES[0].scrollbar_hovered,
+                    Rect {
+                        x: (result_gutter_x - SCROLLBAR_WIDTH) as u16,
+                        y: 0,
+                        w: SCROLLBAR_WIDTH as u16,
+                        h: 1,
+                    }
+                ))
             );
 
             test.handle_mouse_move(result_gutter_x, 0);
             assert_eq!(test.app().mouse_hover_type, MouseHoverType::RightGutter);
-            assert_contains(commands, 0, OutputMessage::SetColor(SCROLLBAR_HOVER_COLOR));
-            assert_contains(commands, 1, OutputMessage::SetColor(SCROLLBAR_NORMAL_COLOR));
-            assert_contains(
-                commands,
-                1,
-                OutputMessage::RenderRectangle {
-                    x: result_gutter_x - SCROLLBAR_WIDTH,
-                    y: canvas_y(0),
-                    w: SCROLLBAR_WIDTH,
-                    h: 1,
-                },
+            assert_eq!(
+                test.render_bucket().scroll_bar,
+                Some((
+                    THEMES[0].scrollbar_normal,
+                    Rect {
+                        x: (result_gutter_x - SCROLLBAR_WIDTH) as u16,
+                        y: 0,
+                        w: SCROLLBAR_WIDTH as u16,
+                        h: 1,
+                    }
+                ))
             );
         }
 
@@ -7089,15 +7305,17 @@ mod main_tests {
             let test = create_app2(CANVAS_HEIGHT);
             test.repeated_paste("1\n2\n\n[1;2;3;4]", 5);
             test.render();
-            assert_contains(
-                &test.render_bucket().custom_commands[Layer::Text as usize],
-                1,
-                OutputMessage::RenderRectangle {
-                    x: result_panel_w(120) - SCROLLBAR_WIDTH,
-                    y: canvas_y(0),
-                    w: 1,
-                    h: 19,
-                },
+            assert_eq!(
+                test.render_bucket().scroll_bar,
+                Some((
+                    THEMES[0].scrollbar_normal,
+                    Rect {
+                        x: (result_panel_w(120) - SCROLLBAR_WIDTH) as u16,
+                        y: 0,
+                        w: 1,
+                        h: 19,
+                    }
+                ))
             );
         }
 
@@ -10071,44 +10289,46 @@ ddd",
 
             test.render();
             let render_command_count_before =
-                &test.render_bucket().custom_commands[Layer::AboveText as usize].len();
+                &test.render_bucket().custom_commands[Layer::BehindText as usize].len();
 
             test.input(EditorInputEvent::Down, InputModifiers::none());
 
             let left_gutter_w = LEFT_GUTTER_MIN_WIDTH;
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_eq!(render_commands.len(), render_command_count_before + 1);
+            let render_commands = &test.render_bucket().custom_commands[Layer::BehindText as usize];
+            // (setcolor + underline) + (setcolor + 2*rect)
+            assert_eq!(render_commands.len(), render_command_count_before + 5);
             assert_contains(
                 render_commands,
-                1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x33),
+                2,
+                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0]),
             );
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w,
+                    x: 0,
                     y: canvas_y(0),
-                    w: "223456".len(),
+                    w: left_gutter_w,
                     h: 1,
                 },
             );
-
-            // the line_refs itself have different bacground color
-            let render_commands = &test.render_bucket().custom_commands[Layer::BehindText as usize];
-            assert_contains(
-                render_commands,
-                1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x55),
-            );
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w + 4,
+                    x: test.get_render_data().result_gutter_x,
+                    y: canvas_y(0),
+                    w: RIGHT_GUTTER_WIDTH,
+                    h: 1,
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd ".len(),
                     y: canvas_y(1),
                     w: "223 456".len(),
-                    h: 1,
                 },
             );
         }
@@ -10122,74 +10342,83 @@ ddd",
 
             test.assert_no_highlighting_rectangle();
             let render_command_count_before =
-                &test.render_bucket().custom_commands[Layer::AboveText as usize].len();
+                &test.render_bucket().custom_commands[Layer::BehindText as usize].len();
             test.input(EditorInputEvent::Down, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_eq!(render_commands.len(), render_command_count_before + 3);
+            let render_commands = &test.render_bucket().custom_commands[Layer::BehindText as usize];
+            // 2 underlines + 2 setcolors
+            // 2*2 rectangles on the gutters + 1 setcolor for each (2)
+            //
+            assert_eq!(render_commands.len(), render_command_count_before + 10);
 
             assert_contains(
                 render_commands,
-                1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x33),
+                2,
+                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0]),
             );
             let left_gutter_w = LEFT_GUTTER_MIN_WIDTH;
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w,
+                    x: 0,
                     y: canvas_y(0),
-                    w: "234".len(),
+                    w: left_gutter_w,
                     h: 1,
                 },
             );
             assert_contains(
                 render_commands,
                 1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[1] << 8 | 0x33),
+                OutputMessage::RenderRectangle {
+                    x: test.get_render_data().result_gutter_x,
+                    y: canvas_y(0),
+                    w: RIGHT_GUTTER_WIDTH,
+                    h: 1,
+                },
+            );
+            assert_contains(
+                render_commands,
+                2,
+                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[1]),
             );
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w,
+                    x: 0,
                     y: canvas_y(1),
-                    w: "356789".len(),
+                    w: left_gutter_w,
+                    h: 1,
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderRectangle {
+                    x: test.get_render_data().result_gutter_x,
+                    y: canvas_y(1),
+                    w: RIGHT_GUTTER_WIDTH,
                     h: 1,
                 },
             );
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::BehindText as usize];
-            // the line_refs itself have different bacground color
             assert_contains(
                 render_commands,
                 1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x55),
-            );
-            assert_contains(
-                render_commands,
-                1,
-                OutputMessage::RenderRectangle {
-                    x: left_gutter_w + 4,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd ".len(),
                     y: canvas_y(2),
                     w: "234".len(),
-                    h: 1,
                 },
             );
             assert_contains(
                 render_commands,
                 1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[1] << 8 | 0x55),
-            );
-            assert_contains(
-                render_commands,
-                1,
-                OutputMessage::RenderRectangle {
-                    x: left_gutter_w + 10,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd 234 * ".len(),
                     y: canvas_y(2),
                     w: "356 789".len(),
-                    h: 1,
                 },
             );
         }
@@ -10202,43 +10431,26 @@ ddd",
             test.render();
 
             let render_command_count_before =
-                test.render_bucket().custom_commands[Layer::AboveText as usize].len();
+                test.render_bucket().custom_commands[Layer::BehindText as usize].len();
 
             test.input(EditorInputEvent::Down, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_eq!(render_commands.len(), render_command_count_before);
+            let render_commands = &test.render_bucket().custom_commands[Layer::BehindText as usize];
+            // 2*(setcolor + underline) + setcolor + 2*rect
+            assert_eq!(render_commands.len(), render_command_count_before + 7);
             assert_contains(
                 render_commands,
-                1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x33),
+                3,
+                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0]),
             );
             let left_gutter_w = LEFT_GUTTER_MIN_WIDTH;
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w,
+                    x: 0,
                     y: canvas_y(0),
-                    w: "2345".len(),
-                    h: 1,
-                },
-            );
-
-            // the line_refs have to have same background colors
-            let render_commands = &test.render_bucket().custom_commands[Layer::BehindText as usize];
-            assert_contains(
-                render_commands,
-                2,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x55),
-            );
-            assert_contains(
-                render_commands,
-                1,
-                OutputMessage::RenderRectangle {
-                    x: left_gutter_w + 4,
-                    y: canvas_y(1),
-                    w: 5,
+                    w: left_gutter_w,
                     h: 1,
                 },
             );
@@ -10246,10 +10458,28 @@ ddd",
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w + 12,
-                    y: canvas_y(1),
-                    w: 5,
+                    x: test.get_render_data().result_gutter_x,
+                    y: canvas_y(0),
+                    w: RIGHT_GUTTER_WIDTH,
                     h: 1,
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd ".len(),
+                    y: canvas_y(1),
+                    w: "2 345".len(),
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd 2 345 * ".len(),
+                    y: canvas_y(1),
+                    w: "2 345".len(),
                 },
             );
         }
@@ -10263,59 +10493,75 @@ ddd",
             test.render();
 
             let render_command_count_before =
-                &test.render_bucket().custom_commands[Layer::AboveText as usize].len();
+                &test.render_bucket().custom_commands[Layer::BehindText as usize].len();
 
             test.input(EditorInputEvent::Down, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_eq!(render_commands.len(), render_command_count_before + 3);
+            let render_commands = &test.render_bucket().custom_commands[Layer::BehindText as usize];
+            // 2*(setcolor + underline) + (setcolor + underline) +
+            // 2*(setcolor + 2*rect)
+            assert_eq!(render_commands.len(), render_command_count_before + 12);
 
             assert_contains(
                 render_commands,
-                1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x33),
+                3,
+                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0]),
             );
             let left_gutter_w = LEFT_GUTTER_MIN_WIDTH;
+            // "2 345"
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w,
+                    x: 0,
                     y: canvas_y(0),
-                    w: "2345".len(),
+                    w: left_gutter_w,
                     h: 1,
                 },
             );
             assert_contains(
                 render_commands,
                 1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[1] << 8 | 0x33),
-            );
-            assert_contains(
-                render_commands,
-                1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w,
-                    y: canvas_y(1),
-                    w: "123".len(),
+                    x: test.get_render_data().result_gutter_x,
+                    y: canvas_y(0),
+                    w: RIGHT_GUTTER_WIDTH,
                     h: 1,
                 },
             );
 
-            // the line_refs have to have same background colors
-            let render_commands = &test.render_bucket().custom_commands[Layer::BehindText as usize];
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd ".len(),
+                    y: canvas_y(2),
+                    w: "2 345".len(),
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd 2 345 * ".len(),
+                    y: canvas_y(2),
+                    w: "2 345".len(),
+                },
+            );
+
+            // "123"
             assert_contains(
                 render_commands,
                 2,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x55),
+                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[1]),
             );
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w + 4,
-                    y: canvas_y(2),
-                    w: 5,
+                    x: 0,
+                    y: canvas_y(1),
+                    w: left_gutter_w,
                     h: 1,
                 },
             );
@@ -10323,25 +10569,20 @@ ddd",
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w + 12,
-                    y: canvas_y(2),
-                    w: 5,
+                    x: test.get_render_data().result_gutter_x,
+                    y: canvas_y(1),
+                    w: RIGHT_GUTTER_WIDTH,
                     h: 1,
                 },
             );
+
             assert_contains(
                 render_commands,
                 1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[1] << 8 | 0x55),
-            );
-            assert_contains(
-                render_commands,
-                1,
-                OutputMessage::RenderRectangle {
-                    x: left_gutter_w + 20,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd 2 345 * 2 345 * ".len(),
                     y: canvas_y(2),
-                    w: 3,
-                    h: 1,
+                    w: "123".len(),
                 },
             );
         }
@@ -10368,56 +10609,119 @@ ddd",
 
             test.render();
             let render_command_count_before =
-                &test.render_bucket().custom_commands[Layer::AboveText as usize].len();
+                &test.render_bucket().custom_commands[Layer::BehindText as usize].len();
 
             test.input(EditorInputEvent::Down, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_eq!(render_commands.len(), render_command_count_before + 5);
+            let render_commands = &test.render_bucket().custom_commands[Layer::BehindText as usize];
+            // 3*(setcolor + underline) + 3(setcolor + 2*rect)
+            assert_eq!(render_commands.len(), render_command_count_before + 15);
             let left_gutter_w = LEFT_GUTTER_MIN_WIDTH;
+            // 1st
             assert_contains(
                 render_commands,
-                1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x33),
+                2,
+                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0]),
             );
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w,
+                    x: 0,
                     y: canvas_y(0),
+                    w: left_gutter_w,
+                    h: 1,
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderRectangle {
+                    x: test.get_render_data().result_gutter_x,
+                    y: canvas_y(0),
+                    w: RIGHT_GUTTER_WIDTH,
+                    h: 1,
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd ".len(),
+                    y: canvas_y(3),
                     w: "2".len(),
-                    h: 1,
                 },
             );
+
+            // 2nd
             assert_contains(
                 render_commands,
-                1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[1] << 8 | 0x33),
+                2,
+                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[1]),
             );
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w,
+                    x: 0,
                     y: canvas_y(1),
-                    w: "3".len(),
+                    w: left_gutter_w,
                     h: 1,
                 },
             );
             assert_contains(
                 render_commands,
                 1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[2] << 8 | 0x33),
+                OutputMessage::RenderRectangle {
+                    x: test.get_render_data().result_gutter_x,
+                    y: canvas_y(1),
+                    w: RIGHT_GUTTER_WIDTH,
+                    h: 1,
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd 2 * ".len(),
+                    y: canvas_y(3),
+                    w: "3".len(),
+                },
+            );
+
+            // 3rd
+            assert_contains(
+                render_commands,
+                2,
+                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[2]),
             );
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w,
+                    x: 0,
                     y: canvas_y(2),
-                    w: "var = 4".len(),
+                    w: left_gutter_w,
                     h: 1,
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderRectangle {
+                    x: test.get_render_data().result_gutter_x,
+                    y: canvas_y(2),
+                    w: RIGHT_GUTTER_WIDTH,
+                    h: 1,
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd 2 * 3 * ".len(),
+                    y: canvas_y(3),
+                    w: "var".len(),
                 },
             );
         }
@@ -10455,21 +10759,41 @@ monthly payment = r/(1 - (1 + r)^(-n)) *finance amount",
             test.input(EditorInputEvent::Backspace, InputModifiers::none());
             test.input(EditorInputEvent::Down, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
+            let render_commands = &test.render_bucket().custom_commands[Layer::BehindText as usize];
             assert_contains(
                 render_commands,
-                1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x33),
+                2, /*one for the underline and 1 for the gutter rectangles*/
+                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0]),
             );
             let left_gutter_w = LEFT_GUTTER_MIN_WIDTH + 1;
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w,
+                    x: 0,
                     y: canvas_y(10),
-                    w: "price = 350k$".len(),
+                    w: left_gutter_w,
                     h: 1,
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderRectangle {
+                    x: test.get_render_data().result_gutter_x,
+                    y: canvas_y(10),
+                    w: RIGHT_GUTTER_WIDTH,
+                    h: 1,
+                },
+            );
+
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "down payment = 20% * ".len(),
+                    y: canvas_y(11),
+                    w: "price".len(),
                 },
             );
         }
@@ -10807,6 +11131,48 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
         assert_contains(commands, 1, expected_char_at(&test, 0));
         assert_contains(commands, 1, expected_char_at(&test, 1));
         assert_contains(commands, 1, expected_char_at(&test, 2));
+    }
+
+    #[test]
+    fn test_line_number_rendering_for_tall_rows() {
+        let test = create_app3(25, 35);
+        test.paste(
+            "1
+2
+3
+[0,0,0,0;0,0,0,0;0,0,0,0]
+
+asd",
+        );
+        let commands = &test.render_bucket().custom_commands[Layer::Text as usize];
+        let mut expected_text_buf: [char; 2] = ['0', '0'];
+        for i in 0..35 {
+            let rendered_num: u8 = i + 1;
+            let expected_text = if rendered_num < 10 {
+                expected_text_buf[0] = (b'0' + rendered_num) as char;
+                &expected_text_buf[0..1]
+            } else {
+                expected_text_buf[0] = (b'0' + (rendered_num / 10)) as char;
+                expected_text_buf[1] = (b'0' + (rendered_num % 10)) as char;
+                &expected_text_buf[..]
+            };
+            let expected_y_coord = if rendered_num < 4 {
+                rendered_num - 1
+            } else if rendered_num == 4 {
+                5 // this is sthe matrix row, it is vertically aligned
+            } else {
+                rendered_num + 3
+            };
+            assert_contains(
+                commands,
+                1,
+                OutputMessage::RenderUtf8Text(RenderUtf8TextMsg {
+                    text: expected_text,
+                    row: canvas_y(expected_y_coord as isize),
+                    column: 0,
+                }),
+            );
+        }
     }
 
     #[test]
