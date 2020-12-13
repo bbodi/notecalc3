@@ -36,6 +36,8 @@ in a note, which affected the result panel size.
 - Char width at the fonrend is now integer, ceiling upward. It caused issues
 with rendering (widths of recatngles were float as well and did not always fill up
   the required space)
+- Underlines and line reference background rectangles were rendered even if they
+were outside of the editor area
 ### Removed
 
 ## [0.2.0] - 2020-12-03

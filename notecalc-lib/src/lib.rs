@@ -4179,15 +4179,21 @@ fn highlight_line_ref_background<'text_ptr>(
 ) {
     for editor_obj in editor_objs.iter() {
         if matches!(editor_obj.typ, EditorObjectType::LineReference{..}) {
-            let vert_align_offset = (r.rendered_row_height - editor_obj.rendered_h) / 2;
-            render_buckets.set_color(Layer::BehindText, theme.line_ref_bg);
-            render_buckets.draw_rect(
-                Layer::BehindText,
-                gr.left_gutter_width + editor_obj.rendered_x,
-                editor_obj.rendered_y.add(vert_align_offset),
-                editor_obj.rendered_w,
-                editor_obj.rendered_h,
-            );
+            let start_render_x = gr.left_gutter_width + editor_obj.rendered_x;
+            let allowed_end_x =
+                (start_render_x + editor_obj.rendered_w).min(gr.result_gutter_x - 1);
+            let width = allowed_end_x as isize - start_render_x as isize;
+            if width > 0 {
+                let vert_align_offset = (r.rendered_row_height - editor_obj.rendered_h) / 2;
+                render_buckets.set_color(Layer::BehindText, theme.line_ref_bg);
+                render_buckets.draw_rect(
+                    Layer::BehindText,
+                    start_render_x,
+                    editor_obj.rendered_y.add(vert_align_offset),
+                    width as usize,
+                    editor_obj.rendered_h,
+                );
+            }
         }
     }
 }
@@ -4215,13 +4221,19 @@ fn underline_active_line_refs<'text_ptr>(
                     color
                 };
 
-                render_buckets.set_color(Layer::BehindText, color);
-                render_buckets.draw_underline(
-                    Layer::BehindText,
-                    gr.left_gutter_width + editor_obj.rendered_x,
-                    editor_obj.rendered_y.add(editor_obj.rendered_h - 1),
-                    editor_obj.rendered_w,
-                );
+                let start_render_x = gr.left_gutter_width + editor_obj.rendered_x;
+                let allowed_end_x =
+                    (start_render_x + editor_obj.rendered_w).min(gr.result_gutter_x - 1);
+                let width = allowed_end_x as isize - start_render_x as isize;
+                if width > 0 {
+                    render_buckets.set_color(Layer::BehindText, color);
+                    render_buckets.draw_underline(
+                        Layer::BehindText,
+                        start_render_x,
+                        editor_obj.rendered_y.add(editor_obj.rendered_h - 1),
+                        width as usize,
+                    );
+                }
             }
             _ => {}
         }
@@ -6225,6 +6237,28 @@ mod main_tests {
                 count, expected_count,
                 "Found {} times.\nExpected: {}\nin\n{:?}",
                 count, expected_count, operators
+            );
+        }
+
+        fn assert_contains_custom_command<F>(
+            &self,
+            layer: Layer,
+            expected_count: usize,
+            expected_command: F,
+        ) where
+            F: Fn(&OutputMessage) -> bool,
+        {
+            let mut count = 0;
+            let commands = &self.render_bucket().custom_commands[layer as usize];
+            for op in commands {
+                if expected_command(op) {
+                    count += 1;
+                }
+            }
+            assert_eq!(
+                count, expected_count,
+                "Found {} times.\nExpected: {}\nin\n{:?}",
+                count, expected_count, commands
             );
         }
 
@@ -10420,6 +10454,181 @@ ddd",
                     y: canvas_y(2),
                     w: "356 789".len(),
                 },
+            );
+        }
+
+        #[test]
+        fn test_that_out_of_editor_line_ref_backgrounds_are_not_rendered() {
+            let test = create_app3(51, 35);
+            test.paste("234\n356789\nasd &[1] * &[2] * 2");
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+
+            // line_ref rect would start on the result gutter
+            for _i in 0..10 {
+                test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            }
+
+            test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+                OutputMessage::RenderRectangle { y, .. } => *y == canvas_y(2),
+                _ => false,
+            });
+            test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+                OutputMessage::SetColor(c) => *c == THEMES[0].line_ref_bg,
+                _ => false,
+            });
+        }
+
+        #[test]
+        fn test_that_partial_out_of_editor_line_ref_backgrounds_are_rendered_partially() {
+            let test = create_app3(51, 35);
+            test.paste("234\n356789\nasd &[1] * &[2] * 2");
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+
+            // line_ref rect would start on the result gutter
+            for _i in 0..7 {
+                test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            }
+
+            // everything visible yet
+            test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+                OutputMessage::RenderRectangle { x, y, w, h } => {
+                    *y == canvas_y(2) && *x == 22 && *w == 7 && *h == 1
+                }
+                _ => false,
+            });
+
+            test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+                OutputMessage::RenderRectangle { x, y, w, h } => {
+                    *y == canvas_y(2) && *x == 23 && *w == 4 && *h == 1
+                }
+                _ => false,
+            });
+
+            test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+                OutputMessage::RenderRectangle { x, y, w, h } => {
+                    *y == canvas_y(2) && *x == 24 && *w == 2 && *h == 1
+                }
+                _ => false,
+            });
+        }
+
+        #[test]
+        fn test_that_out_of_editor_line_ref_underlines_are_not_rendered() {
+            let test = create_app3(51, 35);
+            test.paste("234\n356789\nasd &[1] * &[2] * 2");
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+
+            for _i in 0..10 {
+                test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            }
+
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+
+            // there is only 1 line ref background since the 2nd one is out of editor
+            // the one setcolor is for the rectangle, but there is no for the underline
+            test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+                OutputMessage::SetColor(color) => *color == ACTIVE_LINE_REF_HIGHLIGHT_COLORS[1],
+                _ => false,
+            });
+            // just to be suire that there are 2 setcolor for normal cases
+            test.assert_contains_custom_command(Layer::BehindText, 2, |cmd| match cmd {
+                OutputMessage::SetColor(color) => *color == ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0],
+                _ => false,
+            });
+            test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+                OutputMessage::RenderUnderline { y, .. } => *y == canvas_y(2),
+                _ => false,
+            });
+            // no other colors
+            for expected_color in ACTIVE_LINE_REF_HIGHLIGHT_COLORS.iter().skip(2) {
+                test.assert_contains_custom_command(Layer::BehindText, 0, |cmd| match cmd {
+                    OutputMessage::SetColor(color) => *color == *expected_color,
+                    _ => false,
+                })
+            }
+        }
+
+        #[test]
+        fn test_that_partial_out_of_editor_line_ref_underlines_are_rendered_partially() {
+            let test = create_app3(51, 35);
+            test.paste("234\n356789\nasd &[1] * &[2] * 2");
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+
+            // line_ref rect would start on the result gutter
+            for _i in 0..7 {
+                test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            }
+
+            // everything visible yet
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+                OutputMessage::RenderUnderline { x, y, w } => {
+                    *y == canvas_y(2) && *x == 22 && *w == 7
+                }
+                _ => false,
+            });
+
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+            test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+                OutputMessage::RenderUnderline { x, y, w } => {
+                    *y == canvas_y(2) && *x == 23 && *w == 4
+                }
+                _ => false,
+            });
+
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+            test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+                OutputMessage::RenderUnderline { x, y, w } => {
+                    *y == canvas_y(2) && *x == 24 && *w == 2
+                }
+                _ => false,
+            });
+        }
+
+        #[test]
+        fn test_that_partial_out_of_editor_line_ref_pulses_are_rendered_partially() {
+            let test = create_app3(51, 35);
+            test.paste("234\n356789\nasd &[1] * &[2] * 2");
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+
+            for _i in 0..7 {
+                test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            }
+
+            // everything visible yet
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            assert_contains(
+                &test.render_bucket().custom_commands[Layer::AboveText as usize],
+                1,
+                pulsing_ref_rect(22, 2, 7, 1),
+            );
+
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+            test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            assert_contains(
+                &test.render_bucket().custom_commands[Layer::AboveText as usize],
+                1,
+                pulsing_ref_rect(23, 2, 5, 1),
+            );
+
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+            test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            assert_contains(
+                &test.render_bucket().custom_commands[Layer::AboveText as usize],
+                1,
+                pulsing_ref_rect(24, 2, 3, 1),
             );
         }
 
