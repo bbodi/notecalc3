@@ -308,7 +308,7 @@
             console.log("memory: ", wasm_bindgen.get_allocated_bytes_count(app_ptr));
             next_full_reparse_tick = now + 10_000;
         } else if (wasm_bindgen.handle_time(app_ptr, now)) {
-            set_canvas_dirty('tick');
+            //set_canvas_dirty('tick');
             if (content_was_modified) {
                 save_content();
             }
@@ -409,7 +409,7 @@
             measure_start = new Date().getTime();
             if (need_update && wasm_bindgen.handle_drag(app_ptr, char_x, char_y)) {
                 need_update_selected_text = true;
-                set_canvas_dirty('dragging');
+                //set_canvas_dirty('dragging');
                 last_drag_event = {x: char_x, y: char_y};
             }
         } else {
@@ -521,9 +521,8 @@
         let content_was_modified = wasm_bindgen.handle_input(app_ptr, key, modifiers);
         if (content_was_modified) {
             set_content_was_modified();
-        } else {
-            update_selected_text();
         }
+        update_selected_text();
         if (e.ctrlKey && (e.key === 'c' || e.key === 'x')) {
             if (e.key === 'x') {
                 set_canvas_dirty('ctrl-x');

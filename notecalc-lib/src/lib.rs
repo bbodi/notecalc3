@@ -1222,7 +1222,7 @@ impl MatrixEditing {
                         );
                     }
                     let sel = self.editor.get_selection();
-                    if let Some((first, second)) = sel.is_range() {
+                    if let Some((first, second)) = sel.is_range_ordered() {
                         let len = second.column - first.column;
                         render_buckets.set_color(Layer::BehindText, theme.selection_color);
                         render_buckets.draw_rect(
@@ -1392,10 +1392,12 @@ impl NoteCalcApp {
                 .editor_content
                 .write_selection_into(matrix_editing.editor.get_selection(), &mut str);
             Some(str)
-        } else if self.editor.get_selection().is_range().is_some() {
+        } else if self.editor.get_selection().is_range() {
             self.editor_content
                 .write_selection_into(self.editor.get_selection(), &mut str);
             Some(str)
+        } else if !self.editor.clipboard.is_empty() {
+            Some(std::mem::replace(&mut self.editor.clipboard, String::new()))
         } else {
             None
         };
@@ -1559,7 +1561,7 @@ impl NoteCalcApp {
                     // it means that either we use the nice token rendering (e.g. for matrix it is the multiline matrix stuff),
                     // or render simply the backend content (e.g. for matrix it is [1;2;3]
                     let need_matrix_renderer =
-                        if let Some((first, second)) = editor.get_selection().is_range() {
+                        if let Some((first, second)) = editor.get_selection().is_range_ordered() {
                             NOT((first.row..=second.row).contains(&(editor_y.as_usize())))
                         } else {
                             true
@@ -2675,7 +2677,7 @@ impl NoteCalcApp {
         ) -> Option<RowModificationType> {
             if input == EditorInputEvent::Left {
                 let selection = app.editor.get_selection();
-                let (start, end) = selection.get_range();
+                let (start, end) = selection.get_range_ordered();
                 for row_i in start.row..=end.row {
                     let new_format = match &app.editor_content.get_data(row_i).result_format {
                         ResultFormat::Bin => ResultFormat::Hex,
@@ -2687,7 +2689,7 @@ impl NoteCalcApp {
                 None
             } else if input == EditorInputEvent::Right {
                 let selection = app.editor.get_selection();
-                let (start, end) = selection.get_range();
+                let (start, end) = selection.get_range_ordered();
                 for row_i in start.row..=end.row {
                     let new_format = match &app.editor_content.get_data(row_i).result_format {
                         ResultFormat::Bin => ResultFormat::Dec,
@@ -2741,6 +2743,7 @@ impl NoteCalcApp {
         ////////////////////////////////////////////////////
         ////////////////////////////////////////////////////
         ////////////////////////////////////////////////////
+        let prev_selection = self.editor.get_selection();
         let prev_row = self.editor.get_selection().get_cursor_pos().row;
         let modif = if self.matrix_editing.is_none() && modifiers.alt {
             handle_input_with_alt(&mut *self, input)
@@ -2764,7 +2767,7 @@ impl NoteCalcApp {
             Some(modif_type)
         } else if input == EditorInputEvent::Char('c')
             && modifiers.ctrl
-            && self.editor.get_selection().is_range().is_none()
+            && !self.editor.get_selection().is_range()
         {
             let row = self.editor.get_selection().get_cursor_pos().row;
             if let Ok(Some(result)) = &results[content_y(row)] {
@@ -2783,8 +2786,19 @@ impl NoteCalcApp {
             None
         } else if self.handle_obj_jump_over(&input, modifiers, editor_objs) {
             None
+        } else if self.handle_parenthesis_wrapping(&input) {
+            Some(RowModificationType::AllLinesFrom(
+                prev_selection.get_first().row,
+            ))
+        } else if self.handle_parenthesis_removal(&input) {
+            Some(RowModificationType::SingleLine(
+                prev_selection.get_first().row,
+            ))
+        } else if self.handle_parenthesis_completion(&input) {
+            Some(RowModificationType::SingleLine(
+                prev_selection.get_first().row,
+            ))
         } else {
-            let prev_selection = self.editor.get_selection();
             let prev_cursor_pos = prev_selection.get_cursor_pos();
 
             // if the cursor is inside a matrix, put it afterwards
@@ -2805,7 +2819,7 @@ impl NoteCalcApp {
                 .handle_input(input, modifiers, &mut self.editor_content);
 
             if self.editor.get_selection().get_cursor_pos().row >= MAX_LINE_COUNT {
-                if let Some((start, _end)) = self.editor.get_selection().is_range() {
+                if let Some((start, _end)) = self.editor.get_selection().is_range_ordered() {
                     self.editor.set_selection_save_col(Selection::range(
                         start,
                         Pos::from_row_column(MAX_LINE_COUNT - 1, 0),
@@ -2820,9 +2834,8 @@ impl NoteCalcApp {
                 // it is possible to step into a matrix only through navigation
                 self.check_stepping_into_matrix(prev_cursor_pos, editor_objs);
                 // if there was no selection but now there is
-                if prev_selection.is_range().is_none()
-                    && self.editor.get_selection().is_range().is_some()
-                {
+                if !prev_selection.is_range() && self.editor.get_selection().is_range() {
+                    // since the content is modified, it is considered as modification
                     self.normalize_line_refs_in_place();
                     Some(RowModificationType::AllLinesFrom(0))
                 } else {
@@ -3336,7 +3349,7 @@ impl NoteCalcApp {
         render_buckets.clear();
         let theme = &THEMES[self.render_data.theme_index];
         let (first_row, second_row) =
-            if let Some((start, end)) = self.editor.get_selection().is_range() {
+            if let Some((start, end)) = self.editor.get_selection().is_range_ordered() {
                 (start.row, end.row)
             } else {
                 (0, self.editor_content.line_count() - 1)
@@ -3454,6 +3467,152 @@ impl NoteCalcApp {
         }
 
         return result_str;
+    }
+
+    fn handle_parenthesis_completion<'b>(&mut self, input: &EditorInputEvent) -> bool {
+        let closing_char = match input {
+            EditorInputEvent::Char('(') => Some(')'),
+            EditorInputEvent::Char('[') => Some(']'),
+            EditorInputEvent::Char('{') => Some('}'),
+            EditorInputEvent::Char('\"') => Some('\"'),
+            _ => None,
+        };
+        if let Some(closing_char) = closing_char {
+            if self
+                .editor
+                .handle_input(*input, InputModifiers::none(), &mut self.editor_content)
+                .is_some()
+            {
+                if self
+                    .editor
+                    .handle_input(
+                        EditorInputEvent::Char(closing_char),
+                        InputModifiers::none(),
+                        &mut self.editor_content,
+                    )
+                    .is_some()
+                {
+                    self.editor.handle_input(
+                        EditorInputEvent::Left,
+                        InputModifiers::none(),
+                        &mut self.editor_content,
+                    );
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn handle_parenthesis_removal<'b>(&mut self, input: &EditorInputEvent) -> bool {
+        let prev_selection = self.editor.get_selection();
+        if prev_selection.is_range() {
+            return false;
+        }
+        let prev_cursor_pos = prev_selection.get_cursor_pos();
+        let char_in_front_of_cursur = if prev_cursor_pos.column > 0 {
+            Some(
+                self.editor_content
+                    .get_char(prev_cursor_pos.row, prev_cursor_pos.column - 1),
+            )
+        } else {
+            None
+        };
+        if *input == EditorInputEvent::Backspace {
+            let closing_char = match char_in_front_of_cursur {
+                Some('(') => Some(')'),
+                Some('[') => Some(']'),
+                Some('{') => Some('}'),
+                Some('\"') => Some('\"'),
+                _ => None,
+            };
+            if let Some(closing_char) = closing_char {
+                let cursor_pos = self.editor.get_selection().get_cursor_pos();
+                if self
+                    .editor_content
+                    .get_char(cursor_pos.row, cursor_pos.column)
+                    == closing_char
+                {
+                    if self
+                        .editor
+                        .handle_input(
+                            EditorInputEvent::Backspace,
+                            InputModifiers::none(),
+                            &mut self.editor_content,
+                        )
+                        .is_some()
+                    {
+                        self.editor.handle_input(
+                            EditorInputEvent::Del,
+                            InputModifiers::none(),
+                            &mut self.editor_content,
+                        );
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    fn handle_parenthesis_wrapping<'b>(&mut self, input: &EditorInputEvent) -> bool {
+        let prev_selection = self.editor.get_selection();
+        if let Some((start, end)) = prev_selection.is_range_ordered() {
+            let single_line = start.row == end.row;
+            let closing_char = match input {
+                EditorInputEvent::Char('(') => Some(')'),
+                EditorInputEvent::Char('[') => Some(']'),
+                EditorInputEvent::Char('{') => Some('}'),
+                EditorInputEvent::Char('\"') => Some('\"'),
+                _ => None,
+            };
+            if let Some(closing_char) = closing_char {
+                // end selection and insert closing char
+                self.editor.set_cursor_pos(end);
+                if self
+                    .editor
+                    .handle_input(
+                        EditorInputEvent::Char(closing_char),
+                        InputModifiers::none(),
+                        &mut self.editor_content,
+                    )
+                    .is_some()
+                {
+                    // insert opening char
+                    self.editor.set_cursor_pos(start);
+                    if self
+                        .editor
+                        .handle_input(*input, InputModifiers::none(), &mut self.editor_content)
+                        .is_some()
+                    {
+                        // restore selection
+                        let (real_start, real_end) = prev_selection.get_range();
+                        if start != real_start {
+                            // the selection is backwards
+                            self.editor.set_selection_save_col(Selection::range(
+                                if single_line {
+                                    real_start.with_next_col()
+                                } else {
+                                    real_start
+                                },
+                                real_end.with_next_col(),
+                            ));
+                        } else {
+                            self.editor.set_selection_save_col(Selection::range(
+                                start.with_next_col(),
+                                if single_line {
+                                    end.with_next_col()
+                                } else {
+                                    end
+                                },
+                            ));
+                        }
+                    }
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     fn handle_completion<'b>(
@@ -3605,7 +3764,7 @@ impl NoteCalcApp {
         let selection = self.editor.get_selection();
         let cursor_pos = selection.get_cursor_pos();
         if *input == EditorInputEvent::Backspace
-            && selection.is_range().is_none()
+            && !selection.is_range()
             && selection.start.column > 0
         {
             if let Some(index) =
@@ -3629,7 +3788,7 @@ impl NoteCalcApp {
                     Some(RowModificationType::SingleLine(cursor_pos.row))
                 };
             }
-        } else if *input == EditorInputEvent::Del && selection.is_range().is_none() {
+        } else if *input == EditorInputEvent::Del && !selection.is_range() {
             if let Some(index) = self.index_of_matrix_or_lineref_at(cursor_pos, editor_objects) {
                 // remove it
                 let obj = editor_objects[content_y(cursor_pos.row)].remove(index);
@@ -3662,7 +3821,7 @@ impl NoteCalcApp {
         let selection = self.editor.get_selection();
         let cursor_pos = selection.get_cursor_pos();
         if *input == EditorInputEvent::Left
-            && selection.is_range().is_none()
+            && !selection.is_range()
             && selection.start.column > 0
             && modifiers.shift == false
         {
@@ -3675,7 +3834,7 @@ impl NoteCalcApp {
                 return true;
             }
         } else if *input == EditorInputEvent::Right
-            && selection.is_range().is_none()
+            && !selection.is_range()
             && modifiers.shift == false
         {
             let obj = self
@@ -3723,9 +3882,7 @@ impl NoteCalcApp {
                     row_count,
                     col_count,
                 } => {
-                    if self.matrix_editing.is_none()
-                        && self.editor.get_selection().is_range().is_none()
-                    {
+                    if self.matrix_editing.is_none() && !self.editor.get_selection().is_range() {
                         self.matrix_editing = Some(MatrixEditing::new(
                             row_count,
                             col_count,
@@ -3860,7 +4017,7 @@ impl NoteCalcApp {
             && input == EditorInputEvent::Right
             && mat_edit.editor.is_cursor_at_eol(&mat_edit.editor_content)
         {
-            if let Some((_from, to)) = mat_edit.editor.get_selection().is_range() {
+            if let Some((_from, to)) = mat_edit.editor.get_selection().is_range_ordered() {
                 mat_edit.editor.set_cursor_pos_r_c(0, to.column);
             } else if mat_edit.current_cell.column + 1 < mat_edit.col_count {
                 mat_edit.move_to_cell(mat_edit.current_cell.with_next_col());
@@ -4633,7 +4790,7 @@ fn render_matrix<'text_ptr>(
     end_token_index += 1;
 
     let cursor_pos = editor.get_selection().get_cursor_pos();
-    let cursor_inside_matrix: bool = if editor.get_selection().is_range().is_none()
+    let cursor_inside_matrix: bool = if !editor.get_selection().is_range()
         && cursor_pos.row == r.editor_y.as_usize()
         && cursor_pos.column > r.editor_x
         && cursor_pos.column < r.editor_x + text_width
@@ -5705,7 +5862,7 @@ fn render_selection_and_its_sum<'text_ptr>(
     theme: &Theme,
 ) {
     render_buckets.set_color(Layer::BehindText, theme.selection_color);
-    if let Some((start, end)) = editor.get_selection().is_range() {
+    if let Some((start, end)) = editor.get_selection().is_range_ordered() {
         if end.row > start.row {
             // first line
             if let Some(start_render_y) = gr.get_render_y(content_y(start.row)) {
@@ -6464,7 +6621,11 @@ mod main_tests {
             );
         }
 
-        fn input(&self, event: EditorInputEvent, modif: InputModifiers) {
+        fn input(
+            &self,
+            event: EditorInputEvent,
+            modif: InputModifiers,
+        ) -> Option<RowModificationType> {
             self.mut_app().handle_input(
                 event,
                 modif,
@@ -6475,7 +6636,7 @@ mod main_tests {
                 self.mut_vars(),
                 self.mut_editor_objects(),
                 self.mut_render_bucket(),
-            );
+            )
         }
 
         fn handle_mouse_up(&self) {
@@ -7963,7 +8124,11 @@ sum",
             let mut expected: String = "16892313\n".to_owned();
             expected.push(*ch);
             expected.push_str("&[1]");
-            assert_eq!(test.get_editor_content(), expected);
+            let expected_len = "16892313\n(&[1]".len(); // it is needed since '(' inserts a ')' as well);
+            assert_eq!(
+                test.get_editor_content()[0..expected_len],
+                expected[0..expected_len]
+            );
         }
     }
 
@@ -9179,7 +9344,7 @@ ddd",
         test.input(EditorInputEvent::PageDown, InputModifiers::shift());
         test.render();
         assert_eq!(
-            test.get_selection().is_range(),
+            test.get_selection().is_range_ordered(),
             Some((
                 Pos::from_row_column(0, 0),
                 Pos::from_row_column(MAX_LINE_COUNT - 1, 0)
@@ -9297,7 +9462,7 @@ ddd",
         test.click(left_gutter_width + 7, 0);
         test.handle_drag(0, 0);
         assert_eq!(
-            test.get_selection().is_range(),
+            test.get_selection().is_range_ordered(),
             Some((Pos::from_row_column(0, 0), Pos::from_row_column(0, 7)))
         );
     }
@@ -11568,5 +11733,376 @@ asd",
         test.paste("    =5$2*x-2044923+/I2(397-293496(6[/7k9]/^*6490^)(5/j=");
         test.input(EditorInputEvent::Char('9'), InputModifiers::none());
         assert!(test.mut_vars()[0].is_none());
+    }
+
+    #[test]
+    fn test_modification_happens_on_selection() {
+        let test = create_app3(84, 36);
+        test.paste("asd");
+        assert!(test
+            .input(EditorInputEvent::Home, InputModifiers::shift())
+            .is_some())
+    }
+
+    #[test]
+    fn test_insert_closing_parenthesis_when_opening_paren_inserted() {
+        for (tested_opening_char, expected_closing_char) in
+            &[('(', ')'), ('[', ']'), ('{', '}'), ('\"', '\"')]
+        {
+            let tested_opening_char = *tested_opening_char;
+            let expected_closing_char = *expected_closing_char;
+            {
+                let test = create_app3(84, 36);
+                test.paste("");
+                test.input(
+                    EditorInputEvent::Char(tested_opening_char),
+                    InputModifiers::none(),
+                );
+                let mut expected_str = String::with_capacity(2);
+                expected_str.push(tested_opening_char);
+                expected_str.push(expected_closing_char);
+                assert_eq!(expected_str, test.get_editor_content());
+                assert_eq!(Pos::from_row_column(0, 1), test.get_cursor_pos());
+            }
+            {
+                let test = create_app3(84, 36);
+                test.paste("");
+                let mut expected_str = String::with_capacity(20);
+                for i in 0..10 {
+                    test.input(
+                        EditorInputEvent::Char(tested_opening_char),
+                        InputModifiers::none(),
+                    );
+                    expected_str.clear();
+                    for _ in 0..i + 1 {
+                        expected_str.push(tested_opening_char);
+                    }
+                    for _ in 0..i + 1 {
+                        expected_str.push(expected_closing_char);
+                    }
+
+                    assert_eq!(expected_str, test.get_editor_content());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_removing_opening_parenthesis_removes_closing_as_well_if_they_are_neighbours() {
+        for (tested_opening_char, expected_closing_char) in
+            &[('(', ')'), ('[', ']'), ('{', '}'), ('\"', '\"')]
+        {
+            let tested_opening_char = *tested_opening_char;
+            let expected_closing_char = *expected_closing_char;
+            {
+                let test = create_app3(84, 36);
+
+                let mut pasted_str = String::with_capacity(2);
+                pasted_str.push(tested_opening_char);
+                pasted_str.push(expected_closing_char);
+
+                test.paste(&pasted_str);
+                test.input(EditorInputEvent::Left, InputModifiers::none());
+                test.input(EditorInputEvent::Backspace, InputModifiers::none());
+                assert_eq!("", &test.get_editor_content());
+                assert_eq!(Pos::from_row_column(0, 0), test.get_cursor_pos());
+            }
+            {
+                let test = create_app3(84, 36);
+
+                let mut pasted_str = String::with_capacity(2);
+                pasted_str.push(tested_opening_char);
+                pasted_str.push(expected_closing_char);
+
+                test.paste(&pasted_str);
+                test.input(EditorInputEvent::Backspace, InputModifiers::none());
+                assert_eq!(tested_opening_char.to_string(), test.get_editor_content());
+                assert_eq!(Pos::from_row_column(0, 1), test.get_cursor_pos());
+            }
+            {
+                let test = create_app3(84, 36);
+
+                let mut pasted_str = String::with_capacity(2);
+                pasted_str.push(tested_opening_char);
+                pasted_str.push(expected_closing_char);
+
+                test.paste(&pasted_str);
+                test.input(EditorInputEvent::Left, InputModifiers::none());
+                test.input(EditorInputEvent::Del, InputModifiers::none());
+                assert_eq!(tested_opening_char.to_string(), test.get_editor_content());
+                assert_eq!(Pos::from_row_column(0, 1), test.get_cursor_pos());
+            }
+            {
+                let test = create_app3(84, 36);
+
+                let mut pasted_str = String::with_capacity(2);
+                pasted_str.push(tested_opening_char);
+                pasted_str.push(expected_closing_char);
+
+                test.paste(&pasted_str);
+                test.input(EditorInputEvent::Left, InputModifiers::none());
+                test.input(EditorInputEvent::Left, InputModifiers::none());
+                test.input(EditorInputEvent::Del, InputModifiers::none());
+                assert_eq!(expected_closing_char.to_string(), test.get_editor_content());
+                assert_eq!(Pos::from_row_column(0, 0), test.get_cursor_pos());
+            }
+        }
+    }
+
+    #[test]
+    fn test_removing_opening_parenthesis_multiple_times() {
+        for (tested_opening_char, expected_closing_char) in
+            &[('(', ')'), ('[', ']'), ('{', '}'), ('\"', '\"')]
+        {
+            let tested_opening_char = *tested_opening_char;
+            let expected_closing_char = *expected_closing_char;
+            let test = create_app3(84, 36);
+            let mut expected_str = String::with_capacity(20);
+            test.paste("");
+            for i in 0..10 {
+                for _ in 0..i + 1 {
+                    test.input(
+                        EditorInputEvent::Char(tested_opening_char),
+                        InputModifiers::none(),
+                    );
+                }
+                {
+                    expected_str.clear();
+                    for _ in 0..i + 1 {
+                        expected_str.push(tested_opening_char);
+                    }
+                    for _ in 0..i + 1 {
+                        expected_str.push(expected_closing_char);
+                    }
+                    assert_eq!(test.get_editor_content(), expected_str);
+                }
+                for _ in 0..i + 1 {
+                    test.input(EditorInputEvent::Backspace, InputModifiers::none());
+                }
+                assert_eq!(&test.get_editor_content(), "");
+                assert_eq!(Pos::from_row_column(0, 0), test.get_cursor_pos());
+            }
+        }
+    }
+
+    #[test]
+    fn test_removing_opening_parenthesis_removes_only_inside_content() {
+        let mut expected_str = String::with_capacity(2);
+        for (tested_opening_char, expected_closing_char) in
+            &[('(', ')'), ('[', ']'), ('{', '}'), ('\"', '\"')]
+        {
+            let tested_opening_char = *tested_opening_char;
+            let expected_closing_char = *expected_closing_char;
+            let test = create_app3(84, 36);
+            test.paste("");
+            test.input(
+                EditorInputEvent::Char(tested_opening_char),
+                InputModifiers::none(),
+            );
+            test.input(EditorInputEvent::Char('a'), InputModifiers::none());
+            test.input(EditorInputEvent::Char('s'), InputModifiers::none());
+            test.input(EditorInputEvent::Char('d'), InputModifiers::none());
+
+            test.input(EditorInputEvent::Left, InputModifiers::shift());
+            test.input(EditorInputEvent::Left, InputModifiers::shift());
+            test.input(EditorInputEvent::Left, InputModifiers::shift());
+
+            test.input(EditorInputEvent::Backspace, InputModifiers::none());
+
+            expected_str.clear();
+            expected_str.push(tested_opening_char);
+            expected_str.push(expected_closing_char);
+            assert_eq!(expected_str, test.get_editor_content());
+            assert_eq!(Pos::from_row_column(0, 1), test.get_cursor_pos());
+        }
+    }
+
+    #[test]
+    fn test_parenthesis_completion_1() {
+        let test = create_app3(84, 36);
+        test.paste("");
+        test.input(EditorInputEvent::Char('{'), InputModifiers::none());
+        test.input(EditorInputEvent::Char('{'), InputModifiers::none());
+        test.input(EditorInputEvent::Char('('), InputModifiers::none());
+        test.input(EditorInputEvent::Char('('), InputModifiers::none());
+        assert_eq!("{{(())}}", &test.get_editor_content());
+        assert_eq!(Pos::from_row_column(0, 4), test.get_cursor_pos());
+    }
+
+    #[test]
+    fn test_insert_closing_parenthesis_around_selected_text() {
+        for (tested_opening_char, expected_closing_char) in
+            &[('(', ')'), ('[', ']'), ('{', '}'), ('\"', '\"')]
+        {
+            let tested_opening_char = *tested_opening_char;
+            let expected_closing_char = *expected_closing_char;
+            {
+                let test = create_app3(84, 36);
+                test.paste("asd");
+                test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
+                test.input(
+                    EditorInputEvent::Char(tested_opening_char),
+                    InputModifiers::none(),
+                );
+
+                let mut expected_str = String::with_capacity(2);
+                expected_str.push(tested_opening_char);
+                expected_str.push_str("asd");
+                expected_str.push(expected_closing_char);
+                assert_eq!(expected_str, test.get_editor_content());
+                assert_eq!(
+                    test.get_selection(),
+                    Selection::range(Pos::from_row_column(0, 1), Pos::from_row_column(0, 4)),
+                );
+            }
+            {
+                let test = create_app3(84, 36);
+                test.paste("asd");
+                test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
+                let mut expected_str = String::with_capacity(20);
+                for i in 0..10 {
+                    test.input(
+                        EditorInputEvent::Char(tested_opening_char),
+                        InputModifiers::none(),
+                    );
+                    expected_str.clear();
+                    for _ in 0..i + 1 {
+                        expected_str.push(tested_opening_char);
+                    }
+                    expected_str.push_str("asd");
+                    for _ in 0..i + 1 {
+                        expected_str.push(expected_closing_char);
+                    }
+
+                    assert_eq!(expected_str, test.get_editor_content());
+                    assert_eq!(
+                        test.get_selection(),
+                        Selection::range(
+                            Pos::from_row_column(0, i + 1),
+                            Pos::from_row_column(0, 3 + (i + 1))
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_insert_closing_parenthesis_around_multiline_selected_text() {
+        for (tested_opening_char, expected_closing_char) in
+            &[('(', ')'), ('[', ']'), ('{', '}'), ('\"', '\"')]
+        {
+            let tested_opening_char = *tested_opening_char;
+            let expected_closing_char = *expected_closing_char;
+            {
+                let test = create_app3(84, 36);
+                test.paste("asd\nbsd");
+                test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
+                test.input(
+                    EditorInputEvent::Char(tested_opening_char),
+                    InputModifiers::none(),
+                );
+
+                let mut expected_str = String::with_capacity(2);
+                expected_str.push(tested_opening_char);
+                expected_str.push_str("asd\nbsd");
+                expected_str.push(expected_closing_char);
+                assert_eq!(expected_str, test.get_editor_content());
+                assert_eq!(
+                    test.get_selection(),
+                    Selection::range(Pos::from_row_column(0, 1), Pos::from_row_column(1, 3)),
+                );
+            }
+            {
+                let test = create_app3(84, 36);
+                test.paste("asd\nbsd");
+                test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
+                let mut expected_str = String::with_capacity(20);
+                for i in 0..10 {
+                    test.input(
+                        EditorInputEvent::Char(tested_opening_char),
+                        InputModifiers::none(),
+                    );
+                    expected_str.clear();
+                    for _ in 0..i + 1 {
+                        expected_str.push(tested_opening_char);
+                    }
+                    expected_str.push_str("asd\nbsd");
+                    for _ in 0..i + 1 {
+                        expected_str.push(expected_closing_char);
+                    }
+
+                    assert_eq!(expected_str, test.get_editor_content());
+                    assert_eq!(
+                        test.get_selection(),
+                        Selection::range(
+                            Pos::from_row_column(0, i + 1),
+                            Pos::from_row_column(1, 3)
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_insert_closing_parenthesis_around_multiline_selected_text_backward_selection() {
+        for (tested_opening_char, expected_closing_char) in
+            &[('(', ')'), ('[', ']'), ('{', '}'), ('\"', '\"')]
+        {
+            let tested_opening_char = *tested_opening_char;
+            let expected_closing_char = *expected_closing_char;
+            {
+                let test = create_app3(84, 36);
+                test.paste("asd\nbsd");
+                test.input(EditorInputEvent::Home, InputModifiers::shift());
+                test.input(EditorInputEvent::Up, InputModifiers::shift());
+                test.input(
+                    EditorInputEvent::Char(tested_opening_char),
+                    InputModifiers::none(),
+                );
+
+                let mut expected_str = String::with_capacity(2);
+                expected_str.push(tested_opening_char);
+                expected_str.push_str("asd\nbsd");
+                expected_str.push(expected_closing_char);
+                assert_eq!(expected_str, test.get_editor_content());
+                assert_eq!(
+                    test.get_selection(),
+                    Selection::range(Pos::from_row_column(1, 3), Pos::from_row_column(0, 1)),
+                );
+            }
+            {
+                let test = create_app3(84, 36);
+                test.paste("asd\nbsd");
+                test.input(EditorInputEvent::Home, InputModifiers::shift());
+                test.input(EditorInputEvent::Up, InputModifiers::shift());
+
+                let mut expected_str = String::with_capacity(20);
+                for i in 0..10 {
+                    test.input(
+                        EditorInputEvent::Char(tested_opening_char),
+                        InputModifiers::none(),
+                    );
+                    expected_str.clear();
+                    for _ in 0..i + 1 {
+                        expected_str.push(tested_opening_char);
+                    }
+                    expected_str.push_str("asd\nbsd");
+                    for _ in 0..i + 1 {
+                        expected_str.push(expected_closing_char);
+                    }
+
+                    assert_eq!(expected_str, test.get_editor_content());
+                    assert_eq!(
+                        test.get_selection(),
+                        Selection::range(
+                            Pos::from_row_column(1, 3),
+                            Pos::from_row_column(0, i + 1),
+                        ),
+                    );
+                }
+            }
+        }
     }
 }

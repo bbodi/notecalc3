@@ -150,7 +150,7 @@ impl<T: Default + Clone + Debug> EditorContent<T> {
     }
 
     pub fn write_selection_into(&self, selection: Selection, result: &mut String) {
-        if selection.is_range().is_none() {
+        if !selection.is_range() {
             return;
         }
         let start = selection.get_first();

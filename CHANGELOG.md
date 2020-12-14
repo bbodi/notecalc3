@@ -18,7 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are rendered only once as a big rectangle and not line by line).
 - Active references (variables and line refs in the cursor's row) are now just underlined
   and the referenced lines are not highlighted fully only their left and right gutter.
-  https://twitter.com/bodidev/status/1337363000261554182
+  [gif](https://twitter.com/bodidev/status/1337363000261554182)
+- Automatic closing parenthesis/braces insertion when the opening one is typed
+- Automatic closing parenthesis/braces deletion when the opening one is deleted
+- Automatic parenthesis/braces wrapping around selected text if opening one is typed while
+a text is selected
+  [gif](https://twitter.com/bodidev/status/1338427762831470592)
 
 ### Changed
 - When opening a not empty note, the result panel now tries
@@ -38,6 +43,7 @@ with rendering (widths of recatngles were float as well and did not always fill 
   the required space)
 - Underlines and line reference background rectangles were rendered even if they
 were outside of the editor area
+- `ctrl-x` did not copy the selected text  
 ### Removed
 
 ## [0.2.0] - 2020-12-03

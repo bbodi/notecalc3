@@ -250,13 +250,13 @@ mod tests {
                 expected_selection_start,
                 "Selection start"
             );
-            assert!(editor.get_selection().is_range().is_some());
+            assert!(editor.get_selection().is_range());
             assert_eq!(
                 editor.get_selection().end.unwrap(),
                 expected_selection_end,
                 "Selection end"
             );
-        } else if expected_cursor.is_range().is_none() && params.undo_count > 0 {
+        } else if !expected_cursor.is_range() && params.undo_count > 0 {
             assert_eq!(
                 editor.get_selection().start.row,
                 expected_cursor.start.row,
@@ -6170,5 +6170,27 @@ interest rate / (12 (1/year))
         );
         assert_eq!(content.get_content().lines().skip(2).next().unwrap(), "wed");
         assert_eq!(content.line_count(), 3);
+    }
+
+    #[test]
+    fn test_ctrl_x_without_selection_send_line_to_clipboard() {
+        let mut content = EditorContent::<usize>::new(120);
+        let mut editor = Editor::new(&mut content);
+
+        editor.insert_text(&"a".repeat(10), &mut content);
+        editor.handle_input(
+            EditorInputEvent::Enter,
+            InputModifiers::none(),
+            &mut content,
+        );
+        editor.insert_text(&"b".repeat(10), &mut content);
+        editor.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut content);
+        editor.handle_input(
+            EditorInputEvent::Char('x'),
+            InputModifiers::ctrl(),
+            &mut content,
+        );
+
+        assert_eq!(editor.clipboard, "aaaaaaaaaa\n".to_owned());
     }
 }
