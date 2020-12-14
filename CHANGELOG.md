@@ -43,7 +43,14 @@ with rendering (widths of recatngles were float as well and did not always fill 
   the required space)
 - Underlines and line reference background rectangles were rendered even if they
 were outside of the editor area
-- `ctrl-x` did not copy the selected text  
+- `ctrl-x` did not copy the selected text
+- units in the denominator behaved buggy. now expressions like this works well
+  ```
+  tax A = 50 000/month
+  tax B = 50 000/year
+  (tax A + tax B) * (1 year)
+  ```
+- Matrices cannot be deleted anymore by `DEL` or `BACKSPACE`, ctrl is needed.
 ### Removed
 
 ## [0.2.0] - 2020-12-03

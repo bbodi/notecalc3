@@ -633,7 +633,7 @@ impl UnitOutput {
     }
 
     pub fn is_derived(&self) -> bool {
-        self.units.len() > 1 || (self.units.len() == 1 && self.units[0].power > 1)
+        self.units.len() > 1 || (self.units.len() == 1 && self.units[0].power != 1)
     }
 }
 

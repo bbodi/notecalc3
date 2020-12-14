@@ -572,17 +572,9 @@ pub fn multiply_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
             // 2s * 3s
             let new_unit = lhs_unit * rhs_unit;
             if new_unit.is_unitless() {
-                if let Some(lhs_num) = lhs_unit.from_base_to_this_unit(lhs_num) {
-                    if let Some(rhs_num) = rhs_unit.from_base_to_this_unit(rhs_num) {
-                        lhs_num
-                            .checked_mul(&rhs_num)
-                            .map(|num| CalcResult::new(CalcResultType::Number(num), 0))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
+                lhs_num
+                    .checked_mul(&rhs_num)
+                    .map(|num| CalcResult::new(CalcResultType::Number(num), 0))
             } else {
                 lhs_num
                     .checked_mul(rhs_num)
@@ -923,6 +915,7 @@ pub fn divide_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         (CalcResultType::Number(num), CalcResultType::Unit(unit)) => {
             let new_unit = unit.pow(-1)?;
             let num_part = new_unit.normalize(&num)?;
+            //let _asd = new_unit.from_base_to_this_unit(&num)?;
             Some(CalcResult::new(
                 CalcResultType::Quantity(num_part, new_unit),
                 0,
@@ -1431,7 +1424,6 @@ mod tests {
         // there are no empty vectors
 
         // matrix
-        test_tokens("[]", &[str("["), str("]")]); // there are no empty vectors
         test_tokens(
             "1 + [2,]",
             &[
@@ -1984,5 +1976,20 @@ mod tests {
     #[test]
     fn test_fuzzing_issue() {
         test("90-/9b^72^4", "Err");
+    }
+
+    #[test]
+    fn calc_bug_period_calc() {
+        test("(1000/month) + (2000/year)", "1166.6667 month^-1");
+    }
+
+    #[test]
+    fn calc_bug_period_calc2() {
+        test("((1000/month) + (2000/year)) * 12 month", "14000");
+    }
+
+    #[test]
+    fn calc_bug_period_calc3() {
+        test("50 000 / month * 1 year", "600000");
     }
 }

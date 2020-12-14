@@ -397,6 +397,48 @@ impl ShuntingYard {
                                 &mut v,
                             );
                         }
+                        if tokens
+                            .get(input_index as usize + 1)
+                            .map(|it| {
+                                matches!(
+                                    it.typ,
+                                    TokenType::Operator(OperatorTokenType::BracketClose)
+                                )
+                            })
+                            .unwrap_or(false)
+                        {
+                            let matrix_token_type =
+                                TokenType::Operator(OperatorTokenType::Matrix {
+                                    row_count: 1,
+                                    col_count: 1,
+                                });
+                            to_out(output_stack, &matrix_token_type, input_index);
+                            tokens.insert(
+                                input_index as usize,
+                                Token {
+                                    ptr: &[],
+                                    typ: matrix_token_type.clone(),
+                                    has_error: false,
+                                },
+                            );
+                            // we inserted one element and we parsed the next one
+                            input_index += 2;
+                            if v.can_be_valid_closing_token() {
+                                ShuntingYard::send_everything_to_output(
+                                    &mut operator_stack,
+                                    output_stack,
+                                    &mut v.last_valid_operator_index,
+                                    &mut v.last_valid_output_range,
+                                );
+                                v.close_valid_range(
+                                    output_stack.len(),
+                                    input_index,
+                                    operator_stack.len(),
+                                );
+                            }
+                            continue;
+                        }
+
                         v.open_brackets += 1;
                         v.prev_token_type = ValidationTokenType::Nothing;
                         v.parenthesis_stack
@@ -2015,7 +2057,6 @@ pub mod tests {
     #[test]
     fn test_panic() {
         test_tokens("()", &[str("("), str(")")]);
-        test_tokens("[]", &[str("["), str("]")]);
         test_tokens("() Hz", &[str("("), str(")"), str(" "), str("Hz")]);
     }
 
@@ -2182,6 +2223,21 @@ pub mod tests {
                 num(1),
                 op(OperatorTokenType::BracketClose),
                 op(OperatorTokenType::ParenClose),
+            ],
+        )
+    }
+
+    #[test]
+    fn test_empty_matrix() {
+        test_tokens(
+            "[]",
+            &[
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 1,
+                }),
+                op(OperatorTokenType::BracketOpen),
+                op(OperatorTokenType::BracketClose),
             ],
         )
     }
