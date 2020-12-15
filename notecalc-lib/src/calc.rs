@@ -196,7 +196,7 @@ fn apply_operation<'text_ptr>(
         | OperatorTokenType::UnitConverter => {
             if stack.len() > 1 {
                 let (lhs, rhs) = (&stack[stack.len() - 2], &stack[stack.len() - 1]);
-                if let Some(result) = binary_operation(op, lhs, rhs) {
+                if let Some(result) = bitwise_operation(op, lhs, rhs) {
                     stack.truncate(stack.len() - 2);
                     stack.push(result);
                     true
@@ -262,22 +262,17 @@ fn apply_operation<'text_ptr>(
             if let Some(result) = maybe_top.and_then(|top| unit_conversion(top, &target_unit)) {
                 stack.pop();
                 stack.push(result);
+                true
             } else {
-                // it is the unit operand for "in" conversion
-                // e.g. "3m in cm",
-                // put the unit name into the stack, the next operator is probably an 'in'
-                stack.push(CalcResult::new(
-                    CalcResultType::Unit(target_unit.clone()),
-                    op_token_index,
-                ));
+                //tokens[op_token_index].has_error = true;
+                false
             }
-            true
         }
     };
     return succeed;
 }
 
-fn unit_conversion(top: &CalcResult, target_unit: &UnitOutput) -> Option<CalcResult> {
+fn unit_conversion<'text_ptr>(top: &CalcResult, target_unit: &UnitOutput) -> Option<CalcResult> {
     match &top.typ {
         CalcResultType::Number(num) => {
             let norm = target_unit.normalize(num);
@@ -303,12 +298,12 @@ fn unary_operation(
         OperatorTokenType::UnaryPlus => Some(top.clone()),
         OperatorTokenType::UnaryMinus => unary_minus_op(top),
         OperatorTokenType::Perc => percentage_operator(top, op_token_index),
-        OperatorTokenType::BinNot => binary_complement(top),
+        OperatorTokenType::BinNot => bitwise_not(top),
         _ => None,
     };
 }
 
-fn binary_operation(
+fn bitwise_operation(
     op: &OperatorTokenType,
     lhs: &CalcResult,
     rhs: &CalcResult,
@@ -318,12 +313,12 @@ fn binary_operation(
         OperatorTokenType::Div => divide_op(lhs, rhs),
         OperatorTokenType::Add => add_op(lhs, rhs),
         OperatorTokenType::Sub => sub_op(lhs, rhs),
-        OperatorTokenType::BinAnd => binary_and_op(lhs, rhs),
-        OperatorTokenType::BinOr => binary_or_op(lhs, rhs),
-        OperatorTokenType::BinXor => binary_xor_op(lhs, rhs),
+        OperatorTokenType::BinAnd => bitwise_and_op(lhs, rhs),
+        OperatorTokenType::BinOr => bitwise_or_op(lhs, rhs),
+        OperatorTokenType::BinXor => bitwise_xor_op(lhs, rhs),
         OperatorTokenType::Pow => pow_op(lhs, rhs),
-        OperatorTokenType::ShiftLeft => binary_shift_left(lhs, rhs),
-        OperatorTokenType::ShiftRight => binary_shift_right(lhs, rhs),
+        OperatorTokenType::ShiftLeft => bitwise_shift_left(lhs, rhs),
+        OperatorTokenType::ShiftRight => bitwise_shift_right(lhs, rhs),
         OperatorTokenType::UnitConverter => {
             return match (&lhs.typ, &rhs.typ) {
                 (
@@ -343,7 +338,7 @@ fn binary_operation(
                     let cells: Option<Vec<CalcResult>> = mat
                         .cells
                         .iter()
-                        .map(|cell| binary_operation(op, cell, rhs))
+                        .map(|cell| bitwise_operation(op, cell, rhs))
                         .collect();
                     cells.map(|it| {
                         CalcResult::new(
@@ -380,11 +375,11 @@ fn percentage_operator(lhs: &CalcResult, op_token_index: usize) -> Option<CalcRe
     }
 }
 
-fn binary_complement(lhs: &CalcResult) -> Option<CalcResult> {
+fn bitwise_not(lhs: &CalcResult) -> Option<CalcResult> {
     match &lhs.typ {
         CalcResultType::Number(lhs_num) => {
             // 0b01 and 0b10
-            let lhs_num = lhs_num.to_i64()?;
+            let lhs_num = lhs_num.to_u64()?;
             Some(CalcResult::new(
                 CalcResultType::Number(dec(lhs_num.not())),
                 lhs.index_into_tokens,
@@ -394,15 +389,15 @@ fn binary_complement(lhs: &CalcResult) -> Option<CalcResult> {
     }
 }
 
-fn binary_xor_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+fn bitwise_xor_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     match (&lhs.typ, &rhs.typ) {
         //////////////
         // 12 and x
         //////////////
         (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             // 0b01 and 0b10
-            let lhs = lhs.to_i64()?;
-            let rhs = rhs.to_i64()?;
+            let lhs = lhs.to_u64()?;
+            let rhs = rhs.to_u64()?;
             Some(CalcResult::new(
                 CalcResultType::Number(dec(lhs.bitxor(rhs))),
                 0,
@@ -412,25 +407,25 @@ fn binary_xor_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     }
 }
 
-fn binary_or_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+fn bitwise_or_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     match (&lhs.typ, &rhs.typ) {
         //////////////
         // 12 and x
         //////////////
         (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             // 0b01 and 0b10
-            let lhs = lhs.to_i64()?;
-            let rhs = rhs.to_i64()?;
+            let lhs = lhs.to_u64()?;
+            let rhs = rhs.to_u64()?;
             Some(CalcResult::new(CalcResultType::Number(dec(lhs | rhs)), 0))
         }
         _ => None,
     }
 }
 
-fn binary_shift_right(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+fn bitwise_shift_right(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     match (&lhs.typ, &rhs.typ) {
         (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
-            let lhs = lhs.to_i64()?;
+            let lhs = lhs.to_u64()?;
             let rhs = rhs.to_u32()?;
             Some(CalcResult::new(
                 CalcResultType::Number(dec(lhs.wrapping_shr(rhs))),
@@ -441,10 +436,10 @@ fn binary_shift_right(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> 
     }
 }
 
-fn binary_shift_left(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+fn bitwise_shift_left(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     match (&lhs.typ, &rhs.typ) {
         (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
-            let lhs = lhs.to_i64()?;
+            let lhs = lhs.to_u64()?;
             let rhs = rhs.to_u32()?;
             Some(CalcResult::new(
                 CalcResultType::Number(dec(lhs.wrapping_shl(rhs))),
@@ -455,15 +450,15 @@ fn binary_shift_left(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     }
 }
 
-fn binary_and_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+fn bitwise_and_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     match (&lhs.typ, &rhs.typ) {
         //////////////
         // 12 and x
         //////////////
         (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             // 0b01 and 0b10
-            let lhs = lhs.to_i64()?;
-            let rhs = rhs.to_i64()?;
+            let lhs = lhs.to_u64()?;
+            let rhs = rhs.to_u64()?;
             Some(CalcResult::new(CalcResultType::Number(dec(lhs & rhs)), 0))
         }
         _ => None,
@@ -1058,8 +1053,8 @@ pub fn pow(this: Decimal, mut exp: i64) -> Option<Decimal> {
     })
 }
 
-pub fn dec(num: i64) -> Decimal {
-    Decimal::from_i64(num).unwrap()
+pub fn dec<T: Into<Decimal>>(num: T) -> Decimal {
+    num.into()
 }
 
 const DECIMAL_100: Decimal = Decimal::from_parts(100, 0, 0, false, 0);
@@ -1196,14 +1191,14 @@ mod tests {
         test("100 ft * lbf in (in*lbf)", "1200 in lbf");
         test("100 N in kg*m / s ^ 2", "100 (kg m) / s^2");
         test("100 cm in m", "1 m");
-        test("100 Hz in 1/s", "100 s^-1");
+        test("100 Hz in 1/s", "100 / s");
         test("() Hz", " ");
 
         test("1 ft * lbf * 2 rad", "2 ft lbf rad");
         test("1 ft * lbf * 2 rad in in*lbf*rad", "24 in lbf rad");
         test("(2/3)m", "0.6667 m");
         test_with_dec_count(50, "(2/3)m", "0.6667 m");
-        test_with_dec_count(50, "2/3m", "0.6667 m^-1");
+        test_with_dec_count(50, "2/3m", "0.6667 / m");
 
         test("123 N in (kg m)/s^2", "123 (kg m) / s^2");
 
@@ -1300,12 +1295,16 @@ mod tests {
             "64373.76 m",
         );
         test(
-            "transfer of around 1.587GB in about / 3 seconds",
-            "0.529 GB / second",
-        );
-        test(
             " is a unit but should not be handled here so... 37.5MB*1 of DNA information in it.",
             "37.5 MB",
+        );
+    }
+
+    #[test]
+    fn test_longer_texts2() {
+        test(
+            "transfer of around 1.587GB in about / 3 seconds",
+            "0.529 GB / second",
         );
     }
 
@@ -1344,13 +1343,12 @@ mod tests {
 
     #[test]
     fn test_quant_vs_non_quant() {
-        // test("12 km/h * 5 ", "60 km / h");
-        // test("200kg alma + 300 kg banán ", "500 kg");
-        // test("(1 alma + 4 körte) * 3 ember", "15");
+        test("12 km/h * 5 ", "60 km / h");
+        test("200kg alma + 300 kg banán ", "500 kg");
 
-        test("3000/50ml", "60 ml^-1");
+        test("3000/50ml", "60 / ml");
         test("(3000/50)ml", "60 ml");
-        test("3000/(50ml)", "60 ml^-1");
+        test("3000/(50ml)", "60 / ml");
         test("1/(2km/h)", "0.5 h / km");
     }
 
@@ -1593,6 +1591,22 @@ mod tests {
     }
 
     #[test]
+    fn kcal_unit_tokens() {
+        test_tokens(
+            "1 cal in J",
+            &[
+                num(1),
+                str(" "),
+                apply_to_prev_token_unit("cal"),
+                str(" "),
+                op(OperatorTokenType::UnitConverter),
+                str(" "),
+                unit("J"),
+            ],
+        );
+    }
+
+    #[test]
     fn kcal_unit() {
         test("1 cal in J", "4.1868 J");
         test("3kcal in J", "12560.4 J");
@@ -1612,7 +1626,7 @@ mod tests {
     }
 
     #[test]
-    fn test_binary_ops() {
+    fn test_bitwise_ops() {
         test("0xFF AND 0b111", "7");
 
         test_tokens(
@@ -1765,8 +1779,8 @@ mod tests {
     }
 
     #[test]
-    fn test_binary_not() {
-        test("NOT(0b11)", "-4");
+    fn test_bitwise_not() {
+        test("NOT(0b11)", "18446744073709551612");
         test("13 AND NOT(4 - 1)", "12");
     }
 
@@ -1833,7 +1847,7 @@ mod tests {
 
     #[test]
     fn test_unit_in_denominator() {
-        test("12/year", "12 year^-1");
+        test("12/year", "12 / year");
     }
 
     #[test]
@@ -1980,7 +1994,7 @@ mod tests {
 
     #[test]
     fn calc_bug_period_calc() {
-        test("(1000/month) + (2000/year)", "1166.6667 month^-1");
+        test("(1000/month) + (2000/year)", "1166.6667 / month");
     }
 
     #[test]
@@ -1991,5 +2005,42 @@ mod tests {
     #[test]
     fn calc_bug_period_calc3() {
         test("50 000 / month * 1 year", "600000");
+    }
+
+    #[test]
+    fn test_u64_hex_bitwise_and() {
+        test("0xFF AND 0xFFFFFFFFFFFFFFFF", &0xFFu64.to_string());
+    }
+
+    #[test]
+    fn test_u64_hex_bitwise_or() {
+        test(
+            "0xFF OR 0xFFFFFFFFFFFFFFFF",
+            &0xFFFFFFFFFFFFFFFFu64.to_string(),
+        );
+    }
+
+    #[test]
+    fn test_u64_hex_bitwise_xor() {
+        test(
+            "0xFF XOR 0xFFFFFFFFFFFFFFFF",
+            &0xFFFFFFFFFFFFFF00u64.to_string(),
+        );
+    }
+
+    #[test]
+    fn test_u64_hex_bitwise_shift_left() {
+        test(
+            "0x00FFFFFF_FFFFFFFF << 8",
+            &0xFFFFFFFF_FFFFFF00u64.to_string(),
+        );
+    }
+
+    #[test]
+    fn test_u64_hex_bitwise_shift_right() {
+        test(
+            "0xFFFFFFFF_FFFFFFFF >> 8",
+            &0x00FFFFFF_FFFFFFFFu64.to_string(),
+        );
     }
 }

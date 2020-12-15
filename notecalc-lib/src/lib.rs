@@ -84,8 +84,8 @@ pub struct Theme {
     pub selection_color: u32,
     pub sum_bg_color: u32,
     pub sum_text_color: u32,
-    pub reference_pulse_start_color: u32,
-    pub reference_pulse_end_color: u32,
+    pub reference_pulse_start: u32,
+    pub reference_pulse_end: u32,
     pub number: u32,
     pub number_error: u32,
     pub operator: u32,
@@ -137,8 +137,8 @@ pub const THEMES: [Theme; 2] = [
         selection_color: 0xA6D2FF_FF,
         sum_bg_color: 0x008a0d_FF,
         sum_text_color: 0x000000_FF,
-        reference_pulse_start_color: 0x00FF7F_33,
-        reference_pulse_end_color: 0x00FF7F_00,
+        reference_pulse_start: 0x00FF7F_33,
+        reference_pulse_end: 0x00FF7F_00,
         number: 0x8963c4_FF,
         number_error: 0xde353d_FF,
         operator: 0x3a88e8_FF,
@@ -172,8 +172,8 @@ pub const THEMES: [Theme; 2] = [
         selection_color: 0x214283_FF,
         sum_bg_color: Theme::DRACULA_GREEN,
         sum_text_color: 0x000000_FF,
-        reference_pulse_start_color: 0x00FF7F_33,
-        reference_pulse_end_color: 0x00FF7F_00,
+        reference_pulse_start: 0x00FF7F_33,
+        reference_pulse_end: 0x00FF7F_00,
         number: Theme::DRACULA_PURPLE,
         number_error: Theme::DRACULA_RED,
         operator: 0x5bb0ff_FF, // Theme::DRACULA_YELLOW,
@@ -197,7 +197,7 @@ pub const THEMES: [Theme; 2] = [
         line_ref_selector: 0xFFCCCC_FF,
         referenced_matrix_text: 0x000000_FF,
         change_result_pulse_start: 0xFF88FF_AA,
-        change_result_pulse_end: 0xFFFFFF_55,
+        change_result_pulse_end: Theme::DRACULA_BG - 0xFF,
         current_line_bg: Theme::DRACULA_CURRENT_LINE,
     },
 ];
@@ -796,6 +796,18 @@ pub struct RenderStringMsg {
     pub column: usize,
 }
 
+#[derive(Debug, PartialEq)]
+pub struct PulsingRectangle {
+    pub x: usize,
+    pub y: CanvasY,
+    pub w: usize,
+    pub h: usize,
+    pub start_color: u32,
+    pub end_color: u32,
+    pub animation_time: Duration,
+    pub repeat: bool,
+}
+
 #[repr(C)]
 #[derive(Debug, EnumDiscriminants, PartialEq)]
 #[strum_discriminants(name(OutputMessageCommandId))]
@@ -812,21 +824,13 @@ pub enum OutputMessage<'a> {
         w: usize,
         h: usize,
     },
-    PulsingRectangle {
-        x: usize,
-        y: CanvasY,
-        w: usize,
-        h: usize,
-        start_color: u32,
-        end_color: u32,
-        animation_time: Duration,
-    },
     FollowingTextCommandsAreHeaders(bool),
     RenderUnderline {
         x: usize,
         y: CanvasY,
         w: usize,
     },
+    UpdatePulses,
 }
 
 #[repr(C)]
@@ -861,6 +865,8 @@ pub struct RenderBuckets<'a> {
     pub variable: Vec<RenderUtf8TextMsg<'a>>,
     pub line_ref_results: Vec<RenderStringMsg>,
     pub custom_commands: [Vec<OutputMessage<'a>>; 3],
+    pub pulses: Vec<PulsingRectangle>,
+    pub clear_pulses: bool,
 }
 
 impl<'a> RenderBuckets<'a> {
@@ -900,6 +906,8 @@ impl<'a> RenderBuckets<'a> {
             operators: Vec::with_capacity(32),
             variable: Vec::with_capacity(32),
             line_ref_results: Vec::with_capacity(32),
+            pulses: Vec::with_capacity(8),
+            clear_pulses: false,
         }
     }
 
@@ -920,6 +928,8 @@ impl<'a> RenderBuckets<'a> {
         self.operators.clear();
         self.variable.clear();
         self.line_ref_results.clear();
+        self.pulses.clear();
+        self.clear_pulses = false;
     }
 
     pub fn set_color(&mut self, layer: Layer, color: u32) {
@@ -1350,7 +1360,6 @@ pub struct NoteCalcApp {
     pub mouse_state: Option<MouseClickType>,
     pub mouse_hover_type: MouseHoverType,
     pub updated_line_ref_obj_indices: Vec<EditorObjId>,
-    pub editor_objs_referencing_current_line: Vec<EditorObjId>,
     pub render_data: GlobalRenderData,
     // when pressing Ctrl-c without any selection, the result of the current line will be put into this clipboard
     pub clipboard: Option<String>,
@@ -1372,7 +1381,6 @@ impl NoteCalcApp {
             mouse_state: None,
             mouse_hover_type: MouseHoverType::Normal,
             updated_line_ref_obj_indices: Vec::with_capacity(16),
-            editor_objs_referencing_current_line: Vec::with_capacity(8),
             render_data: GlobalRenderData::new(
                 client_width,
                 client_height,
@@ -1438,7 +1446,6 @@ impl NoteCalcApp {
             value: Err(()),
         });
         self.render_data.clear();
-        self.editor_objs_referencing_current_line.clear();
         self.process_and_render_tokens(
             RowModificationType::AllLinesFrom(0),
             units,
@@ -1491,7 +1498,6 @@ impl NoteCalcApp {
         vars: &Variables,
         editor_objs: &mut EditorObjects,
         updated_line_ref_obj_indices: &[EditorObjId],
-        editor_objs_referencing_current_line: &mut Vec<EditorObjId>,
         mouse_hover_type: MouseHoverType,
     ) {
         let theme = &THEMES[gr.theme_index];
@@ -1689,14 +1695,6 @@ impl NoteCalcApp {
             render_buckets,
         );
 
-        NoteCalcApp::fill_editor_objs_referencing_current_line(
-            content_y(editor.get_selection().get_cursor_pos().row),
-            tokens,
-            vars,
-            editor_objs_referencing_current_line,
-            editor_content,
-        );
-
         // TODO calc it once on content change (scroll_bar_h as well) (it is used in handle_drag)
         render_buckets.scroll_bar = if let Some(scrollbar_info) =
             NoteCalcApp::get_scrollbar_info(gr, editor_content.line_count())
@@ -1765,14 +1763,6 @@ impl NoteCalcApp {
             render_buckets,
             gr,
             updated_line_ref_obj_indices,
-            editor_objs,
-            theme,
-        );
-
-        pulse_editor_objs_referencing_current_line(
-            render_buckets,
-            gr,
-            editor_objs_referencing_current_line,
             editor_objs,
             theme,
         );
@@ -2037,6 +2027,12 @@ impl NoteCalcApp {
                 deep + 1,
             );
         }
+        self.editor_objs_referencing_current_line_might_changed(
+            tokens,
+            vars,
+            editor_objs,
+            render_buckets,
+        );
     }
 
     pub fn rendered_y_to_editor_y(&self, clicked_y: CanvasY) -> Option<ContentIndex> {
@@ -2232,6 +2228,12 @@ impl NoteCalcApp {
                 vars,
                 editor_objs,
                 BitFlag128::empty(),
+            );
+            self.editor_objs_referencing_current_line_might_changed(
+                tokens,
+                vars,
+                editor_objs,
+                render_buckets,
             );
         }
         return need_render;
@@ -2768,8 +2770,6 @@ impl NoteCalcApp {
         ////////////////////////////////////////////////////
         ////////////////////////////////////////////////////
         ////////////////////////////////////////////////////
-        // TODO
-        // readonly(
         //
         let prev_selection = self.editor.get_selection();
         let prev_row = self.editor.get_selection().get_cursor_pos().row;
@@ -2902,7 +2902,42 @@ impl NoteCalcApp {
             );
         }
 
+        // TODO vec alloc
+        if prev_row != cursor_pos.row || modif.is_some() {
+            self.editor_objs_referencing_current_line_might_changed(
+                tokens,
+                vars,
+                editor_objs,
+                render_buckets,
+            );
+        }
+
         return modif;
+    }
+
+    pub fn editor_objs_referencing_current_line_might_changed<'b>(
+        &mut self,
+        tokens: &AppTokens<'b>,
+        vars: &Variables,
+        editor_objs: &EditorObjects,
+        render_buckets: &mut RenderBuckets<'b>,
+    ) {
+        let mut editor_objs_referencing_current_line: Vec<EditorObjId> = Vec::with_capacity(8);
+        render_buckets.clear_pulses = true;
+        NoteCalcApp::fill_editor_objs_referencing_current_line(
+            content_y(self.editor.get_selection().get_cursor_pos().row),
+            tokens,
+            vars,
+            &mut editor_objs_referencing_current_line,
+            &self.editor_content,
+        );
+        pulse_editor_objs_referencing_current_line(
+            render_buckets,
+            &self.render_data,
+            &editor_objs_referencing_current_line,
+            editor_objs,
+            &THEMES[self.render_data.theme_index],
+        );
     }
 
     pub fn process_and_render_tokens<'b>(
@@ -3738,7 +3773,6 @@ impl NoteCalcApp {
             return false;
         }
 
-        // matrix autocompletion 'm' + tab
         let cursor_pos = cursor_pos.get_cursor_pos();
 
         for autocompl_const in &AUTOCOMPLETION_CONSTS {
@@ -4249,7 +4283,6 @@ impl NoteCalcApp {
             vars,
             editor_objs,
             &self.updated_line_ref_obj_indices,
-            &mut self.editor_objs_referencing_current_line,
             self.mouse_hover_type,
         );
         self.updated_line_ref_obj_indices.clear();
@@ -4323,17 +4356,16 @@ pub fn pulse_modified_line_references(
                     rendered_h,
                     ..
                 } if *var_index == id.var_index => {
-                    render_buckets.custom_commands[Layer::AboveText as usize].push(
-                        OutputMessage::PulsingRectangle {
-                            x: gr.left_gutter_width + *rendered_x,
-                            y: *rendered_y,
-                            w: *rendered_w,
-                            h: *rendered_h,
-                            start_color: theme.change_result_pulse_start,
-                            end_color: theme.change_result_pulse_end,
-                            animation_time: Duration::from_millis(2000),
-                        },
-                    );
+                    render_buckets.pulses.push(PulsingRectangle {
+                        x: gr.left_gutter_width + *rendered_x,
+                        y: *rendered_y,
+                        w: *rendered_w,
+                        h: *rendered_h,
+                        start_color: theme.change_result_pulse_start,
+                        end_color: theme.change_result_pulse_end,
+                        animation_time: Duration::from_millis(2000),
+                        repeat: false,
+                    });
                 }
                 _ => {}
             }
@@ -4366,17 +4398,16 @@ pub fn pulse_editor_objs_referencing_current_line(
                         let obj_start_x =
                             (gr.left_gutter_width + ed_obj.rendered_x).min(end_editor_x - 1);
                         let obj_end_x = (obj_start_x + ed_obj.rendered_w).min(end_editor_x);
-                        render_buckets.custom_commands[Layer::AboveText as usize].push(
-                            OutputMessage::PulsingRectangle {
-                                x: obj_start_x,
-                                y: ed_obj.rendered_y.add(vert_align_offset),
-                                w: obj_end_x - obj_start_x,
-                                h: ed_obj.rendered_h,
-                                start_color: theme.reference_pulse_start_color,
-                                end_color: theme.reference_pulse_end_color,
-                                animation_time: Duration::from_millis(1000),
-                            },
-                        );
+                        render_buckets.pulses.push(PulsingRectangle {
+                            x: obj_start_x,
+                            y: ed_obj.rendered_y.add(vert_align_offset),
+                            w: obj_end_x - obj_start_x,
+                            h: ed_obj.rendered_h,
+                            start_color: theme.reference_pulse_start,
+                            end_color: theme.reference_pulse_end,
+                            animation_time: Duration::from_millis(1000),
+                            repeat: true,
+                        });
                     }
                 }
                 _ => {}
@@ -4401,17 +4432,16 @@ pub fn pulse_changed_results(
     for i in 0..MAX_LINE_COUNT {
         if result_change_flag.is_true(i) {
             if let Some(render_y) = gr.get_render_y(content_y(i)) {
-                render_buckets.custom_commands[Layer::AboveText as usize].push(
-                    OutputMessage::PulsingRectangle {
-                        x: gr.result_gutter_x + RIGHT_GUTTER_WIDTH,
-                        y: render_y,
-                        w: longest_rendered_result_len,
-                        h: gr.get_rendered_height(content_y(i)),
-                        start_color: theme.change_result_pulse_start,
-                        end_color: theme.change_result_pulse_end,
-                        animation_time: Duration::from_millis(1000),
-                    },
-                );
+                render_buckets.pulses.push(PulsingRectangle {
+                    x: gr.result_gutter_x + RIGHT_GUTTER_WIDTH,
+                    y: render_y,
+                    w: longest_rendered_result_len,
+                    h: gr.get_rendered_height(content_y(i)),
+                    start_color: theme.change_result_pulse_start,
+                    end_color: theme.change_result_pulse_end,
+                    animation_time: Duration::from_millis(1000),
+                    repeat: false,
+                });
             }
         }
     }
@@ -4431,7 +4461,7 @@ pub fn parse_tokens<'b>(
     // TODO: measure is 128 necessary?
     // and remove allocation
     let mut shunting_output_stack = Vec::with_capacity(128);
-    ShuntingYard::shunting_yard(&mut tokens, &mut shunting_output_stack);
+    ShuntingYard::shunting_yard(&mut tokens, &mut shunting_output_stack, units);
     Tokens {
         tokens,
         shunting_output_stack,
@@ -5067,7 +5097,7 @@ fn evaluate_text<'text_ptr>(
 ) -> Result<Option<EvaluationResult>, ()> {
     TokenParser::parse_line(text, vars, tokens, &units, editor_y, allocator);
     let mut shunting_output_stack = Vec::with_capacity(4);
-    ShuntingYard::shunting_yard(tokens, &mut shunting_output_stack);
+    ShuntingYard::shunting_yard(tokens, &mut shunting_output_stack, units);
     return evaluate_tokens(tokens, &mut shunting_output_stack, &vars);
 }
 
@@ -5934,15 +5964,17 @@ fn render_buckets_into(buckets: &RenderBuckets, canvas: &mut [[char; 256]]) {
             OutputMessage::RenderAsciiText(text) => {
                 write_ascii(canvas, text.row, text.column, &text.text);
             }
-            OutputMessage::PulsingRectangle { .. } => {}
             OutputMessage::FollowingTextCommandsAreHeaders { .. } => {}
             OutputMessage::RenderUnderline { .. } => {}
+            OutputMessage::UpdatePulses => {}
         }
     }
 
     for command in &buckets.custom_commands[Layer::BehindText as usize] {
         write_command(canvas, command);
     }
+
+    write_command(canvas, &OutputMessage::UpdatePulses);
 
     for command in &buckets.utf8_texts {
         write_char_slice(canvas, command.row, command.column, command.text);
@@ -6319,20 +6351,21 @@ mod main_tests {
         client_width * (100 - DEFAULT_RESULT_PANEL_WIDTH_PERCENT) / 100
     }
 
-    fn pulsing_ref_rect<'a>(x: usize, y: usize, w: usize, h: usize) -> OutputMessage<'a> {
-        OutputMessage::PulsingRectangle {
+    fn pulsing_ref_rect(x: usize, y: usize, w: usize, h: usize) -> PulsingRectangle {
+        PulsingRectangle {
             x,
             y: canvas_y(y as isize),
             w,
             h,
-            start_color: THEMES[0].reference_pulse_start_color,
-            end_color: THEMES[0].reference_pulse_end_color,
+            start_color: THEMES[0].reference_pulse_start,
+            end_color: THEMES[0].reference_pulse_end,
             animation_time: Duration::from_millis(1000),
+            repeat: true,
         }
     }
 
-    fn pulsing_result_rect<'a>(x: usize, y: usize, w: usize, h: usize) -> OutputMessage<'a> {
-        OutputMessage::PulsingRectangle {
+    fn pulsing_result_rect(x: usize, y: usize, w: usize, h: usize) -> PulsingRectangle {
+        PulsingRectangle {
             x,
             y: canvas_y(y as isize),
             w,
@@ -6340,16 +6373,12 @@ mod main_tests {
             start_color: THEMES[0].change_result_pulse_start,
             end_color: THEMES[0].change_result_pulse_end,
             animation_time: Duration::from_millis(1000),
+            repeat: false,
         }
     }
 
-    fn pulsing_changed_content_rect<'a>(
-        x: usize,
-        y: usize,
-        w: usize,
-        h: usize,
-    ) -> OutputMessage<'a> {
-        OutputMessage::PulsingRectangle {
+    fn pulsing_changed_content_rect(x: usize, y: usize, w: usize, h: usize) -> PulsingRectangle {
+        PulsingRectangle {
             x,
             y: canvas_y(y as isize),
             w,
@@ -6357,7 +6386,26 @@ mod main_tests {
             start_color: THEMES[0].change_result_pulse_start,
             end_color: THEMES[0].change_result_pulse_end,
             animation_time: Duration::from_millis(2000),
+            repeat: false,
         }
+    }
+
+    fn assert_contains_pulse(
+        render_bucket: &[PulsingRectangle],
+        expected_count: usize,
+        expected_command: PulsingRectangle,
+    ) {
+        let mut count = 0;
+        for command in render_bucket {
+            if *command == expected_command {
+                count += 1;
+            }
+        }
+        assert_eq!(
+            count, expected_count,
+            "Found {} times, expected {}.\n{:?}\nin\n{:?}",
+            count, expected_count, expected_command, render_bucket
+        );
     }
 
     fn assert_contains(
@@ -6469,7 +6517,7 @@ mod main_tests {
         }
 
         fn assert_no_highlighting_rectangle(&self) {
-            let render_buckets = &self.render_bucket().custom_commands[Layer::AboveText as usize];
+            let render_buckets = &self.render_bucket().custom_commands[Layer::BehindText as usize];
             for i in 0..9 {
                 assert_contains(
                     render_buckets,
@@ -6625,14 +6673,7 @@ mod main_tests {
         }
 
         fn assert_no_pulsing(&self) {
-            let render_bucket = &self.render_bucket().custom_commands[Layer::AboveText as usize];
-            for command in render_bucket {
-                assert!(
-                    !matches!(command, OutputMessage::PulsingRectangle {..}),
-                    "Pulsing was found but did not expected: {:?}",
-                    command
-                );
-            }
+            assert!(self.render_bucket().pulses.is_empty());
         }
 
         fn set_normalized_content(&self, str: &str) {
@@ -7118,8 +7159,8 @@ mod main_tests {
         let first_line_h = 5;
         let second_line_half = (5 / 2) + 1;
         let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
-        assert_contains(
-            &test.render_bucket().custom_commands[Layer::AboveText as usize],
+        assert_contains_pulse(
+            &test.render_bucket().pulses,
             1,
             pulsing_ref_rect(left_gutter_width + 5, first_line_h + second_line_half, 3, 1),
         )
@@ -8525,9 +8566,9 @@ sum",
             test.input(EditorInputEvent::Home, InputModifiers::none());
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
+            let render_commands = &test.render_bucket().pulses;
 
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_result_rect(
@@ -8537,7 +8578,7 @@ sum",
                     1,
                 ),
             );
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_result_rect(
@@ -8568,8 +8609,8 @@ sum",
             test.input(EditorInputEvent::Home, InputModifiers::none());
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_changed_content_rect(LEFT_GUTTER_MIN_WIDTH, 1, 2, 1),
@@ -8598,27 +8639,27 @@ sum",
             test.input(EditorInputEvent::Home, InputModifiers::none());
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
+            let render_commands = &test.render_bucket().pulses;
 
             let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_changed_content_rect(left_gutter_width, 1, 2, 1),
             );
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_changed_content_rect(left_gutter_width + 3, 1, 2, 1),
             );
 
             // the last 2 command is for pulsing references for the active row
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(left_gutter_width, 1, 2, 1),
             );
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(left_gutter_width + 3, 1, 2, 1),
@@ -8651,27 +8692,27 @@ sum",
 
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
+            let render_commands = &test.render_bucket().pulses;
 
             let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_changed_content_rect(left_gutter_width, 1, 2, 1),
             );
 
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_changed_content_rect(left_gutter_width, 2, 2, 1),
             );
             // the last 2 command is for pulsing references for the active row
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(left_gutter_width, 1, 2, 1),
             );
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(left_gutter_width, 2, 2, 1),
@@ -8696,9 +8737,9 @@ sum",
             // step into the first row
             test.input(EditorInputEvent::Up, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
+            let render_commands = &test.render_bucket().pulses;
 
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(LEFT_GUTTER_MIN_WIDTH, 1, 1, 1),
@@ -8714,8 +8755,8 @@ aaaaaaaaaaaaaaaaaaaaaa b",
             );
             test.input(EditorInputEvent::Up, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(
@@ -8731,17 +8772,15 @@ aaaaaaaaaaaaaaaaaaaaaa b",
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
             assert_eq!(test.get_render_data().current_editor_width, 23);
             // if it is out of screen, it is rendered on the '...'
-            test.render(); // we currently need one render cycle to align widths
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(render_commands, 1, pulsing_ref_rect(25, 1, 1, 1));
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(render_commands, 1, pulsing_ref_rect(25, 1, 1, 1));
 
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
-            test.render(); // we currently need one render cycle to align widths
             assert_eq!(test.get_render_data().current_editor_width, 22);
 
             // if it is out of screen, it is rendered on the '...'
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(render_commands, 1, pulsing_ref_rect(24, 1, 1, 1));
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(render_commands, 1, pulsing_ref_rect(24, 1, 1, 1));
         }
 
         #[test]
@@ -8753,8 +8792,8 @@ aaaaaaaaaaaaaaaaaa bcdef",
             );
             test.input(EditorInputEvent::Up, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(
@@ -8770,36 +8809,32 @@ aaaaaaaaaaaaaaaaaa bcdef",
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
             assert_eq!(test.get_render_data().current_editor_width, 23);
             // if it is out of screen, it is rendered on the '...'
-            test.render(); // we currently need one render cycle to align widths
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(render_commands, 1, pulsing_ref_rect(21, 1, 5, 1));
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(render_commands, 1, pulsing_ref_rect(21, 1, 5, 1));
             test.assert_contains_variable(1, |cmd| {
                 cmd.text == &['b', 'c', 'd', 'e'] && cmd.row == canvas_y(1) && cmd.column == 21
             });
 
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
-            test.render(); // we currently need one render cycle to align widths
             assert_eq!(test.get_render_data().current_editor_width, 22);
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(render_commands, 1, pulsing_ref_rect(21, 1, 4, 1));
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(render_commands, 1, pulsing_ref_rect(21, 1, 4, 1));
             test.assert_contains_variable(1, |cmd| {
                 cmd.text == &['b', 'c', 'd'] && cmd.row == canvas_y(1) && cmd.column == 21
             });
 
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
-            test.render(); // we currently need one render cycle to align widths
             assert_eq!(test.get_render_data().current_editor_width, 20);
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(render_commands, 1, pulsing_ref_rect(21, 1, 2, 1));
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(render_commands, 1, pulsing_ref_rect(21, 1, 2, 1));
             test.assert_contains_variable(1, |cmd| {
                 cmd.text == &['b'] && cmd.row == canvas_y(1) && cmd.column == 21
             });
 
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
-            test.render(); // we currently need one render cycle to align widths
             assert_eq!(test.get_render_data().current_editor_width, 19);
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(render_commands, 1, pulsing_ref_rect(21, 1, 1, 1));
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(render_commands, 1, pulsing_ref_rect(21, 1, 1, 1));
             test.assert_contains_variable(0, |cmd| cmd.row == canvas_y(1) && !cmd.text.is_empty());
         }
 
@@ -8812,8 +8847,8 @@ aaaaaaaaaaaaaaaaaaaaaa &[1]",
             );
             test.input(EditorInputEvent::Up, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(
@@ -8830,22 +8865,27 @@ aaaaaaaaaaaaaaaaaaaaaa &[1]",
             assert_eq!(test.get_render_data().current_editor_width, 23);
             // should appear
             // if it is out of screen, it is rendered on the '...'
-            test.render(); // we currently need one render cycle to align widths
             let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderChar(test.get_render_data().result_gutter_x - 1, 1, '…'),
             );
-            assert_contains(render_commands, 1, pulsing_ref_rect(25, 1, 1, 1));
+            assert_contains_pulse(
+                &test.render_bucket().pulses,
+                1,
+                pulsing_ref_rect(25, 1, 1, 1),
+            );
 
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
-            test.render(); // we currently need one render cycle to align widths
             assert_eq!(test.get_render_data().current_editor_width, 22);
 
             // if it is out of screen, it is rendered on the '...'
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(render_commands, 1, pulsing_ref_rect(24, 1, 1, 1));
+            assert_contains_pulse(
+                &test.render_bucket().pulses,
+                1,
+                pulsing_ref_rect(24, 1, 1, 1),
+            );
         }
 
         #[test]
@@ -8857,8 +8897,8 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             );
             test.input(EditorInputEvent::Up, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(
@@ -8876,7 +8916,6 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
                 test.input(EditorInputEvent::Char('3'), InputModifiers::none());
                 assert_eq!(test.get_render_data().current_editor_width, 22);
                 // if it is out of screen, it is rendered on the '...'
-                test.render(); // we currently need one render cycle to align widths
                 let render_commands =
                     &test.render_bucket().custom_commands[Layer::AboveText as usize];
                 assert_contains(
@@ -8884,7 +8923,11 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
                     1,
                     OutputMessage::RenderChar(test.get_render_data().result_gutter_x - 1, 1, '…'),
                 );
-                assert_contains(render_commands, 1, pulsing_ref_rect(23, 1, 2, 1));
+                assert_contains_pulse(
+                    &test.render_bucket().pulses,
+                    1,
+                    pulsing_ref_rect(23, 1, 2, 1),
+                );
                 test.assert_contains_line_ref_result(1, |cmd| {
                     cmd.text == "1".to_owned() && cmd.row == canvas_y(1) && cmd.column == 23
                 });
@@ -8892,11 +8935,14 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
             {
                 test.input(EditorInputEvent::Char('4'), InputModifiers::none());
-                test.render(); // we currently need one render cycle to align widths
                 assert_eq!(test.get_render_data().current_editor_width, 20);
                 let render_commands =
                     &test.render_bucket().custom_commands[Layer::AboveText as usize];
-                assert_contains(render_commands, 1, pulsing_ref_rect(22, 1, 1, 1));
+                assert_contains_pulse(
+                    &test.render_bucket().pulses,
+                    1,
+                    pulsing_ref_rect(22, 1, 1, 1),
+                );
                 test.assert_contains_line_ref_result(0, |cmd| {
                     !cmd.text.is_empty() && cmd.row == canvas_y(1)
                 });
@@ -8932,14 +8978,14 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             // step into the first row
             test.input(EditorInputEvent::Up, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
+            let render_commands = &test.render_bucket().pulses;
 
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(LEFT_GUTTER_MIN_WIDTH, 1, 1, 1),
             );
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(LEFT_GUTTER_MIN_WIDTH + 2, 1, 1, 1),
@@ -8960,13 +9006,13 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             // step into the first row
             test.input(EditorInputEvent::Up, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(LEFT_GUTTER_MIN_WIDTH, 1, 3, 1),
             );
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(LEFT_GUTTER_MIN_WIDTH + 5, 2, 3, 1),
@@ -8986,8 +9032,8 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             // step into the first row
             test.input(EditorInputEvent::Up, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(LEFT_GUTTER_MIN_WIDTH, 1, 3, 1),
@@ -9033,7 +9079,6 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
     }
 
     mod dependent_lines_recalculation_tests {
-        use super::super::*;
         use super::*;
 
         #[test]
@@ -9057,14 +9102,14 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             // inserting a '.' does not modify the result of the line
             test.input(EditorInputEvent::Char('.'), InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
+            let render_commands = &test.render_bucket().pulses;
             // expect no pulsing since there were no value change
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 0,
                 pulsing_changed_content_rect(90, 0, 2, 1),
             );
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 0,
                 pulsing_changed_content_rect(90, 1, 2, 1),
@@ -9209,14 +9254,8 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
         test.input(EditorInputEvent::Home, InputModifiers::none());
         test.input(EditorInputEvent::Char(' '), InputModifiers::none());
 
-        let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
         // expect no pulsing since there were no value change
-        for command in render_commands {
-            match command {
-                OutputMessage::PulsingRectangle { .. } => assert!(false, "{:?}", render_commands),
-                _ => {}
-            }
-        }
+        test.assert_no_pulsing();
     }
 
     #[test]
@@ -10621,10 +10660,10 @@ ddd",
 
         test.render();
         let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
-        let render_bucket = &test.render_bucket().custom_commands[Layer::AboveText as usize];
+        let render_commands = &test.render_bucket().pulses;
         //  dependant row is not pulsed yet
-        assert_contains(
-            render_bucket,
+        assert_contains_pulse(
+            render_commands,
             0,
             pulsing_ref_rect(left_gutter_width, 1, 3, 1),
         );
@@ -10632,8 +10671,8 @@ ddd",
         // step into the first row
         test.input(EditorInputEvent::Char('b'), InputModifiers::ctrl());
 
-        assert_contains(
-            render_bucket,
+        assert_contains_pulse(
+            render_commands,
             1,
             pulsing_ref_rect(left_gutter_width, 1, 3, 1),
         );
@@ -10935,8 +10974,8 @@ ddd",
 
             // everything visible yet
             test.input(EditorInputEvent::Down, InputModifiers::none());
-            assert_contains(
-                &test.render_bucket().custom_commands[Layer::AboveText as usize],
+            assert_contains_pulse(
+                &test.render_bucket().pulses,
                 1,
                 pulsing_ref_rect(22, 2, 7, 1),
             );
@@ -10944,8 +10983,8 @@ ddd",
             test.input(EditorInputEvent::PageUp, InputModifiers::none());
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
             test.input(EditorInputEvent::Down, InputModifiers::none());
-            assert_contains(
-                &test.render_bucket().custom_commands[Layer::AboveText as usize],
+            assert_contains_pulse(
+                &test.render_bucket().pulses,
                 1,
                 pulsing_ref_rect(23, 2, 5, 1),
             );
@@ -10953,8 +10992,8 @@ ddd",
             test.input(EditorInputEvent::PageUp, InputModifiers::none());
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
             test.input(EditorInputEvent::Down, InputModifiers::none());
-            assert_contains(
-                &test.render_bucket().custom_commands[Layer::AboveText as usize],
+            assert_contains_pulse(
+                &test.render_bucket().pulses,
                 1,
                 pulsing_ref_rect(24, 2, 3, 1),
             );
@@ -11361,20 +11400,33 @@ b = a * 20",
     #[test]
     fn converting_unit_of_line_ref() {
         let test = create_app2(35);
-        test.paste("573 390 s");
-        test.set_cursor_row_col(0, 9);
-        test.render();
-
-        test.input(EditorInputEvent::Enter, InputModifiers::none());
-        test.input(EditorInputEvent::Up, InputModifiers::alt());
-        test.alt_key_released();
-        test.input(EditorInputEvent::Char(' '), InputModifiers::none());
-        test.input(EditorInputEvent::Char('i'), InputModifiers::none());
-        test.input(EditorInputEvent::Char('n'), InputModifiers::none());
-        test.input(EditorInputEvent::Char(' '), InputModifiers::none());
-        test.input(EditorInputEvent::Char('h'), InputModifiers::none());
+        test.paste("573 390 s\n&[1] in h");
 
         test.assert_results(&["573 390 s", "159.275 h"][..]);
+    }
+
+    #[test]
+    fn test_unit_conversion_for_variable() {
+        let test = create_app2(35);
+        test.paste("input = 573 390 s\ninput in h");
+
+        test.assert_results(&["573 390 s", "159.275 h"][..]);
+    }
+
+    #[test]
+    fn test_unit_conversion_for_variable2() {
+        let test = create_app2(35);
+        test.paste("input = 1 s\ninput h");
+
+        test.assert_results(&["1 s", "Err"][..]);
+    }
+
+    #[test]
+    fn test_ininin() {
+        let test = create_app2(35);
+        test.paste("12 in in in");
+
+        test.assert_results(&["12 in"][..]);
     }
 
     #[test]
@@ -11476,7 +11528,7 @@ monthly payment = r/(1 - (1 + r)^(-n)) *finance amount",
         let test = create_app2(35);
         test.paste("a = 2/year");
 
-        test.assert_results(&["2 year^-1"][..]);
+        test.assert_results(&["2 / year"][..]);
     }
 
     #[test]
@@ -11531,7 +11583,7 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
                 "70 000 $",
                 "280 000 $",
                 "",
-                "0.0369999999999999999978225256 year^-1",
+                "0.0369999999999999999978225256 / year",
                 "30 year",
                 "",
                 "360",
@@ -11562,6 +11614,46 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
         test.input(EditorInputEvent::Left, InputModifiers::alt());
 
         test.assert_results(&["Err"][..]);
+    }
+
+    #[test]
+    fn test_u64_hex_form() {
+        let test = create_app2(35);
+        test.paste("0xFFFFFFFFFFFFFFFF");
+        test.input(EditorInputEvent::Right, InputModifiers::alt());
+
+        test.assert_results(&["FF FF FF FF FF FF FF FF"][..]);
+    }
+
+    #[test]
+    fn test_u64_bin_form() {
+        let test = create_app2(35);
+        test.paste("0xFFFFFFFFFFFFFFFF");
+        test.input(EditorInputEvent::Left, InputModifiers::alt());
+
+        test.assert_results(
+            &["11111111 11111111 11111111 11111111 11111111 11111111 11111111 11111111"][..],
+        );
+    }
+
+    #[test]
+    fn test_negative_num_bin_form() {
+        let test = create_app2(35);
+        test.paste("-256");
+        test.input(EditorInputEvent::Left, InputModifiers::alt());
+
+        test.assert_results(
+            &["11111111 11111111 11111111 11111111 11111111 11111111 11111111 00000000"][..],
+        );
+    }
+
+    #[test]
+    fn test_negative_num_hex_form() {
+        let test = create_app2(35);
+        test.paste("-256");
+        test.input(EditorInputEvent::Right, InputModifiers::alt());
+
+        test.assert_results(&["FF FF FF FF FF FF FF 00"][..]);
     }
 
     #[test]
@@ -12346,5 +12438,33 @@ asd",
         test.input(EditorInputEvent::Left, InputModifiers::shift());
         test.input(EditorInputEvent::Del, InputModifiers::none());
         assert_eq!(&test.get_editor_content(), "[]");
+    }
+
+    #[test]
+    fn test_single_unit_in_denom_output_format() {
+        let test = create_app3(84, 36);
+        test.paste("50 000 / year");
+        test.assert_results(&["50 000 / year"][..]);
+    }
+
+    #[test]
+    fn test_units_can_be_applied_on_linerefs() {
+        let test = create_app3(84, 36);
+        test.paste("12\n&[1] m");
+        test.assert_results(&["12", "12 m"][..]);
+    }
+
+    #[test]
+    fn test_units_right_after_each_other() {
+        {
+            let test = create_app3(84, 36);
+            test.paste("var = 12 byte\nvar kilobyte");
+            test.assert_results(&["12 bytes", "Err"][..]);
+        }
+        {
+            let test = create_app3(84, 36);
+            test.paste("var = 12 byte\nvar ok kilobyte");
+            test.assert_results(&["12 bytes", "12 bytes"][..]);
+        }
     }
 }

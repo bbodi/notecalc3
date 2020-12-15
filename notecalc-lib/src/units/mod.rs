@@ -10,15 +10,15 @@ pub mod units;
 
 #[derive(Eq, PartialEq, Clone)]
 pub struct Unit {
-    name: &'static [char],
-    base: [i8; BASE_UNIT_DIMENSION_COUNT],
+    pub name: &'static [char],
+    pub base: [i8; BASE_UNIT_DIMENSION_COUNT],
     // e.g. prefix_groups: (Some(&prefixes.short), Some(&prefixes.long)),
-    prefix_groups: (
+    pub prefix_groups: (
         Option<RefCell<Box<Vec<RefCell<Prefix>>>>>,
         Option<RefCell<Box<Vec<RefCell<Prefix>>>>>,
     ),
-    value: Decimal,
-    offset: Decimal,
+    pub value: Decimal,
+    pub offset: Decimal,
 }
 
 impl std::fmt::Debug for Unit {
@@ -45,9 +45,9 @@ pub struct UnitPrefixes {
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub struct Prefix {
-    name: &'static [char],
-    value: Decimal,
-    scientific: bool,
+    pub name: &'static [char],
+    pub value: Decimal,
+    pub scientific: bool,
 }
 
 impl Prefix {

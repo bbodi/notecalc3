@@ -166,6 +166,7 @@ impl TokenParser {
     ) {
         let mut index = 0;
         let mut can_be_unit = CanBeUnit::Not;
+        let mut can_be_unit_converter = false;
         if line.starts_with(&['#']) {
             dst.push(Token {
                 ptr: allocator.alloc_slice_fill_iter(line.iter().map(|it| *it)),
@@ -190,23 +191,29 @@ impl TokenParser {
                     )
                 })
                 .or_else(|| {
-                    TokenParser::try_extract_unit(&line[index..], units, can_be_unit, allocator)
+                    TokenParser::try_extract_unit(
+                        &line[index..],
+                        units,
+                        can_be_unit,
+                        can_be_unit_converter,
+                        allocator,
+                    )
+                    .or_else(|| {
+                        TokenParser::try_extract_operator(
+                            &line[index..],
+                            allocator,
+                            can_be_unit_converter,
+                        )
                         .or_else(|| {
-                            TokenParser::try_extract_operator(&line[index..], allocator).or_else(
-                                || {
-                                    TokenParser::try_extract_number_literal(
+                            TokenParser::try_extract_number_literal(&line[index..], allocator)
+                                .or_else(|| {
+                                    TokenParser::try_extract_string_literal(
                                         &line[index..],
                                         allocator,
                                     )
-                                    .or_else(|| {
-                                        TokenParser::try_extract_string_literal(
-                                            &line[index..],
-                                            allocator,
-                                        )
-                                    })
-                                },
-                            )
+                                })
                         })
+                    })
                 });
             if let Some(token) = parse_result {
                 match &token.typ {
@@ -219,28 +226,43 @@ impl TokenParser {
                             // keep can_be_unit as it was
                         } else {
                             can_be_unit = CanBeUnit::Not;
+                            can_be_unit_converter = false;
                         }
                     }
                     TokenType::NumberLiteral(..) | TokenType::NumberErr => {
                         can_be_unit = CanBeUnit::ApplyToPrevToken;
+                        can_be_unit_converter = false;
                     }
                     TokenType::Unit(..) => {
                         can_be_unit = CanBeUnit::Not;
+                        can_be_unit_converter = true;
                     }
                     TokenType::Operator(typ) => {
                         match typ {
                             OperatorTokenType::ParenClose => {
                                 // keep can_be_unit as it was
                             }
+                            OperatorTokenType::BracketClose => {
+                                // keep can_be_unit as it was
+                            }
                             OperatorTokenType::UnitConverter => {
-                                can_be_unit = CanBeUnit::StandInItself
+                                can_be_unit = CanBeUnit::StandInItself;
+                                can_be_unit_converter = false;
                             }
                             OperatorTokenType::Div => can_be_unit = CanBeUnit::StandInItself,
-                            _ => can_be_unit = CanBeUnit::Not,
+                            OperatorTokenType::ApplyUnit(_) => {
+                                can_be_unit = CanBeUnit::Not;
+                                can_be_unit_converter = true;
+                            }
+                            _ => {
+                                can_be_unit = CanBeUnit::Not;
+                                can_be_unit_converter = false;
+                            }
                         }
                     }
                     TokenType::Variable { .. } | TokenType::LineReference { .. } => {
-                        can_be_unit = CanBeUnit::Not;
+                        can_be_unit = CanBeUnit::ApplyToPrevToken;
+                        can_be_unit_converter = true;
                     }
                 }
                 index += token.ptr.len();
@@ -336,7 +358,7 @@ impl TokenParser {
             i = end_index_before_last_whitespace;
             if i > 2 {
                 // Decimal cannot parse hex, that's why the explicit i64 type
-                let num: i64 = i64::from_str_radix(
+                let num: u64 = u64::from_str_radix(
                     &unsafe { std::str::from_utf8_unchecked(&number_str[0..number_str_index]) },
                     16,
                 )
@@ -473,6 +495,7 @@ impl TokenParser {
         str: &[char],
         unit: &Units,
         can_be_unit: CanBeUnit,
+        can_be_unit_converter: bool,
         allocator: &'text_ptr Bump,
     ) -> Option<Token<'text_ptr>> {
         if matches!(can_be_unit, CanBeUnit::Not) || str[0].is_ascii_whitespace() {
@@ -488,18 +511,32 @@ impl TokenParser {
                 i -= 1;
             }
             let ptr = allocator.alloc_slice_fill_iter(str.iter().map(|it| *it).take(i));
-            match can_be_unit {
-                CanBeUnit::Not => panic!("impossible"),
-                CanBeUnit::ApplyToPrevToken => Some(Token {
-                    typ: TokenType::Operator(OperatorTokenType::ApplyUnit(unit)),
+            if ptr == &['i', 'n'] && can_be_unit_converter {
+                // 'in' is always a UnitConverter, the shunting_yard will convert it to
+                // ApplyUnit or String if necessary.
+                // It is required "&[1] in", here, we don't know yet if 'in' is a converter or a unit
+                // for the referenced value
+                // However with 'can_be_unit_converter' we try to reduce its occurance
+                // as much as possible
+                Some(Token {
+                    typ: TokenType::Operator(OperatorTokenType::UnitConverter),
                     ptr,
                     has_error: false,
-                }),
-                CanBeUnit::StandInItself => Some(Token {
-                    typ: TokenType::Unit(unit),
-                    ptr,
-                    has_error: false,
-                }),
+                })
+            } else {
+                match can_be_unit {
+                    CanBeUnit::Not => panic!("impossible"),
+                    CanBeUnit::ApplyToPrevToken => Some(Token {
+                        typ: TokenType::Operator(OperatorTokenType::ApplyUnit(unit)),
+                        ptr,
+                        has_error: false,
+                    }),
+                    CanBeUnit::StandInItself => Some(Token {
+                        typ: TokenType::Unit(unit),
+                        ptr,
+                        has_error: false,
+                    }),
+                }
             }
         };
     }
@@ -638,6 +675,7 @@ impl TokenParser {
     fn try_extract_operator<'text_ptr>(
         str: &[char],
         allocator: &'text_ptr Bump,
+        can_be_unit_converter: bool,
     ) -> Option<Token<'text_ptr>> {
         fn op<'text_ptr>(
             typ: OperatorTokenType,
@@ -667,7 +705,7 @@ impl TokenParser {
             ',' => op(OperatorTokenType::Comma, str, 1, allocator),
             ';' => op(OperatorTokenType::Semicolon, str, 1, allocator),
             _ => {
-                if str.starts_with(&['i', 'n', ' ']) {
+                if str.starts_with(&['i', 'n', ' ']) && can_be_unit_converter {
                     op(OperatorTokenType::UnitConverter, str, 2, allocator)
                 } else if str.starts_with(&['A', 'N', 'D'])
                     && str.get(3).map(|it| !it.is_alphabetic()).unwrap_or(true)
@@ -1778,6 +1816,95 @@ mod tests {
         test(
             "0xAA_B B",
             &[num(0xAAB), str(" "), apply_to_prev_token_unit("B")],
+        );
+    }
+
+    #[test]
+    fn test_parsing_u64_hex() {
+        test("0xFFFFFFFFFFFFFFFF", &[num(0xFFFFFFFFFFFFFFFF)]);
+    }
+
+    #[test]
+    fn test_parsing_u64_dec() {
+        test(
+            "18 446 744 073 709 551 615",
+            &[num(18_446_744_073_709_551_615)],
+        );
+    }
+
+    #[test]
+    fn test_unit_after_lineref_is_allowed() {
+        test_vars(
+            &[&['&', '[', '1', ']']],
+            "&[1] m",
+            &[line_ref("&[1]"), str(" "), apply_to_prev_token_unit("m")],
+        );
+    }
+
+    #[test]
+    fn test_unit_after_var_is_allowed() {
+        test_vars(
+            &[&['v', 'a', 'r']],
+            "var m",
+            &[var("var"), str(" "), apply_to_prev_token_unit("m")],
+        );
+    }
+
+    #[test]
+    fn in_must_be_str_if_we_are_sure_it_cant_be_unit() {
+        test(
+            "12 m in",
+            &[
+                num(12),
+                str(" "),
+                apply_to_prev_token_unit("m"),
+                str(" "),
+                str("in"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_parse_ininin() {
+        test(
+            "12 in in in",
+            &[
+                num(12),
+                str(" "),
+                apply_to_prev_token_unit("in"),
+                str(" "),
+                op(OperatorTokenType::UnitConverter),
+                str(" "),
+                unit("in"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_parse_longer_texts2() {
+        test(
+            "transfer of around 1.587GB in about / 3 seconds",
+            &[
+                str("transfer"),
+                str(" "),
+                str("of"),
+                str(" "),
+                str("around"),
+                str(" "),
+                numf(1.587),
+                apply_to_prev_token_unit("GB"),
+                str(" "),
+                // TODO: currently it is allowed it here, shunting will demote it to String
+                op(OperatorTokenType::UnitConverter),
+                str(" "),
+                str("about"),
+                str(" "),
+                op(OperatorTokenType::Div),
+                str(" "),
+                num(3),
+                str(" "),
+                apply_to_prev_token_unit("seconds"),
+            ],
         );
     }
 }

@@ -1,15 +1,15 @@
-#![deny(
-warnings,
-anonymous_parameters,
-unused_extern_crates,
-unused_import_braces,
-trivial_casts,
-variant_size_differences,
-//missing_debug_implementations,
-trivial_numeric_casts,
-unused_qualifications,
-clippy::all
-)]
+// #![deny(
+// warnings,
+// anonymous_parameters,
+// unused_extern_crates,
+// unused_import_braces,
+// trivial_casts,
+// variant_size_differences,
+// //missing_debug_implementations,
+// trivial_numeric_casts,
+// unused_qualifications,
+// clippy::all
+// )]
 #![feature(const_in_array_repeat_expressions)]
 
 use wasm_bindgen::prelude::*;
@@ -542,6 +542,34 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets, theme: &Theme) {
         }
     }
 
+    const PULSING_RECTANGLE_ID: usize = 100;
+    const CLEAR_PULSING_RECTANGLE_ID: usize = 101;
+    fn write_pulse_commands(
+        js_command_buffer: &mut Cursor<&mut [u8]>,
+        pulses: &[PulsingRectangle],
+    ) {
+        js_command_buffer
+            .write_u8(PULSING_RECTANGLE_ID as u8)
+            .expect("");
+        js_command_buffer.write_u8(pulses.len() as u8).expect("");
+        for p in pulses {
+            js_command_buffer.write_u8(p.x as u8).expect("");
+            js_command_buffer.write_u8(p.y.as_usize() as u8).expect("");
+            js_command_buffer.write_u8(p.w as u8).expect("");
+            js_command_buffer.write_u8(p.h as u8).expect("");
+            js_command_buffer
+                .write_u32::<LittleEndian>(p.start_color)
+                .expect("");
+            js_command_buffer
+                .write_u32::<LittleEndian>(p.end_color)
+                .expect("");
+            js_command_buffer
+                .write_u16::<LittleEndian>(p.animation_time.as_millis() as u16)
+                .expect("");
+            js_command_buffer.write_u8(p.repeat as u8).expect("");
+        }
+    }
+
     fn write_command(js_command_buffer: &mut Cursor<&mut [u8]>, command: &OutputMessage) {
         match command {
             OutputMessage::RenderUtf8Text(text) => {
@@ -573,32 +601,6 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets, theme: &Theme) {
             OutputMessage::RenderAsciiText(text) => {
                 write_ascii_text_command(js_command_buffer, text);
             }
-            OutputMessage::PulsingRectangle {
-                x,
-                y,
-                w,
-                h,
-                start_color,
-                end_color,
-                animation_time,
-            } => {
-                js_command_buffer
-                    .write_u8(OutputMessageCommandId::PulsingRectangle as u8 + 1)
-                    .expect("");
-                js_command_buffer.write_u8(*x as u8).expect("");
-                js_command_buffer.write_u8(y.as_usize() as u8).expect("");
-                js_command_buffer.write_u8(*w as u8).expect("");
-                js_command_buffer.write_u8(*h as u8).expect("");
-                js_command_buffer
-                    .write_u32::<LittleEndian>(*start_color)
-                    .expect("");
-                js_command_buffer
-                    .write_u32::<LittleEndian>(*end_color)
-                    .expect("");
-                js_command_buffer
-                    .write_u16::<LittleEndian>(animation_time.as_millis() as u16)
-                    .expect("");
-            }
             OutputMessage::FollowingTextCommandsAreHeaders(b) => {
                 js_command_buffer
                     .write_u8(OutputMessageCommandId::FollowingTextCommandsAreHeaders as u8 + 1)
@@ -612,6 +614,11 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets, theme: &Theme) {
                 js_command_buffer.write_u8(*x as u8).expect("");
                 js_command_buffer.write_u8(y.as_usize() as u8).expect("");
                 js_command_buffer.write_u8(*w as u8).expect("");
+            }
+            OutputMessage::UpdatePulses => {
+                js_command_buffer
+                    .write_u8(OutputMessageCommandId::UpdatePulses as u8 + 1)
+                    .expect("");
             }
         }
     }
@@ -685,6 +692,16 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets, theme: &Theme) {
     for command in &render_buckets.custom_commands[Layer::BehindText as usize] {
         write_command(&mut js_command_buffer, command);
     }
+
+    if render_buckets.clear_pulses {
+        js_command_buffer
+            .write_u8(CLEAR_PULSING_RECTANGLE_ID as u8)
+            .expect("");
+    }
+    if NOT(render_buckets.pulses.is_empty()) {
+        write_pulse_commands(&mut js_command_buffer, &render_buckets.pulses);
+    }
+    write_command(&mut js_command_buffer, &OutputMessage::UpdatePulses);
 
     for command in &render_buckets.custom_commands[Layer::Text as usize] {
         write_command(&mut js_command_buffer, command);

@@ -438,9 +438,20 @@ impl Display for UnitOutput {
 impl UnitOutput {
     pub fn new() -> UnitOutput {
         UnitOutput {
-            units: vec![],
+            // TODO: perf vec, limit it. it is called in a hot path in shunting_yard
+            units: Vec::with_capacity(2),
             dimensions: [0; BASE_UNIT_DIMENSION_COUNT],
         }
+    }
+
+    pub fn new_inch(units: &Units) -> UnitOutput {
+        let mut unit = UnitOutput::new();
+        let _ = unit.add_unit(UnitInstance::new(
+            RefCell::clone(&units.units["in"]),
+            RefCell::clone(&units.no_prefix),
+            1,
+        ));
+        return unit;
     }
 
     #[must_use]

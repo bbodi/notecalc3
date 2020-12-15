@@ -4,7 +4,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Features
 ### Changed
 ### Fixed
-### Removed
 
 
 ## [Unreleased]
@@ -24,6 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Automatic parenthesis/braces wrapping around selected text if opening one is typed while
 a text is selected
   [gif](https://twitter.com/bodidev/status/1338427762831470592)
+- The note can be saved with ``ctrl-s`` (Though it is still saved automatically when there is no user interaction)
+- Results where a denominator is a unit (e.g. 5 / year) are now rendered in a moe user-friendly way (e.g. instead of `5 year^-1` it is `5 / year`)
+- It is possible to apply units directly on Line References or Variables, e.g.
+  ```
+  var = 12
+  var km
+  ```
+  The result of the second line will be ``12 km``
+- Parsing improvement: Now the parser are smarter in deciding what is an operator (e.g. 'in' in `12 m in cm`),
+  a unit (`12 in` which is 12 inch), or a simple string (`12 GB in 3 seconds`).
+  Now it is even possible to evaluate this string `12 in in in`, which is equivalent of `12 inch in inch`
 
 ### Changed
 - When opening a not empty note, the result panel now tries
@@ -33,6 +43,10 @@ to be as close to the editor as possible to have a better
 - Strings at the frontend are now rendered char by char. It is necessary
 to be able to place the cursor at the right place, since the text rendering
   does not guarantee that a single char takes exactly 'char-width' pixels.
+- Overlay canvas (the canvas above the app canvas) was removed. It was used to draw
+  overlay effects (e.g. pulsing), but it was problematic since it needed alpha blending,
+  which wasn't always nice and console frontend support is limited.
+  Now pulses are rendered above "BelowText" layer and below the "Text" layer.
 
 ### Fixed
 - Longest visible result length was calculated wrongly when there were multiple headers
@@ -44,14 +58,18 @@ with rendering (widths of recatngles were float as well and did not always fill 
 - Underlines and line reference background rectangles were rendered even if they
 were outside of the editor area
 - `ctrl-x` did not copy the selected text
-- units in the denominator behaved buggy. now expressions like this works well
+- Units in the denominator behaved buggy. now expressions like this works well
   ```
   tax A = 50 000/month
   tax B = 50 000/year
   (tax A + tax B) * (1 year)
   ```
-- Matrices cannot be deleted anymore by `DEL` or `BACKSPACE`, ctrl is needed.
-### Removed
+- Matrices cannot be deleted anymore by `DEL` or `BACKSPACE`, ctrl is needed
+- u64 values can be parsed correctly (e.g. 0xFFFFFFFFFFFFFFFF)
+- Bitwise operations now work on u64 values
+- Negative numbers can be presented in binary and hex form
+- Line reference pulsing was called each time a cursor was pressed on the line ref's line, causing
+flickering.
 
 ## [0.2.0] - 2020-12-03
 ### Breaking Changes

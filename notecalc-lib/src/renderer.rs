@@ -70,9 +70,23 @@ pub fn render_result_into(
                     f.write_u8(b' ').expect("");
                     // TODO:mem to_string -> into(buf)
                     // implement a into(std::io:Write) method for UnitOutput
-                    for ch in unit.to_string().as_bytes() {
-                        f.write_u8(*ch).expect("");
-                        lens.unit_part_len += 1;
+                    if unit.units.len() == 1 && unit.units[0].power == -1 {
+                        let unit = &unit.units[0];
+                        f.write_u8(b'/').expect("");
+                        f.write_u8(b' ').expect("");
+                        for ch in unit.prefix.borrow().name {
+                            f.write_u8(*ch as u8).expect("");
+                        }
+                        for ch in unit.unit.borrow().name {
+                            f.write_u8(*ch as u8).expect("");
+                        }
+                        lens.unit_part_len +=
+                            2 + unit.prefix.borrow().name.len() + unit.unit.borrow().name.len();
+                    } else {
+                        for ch in unit.to_string().as_bytes() {
+                            f.write_u8(*ch).expect("");
+                            lens.unit_part_len += 1;
+                        }
                     }
                     lens
                 } else {
@@ -171,7 +185,7 @@ fn num_to_string(
     let num = num_a.as_ref().unwrap_or(num);
 
     return if *format == ResultFormat::Bin || *format == ResultFormat::Hex {
-        if let Some(n) = num.to_i64() {
+        if let Some(n) = num.to_u64().or_else(|| num.to_i64().map(|it| it as u64)) {
             let ss = if *format == ResultFormat::Bin {
                 format!("{:b}", n)
             } else {
