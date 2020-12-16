@@ -47,6 +47,7 @@ to be able to place the cursor at the right place, since the text rendering
   overlay effects (e.g. pulsing), but it was problematic since it needed alpha blending,
   which wasn't always nice and console frontend support is limited.
   Now pulses are rendered above "BelowText" layer and below the "Text" layer.
+- underscore is allowed in binary numbers (e.g. ``0b11_00``)
 
 ### Fixed
 - Longest visible result length was calculated wrongly when there were multiple headers
@@ -69,7 +70,9 @@ were outside of the editor area
 - Bitwise operations now work on u64 values
 - Negative numbers can be presented in binary and hex form
 - Line reference pulsing was called each time a cursor was pressed on the line ref's line, causing
-flickering.
+flickering
+- 'Line normalization' (the process where the referenced lines' id is normalized to the referenced line actual line number)
+  could be undo with ctrl-z
 
 ## [0.2.0] - 2020-12-03
 ### Breaking Changes

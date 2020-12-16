@@ -193,10 +193,18 @@ fn apply_operation<'text_ptr>(
         | OperatorTokenType::Pow
         | OperatorTokenType::ShiftLeft
         | OperatorTokenType::ShiftRight
+        | OperatorTokenType::PercNumIsXPercOnWhat
+        | OperatorTokenType::PercWhatPlusXPercIsNum
+        | OperatorTokenType::PercOnWhatIsNum
+        | OperatorTokenType::PercNumIsWhatPercOnNum
+        | OperatorTokenType::PercNumIsXPercOffWhat
+        | OperatorTokenType::PercWhatMinusXPercIsNum
+        | OperatorTokenType::PercOffWhatIsNum
+        | OperatorTokenType::PercNumIsWhatPercOffNum
         | OperatorTokenType::UnitConverter => {
             if stack.len() > 1 {
                 let (lhs, rhs) = (&stack[stack.len() - 2], &stack[stack.len() - 1]);
-                if let Some(result) = bitwise_operation(op, lhs, rhs) {
+                if let Some(result) = binary_operation(op, lhs, rhs) {
                     stack.truncate(stack.len() - 2);
                     stack.push(result);
                     true
@@ -264,9 +272,12 @@ fn apply_operation<'text_ptr>(
                 stack.push(result);
                 true
             } else {
-                //tokens[op_token_index].has_error = true;
                 false
             }
+        }
+        OperatorTokenType::PercentageIs => {
+            // ignore
+            true
         }
     };
     return succeed;
@@ -303,7 +314,7 @@ fn unary_operation(
     };
 }
 
-fn bitwise_operation(
+fn binary_operation(
     op: &OperatorTokenType,
     lhs: &CalcResult,
     rhs: &CalcResult,
@@ -319,6 +330,15 @@ fn bitwise_operation(
         OperatorTokenType::Pow => pow_op(lhs, rhs),
         OperatorTokenType::ShiftLeft => bitwise_shift_left(lhs, rhs),
         OperatorTokenType::ShiftRight => bitwise_shift_right(lhs, rhs),
+        OperatorTokenType::PercNumIsXPercOnWhat => perc_num_is_xperc_on_what(lhs, rhs),
+        OperatorTokenType::PercWhatPlusXPercIsNum => perc_num_is_xperc_on_what(rhs, lhs),
+        OperatorTokenType::PercOnWhatIsNum => perc_num_is_xperc_on_what(rhs, lhs),
+        OperatorTokenType::PercNumIsWhatPercOnNum => perc_num_is_what_perc_on_num(lhs, rhs),
+        //
+        OperatorTokenType::PercNumIsXPercOffWhat => perc_num_is_xperc_off_what(lhs, rhs),
+        OperatorTokenType::PercWhatMinusXPercIsNum => perc_num_is_xperc_off_what(rhs, lhs),
+        OperatorTokenType::PercOffWhatIsNum => perc_num_is_xperc_off_what(rhs, lhs),
+        OperatorTokenType::PercNumIsWhatPercOffNum => perc_num_is_what_perc_off_num(lhs, rhs),
         OperatorTokenType::UnitConverter => {
             return match (&lhs.typ, &rhs.typ) {
                 (
@@ -338,7 +358,7 @@ fn bitwise_operation(
                     let cells: Option<Vec<CalcResult>> = mat
                         .cells
                         .iter()
-                        .map(|cell| bitwise_operation(op, cell, rhs))
+                        .map(|cell| binary_operation(op, cell, rhs))
                         .collect();
                     cells.map(|it| {
                         CalcResult::new(
@@ -417,6 +437,66 @@ fn bitwise_or_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
             let lhs = lhs.to_u64()?;
             let rhs = rhs.to_u64()?;
             Some(CalcResult::new(CalcResultType::Number(dec(lhs | rhs)), 0))
+        }
+        _ => None,
+    }
+}
+
+fn perc_num_is_xperc_on_what(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+    // 'lhs' is 'rhs' on what
+    // 41 is 17% on what
+    match (&lhs.typ, &rhs.typ) {
+        (CalcResultType::Number(y), CalcResultType::Percentage(p)) => {
+            let x = y
+                .checked_mul(&DECIMAL_100)?
+                .checked_div(&p.checked_add(&DECIMAL_100)?)?;
+            Some(CalcResult::new(CalcResultType::Number(x), 0))
+        }
+        _ => None,
+    }
+}
+
+fn perc_num_is_xperc_off_what(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+    // 'lhs' is 'rhs' off what
+    // 41 is 17% off what
+    // x = (y*100)/(100-p)
+    match (&lhs.typ, &rhs.typ) {
+        (CalcResultType::Number(y), CalcResultType::Percentage(p)) => {
+            let x = y
+                .checked_mul(&DECIMAL_100)?
+                .checked_div(&DECIMAL_100.checked_sub(&p)?)?;
+            Some(CalcResult::new(CalcResultType::Number(x), 0))
+        }
+        _ => None,
+    }
+}
+
+fn perc_num_is_what_perc_on_num(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+    // lhs is what % on rhs
+    // 41 is what % on 35
+    match (&lhs.typ, &rhs.typ) {
+        (CalcResultType::Number(y), CalcResultType::Number(x)) => {
+            let p = y
+                .checked_mul(&DECIMAL_100)?
+                .checked_div(x)?
+                .checked_sub(&DECIMAL_100)?;
+            Some(CalcResult::new(CalcResultType::Percentage(p), 0))
+        }
+        _ => None,
+    }
+}
+
+fn perc_num_is_what_perc_off_num(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+    // lhs is what % off rhs
+    // 35 is what % off 41
+    match (&lhs.typ, &rhs.typ) {
+        (CalcResultType::Number(y), CalcResultType::Number(x)) => {
+            let p = y
+                .checked_mul(&DECIMAL_100)?
+                .checked_div(x)?
+                .checked_sub(&DECIMAL_100)?
+                .neg();
+            Some(CalcResult::new(CalcResultType::Percentage(p), 0))
         }
         _ => None,
     }
@@ -1099,7 +1179,7 @@ mod tests {
         );
         let _result_stack = crate::calc::evaluate_tokens(&mut tokens, &mut shunting_output, &vars);
 
-        crate::shunting_yard::tests::compare_tokens(expected_tokens, &tokens);
+        crate::shunting_yard::tests::compare_tokens(text, expected_tokens, &tokens);
     }
 
     fn test_vars(vars: &Variables, text: &str, expected: &str, dec_count: usize) {
@@ -2042,5 +2122,167 @@ mod tests {
             "0xFFFFFFFF_FFFFFFFF >> 8",
             &0x00FFFFFF_FFFFFFFFu64.to_string(),
         );
+    }
+
+    #[test]
+    fn test_calc_num_perc_on_what() {
+        test("41 is 17% on what", "35.0427");
+    }
+
+    #[test]
+    fn test_calc_num_perc_on_what_tokens() {
+        test_tokens(
+            "41 is 17% on what",
+            &[
+                num(41),
+                str(" "),
+                op(OperatorTokenType::PercentageIs),
+                str(" "),
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::PercNumIsXPercOnWhat),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_calc_num_perc_on_what_2() {
+        test("41 is (16%+1%) on what", "35.0427");
+    }
+
+    #[test]
+    fn test_calc_num_perc_on_what_3() {
+        test("41 is (16+1)% on what", "35.0427");
+    }
+
+    #[test]
+    fn test_calc_percentage_what_plus() {
+        test("what + 17% is 41", "35.0427");
+    }
+
+    #[test]
+    fn test_calc_percentage_what_plus_2() {
+        test("what + (16%+1%) is 41", "35.0427");
+    }
+    #[test]
+    fn test_calc_percentage_what_plus_3() {
+        test("what + (16+1)% is 41", "35.0427");
+    }
+
+    #[test]
+    fn test_calc_perc_on_what_is() {
+        test("17% on what is 41", "35.0427");
+    }
+
+    #[test]
+    fn test_calc_perc_on_what_is_tokens() {
+        test_tokens(
+            "17% on what is 41",
+            &[
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::PercOnWhatIsNum),
+                str(" "),
+                num(41),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_calc_perc_on_what_is_2() {
+        test("(16%+1%) on what is 41", "35.0427");
+    }
+
+    #[test]
+    fn test_calc_perc_on_what_is_3() {
+        test("(16+1)% on what is 41", "35.0427");
+    }
+
+    #[test]
+    fn test_calc_num_what_perc_on_num_tokens() {
+        test("41 is what % on 35", "17.1429 %");
+    }
+
+    #[test]
+    fn test_calc_num_perc_off_what() {
+        test("41 is 17% off what", "49.3976");
+    }
+
+    #[test]
+    fn test_calc_num_perc_off_what_tokens() {
+        test_tokens(
+            "41 is 17% off what",
+            &[
+                num(41),
+                str(" "),
+                op(OperatorTokenType::PercentageIs),
+                str(" "),
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::PercNumIsXPercOffWhat),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_calc_num_perc_off_what_2() {
+        test("41 is (16%+1%) off what", "49.3976");
+    }
+
+    #[test]
+    fn test_calc_num_perc_off_what_3() {
+        test("41 is (16+1)% off what", "49.3976");
+    }
+
+    #[test]
+    fn test_calc_percentage_what_minus() {
+        test("what - 17% is 41", "49.3976");
+    }
+
+    #[test]
+    fn test_calc_percentage_what_minus_2() {
+        test("what - (16%+1%) is 41", "49.3976");
+    }
+    #[test]
+    fn test_calc_percentage_what_minus_3() {
+        test("what - (16+1)% is 41", "49.3976");
+    }
+
+    #[test]
+    fn test_calc_perc_off_what_is() {
+        test("17% off what is 41", "49.3976");
+    }
+
+    #[test]
+    fn test_calc_perc_off_what_is_tokens() {
+        test_tokens(
+            "17% off what is 41",
+            &[
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::PercOffWhatIsNum),
+                str(" "),
+                num(41),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_calc_perc_off_what_is_2() {
+        test("(16%+1%) off what is 41", "49.3976");
+    }
+
+    #[test]
+    fn test_calc_perc_off_what_is_3() {
+        test("(16+1)% off what is 41", "49.3976");
+    }
+
+    #[test]
+    fn test_calc_num_what_perc_off_num_tokens() {
+        test("35 is what % off 41", "14.6341 %");
     }
 }

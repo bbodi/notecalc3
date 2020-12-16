@@ -1,0 +1,11 @@
+price = 350 000$
+down payment = price * 20%
+finance amount = price - down payment
+
+interest rate = 3.7%/year
+term = 30year
+
+n = term * 12/year
+r = interest rate / (12/year)
+
+monthly payment = r/(1 - (1+r)^(-n)) * finance amount

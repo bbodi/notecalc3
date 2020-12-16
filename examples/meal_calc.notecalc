@@ -1,0 +1,13 @@
+Arrays contain the Protein, Fat and Carbohydrate
+content of each food in this respective order.
+
+# Food list
+                   P       F     Ch
+chicken breast = [22.5 g,2.6 g,0 g] / 100g
+rice           = [6.0 g,0.2g,72g]      / 100g
+
+# Daily intake
+chicken breast * 500g
+rice * 300g
+daily intake = sum
+daily intake * [4kcal/g;4kcal/g;9kcal/g] in kcal

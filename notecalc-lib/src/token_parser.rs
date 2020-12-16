@@ -77,6 +77,23 @@ pub enum OperatorTokenType {
     ApplyUnit(UnitOutput),
     Matrix { row_count: usize, col_count: usize },
     Fn { arg_count: usize, typ: FnType },
+    PercentageIs,
+    // 41 is 17% on what
+    PercNumIsXPercOnWhat,
+    // what + 17% is 41
+    PercWhatPlusXPercIsNum,
+    // 17% on what is 41
+    PercOnWhatIsNum,
+    // 41 is what % on 35
+    PercNumIsWhatPercOnNum,
+    // 41 is 17% off what
+    PercNumIsXPercOffWhat,
+    // what - 17% is 41
+    PercWhatMinusXPercIsNum,
+    // 17% off what is 41
+    PercOffWhatIsNum,
+    // 35 is what % off 41
+    PercNumIsWhatPercOffNum,
 }
 
 #[derive(Eq, PartialEq, Copy, Clone)]
@@ -112,6 +129,15 @@ impl OperatorTokenType {
             OperatorTokenType::Matrix { .. } => 0,
             OperatorTokenType::Fn { .. } => 0,
             OperatorTokenType::ApplyUnit(_) => 5,
+            OperatorTokenType::PercentageIs => 20,
+            OperatorTokenType::PercNumIsXPercOnWhat => 10,
+            OperatorTokenType::PercWhatPlusXPercIsNum => 10,
+            OperatorTokenType::PercOnWhatIsNum => 10,
+            OperatorTokenType::PercNumIsWhatPercOnNum => 10,
+            OperatorTokenType::PercNumIsXPercOffWhat => 10,
+            OperatorTokenType::PercWhatMinusXPercIsNum => 10,
+            OperatorTokenType::PercOffWhatIsNum => 10,
+            OperatorTokenType::PercNumIsWhatPercOffNum => 10,
         }
     }
 
@@ -142,6 +168,15 @@ impl OperatorTokenType {
             OperatorTokenType::Matrix { .. } => Assoc::Left,
             OperatorTokenType::Fn { .. } => Assoc::Left,
             OperatorTokenType::ApplyUnit(_) => Assoc::Left,
+            OperatorTokenType::PercentageIs => Assoc::Left,
+            OperatorTokenType::PercNumIsXPercOnWhat => Assoc::Left,
+            OperatorTokenType::PercWhatPlusXPercIsNum => Assoc::Left,
+            OperatorTokenType::PercOnWhatIsNum => Assoc::Left,
+            OperatorTokenType::PercNumIsWhatPercOnNum => Assoc::Left,
+            OperatorTokenType::PercNumIsXPercOffWhat => Assoc::Left,
+            OperatorTokenType::PercWhatMinusXPercIsNum => Assoc::Left,
+            OperatorTokenType::PercOffWhatIsNum => Assoc::Left,
+            OperatorTokenType::PercNumIsWhatPercOffNum => Assoc::Left,
         }
     }
 }
@@ -311,7 +346,7 @@ impl TokenParser {
                     end_index_before_last_whitespace = i + 1;
                     number_str[number_str_index] = str[i] as u8;
                     number_str_index += 1;
-                } else if str[i].is_ascii_whitespace() {
+                } else if str[i].is_ascii_whitespace() || str[i] == '_' {
                     // allowed
                 } else {
                     break;
@@ -690,6 +725,13 @@ impl TokenParser {
                 has_error: false,
             });
         }
+        fn cmp<'text_ptr>(str: &[char], expected: &[char]) -> bool {
+            return str.starts_with(expected)
+                && str
+                    .get(expected.len())
+                    .map(|it| !it.is_alphabetic())
+                    .unwrap_or(true);
+        }
         match str[0] {
             '=' => op(OperatorTokenType::Assign, str, 1, allocator),
             '+' => op(OperatorTokenType::Add, str, 1, allocator),
@@ -707,21 +749,59 @@ impl TokenParser {
             _ => {
                 if str.starts_with(&['i', 'n', ' ']) && can_be_unit_converter {
                     op(OperatorTokenType::UnitConverter, str, 2, allocator)
-                } else if str.starts_with(&['A', 'N', 'D'])
-                    && str.get(3).map(|it| !it.is_alphabetic()).unwrap_or(true)
-                {
+                } else if cmp(
+                    str,
+                    &['i', 's', ' ', 'w', 'h', 'a', 't', ' ', '%', ' ', 'o', 'n'],
+                ) {
+                    op(
+                        OperatorTokenType::PercNumIsWhatPercOnNum,
+                        str,
+                        12,
+                        allocator,
+                    )
+                } else if cmp(
+                    str,
+                    &[
+                        'i', 's', ' ', 'w', 'h', 'a', 't', ' ', '%', ' ', 'o', 'f', 'f',
+                    ],
+                ) {
+                    op(
+                        OperatorTokenType::PercNumIsWhatPercOffNum,
+                        str,
+                        13,
+                        allocator,
+                    )
+                } else if cmp(str, &['i', 's']) {
+                    op(OperatorTokenType::PercentageIs, str, 2, allocator)
+                } else if cmp(str, &['o', 'n', ' ', 'w', 'h', 'a', 't', ' ', 'i', 's']) {
+                    op(OperatorTokenType::PercOnWhatIsNum, str, 10, allocator)
+                } else if cmp(
+                    str,
+                    &['o', 'f', 'f', ' ', 'w', 'h', 'a', 't', ' ', 'i', 's'],
+                ) {
+                    op(OperatorTokenType::PercOffWhatIsNum, str, 11, allocator)
+                } else if cmp(str, &['o', 'n', ' ', 'w', 'h', 'a', 't']) {
+                    op(OperatorTokenType::PercNumIsXPercOnWhat, str, 7, allocator)
+                } else if cmp(str, &['o', 'f', 'f', ' ', 'w', 'h', 'a', 't']) {
+                    op(OperatorTokenType::PercNumIsXPercOffWhat, str, 8, allocator)
+                } else if cmp(str, &['w', 'h', 'a', 't', ' ', '+']) {
+                    op(OperatorTokenType::PercWhatPlusXPercIsNum, str, 6, allocator)
+                } else if cmp(str, &['w', 'h', 'a', 't', ' ', '-']) {
+                    op(
+                        OperatorTokenType::PercWhatMinusXPercIsNum,
+                        str,
+                        6,
+                        allocator,
+                    )
+                } else if cmp(str, &['A', 'N', 'D']) {
                     // TODO unit test "0xff and(12)"
                     op(OperatorTokenType::BinAnd, str, 3, allocator)
-                } else if str.starts_with(&['O', 'R'])
-                    && str.get(2).map(|it| !it.is_alphabetic()).unwrap_or(true)
-                {
+                } else if cmp(str, &['O', 'R']) {
                     op(OperatorTokenType::BinOr, str, 2, allocator)
-                } else if str.starts_with(&['N', 'O', 'T', '(']) {
+                } else if cmp(str, &['N', 'O', 'T', '(']) {
                     op(OperatorTokenType::BinNot, str, 3, allocator)
                 // '(' will be parsed separately as an operator
-                } else if str.starts_with(&['X', 'O', 'R'])
-                    && str.get(3).map(|it| !it.is_alphabetic()).unwrap_or(true)
-                {
+                } else if cmp(str, &['X', 'O', 'R']) {
                     op(OperatorTokenType::BinXor, str, 3, allocator)
                 } else if str.starts_with(&['<', '<']) {
                     op(OperatorTokenType::ShiftLeft, str, 2, allocator)
@@ -735,8 +815,23 @@ impl TokenParser {
     }
 }
 
+#[cfg(debug_assertions)]
+pub fn debug_print(str: &str) {
+    println!("{}", str);
+}
+
+#[cfg(debug_assertions)]
+pub fn pad_rust_is_shit(error: &mut String, str: &str, len: usize) {
+    error.push_str(str);
+    if str.len() < len {
+        for _ in 0..len - str.len() {
+            error.push(' ');
+        }
+    }
+}
+
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::calc::{CalcResult, CalcResultType};
     use crate::helper::create_vars;
@@ -826,16 +921,12 @@ mod tests {
         let arena = Bump::new();
         // line index is 10 so the search for the variable does not stop at 0
         TokenParser::parse_line(&temp, &var_names, &mut vec, &units, 10, &arena);
-        assert_eq!(
-            expected_tokens.len(),
-            vec.len(),
-            "actual tokens:\n {:?}",
-            vec.iter()
-                .map(|it| format!("{:?}\n", it))
-                .collect::<Vec<_>>()
-                .join(" -----> ")
-        );
-        for (actual_token, expected_token) in vec.iter().zip(expected_tokens.iter()) {
+        if expected_tokens.len() != vec.len() {
+            print_tokens_compare_error_and_panic(text, &vec, None);
+        }
+        for (error_index, (actual_token, expected_token)) in
+            vec.iter().zip(expected_tokens.iter()).enumerate()
+        {
             match (&expected_token.typ, &actual_token.typ) {
                 (TokenType::NumberLiteral(expected_num), TokenType::NumberLiteral(actual_num)) => {
                     assert_eq!(expected_num, actual_num)
@@ -853,7 +944,7 @@ mod tests {
                 (TokenType::NumberErr, _) => {
                     assert_eq!(actual_token.typ, expected_token.typ);
                 }
-                (TokenType::Operator(etyp), TokenType::Operator(atyp)) => assert_eq!(etyp, atyp),
+                (TokenType::Operator(etyp), TokenType::Operator(atyp)) => assert_eq!(atyp, etyp),
                 (TokenType::StringLiteral, TokenType::StringLiteral)
                 | (TokenType::Header, TokenType::Header) => {
                     // expected_op is an &str
@@ -868,18 +959,61 @@ mod tests {
                     let expected_chars = str_slice.chars().collect::<Vec<char>>();
                     assert_eq!(actual_token.ptr, expected_chars.as_slice())
                 }
-                _ => panic!(
-                    "'{}', {:?} != {:?}, actual tokens:\n {:?}",
+                _ => print_tokens_compare_error_and_panic(
                     text,
-                    expected_token,
-                    actual_token,
-                    vec.iter()
-                        .map(|it| format!("{:?}\n", it))
-                        .collect::<Vec<_>>()
-                        .join(" -----> ")
+                    &vec,
+                    Some((error_index, &expected_token)),
                 ),
             }
         }
+    }
+
+    pub fn print_tokens_compare_error_and_panic(
+        text: &str,
+        vec: &[Token],
+        single_token_error: Option<(usize, &Token)>,
+    ) -> ! {
+        fn println_token(error: &mut String, token: &Token) {
+            pad_rust_is_shit(error, &format!("{:?}", token.typ), 35);
+            pad_rust_is_shit(error, &format!("{:?}", token.ptr), 50);
+            error.push_str(&format!("{}", token.has_error));
+            error.push('\n');
+        }
+        // Rust's format! macro escapes newline characters...
+        let mut error = String::with_capacity(200);
+        error.push_str("\ntext: ");
+        error.push_str(text);
+
+        if let Some((error_index, expected_token)) = single_token_error {
+            error.push_str("\nerror at index ");
+            error.push_str(&error_index.to_string());
+            error.push('\n');
+            for (i, actual_token) in vec.iter().enumerate() {
+                if i == error_index {
+                    error.push_str(&format!(
+                        "{}. ERR --------------------------------------------------------------------------------------------------------------",
+                        i
+                    ));
+                    error.push_str("\nactual:   ");
+                    println_token(&mut error, actual_token);
+                    error.push_str("expected: ");
+                    println_token(&mut error, expected_token);
+                    error.push_str(
+                        "---------------------------------------------------------------------------------------------------------------------\n",
+                    );
+                } else {
+                    error.push_str(&format!("{}. ok     ", i));
+                    println_token(&mut error, actual_token);
+                }
+            }
+        } else {
+            error.push('\n');
+            for (i, actual_token) in vec.iter().enumerate() {
+                error.push_str(&format!("{}.      ", i));
+                println_token(&mut error, actual_token);
+            }
+        }
+        panic!(error);
     }
 
     fn test(text: &str, expected_tokens: &[Token]) {
@@ -1807,7 +1941,7 @@ mod tests {
     }
 
     #[test]
-    fn test_undorscore_is_allowed_in_hex() {
+    fn test_underscore_is_allowed_in_hex() {
         test("0xAA_B", &[num(0xAAB)]);
         test("0xAA_BB", &[num(0xAABB)]);
         test("0xA_A_B", &[num(0xAAB)]);
@@ -1817,6 +1951,16 @@ mod tests {
             "0xAA_B B",
             &[num(0xAAB), str(" "), apply_to_prev_token_unit("B")],
         );
+    }
+
+    #[test]
+    fn test_underscore_is_allowed_in_bin() {
+        test("0b11_0", &[num(0b110)]);
+        test("0b11_00", &[num(0b1100)]);
+        test("0b1_1_0", &[num(0b110)]);
+        test("0b_110_", &[num(0b110), str("_")]);
+        test("0b_1_1_0_", &[num(0b110), str("_")]);
+        test("0b11_0 0", &[num(0b1100)]);
     }
 
     #[test]
@@ -1904,6 +2048,170 @@ mod tests {
                 num(3),
                 str(" "),
                 apply_to_prev_token_unit("seconds"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_parse_num_perc_on_what_is() {
+        test(
+            "41 is 17% on what",
+            &[
+                num(41),
+                str(" "),
+                op(OperatorTokenType::PercentageIs),
+                str(" "),
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::PercNumIsXPercOnWhat),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_parse_num_perc_on_what_is_paren() {
+        test(
+            "(41 is 17% on what)",
+            &[
+                op(OperatorTokenType::ParenOpen),
+                num(41),
+                str(" "),
+                op(OperatorTokenType::PercentageIs),
+                str(" "),
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::PercNumIsXPercOnWhat),
+                op(OperatorTokenType::ParenClose),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_parse_percentage_what_plus() {
+        test(
+            "what + 17% is 41",
+            &[
+                op(OperatorTokenType::PercWhatPlusXPercIsNum),
+                str(" "),
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::PercentageIs),
+                str(" "),
+                num(41),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_parse_percentage_on_what_is() {
+        test(
+            "17% on what is 41",
+            &[
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::PercOnWhatIsNum),
+                str(" "),
+                num(41),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_parse_num_what_perc_on_num() {
+        test(
+            "41 is what % on 35",
+            &[
+                num(41),
+                str(" "),
+                op(OperatorTokenType::PercNumIsWhatPercOnNum),
+                str(" "),
+                num(35),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_parse_num_perc_off_what_is() {
+        test(
+            "41 is 17% off what",
+            &[
+                num(41),
+                str(" "),
+                op(OperatorTokenType::PercentageIs),
+                str(" "),
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::PercNumIsXPercOffWhat),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_parse_num_perc_off_what_is_paren() {
+        test(
+            "(41 is 17% off what)",
+            &[
+                op(OperatorTokenType::ParenOpen),
+                num(41),
+                str(" "),
+                op(OperatorTokenType::PercentageIs),
+                str(" "),
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::PercNumIsXPercOffWhat),
+                op(OperatorTokenType::ParenClose),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_parse_percentage_what_minus() {
+        test(
+            "what - 17% is 41",
+            &[
+                op(OperatorTokenType::PercWhatMinusXPercIsNum),
+                str(" "),
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::PercentageIs),
+                str(" "),
+                num(41),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_parse_percentage_off_what_is() {
+        test(
+            "17% off what is 41",
+            &[
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::PercOffWhatIsNum),
+                str(" "),
+                num(41),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_parse_num_what_perc_off_num() {
+        test(
+            "41 is what % off 35",
+            &[
+                num(41),
+                str(" "),
+                op(OperatorTokenType::PercNumIsWhatPercOffNum),
+                str(" "),
+                num(35),
             ],
         );
     }

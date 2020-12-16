@@ -1,6 +1,8 @@
 use crate::calc::ShuntingYardResult;
 use crate::functions::FnType;
-use crate::token_parser::{Assoc, OperatorTokenType, Token, TokenType};
+use crate::token_parser::{
+    debug_print, pad_rust_is_shit, Assoc, OperatorTokenType, Token, TokenType,
+};
 use crate::units::units::{UnitOutput, Units};
 use std::ops::Neg;
 
@@ -73,6 +75,8 @@ struct ValidationState {
     had_assign_op: bool,
     assign_op_input_token_pos: Option<usize>,
     had_non_ws_string_literal: bool,
+    // Todo: percentage op-ok legyenek külön enumba
+    in_progress_percentage_op: Option<OperatorTokenType>,
 
     parenthesis_stack: Vec<ParenStackEntry>,
 }
@@ -95,6 +99,7 @@ impl ValidationState {
         } else {
             None
         };
+        debug_print(&format!("  close_valid_range"));
     }
 
     fn reset(&mut self, output_stack_index: usize, token_index: isize) {
@@ -112,6 +117,7 @@ impl ValidationState {
     fn new() -> ValidationState {
         ValidationState {
             had_non_ws_string_literal: false,
+            in_progress_percentage_op: None,
             last_valid_output_range: None,
             last_valid_input_token_range: None,
             expect_expression: true,
@@ -215,7 +221,7 @@ impl ValidationState {
     }
 
     fn can_be_valid_closing_token(&self) -> bool {
-        self.parenthesis_stack.is_empty()
+        self.parenthesis_stack.is_empty() && self.in_progress_percentage_op.is_none()
     }
 
     fn is_valid_assignment_expression(&self) -> bool {
@@ -258,11 +264,25 @@ impl ShuntingYard {
         while input_index + 1 < tokens.len() as isize {
             input_index += 1; // it is here so it is incremented always when "continue"
             let input_token = &tokens[input_index as usize];
+            debug_print(&format!(
+                "Input token: {:?} {:?}",
+                input_token.typ, input_token.ptr
+            ));
+            if matches!(
+                input_token.typ,
+                TokenType::Operator(OperatorTokenType::PercWhatMinusXPercIsNum)
+            ) {
+                // nocheckin
+                ShuntingYard::shunting_state_debug_print("debugger", output_stack, &operator_stack);
+                let _debugger = 1;
+            }
             match &input_token.typ {
                 TokenType::Header => {
+                    debug_print(&format!("  ignore ({:?})", input_token.ptr));
                     return;
                 }
                 TokenType::StringLiteral => {
+                    debug_print(&format!("  {:?}", input_token.ptr));
                     if let Some(fn_type) = FnType::value_of(input_token.ptr) {
                         // next token is parenthesis
                         if tokens
@@ -271,6 +291,7 @@ impl ShuntingYard {
                             .unwrap_or(false)
                             && v.expect_expression
                         {
+                            debug_print(&format!("  function"));
                             tokens[input_index as usize].typ =
                                 TokenType::Operator(OperatorTokenType::Fn {
                                     arg_count: 0, // unused in tokens, so can be fixed 0
@@ -744,7 +765,13 @@ impl ShuntingYard {
                         panic!("Token parser does not generate unary operators");
                     }
                     _ => {
-                        if !matches!(op, OperatorTokenType::BinNot) && v.expect_expression {
+                        if !matches!(
+                            op,
+                            OperatorTokenType::BinNot
+                                | OperatorTokenType::PercWhatPlusXPercIsNum
+                                | OperatorTokenType::PercWhatMinusXPercIsNum
+                        ) && v.expect_expression
+                        {
                             ShuntingYard::rollback(
                                 &mut operator_stack,
                                 output_stack,
@@ -754,7 +781,15 @@ impl ShuntingYard {
                             continue;
                         }
                         v.had_operator = true;
-                        v.expect_expression = true;
+                        v.expect_expression = if matches!(
+                            op,
+                            OperatorTokenType::PercNumIsXPercOnWhat
+                                | OperatorTokenType::PercNumIsXPercOffWhat
+                        ) {
+                            false
+                        } else {
+                            true
+                        };
                         v.prev_token_type = ValidationTokenType::Op;
                         ShuntingYard::operator_rule(
                             op.precedence(),
@@ -769,6 +804,18 @@ impl ShuntingYard {
                             op_type: op.clone(),
                             index_into_tokens: input_index,
                         });
+                        ShuntingYard::update_in_progress_percentage_op(
+                            &op,
+                            &mut v,
+                            input_index,
+                            output_stack,
+                            &operator_stack,
+                        );
+                        ShuntingYard::shunting_state_debug_print(
+                            "token is operator",
+                            output_stack,
+                            &operator_stack,
+                        );
                     }
                 },
                 TokenType::NumberErr => {
@@ -837,26 +884,52 @@ impl ShuntingYard {
             ShuntingYard::set_tokens_to_string(tokens, 0, v.valid_range_start_token_index - 1);
         }
 
-        for op in operator_stack.iter().rev() {
+        ShuntingYard::shunting_state_debug_print(
+            "before into iter rev",
+            output_stack,
+            &operator_stack,
+        );
+        for op in operator_stack.into_iter().rev() {
             match op.op_type {
-                OperatorTokenType::ParenOpen
-                | OperatorTokenType::ParenClose
-                | OperatorTokenType::BracketOpen
-                | OperatorTokenType::BracketClose => {
-                    // ignore
+                OperatorTokenType::PercNumIsXPercOnWhat
+                | OperatorTokenType::PercWhatPlusXPercIsNum => {
+                    // the top must be PercentageIs to be valid
+                    let output_stack_len = output_stack.len();
+                    let ok = if let Some(top) = output_stack.last_mut() {
+                        if matches!(
+                            top.typ,
+                            TokenType::Operator(OperatorTokenType::PercentageIs)
+                        ) {
+                            // is it the last valid token?
+                            if let Some((_start, end)) = &v.last_valid_output_range {
+                                if *end == output_stack_len - 1 {
+                                    top.typ = TokenType::Operator(op.op_type);
+                                    true
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    if ok {
+                        v.close_valid_range(output_stack.len(), input_index, 0);
+                    }
                 }
                 _ => {
-                    to_out2(
-                        output_stack,
-                        TokenType::Operator(op.op_type.clone()),
-                        op.index_into_tokens,
-                    );
+                    // ignore
                 }
             }
         }
+        ShuntingYard::shunting_state_debug_print("after into iter rev", output_stack, &[]);
 
         // set everything to string which is not closed
-        if let Some((start, end)) = v.last_valid_input_token_range {
+        if let Some((start, end)) = dbg!(v.last_valid_input_token_range) {
             if start > 0 {
                 ShuntingYard::set_tokens_to_string(tokens, 0, start - 1);
             }
@@ -889,6 +962,72 @@ impl ShuntingYard {
                 ))
             }
         }
+    }
+
+    fn update_in_progress_percentage_op(
+        op: &OperatorTokenType,
+        v: &mut ValidationState,
+        input_index: isize,
+        output_stack: &[ShuntingYardResult],
+        operator_stack: &[ShuntingYardOperatorResult],
+    ) {
+        match (&v.in_progress_percentage_op, op) {
+            // 41 is 17% on what
+            // 41 is 17% off what
+            (Some(OperatorTokenType::PercentageIs), OperatorTokenType::PercNumIsXPercOnWhat)
+            | (Some(OperatorTokenType::PercentageIs), OperatorTokenType::PercNumIsXPercOffWhat) => {
+                v.in_progress_percentage_op = None;
+                if v.can_be_valid_closing_token() {
+                    v.close_valid_range(output_stack.len(), input_index, operator_stack.len());
+                }
+            }
+            (None, OperatorTokenType::PercentageIs) => {
+                v.in_progress_percentage_op = Some(OperatorTokenType::PercentageIs);
+            }
+            // what + 17% is 41
+            // what - 17% is 41
+            (None, OperatorTokenType::PercWhatPlusXPercIsNum)
+            | (None, OperatorTokenType::PercWhatMinusXPercIsNum) => {
+                v.in_progress_percentage_op = Some(op.clone());
+            }
+            (Some(OperatorTokenType::PercWhatPlusXPercIsNum), OperatorTokenType::PercentageIs)
+            | (Some(OperatorTokenType::PercWhatMinusXPercIsNum), OperatorTokenType::PercentageIs) =>
+            {
+                v.in_progress_percentage_op = None;
+            }
+            // 17% on what is 41
+            (None, OperatorTokenType::PercOnWhatIsNum)
+            | (None, OperatorTokenType::PercOffWhatIsNum) => {
+                v.in_progress_percentage_op = None;
+            }
+            _ => {
+                // ignore
+            }
+        }
+        debug_print(&format!(
+            "in_progress_percentage_op: {:?}",
+            &v.in_progress_percentage_op
+        ));
+    }
+
+    #[cfg(debug_assertions)]
+    fn shunting_state_debug_print<'text_ptr>(
+        where_: &str,
+        output_stack: &[ShuntingYardResult],
+        operator_stack: &[ShuntingYardOperatorResult],
+    ) {
+        let mut msg = String::with_capacity(200);
+        msg.push_str(where_);
+        msg.push('\n');
+        msg.push_str("    [operator_stack]\n    ");
+        for op in operator_stack {
+            pad_rust_is_shit(&mut msg, &format!("        {:?}", op.op_type), 35);
+        }
+        msg.push_str("\n\n    [output_stack]\n    ");
+        for token in output_stack {
+            pad_rust_is_shit(&mut msg, &format!("        {:?}", token.typ), 35);
+        }
+        println!("{}", msg);
     }
 
     fn operator_token_type_unit_converter(
@@ -1076,6 +1215,7 @@ impl ShuntingYard {
         token_index: isize,
         v: &mut ValidationState,
     ) {
+        debug_print(&format!("  rollback"));
         ShuntingYard::send_everything_to_output(
             operator_stack,
             output_stack,
@@ -1106,6 +1246,11 @@ impl ShuntingYard {
             }
             *maybe_last_valid_operator_index = None;
         }
+        ShuntingYard::shunting_state_debug_print(
+            "    send_everything_to_output",
+            output_stack,
+            operator_stack,
+        );
     }
 
     fn send_anything_until_opening_bracket(
@@ -1139,6 +1284,7 @@ pub mod tests {
     use super::*;
     use crate::calc::{CalcResult, CalcResultType};
     use crate::helper::create_vars;
+    use crate::token_parser::tests::print_tokens_compare_error_and_panic;
     use crate::token_parser::TokenParser;
     use crate::units::units::{UnitOutput, Units};
     use crate::{Variable, Variables, MAX_LINE_COUNT};
@@ -1249,27 +1395,21 @@ pub mod tests {
         }
     }
 
-    pub fn compare_tokens(expected_tokens: &[Token], actual_tokens: &[Token]) {
-        assert_eq!(
-            actual_tokens.len(),
-            expected_tokens.len(),
-            "Mismatched token count! actual tokens: {:?}",
-            &actual_tokens
-        );
-        for (actual_token, expected_token) in actual_tokens.iter().zip(expected_tokens.iter()) {
-            assert_eq!(
-                actual_token.has_error, expected_token.has_error,
-                "expected {:?}, found {:?}",
-                expected_token, actual_token
-            );
+    pub fn compare_tokens(input: &str, expected_tokens: &[Token], actual_tokens: &[Token]) {
+        if expected_tokens.len() != actual_tokens.len() {
+            print_tokens_compare_error_and_panic(input, actual_tokens, None);
+        }
+        for (index, (actual_token, expected_token)) in
+            actual_tokens.iter().zip(expected_tokens.iter()).enumerate()
+        {
+            if actual_token.has_error != expected_token.has_error {
+                print_tokens_compare_error_and_panic(
+                    input,
+                    actual_tokens,
+                    Some((index, expected_token)),
+                );
+            }
             match (&expected_token.typ, &actual_token.typ) {
-                (TokenType::NumberLiteral(expected_num), TokenType::NumberLiteral(actual_num)) => {
-                    assert_eq!(
-                        expected_num, actual_num,
-                        "actual tokens: {:?}",
-                        &actual_tokens
-                    );
-                }
                 (TokenType::Unit(..), TokenType::Unit(actual_unit))
                 | (
                     TokenType::Operator(OperatorTokenType::ApplyUnit(..)),
@@ -1279,19 +1419,10 @@ pub mod tests {
                     let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
                     assert_eq!(&actual_unit.to_string(), str_slice)
                 }
-                (TokenType::Operator(expected_op), TokenType::Operator(actual_op)) => {
-                    match (expected_op, actual_op) {
-                        _ => {
-                            assert_eq!(
-                                expected_op, actual_op,
-                                "actual tokens: {:?}",
-                                &actual_tokens
-                            );
-                        }
-                    }
-                }
                 (TokenType::StringLiteral, TokenType::StringLiteral)
-                | (TokenType::Header, TokenType::Header) => {
+                | (TokenType::Header, TokenType::Header)
+                | (TokenType::Variable { .. }, TokenType::Variable { .. })
+                | (TokenType::LineReference { .. }, TokenType::LineReference { .. }) => {
                     // expected_op is an &str
                     let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
                     let expected_chars = str_slice.chars().collect::<Vec<char>>();
@@ -1308,28 +1439,15 @@ pub mod tests {
                         &actual_tokens
                     )
                 }
-                (TokenType::Variable { .. }, TokenType::Variable { .. })
-                | (TokenType::LineReference { .. }, TokenType::LineReference { .. }) => {
-                    // expected_op is an &str
-                    let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
-                    let expected_chars = str_slice.chars().collect::<Vec<char>>();
-                    // in shunting yard, we don't care about whitespaces, they are tested in token_parser
-                    let trimmed_actual: Vec<char> = actual_token
-                        .ptr
-                        .iter()
-                        .collect::<String>()
-                        .chars()
-                        .collect();
-                    assert_eq!(
-                        &expected_chars, &trimmed_actual,
-                        "actual tokens: {:?}",
-                        &actual_tokens
-                    )
+                _ => {
+                    if expected_token.typ != actual_token.typ {
+                        print_tokens_compare_error_and_panic(
+                            input,
+                            actual_tokens,
+                            Some((index, expected_token)),
+                        );
+                    }
                 }
-                _ => panic!(
-                    "{:?} != {:?}, actual tokens: {:?}",
-                    expected_token, actual_token, &actual_tokens
-                ),
             }
         }
     }
@@ -1369,6 +1487,7 @@ pub mod tests {
         let mut tokens = vec![];
         let output = do_shunting_yard(&temp, &units, &mut tokens, &var_names, &Bump::new());
         compare_tokens(
+            text,
             expected_tokens,
             output
                 .iter()
@@ -1403,7 +1522,7 @@ pub mod tests {
             value: Ok(CalcResult::new(CalcResultType::Number(Decimal::zero()), 0)),
         });
         let _ = do_shunting_yard(&temp, &units, &mut tokens, &vars, &arena);
-        compare_tokens(expected_tokens, &tokens);
+        compare_tokens(text, expected_tokens, &tokens);
     }
 
     #[test]
@@ -2533,6 +2652,276 @@ pub mod tests {
                 num(3),
                 apply_to_prev_token_unit("second"),
                 op(OperatorTokenType::Div),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_num_perc_on_what() {
+        test_output(
+            "41 is 17% on what",
+            &[
+                num(41),
+                num(17),
+                op(OperatorTokenType::Perc),
+                op(OperatorTokenType::PercentageIs),
+                op(OperatorTokenType::PercNumIsXPercOnWhat),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_num_perc_on_what_tokens() {
+        test_tokens(
+            "41 is 17% on what",
+            &[
+                num(41),
+                str(" "),
+                op(OperatorTokenType::PercentageIs),
+                str(" "),
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::PercNumIsXPercOnWhat),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_num_perc_on_what_paren_tokens() {
+        test_tokens(
+            "(41 is 17% on what)",
+            &[
+                op(OperatorTokenType::ParenOpen),
+                num(41),
+                str(" "),
+                op(OperatorTokenType::PercentageIs),
+                str(" "),
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::PercNumIsXPercOnWhat),
+                op(OperatorTokenType::ParenClose),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_percentage_what_plus() {
+        test_output(
+            "what + 17% is 41",
+            &[
+                num(17),
+                op(OperatorTokenType::Perc),
+                num(41),
+                op(OperatorTokenType::PercentageIs),
+                op(OperatorTokenType::PercWhatPlusXPercIsNum),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_percentage_what_plus_tokens() {
+        test_tokens(
+            "what + 17% is 41",
+            &[
+                op(OperatorTokenType::PercWhatPlusXPercIsNum),
+                str(" "),
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::PercentageIs),
+                str(" "),
+                num(41),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_percentage_on_what_is() {
+        test_output(
+            "17% on what is 41",
+            &[
+                num(17),
+                op(OperatorTokenType::Perc),
+                num(41),
+                op(OperatorTokenType::PercOnWhatIsNum),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_percentage_on_what_is_tokens() {
+        test_tokens(
+            "17% on what is 41",
+            &[
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::PercOnWhatIsNum),
+                str(" "),
+                num(41),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_num_what_perc_on_num_tokens() {
+        test_tokens(
+            "41 is what % on 35",
+            &[
+                num(41),
+                str(" "),
+                op(OperatorTokenType::PercNumIsWhatPercOnNum),
+                str(" "),
+                num(35),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_num_what_perc_on_num() {
+        test_output(
+            "41 is what % on 35",
+            &[
+                num(41),
+                num(35),
+                op(OperatorTokenType::PercNumIsWhatPercOnNum),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_num_perc_off_what() {
+        test_output(
+            "41 is 17% off what",
+            &[
+                num(41),
+                num(17),
+                op(OperatorTokenType::Perc),
+                op(OperatorTokenType::PercentageIs),
+                op(OperatorTokenType::PercNumIsXPercOffWhat),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_num_perc_off_what_tokens() {
+        test_tokens(
+            "41 is 17% off what",
+            &[
+                num(41),
+                str(" "),
+                op(OperatorTokenType::PercentageIs),
+                str(" "),
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::PercNumIsXPercOffWhat),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_num_perc_off_what_paren_tokens() {
+        test_tokens(
+            "(41 is 17% off what)",
+            &[
+                op(OperatorTokenType::ParenOpen),
+                num(41),
+                str(" "),
+                op(OperatorTokenType::PercentageIs),
+                str(" "),
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::PercNumIsXPercOffWhat),
+                op(OperatorTokenType::ParenClose),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_percentage_what_minus() {
+        test_output(
+            "what - 17% is 41",
+            &[
+                num(17),
+                op(OperatorTokenType::Perc),
+                num(41),
+                op(OperatorTokenType::PercentageIs),
+                op(OperatorTokenType::PercWhatMinusXPercIsNum),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_percentage_what_minus_tokens() {
+        test_tokens(
+            "what - 17% is 41",
+            &[
+                op(OperatorTokenType::PercWhatMinusXPercIsNum),
+                str(" "),
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::PercentageIs),
+                str(" "),
+                num(41),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_percentage_off_what_is() {
+        test_output(
+            "17% off what is 41",
+            &[
+                num(17),
+                op(OperatorTokenType::Perc),
+                num(41),
+                op(OperatorTokenType::PercOffWhatIsNum),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_percentage_off_what_is_tokens() {
+        test_tokens(
+            "17% off what is 41",
+            &[
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::PercOffWhatIsNum),
+                str(" "),
+                num(41),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_num_what_perc_off_num_tokens() {
+        test_tokens(
+            "41 is what % off 35",
+            &[
+                num(41),
+                str(" "),
+                op(OperatorTokenType::PercNumIsWhatPercOffNum),
+                str(" "),
+                num(35),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_num_what_perc_off_num() {
+        test_output(
+            "41 is what % off 35",
+            &[
+                num(41),
+                num(35),
+                op(OperatorTokenType::PercNumIsWhatPercOffNum),
             ],
         );
     }

@@ -158,7 +158,7 @@ pub const THEMES: [Theme; 2] = [
         scrollbar_normal: 0xFFCCCC_FF,
         line_ref_text: 0x000000_FF,
         line_ref_bg: 0xDCE2F7_FF,
-        line_ref_selector: 0xFFCCCC_FF,
+        line_ref_selector: 0xDCE2F7_FF,
         referenced_matrix_text: 0x000000_FF,
         change_result_pulse_start: 0xFF88FF_AA,
         change_result_pulse_end: 0xFFFFFF_55,
@@ -194,7 +194,7 @@ pub const THEMES: [Theme; 2] = [
         //line_ref_bg: Theme::DRACULA_COMMENT,
         line_ref_bg: Theme::DRACULA_BG + 0x333300_00,
         line_ref_text: 0x000000_FF,
-        line_ref_selector: 0xFFCCCC_FF,
+        line_ref_selector: Theme::DRACULA_BG + 0x333300_00,
         referenced_matrix_text: 0x000000_FF,
         change_result_pulse_start: 0xFF88FF_AA,
         change_result_pulse_end: Theme::DRACULA_BG - 0xFF,
@@ -2411,21 +2411,19 @@ impl NoteCalcApp {
 
     pub fn normalize_line_refs_in_place(&mut self) {
         let mut original_selection = self.editor.get_selection();
-        for line_i in 0..self.editor_content.line_count() {
+        let editor_content = &mut self.editor_content;
+        for line_i in 0..editor_content.line_count() {
             let mut i = 0;
-            'i: while i < self.editor_content.line_len(line_i) {
-                //self.editor_content.get_line_valid_chars(line_i)
+            'i: while i < editor_content.line_len(line_i) {
                 let start = i;
-                if i + 3 < self.editor_content.line_len(line_i)
-                    && self.editor_content.get_char(line_i, i) == '&'
-                    && self.editor_content.get_char(line_i, i + 1) == '['
+                if i + 3 < editor_content.line_len(line_i)
+                    && editor_content.get_char(line_i, i) == '&'
+                    && editor_content.get_char(line_i, i + 1) == '['
                 {
                     let mut end = i + 2;
                     let mut num_inside_lineref: u32 = 0;
-                    while end < self.editor_content.line_len(line_i) {
-                        if self.editor_content.get_char(line_i, end) == ']'
-                            && num_inside_lineref > 0
-                        {
+                    while end < editor_content.line_len(line_i) {
+                        if editor_content.get_char(line_i, end) == ']' && num_inside_lineref > 0 {
                             let num_len = end - (start + 2); // start --> &[num] <- end
 
                             // remove the number from the original line_ref text '&[x]' (remove only x)
@@ -2433,16 +2431,15 @@ impl NoteCalcApp {
                                 let start_pos = Pos::from_row_column(line_i, start + 2);
                                 let end_pos = start_pos.with_column(end);
                                 self.editor.set_cursor_range(start_pos, end_pos);
-                                self.editor.handle_input(
+                                self.editor.handle_input_no_undo(
                                     EditorInputEvent::Del,
                                     InputModifiers::none(),
-                                    &mut self.editor_content,
+                                    editor_content,
                                 );
                             }
                             {
                                 // which row has the id of 'num_inside_lineref'?
-                                let referenced_row_index = self
-                                    .editor_content
+                                let referenced_row_index = editor_content
                                     .data()
                                     .iter()
                                     .position(|it| it.line_id == num_inside_lineref as usize)
@@ -2476,10 +2473,10 @@ impl NoteCalcApp {
                                     }
                                 };
                                 for tmp_arr_i in tmp_rev_index..=2 {
-                                    self.editor.handle_input(
+                                    self.editor.handle_input_no_undo(
                                         EditorInputEvent::Char(tmp_arr[tmp_arr_i]),
                                         InputModifiers::none(),
-                                        &mut self.editor_content,
+                                        editor_content,
                                     );
                                     i += 1;
                                     if (align_selection & 1) > 0 {
@@ -2493,7 +2490,7 @@ impl NoteCalcApp {
                             }
                             continue 'i;
                         } else if let Some(digit) =
-                            self.editor_content.get_char(line_i, end).to_digit(10)
+                            editor_content.get_char(line_i, end).to_digit(10)
                         {
                             num_inside_lineref = if num_inside_lineref == 0 {
                                 digit
@@ -2509,10 +2506,10 @@ impl NoteCalcApp {
                 i += 1;
             }
         }
-        for line_i in 0..self.editor_content.line_count() {
-            self.editor_content.mut_data(line_i).line_id = line_i + 1;
+        for line_i in 0..editor_content.line_count() {
+            editor_content.mut_data(line_i).line_id = line_i + 1;
         }
-        self.line_id_generator = self.editor_content.line_count() + 1;
+        self.line_id_generator = editor_content.line_count() + 1;
 
         self.editor.set_selection_save_col(original_selection);
     }
@@ -2589,7 +2586,7 @@ impl NoteCalcApp {
                         && self.editor_content.get_char(pos.row, (i - 1) as usize) == '&'
                 };
                 if prev_ch.is_alphanumeric() || prev_ch == '_' || prev_token_is_lineref {
-                    self.editor.handle_input(
+                    self.editor.handle_input_undoable(
                         EditorInputEvent::Char(' '),
                         InputModifiers::none(),
                         &mut self.editor_content,
@@ -2597,7 +2594,7 @@ impl NoteCalcApp {
                 }
             }
             for ch in var.name.iter() {
-                self.editor.handle_input(
+                self.editor.handle_input_undoable(
                     EditorInputEvent::Char(*ch),
                     InputModifiers::none(),
                     &mut self.editor_content,
@@ -2611,7 +2608,7 @@ impl NoteCalcApp {
 
             let inserting_text = format!("&[{}]", line_id);
             self.editor
-                .insert_text(&inserting_text, &mut self.editor_content);
+                .insert_text_undoable(&inserting_text, &mut self.editor_content);
         }
 
         self.process_and_render_tokens(
@@ -2638,7 +2635,10 @@ impl NoteCalcApp {
         render_buckets: &mut RenderBuckets<'b>,
     ) {
         let prev_row = self.editor.get_selection().get_cursor_pos().row;
-        match self.editor.insert_text(&text, &mut self.editor_content) {
+        match self
+            .editor
+            .insert_text_undoable(&text, &mut self.editor_content)
+        {
             Some(modif) => {
                 if self.editor.get_selection().get_cursor_pos().row >= MAX_LINE_COUNT {
                     self.editor.set_cursor_pos_r_c(MAX_LINE_COUNT - 1, 0);
@@ -2829,9 +2829,9 @@ impl NoteCalcApp {
         } else {
             let prev_cursor_pos = prev_selection.get_cursor_pos();
 
-            let modif_type = self
-                .editor
-                .handle_input(input, modifiers, &mut self.editor_content);
+            let modif_type =
+                self.editor
+                    .handle_input_undoable(input, modifiers, &mut self.editor_content);
 
             if self.editor.get_selection().get_cursor_pos().row >= MAX_LINE_COUNT {
                 if let Some((start, _end)) = self.editor.get_selection().is_range_ordered() {
@@ -3604,7 +3604,7 @@ impl NoteCalcApp {
         if let Some(closing_char) = closing_char {
             if self
                 .editor
-                .handle_input(*input, InputModifiers::none(), &mut self.editor_content)
+                .handle_input_undoable(*input, InputModifiers::none(), &mut self.editor_content)
                 .is_some()
             {
                 let cursor = self.editor.get_selection().get_cursor_pos();
@@ -3620,14 +3620,14 @@ impl NoteCalcApp {
 
                 if self
                     .editor
-                    .handle_input(
+                    .handle_input_undoable(
                         EditorInputEvent::Char(closing_char),
                         InputModifiers::none(),
                         &mut self.editor_content,
                     )
                     .is_some()
                 {
-                    self.editor.handle_input(
+                    self.editor.handle_input_undoable(
                         EditorInputEvent::Left,
                         InputModifiers::none(),
                         &mut self.editor_content,
@@ -3682,14 +3682,14 @@ impl NoteCalcApp {
                 {
                     if self
                         .editor
-                        .handle_input(
+                        .handle_input_undoable(
                             EditorInputEvent::Backspace,
                             InputModifiers::none(),
                             &mut self.editor_content,
                         )
                         .is_some()
                     {
-                        self.editor.handle_input(
+                        self.editor.handle_input_undoable(
                             EditorInputEvent::Del,
                             InputModifiers::none(),
                             &mut self.editor_content,
@@ -3718,7 +3718,7 @@ impl NoteCalcApp {
                 self.editor.set_cursor_pos(end);
                 if self
                     .editor
-                    .handle_input(
+                    .handle_input_undoable(
                         EditorInputEvent::Char(closing_char),
                         InputModifiers::none(),
                         &mut self.editor_content,
@@ -3729,7 +3729,11 @@ impl NoteCalcApp {
                     self.editor.set_cursor_pos(start);
                     if self
                         .editor
-                        .handle_input(*input, InputModifiers::none(), &mut self.editor_content)
+                        .handle_input_undoable(
+                            *input,
+                            InputModifiers::none(),
+                            &mut self.editor_content,
+                        )
                         .is_some()
                     {
                         // restore selection
@@ -3790,13 +3794,13 @@ impl NoteCalcApp {
                 let start = cursor_pos.with_column(start_x);
                 self.editor
                     .set_selection_save_col(Selection::range(start, cursor_pos));
-                self.editor.handle_input(
+                self.editor.handle_input_undoable(
                     EditorInputEvent::Backspace,
                     InputModifiers::none(),
                     &mut self.editor_content,
                 );
                 for ch in autocompl_const.replace_to {
-                    self.editor.handle_input(
+                    self.editor.handle_input_undoable(
                         EditorInputEvent::Char(*ch),
                         InputModifiers::none(),
                         &mut self.editor_content,
@@ -3893,7 +3897,7 @@ impl NoteCalcApp {
                 .iter()
                 .skip(expected_len)
             {
-                self.editor.handle_input(
+                self.editor.handle_input_undoable(
                     EditorInputEvent::Char(*ch),
                     InputModifiers::none(),
                     &mut self.editor_content,
@@ -3932,7 +3936,7 @@ impl NoteCalcApp {
                     Pos::from_row_column(obj.row.as_usize(), obj.end_x),
                 );
                 self.editor.set_selection_save_col(sel);
-                self.editor.handle_input(
+                self.editor.handle_input_undoable(
                     EditorInputEvent::Backspace,
                     InputModifiers::none(),
                     &mut self.editor_content,
@@ -3956,7 +3960,7 @@ impl NoteCalcApp {
                     Pos::from_row_column(obj.row.as_usize(), obj.end_x),
                 );
                 self.editor.set_selection_save_col(sel);
-                self.editor.handle_input(
+                self.editor.handle_input_undoable(
                     EditorInputEvent::Del,
                     InputModifiers::none(),
                     &mut self.editor_content,
@@ -4207,7 +4211,7 @@ impl NoteCalcApp {
                     None,
                 );
                 self.editor
-                    .handle_input(input, modifiers, &mut self.editor_content);
+                    .handle_input_undoable(input, modifiers, &mut self.editor_content);
             }
         } else if simple && input == EditorInputEvent::Down {
             if mat_edit.current_cell.row + 1 < mat_edit.row_count {
@@ -4220,7 +4224,7 @@ impl NoteCalcApp {
                     None,
                 );
                 self.editor
-                    .handle_input(input, modifiers, &mut self.editor_content);
+                    .handle_input_undoable(input, modifiers, &mut self.editor_content);
             }
         } else if simple && input == EditorInputEvent::End {
             if mat_edit.current_cell.column != mat_edit.col_count - 1 {
@@ -4233,7 +4237,7 @@ impl NoteCalcApp {
                     None,
                 );
                 self.editor
-                    .handle_input(input, modifiers, &mut self.editor_content);
+                    .handle_input_undoable(input, modifiers, &mut self.editor_content);
             }
         } else if simple && input == EditorInputEvent::Home {
             if mat_edit.current_cell.column != 0 {
@@ -4247,12 +4251,12 @@ impl NoteCalcApp {
                     Some(cur_pos.with_column(start_index)),
                 );
                 self.editor
-                    .handle_input(input, modifiers, &mut self.editor_content);
+                    .handle_input_undoable(input, modifiers, &mut self.editor_content);
             }
         } else {
             mat_edit
                 .editor
-                .handle_input(input, modifiers, &mut mat_edit.editor_content);
+                .handle_input_undoable(input, modifiers, &mut mat_edit.editor_content);
         }
     }
 
@@ -4753,9 +4757,9 @@ fn draw_line_ref_chooser(
 ) {
     if let Some(selection_row) = line_reference_chooser {
         if *selection_row == r.editor_y {
-            render_buckets.set_color(Layer::Text, theme.line_ref_selector);
+            render_buckets.set_color(Layer::BehindText, theme.line_ref_selector);
             render_buckets.draw_rect(
-                Layer::Text,
+                Layer::BehindText,
                 0,
                 r.render_y,
                 result_gutter_x + RIGHT_GUTTER_WIDTH + gr.current_result_panel_width,
@@ -6250,12 +6254,12 @@ pub fn end_matrix_editing(
     editor.set_selection_save_col(selection);
     // TODO: máshogy oldd meg, mert ez modositja az undo stacket is
     // és az miért baj, legalább tudom ctrl z-zni a mátrix edition-t
-    editor.handle_input(
+    editor.handle_input_undoable(
         EditorInputEvent::Del,
         InputModifiers::none(),
         editor_content,
     );
-    editor.insert_text(&concat, editor_content);
+    editor.insert_text_undoable(&concat, editor_content);
     *matrix_editing = None;
 
     if let Some(new_cursor_pos) = new_cursor_pos {

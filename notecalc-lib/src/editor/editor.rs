@@ -643,10 +643,27 @@ impl Editor {
         };
     }
 
-    pub fn insert_text<T: Default + Clone + Debug>(
+    pub fn insert_text_no_undo<T: Default + Clone + Debug>(
         &mut self,
         str: &str,
         content: &mut EditorContent<T>,
+    ) -> Option<RowModificationType> {
+        self.insert_text(str, content, false)
+    }
+
+    pub fn insert_text_undoable<T: Default + Clone + Debug>(
+        &mut self,
+        str: &str,
+        content: &mut EditorContent<T>,
+    ) -> Option<RowModificationType> {
+        self.insert_text(str, content, true)
+    }
+
+    fn insert_text<T: Default + Clone + Debug>(
+        &mut self,
+        str: &str,
+        content: &mut EditorContent<T>,
+        undoable: bool,
     ) -> Option<RowModificationType> {
         let selection = self.selection;
         let cur_pos = selection.get_first();
@@ -670,14 +687,33 @@ impl Editor {
                 is_there_line_overflow,
             }
         };
-        return self.execute_user_input(command, content);
+        return self.execute_user_input(command, content, undoable);
     }
 
-    pub fn handle_input<T: Default + Clone + Debug>(
+    pub fn handle_input_no_undo<T: Default + Clone + Debug>(
         &mut self,
         input: EditorInputEvent,
         modifiers: InputModifiers,
         content: &mut EditorContent<T>,
+    ) -> Option<RowModificationType> {
+        self.handle_input(input, modifiers, content, false)
+    }
+
+    pub fn handle_input_undoable<T: Default + Clone + Debug>(
+        &mut self,
+        input: EditorInputEvent,
+        modifiers: InputModifiers,
+        content: &mut EditorContent<T>,
+    ) -> Option<RowModificationType> {
+        self.handle_input(input, modifiers, content, true)
+    }
+
+    fn handle_input<T: Default + Clone + Debug>(
+        &mut self,
+        input: EditorInputEvent,
+        modifiers: InputModifiers,
+        content: &mut EditorContent<T>,
+        undoable: bool,
     ) -> Option<RowModificationType> {
         if (input == EditorInputEvent::Char('x') || input == EditorInputEvent::Char('c'))
             && modifiers.ctrl
@@ -696,7 +732,7 @@ impl Editor {
             }
             _ => {
                 if let Some(command) = self.create_command(&input, modifiers, content) {
-                    self.execute_user_input(command, content)
+                    self.execute_user_input(command, content, undoable)
                 } else {
                     self.next_blink_at = self.time + EDITOR_CURSOR_TICK_MS;
                     self.show_cursor = true;
@@ -711,11 +747,12 @@ impl Editor {
         &mut self,
         command: EditorCommand<T>,
         content: &mut EditorContent<T>,
+        undoable: bool,
     ) -> Option<RowModificationType> {
         self.next_blink_at = self.time + EDITOR_CURSOR_TICK_MS;
         self.show_cursor = true;
         let modif_type = self.do_command(&command, content);
-        if modif_type.is_some() {
+        if modif_type.is_some() && undoable {
             if self.modif_time_treshold_expires_at < self.time || content.undo_stack.is_empty() {
                 // new undo group
                 content.undo_stack.push(Vec::with_capacity(4));

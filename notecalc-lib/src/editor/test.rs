@@ -162,13 +162,17 @@ mod tests {
         }
 
         if let Some(text) = params.text_input {
-            editor.insert_text(text, content);
+            editor.insert_text_undoable(text, content);
         }
         let mut now = 0;
         let mut modification_types =
             Vec::with_capacity(params.inputs.len() + params.undo_count + params.redo_count);
         for (i, input) in params.inputs.iter().enumerate() {
-            modification_types.push(editor.handle_input(input.clone(), params.modifiers, content));
+            modification_types.push(editor.handle_input_undoable(
+                input.clone(),
+                params.modifiers,
+                content,
+            ));
             if i < params.delay_after_inputs.len() {
                 now += params.delay_after_inputs[i];
                 editor.handle_tick(now);
@@ -5863,33 +5867,33 @@ interest rate / (12 (1/year))
         let mut content = EditorContent::<usize>::new(120);
         let mut editor = Editor::new(&mut content);
 
-        editor.insert_text(&"a".repeat(100), &mut content);
-        editor.handle_input(
+        editor.insert_text_undoable(&"a".repeat(100), &mut content);
+        editor.handle_input_undoable(
             EditorInputEvent::Enter,
             InputModifiers::none(),
             &mut content,
         );
-        editor.insert_text(&"b".repeat(100), &mut content);
-        editor.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut content);
-        editor.handle_input(EditorInputEvent::End, InputModifiers::none(), &mut content);
-        editor.handle_input(
+        editor.insert_text_undoable(&"b".repeat(100), &mut content);
+        editor.handle_input_undoable(EditorInputEvent::Up, InputModifiers::none(), &mut content);
+        editor.handle_input_undoable(EditorInputEvent::End, InputModifiers::none(), &mut content);
+        editor.handle_input_undoable(
             EditorInputEvent::Right,
             InputModifiers::shift(),
             &mut content,
         );
-        editor.handle_input(
+        editor.handle_input_undoable(
             EditorInputEvent::Right,
             InputModifiers::shift(),
             &mut content,
         );
-        editor.handle_input(
+        editor.handle_input_undoable(
             EditorInputEvent::Char('o'),
             InputModifiers::none(),
             &mut content,
         );
         // the previous command was rejected due to line len limitation, but this command should not
         // cause panic
-        editor.handle_input(
+        editor.handle_input_undoable(
             EditorInputEvent::Char('X'),
             InputModifiers::none(),
             &mut content,
@@ -5901,7 +5905,7 @@ interest rate / (12 (1/year))
         let mut content = EditorContent::<usize>::new(120);
         let mut editor = Editor::new(&mut content);
 
-        editor.handle_input(
+        editor.handle_input_undoable(
             EditorInputEvent::Char('X'),
             InputModifiers::none(),
             &mut content,
@@ -5914,7 +5918,7 @@ interest rate / (12 (1/year))
         assert_eq!(content.redo_stack.len(), 0);
 
         // no panic
-        editor.handle_input(
+        editor.handle_input_undoable(
             EditorInputEvent::Char('z'),
             InputModifiers::ctrl(),
             &mut content,
@@ -5927,13 +5931,13 @@ interest rate / (12 (1/year))
         let mut editor = Editor::new(&mut content);
 
         assert_eq!(&content.get_content(), "");
-        editor.handle_input(
+        editor.handle_input_undoable(
             EditorInputEvent::Char('X'),
             InputModifiers::none(),
             &mut content,
         );
         assert_eq!(&content.get_content(), "X");
-        editor.handle_input(
+        editor.handle_input_undoable(
             EditorInputEvent::Char('Z'),
             InputModifiers::ctrl(),
             &mut content,
@@ -5947,19 +5951,19 @@ interest rate / (12 (1/year))
         let mut editor = Editor::new(&mut content);
 
         assert_eq!(&content.get_content(), "");
-        editor.handle_input(
+        editor.handle_input_undoable(
             EditorInputEvent::Char('X'),
             InputModifiers::none(),
             &mut content,
         );
         assert_eq!(&content.get_content(), "X");
-        editor.handle_input(
+        editor.handle_input_undoable(
             EditorInputEvent::Char('Z'),
             InputModifiers::ctrl(),
             &mut content,
         );
         assert_eq!(&content.get_content(), "");
-        editor.handle_input(
+        editor.handle_input_undoable(
             EditorInputEvent::Char('Z'),
             InputModifiers::ctrl_shift(),
             &mut content,
@@ -5973,13 +5977,13 @@ interest rate / (12 (1/year))
         let mut editor = Editor::new(&mut content);
 
         // go to the second row to put an invalid row index (1) to the redo stack
-        editor.handle_input(
+        editor.handle_input_undoable(
             EditorInputEvent::Enter,
             InputModifiers::none(),
             &mut content,
         );
         editor.handle_tick(5000); // to put it into a separate undo group
-        editor.handle_input(
+        editor.handle_input_undoable(
             EditorInputEvent::Char('X'),
             InputModifiers::none(),
             &mut content,
@@ -5987,7 +5991,7 @@ interest rate / (12 (1/year))
         assert_eq!(content.redo_stack.len(), 0);
 
         editor.handle_tick(10000); // to put it into a separate undo group
-        editor.handle_input(
+        editor.handle_input_undoable(
             EditorInputEvent::Char('z'),
             InputModifiers::ctrl(),
             &mut content,
@@ -5996,7 +6000,7 @@ interest rate / (12 (1/year))
 
         // remove the 2nd row so the '1' row index becomes invalid
         editor.handle_tick(15000); // to put it into a separate undo group
-        editor.handle_input(
+        editor.handle_input_undoable(
             EditorInputEvent::Backspace,
             InputModifiers::none(),
             &mut content,
@@ -6004,7 +6008,7 @@ interest rate / (12 (1/year))
         assert_eq!(content.redo_stack.len(), 0);
 
         editor.handle_tick(20000); // to put it into a separate undo group
-        editor.handle_input(
+        editor.handle_input_undoable(
             EditorInputEvent::Char('Y'),
             InputModifiers::none(),
             &mut content,
@@ -6013,7 +6017,7 @@ interest rate / (12 (1/year))
 
         // no panic, and no content change
         editor.handle_tick(25000); // to put it into a separate undo group
-        editor.handle_input(
+        editor.handle_input_undoable(
             EditorInputEvent::Char('z'),
             InputModifiers::ctrl_shift(),
             &mut content,
@@ -6075,7 +6079,7 @@ interest rate / (12 (1/year))
         let mut content = EditorContent::<usize>::new(120);
         let mut editor = Editor::new(&mut content);
 
-        editor.insert_text(
+        editor.insert_text_undoable(
             &("a".repeat(120) + &"b".repeat(120) + &"c".repeat(120)),
             &mut content,
         );
@@ -6090,10 +6094,10 @@ interest rate / (12 (1/year))
         let mut content = EditorContent::<usize>::new(120);
         let mut editor = Editor::new(&mut content);
 
-        editor.insert_text("this will be overflowed", &mut content);
+        editor.insert_text_undoable("this will be overflowed", &mut content);
         editor.set_cursor_pos_r_c(0, 0);
 
-        editor.insert_text(
+        editor.insert_text_undoable(
             &("a".repeat(120) + &"b".repeat(120) + &"c".repeat(120)),
             &mut content,
         );
@@ -6112,9 +6116,9 @@ interest rate / (12 (1/year))
         let mut content = EditorContent::<usize>::new(120);
         let mut editor = Editor::new(&mut content);
 
-        editor.insert_text("this will not be overflowed", &mut content);
+        editor.insert_text_undoable("this will not be overflowed", &mut content);
 
-        editor.insert_text(
+        editor.insert_text_undoable(
             &("a".repeat(120) + &"b".repeat(120) + &"c".repeat(120)),
             &mut content,
         );
@@ -6133,11 +6137,11 @@ interest rate / (12 (1/year))
         let mut content = EditorContent::<usize>::new(120);
         let mut editor = Editor::new(&mut content);
 
-        editor.insert_text("this will be overflowed", &mut content);
+        editor.insert_text_undoable("this will be overflowed", &mut content);
         editor.set_cursor_pos_r_c(0, 0);
 
         assert_eq!(
-            editor.insert_text(&("a".repeat(100)), &mut content),
+            editor.insert_text_undoable(&("a".repeat(100)), &mut content),
             Some(RowModificationType::AllLinesFrom(0))
         );
         assert_eq!(content.get_content().lines().skip(0).next().unwrap(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaathis will be overflo");
@@ -6150,14 +6154,14 @@ interest rate / (12 (1/year))
         let mut content = EditorContent::<usize>::new(120);
         let mut editor = Editor::new(&mut content);
 
-        editor.insert_text(
+        editor.insert_text_undoable(
             "The first row is untouched\nthis will be overflowed",
             &mut content,
         );
         editor.set_cursor_pos_r_c(1, 0);
 
         assert_eq!(
-            editor.insert_text(&("a".repeat(100)), &mut content),
+            editor.insert_text_undoable(&("a".repeat(100)), &mut content),
             Some(RowModificationType::AllLinesFrom(1))
         );
         assert_eq!(
@@ -6177,15 +6181,15 @@ interest rate / (12 (1/year))
         let mut content = EditorContent::<usize>::new(120);
         let mut editor = Editor::new(&mut content);
 
-        editor.insert_text(&"a".repeat(10), &mut content);
-        editor.handle_input(
+        editor.insert_text_undoable(&"a".repeat(10), &mut content);
+        editor.handle_input_undoable(
             EditorInputEvent::Enter,
             InputModifiers::none(),
             &mut content,
         );
-        editor.insert_text(&"b".repeat(10), &mut content);
-        editor.handle_input(EditorInputEvent::Up, InputModifiers::none(), &mut content);
-        editor.handle_input(
+        editor.insert_text_undoable(&"b".repeat(10), &mut content);
+        editor.handle_input_undoable(EditorInputEvent::Up, InputModifiers::none(), &mut content);
+        editor.handle_input_undoable(
             EditorInputEvent::Char('x'),
             InputModifiers::ctrl(),
             &mut content,
