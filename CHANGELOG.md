@@ -34,6 +34,33 @@ a text is selected
 - Parsing improvement: Now the parser are smarter in deciding what is an operator (e.g. 'in' in `12 m in cm`),
   a unit (`12 in` which is 12 inch), or a simple string (`12 GB in 3 seconds`).
   Now it is even possible to evaluate this string `12 in in in`, which is equivalent of `12 inch in inch`
+- Percentage calculations
+  ```
+    ## Find the rate when the base and result are known                  █
+    20 is what percent of 60                                             █  33.3333 %
+    220 is what percent of 200                                           █ 110      %
+                                                                         █
+    ## Find the base when the result and rate are known                  █
+    5 is 25% of what                                                     █  20
+    12 is 12% of what                                                    █ 100
+                                                                         █
+    ## Find the base when the result and increase/decrease are known     █
+    5 is 25% on what                                                     █   4
+    or in other forms:                                                   █
+    25% on what is 5                                                     █   4
+    what plus 25% is 5                                                   █   4
+                                                                         █
+    5 is 25% off what                                                    █   6.6667
+    or in other forms:                                                   █
+    what minus 25% is 5                                                  █   6.6667
+    25% off what is 5                                                    █   6.6667
+                                                                         █
+    ## Find the increase/decrease when the base and he result are known  █
+    44 is what % on 40                                                   █  10      %
+    24  0 is what % off 300                                              █  20      %
+  ```
+- Max row count was increased from 128 to 256
+- Matching parenthesis are highlighted if the cursor is inside them
 
 ### Changed
 - When opening a not empty note, the result panel now tries
@@ -48,6 +75,7 @@ to be able to place the cursor at the right place, since the text rendering
   which wasn't always nice and console frontend support is limited.
   Now pulses are rendered above "BelowText" layer and below the "Text" layer.
 - underscore is allowed in binary numbers (e.g. ``0b11_00``)
+- Parenthesis have different color than operators.
 
 ### Fixed
 - Longest visible result length was calculated wrongly when there were multiple headers
@@ -73,6 +101,8 @@ were outside of the editor area
 flickering
 - 'Line normalization' (the process where the referenced lines' id is normalized to the referenced line actual line number)
   could be undo with ctrl-z
+- Bitwise shifting operators (`<<` and `>>`) used wrapping, resulted in unwanted situations. Now it is an error
+to use larger shift operands than the underlying integer representation (u64 currently)
 
 ## [0.2.0] - 2020-12-03
 ### Breaking Changes

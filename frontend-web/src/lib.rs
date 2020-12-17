@@ -570,6 +570,19 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets, theme: &Theme) {
         }
     }
 
+    fn write_char(js_command_buffer: &mut Cursor<&mut [u8]>, cmd: &RenderChar) {
+        js_command_buffer
+            .write_u8(OutputMessageCommandId::RenderChar as u8 + 1)
+            .expect("");
+        js_command_buffer.write_u8(cmd.col as u8).expect("");
+        js_command_buffer
+            .write_u8(cmd.row.as_usize() as u8)
+            .expect("");
+        js_command_buffer
+            .write_u32::<LittleEndian>(cmd.char as u32)
+            .expect("");
+    }
+
     fn write_command(js_command_buffer: &mut Cursor<&mut [u8]>, command: &OutputMessage) {
         match command {
             OutputMessage::RenderUtf8Text(text) => {
@@ -585,15 +598,8 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets, theme: &Theme) {
             OutputMessage::RenderRectangle { x, y, w, h } => {
                 write_rectangle(js_command_buffer, *x, *y, *w, *h)
             }
-            OutputMessage::RenderChar(x, y, ch) => {
-                js_command_buffer
-                    .write_u8(OutputMessageCommandId::RenderChar as u8 + 1)
-                    .expect("");
-                js_command_buffer.write_u8(*x as u8).expect("");
-                js_command_buffer.write_u8(*y as u8).expect("");
-                js_command_buffer
-                    .write_u32::<LittleEndian>(*ch as u32)
-                    .expect("");
+            OutputMessage::RenderChar(cmd) => {
+                write_char(js_command_buffer, cmd);
             }
             OutputMessage::RenderString(text) => {
                 write_string_command(js_command_buffer, text);
@@ -764,6 +770,15 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets, theme: &Theme) {
             &OutputMessage::SetColor(theme.operator),
         );
         write_commands(&mut js_command_buffer, &render_buckets.operators);
+    }
+    if !render_buckets.parenthesis.is_empty() {
+        write_command(
+            &mut js_command_buffer,
+            &OutputMessage::SetColor(theme.parenthesis),
+        );
+        for cmd in &render_buckets.parenthesis {
+            write_char(&mut js_command_buffer, cmd);
+        }
     }
     if !render_buckets.line_ref_results.is_empty() {
         write_command(

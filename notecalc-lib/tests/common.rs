@@ -76,7 +76,7 @@ impl BorrowCheckerFighter {
                 self.mut_results(),
                 self.mut_vars(),
                 self.mut_editor_objects(),
-                BitFlag128::empty(),
+                BitFlag256::empty(),
             );
     }
 

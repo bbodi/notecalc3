@@ -50,6 +50,7 @@ impl<'text_ptr> Token<'text_ptr> {
     }
 }
 
+#[allow(non_camel_case_types)]
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum OperatorTokenType {
     Comma,
@@ -79,21 +80,26 @@ pub enum OperatorTokenType {
     Fn { arg_count: usize, typ: FnType },
     PercentageIs,
     // 41 is 17% on what
-    PercNumIsXPercOnWhat,
-    // what + 17% is 41
-    PercWhatPlusXPercIsNum,
+    Percentage_Find_Base_From_Result_Increase_X,
+    // what plus 17% is 41
+    Percentage_Find_Base_From_X_Icrease_Result,
     // 17% on what is 41
-    PercOnWhatIsNum,
+    Percentage_Find_Base_From_Icrease_X_Result,
     // 41 is what % on 35
-    PercNumIsWhatPercOnNum,
+    Percentage_Find_Incr_Rate_From_Result_X_Base,
     // 41 is 17% off what
-    PercNumIsXPercOffWhat,
-    // what - 17% is 41
-    PercWhatMinusXPercIsNum,
+    Percentage_Find_Base_From_Result_Decrease_X,
+    // what minus 17% is 41
+    Percentage_Find_Base_From_X_Decrease_Result,
     // 17% off what is 41
-    PercOffWhatIsNum,
+    Percentage_Find_Base_From_Decrease_X_Result,
     // 35 is what % off 41
-    PercNumIsWhatPercOffNum,
+    Percentage_Find_Decr_Rate_From_Result_X_Base,
+
+    // 20 is what percent of 60
+    Percentage_Find_Rate_From_Result_Base,
+    // 5 is 25% of what
+    Percentage_Find_Base_From_Result_Rate,
 }
 
 #[derive(Eq, PartialEq, Copy, Clone)]
@@ -130,14 +136,16 @@ impl OperatorTokenType {
             OperatorTokenType::Fn { .. } => 0,
             OperatorTokenType::ApplyUnit(_) => 5,
             OperatorTokenType::PercentageIs => 20,
-            OperatorTokenType::PercNumIsXPercOnWhat => 10,
-            OperatorTokenType::PercWhatPlusXPercIsNum => 10,
-            OperatorTokenType::PercOnWhatIsNum => 10,
-            OperatorTokenType::PercNumIsWhatPercOnNum => 10,
-            OperatorTokenType::PercNumIsXPercOffWhat => 10,
-            OperatorTokenType::PercWhatMinusXPercIsNum => 10,
-            OperatorTokenType::PercOffWhatIsNum => 10,
-            OperatorTokenType::PercNumIsWhatPercOffNum => 10,
+            OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X => 10,
+            OperatorTokenType::Percentage_Find_Base_From_X_Icrease_Result => 10,
+            OperatorTokenType::Percentage_Find_Base_From_Icrease_X_Result => 10,
+            OperatorTokenType::Percentage_Find_Incr_Rate_From_Result_X_Base => 10,
+            OperatorTokenType::Percentage_Find_Base_From_Result_Decrease_X => 10,
+            OperatorTokenType::Percentage_Find_Base_From_X_Decrease_Result => 10,
+            OperatorTokenType::Percentage_Find_Base_From_Decrease_X_Result => 10,
+            OperatorTokenType::Percentage_Find_Decr_Rate_From_Result_X_Base => 10,
+            OperatorTokenType::Percentage_Find_Rate_From_Result_Base => 10,
+            OperatorTokenType::Percentage_Find_Base_From_Result_Rate => 10,
         }
     }
 
@@ -169,14 +177,16 @@ impl OperatorTokenType {
             OperatorTokenType::Fn { .. } => Assoc::Left,
             OperatorTokenType::ApplyUnit(_) => Assoc::Left,
             OperatorTokenType::PercentageIs => Assoc::Left,
-            OperatorTokenType::PercNumIsXPercOnWhat => Assoc::Left,
-            OperatorTokenType::PercWhatPlusXPercIsNum => Assoc::Left,
-            OperatorTokenType::PercOnWhatIsNum => Assoc::Left,
-            OperatorTokenType::PercNumIsWhatPercOnNum => Assoc::Left,
-            OperatorTokenType::PercNumIsXPercOffWhat => Assoc::Left,
-            OperatorTokenType::PercWhatMinusXPercIsNum => Assoc::Left,
-            OperatorTokenType::PercOffWhatIsNum => Assoc::Left,
-            OperatorTokenType::PercNumIsWhatPercOffNum => Assoc::Left,
+            OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X => Assoc::Left,
+            OperatorTokenType::Percentage_Find_Base_From_X_Icrease_Result => Assoc::Left,
+            OperatorTokenType::Percentage_Find_Base_From_Icrease_X_Result => Assoc::Left,
+            OperatorTokenType::Percentage_Find_Incr_Rate_From_Result_X_Base => Assoc::Left,
+            OperatorTokenType::Percentage_Find_Base_From_Result_Decrease_X => Assoc::Left,
+            OperatorTokenType::Percentage_Find_Base_From_X_Decrease_Result => Assoc::Left,
+            OperatorTokenType::Percentage_Find_Base_From_Decrease_X_Result => Assoc::Left,
+            OperatorTokenType::Percentage_Find_Decr_Rate_From_Result_X_Base => Assoc::Left,
+            OperatorTokenType::Percentage_Find_Rate_From_Result_Base => Assoc::Left,
+            OperatorTokenType::Percentage_Find_Base_From_Result_Rate => Assoc::Left,
         }
     }
 }
@@ -754,7 +764,7 @@ impl TokenParser {
                     &['i', 's', ' ', 'w', 'h', 'a', 't', ' ', '%', ' ', 'o', 'n'],
                 ) {
                     op(
-                        OperatorTokenType::PercNumIsWhatPercOnNum,
+                        OperatorTokenType::Percentage_Find_Incr_Rate_From_Result_X_Base,
                         str,
                         12,
                         allocator,
@@ -766,33 +776,78 @@ impl TokenParser {
                     ],
                 ) {
                     op(
-                        OperatorTokenType::PercNumIsWhatPercOffNum,
+                        OperatorTokenType::Percentage_Find_Decr_Rate_From_Result_X_Base,
                         str,
                         13,
                         allocator,
                     )
-                } else if cmp(str, &['i', 's']) {
-                    op(OperatorTokenType::PercentageIs, str, 2, allocator)
                 } else if cmp(str, &['o', 'n', ' ', 'w', 'h', 'a', 't', ' ', 'i', 's']) {
-                    op(OperatorTokenType::PercOnWhatIsNum, str, 10, allocator)
+                    op(
+                        OperatorTokenType::Percentage_Find_Base_From_Icrease_X_Result,
+                        str,
+                        10,
+                        allocator,
+                    )
                 } else if cmp(
                     str,
                     &['o', 'f', 'f', ' ', 'w', 'h', 'a', 't', ' ', 'i', 's'],
                 ) {
-                    op(OperatorTokenType::PercOffWhatIsNum, str, 11, allocator)
-                } else if cmp(str, &['o', 'n', ' ', 'w', 'h', 'a', 't']) {
-                    op(OperatorTokenType::PercNumIsXPercOnWhat, str, 7, allocator)
-                } else if cmp(str, &['o', 'f', 'f', ' ', 'w', 'h', 'a', 't']) {
-                    op(OperatorTokenType::PercNumIsXPercOffWhat, str, 8, allocator)
-                } else if cmp(str, &['w', 'h', 'a', 't', ' ', '+']) {
-                    op(OperatorTokenType::PercWhatPlusXPercIsNum, str, 6, allocator)
-                } else if cmp(str, &['w', 'h', 'a', 't', ' ', '-']) {
                     op(
-                        OperatorTokenType::PercWhatMinusXPercIsNum,
+                        OperatorTokenType::Percentage_Find_Base_From_Decrease_X_Result,
                         str,
-                        6,
+                        11,
                         allocator,
                     )
+                } else if cmp(str, &['o', 'n', ' ', 'w', 'h', 'a', 't']) {
+                    op(
+                        OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X,
+                        str,
+                        7,
+                        allocator,
+                    )
+                } else if cmp(str, &['o', 'f', 'f', ' ', 'w', 'h', 'a', 't']) {
+                    op(
+                        OperatorTokenType::Percentage_Find_Base_From_Result_Decrease_X,
+                        str,
+                        8,
+                        allocator,
+                    )
+                } else if cmp(str, &['w', 'h', 'a', 't', ' ', 'p', 'l', 'u', 's']) {
+                    op(
+                        OperatorTokenType::Percentage_Find_Base_From_X_Icrease_Result,
+                        str,
+                        9,
+                        allocator,
+                    )
+                } else if cmp(str, &['w', 'h', 'a', 't', ' ', 'm', 'i', 'n', 'u', 's']) {
+                    op(
+                        OperatorTokenType::Percentage_Find_Base_From_X_Decrease_Result,
+                        str,
+                        10,
+                        allocator,
+                    )
+                } else if cmp(str, &['o', 'f', ' ', 'w', 'h', 'a', 't']) {
+                    op(
+                        OperatorTokenType::Percentage_Find_Base_From_Result_Rate,
+                        str,
+                        7,
+                        allocator,
+                    )
+                } else if cmp(
+                    str,
+                    &[
+                        'i', 's', ' ', 'w', 'h', 'a', 't', ' ', 'p', 'e', 'r', 'c', 'e', 'n', 't',
+                        ' ', 'o', 'f',
+                    ],
+                ) {
+                    op(
+                        OperatorTokenType::Percentage_Find_Rate_From_Result_Base,
+                        str,
+                        18,
+                        allocator,
+                    )
+                } else if cmp(str, &['i', 's']) {
+                    op(OperatorTokenType::PercentageIs, str, 2, allocator)
                 } else if cmp(str, &['A', 'N', 'D']) {
                     // TODO unit test "0xff and(12)"
                     op(OperatorTokenType::BinAnd, str, 3, allocator)
@@ -817,6 +872,9 @@ impl TokenParser {
 
 #[cfg(debug_assertions)]
 pub fn debug_print(str: &str) {
+    if true {
+        return;
+    }
     println!("{}", str);
 }
 
@@ -2064,7 +2122,7 @@ pub mod tests {
                 num(17),
                 op(OperatorTokenType::Perc),
                 str(" "),
-                op(OperatorTokenType::PercNumIsXPercOnWhat),
+                op(OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X),
             ],
         );
     }
@@ -2082,7 +2140,7 @@ pub mod tests {
                 num(17),
                 op(OperatorTokenType::Perc),
                 str(" "),
-                op(OperatorTokenType::PercNumIsXPercOnWhat),
+                op(OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X),
                 op(OperatorTokenType::ParenClose),
             ],
         );
@@ -2091,9 +2149,9 @@ pub mod tests {
     #[test]
     fn test_parse_percentage_what_plus() {
         test(
-            "what + 17% is 41",
+            "what plus 17% is 41",
             &[
-                op(OperatorTokenType::PercWhatPlusXPercIsNum),
+                op(OperatorTokenType::Percentage_Find_Base_From_X_Icrease_Result),
                 str(" "),
                 num(17),
                 op(OperatorTokenType::Perc),
@@ -2113,7 +2171,7 @@ pub mod tests {
                 num(17),
                 op(OperatorTokenType::Perc),
                 str(" "),
-                op(OperatorTokenType::PercOnWhatIsNum),
+                op(OperatorTokenType::Percentage_Find_Base_From_Icrease_X_Result),
                 str(" "),
                 num(41),
             ],
@@ -2127,7 +2185,7 @@ pub mod tests {
             &[
                 num(41),
                 str(" "),
-                op(OperatorTokenType::PercNumIsWhatPercOnNum),
+                op(OperatorTokenType::Percentage_Find_Incr_Rate_From_Result_X_Base),
                 str(" "),
                 num(35),
             ],
@@ -2146,7 +2204,7 @@ pub mod tests {
                 num(17),
                 op(OperatorTokenType::Perc),
                 str(" "),
-                op(OperatorTokenType::PercNumIsXPercOffWhat),
+                op(OperatorTokenType::Percentage_Find_Base_From_Result_Decrease_X),
             ],
         );
     }
@@ -2164,7 +2222,7 @@ pub mod tests {
                 num(17),
                 op(OperatorTokenType::Perc),
                 str(" "),
-                op(OperatorTokenType::PercNumIsXPercOffWhat),
+                op(OperatorTokenType::Percentage_Find_Base_From_Result_Decrease_X),
                 op(OperatorTokenType::ParenClose),
             ],
         );
@@ -2173,9 +2231,9 @@ pub mod tests {
     #[test]
     fn test_parse_percentage_what_minus() {
         test(
-            "what - 17% is 41",
+            "what minus 17% is 41",
             &[
-                op(OperatorTokenType::PercWhatMinusXPercIsNum),
+                op(OperatorTokenType::Percentage_Find_Base_From_X_Decrease_Result),
                 str(" "),
                 num(17),
                 op(OperatorTokenType::Perc),
@@ -2195,7 +2253,7 @@ pub mod tests {
                 num(17),
                 op(OperatorTokenType::Perc),
                 str(" "),
-                op(OperatorTokenType::PercOffWhatIsNum),
+                op(OperatorTokenType::Percentage_Find_Base_From_Decrease_X_Result),
                 str(" "),
                 num(41),
             ],
@@ -2209,9 +2267,40 @@ pub mod tests {
             &[
                 num(41),
                 str(" "),
-                op(OperatorTokenType::PercNumIsWhatPercOffNum),
+                op(OperatorTokenType::Percentage_Find_Decr_Rate_From_Result_X_Base),
                 str(" "),
                 num(35),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_parse_percentage_find_rate_from_result_base() {
+        test(
+            "20 is what percent of 60",
+            &[
+                num(20),
+                str(" "),
+                op(OperatorTokenType::Percentage_Find_Rate_From_Result_Base),
+                str(" "),
+                num(60),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_parse_percentage_find_base_from_result_rate() {
+        test(
+            "5 is 25% of what",
+            &[
+                num(5),
+                str(" "),
+                op(OperatorTokenType::PercentageIs),
+                str(" "),
+                num(25),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::Percentage_Find_Base_From_Result_Rate),
             ],
         );
     }

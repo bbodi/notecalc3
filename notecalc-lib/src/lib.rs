@@ -59,7 +59,10 @@ const SCROLLBAR_WIDTH: usize = 1;
 const RENDERED_RESULT_PRECISION: usize = 28;
 const MAX_EDITOR_WIDTH: usize = 120;
 const LEFT_GUTTER_MIN_WIDTH: usize = 2;
-pub const MAX_LINE_COUNT: usize = 128;
+
+// Currently y coords are transmitted as u8 to the frontend, if you raise this value,
+// don't forget to update  the communication layer as well
+pub const MAX_LINE_COUNT: usize = 256;
 const RIGHT_GUTTER_WIDTH: usize = 2;
 const MIN_RESULT_PANEL_WIDTH: usize = 7;
 const DEFAULT_RESULT_PANEL_WIDTH_PERCENT: usize = 30;
@@ -111,6 +114,7 @@ pub struct Theme {
     pub change_result_pulse_start: u32,
     pub change_result_pulse_end: u32,
     pub current_line_bg: u32,
+    pub parenthesis: u32,
 }
 
 #[allow(dead_code)]
@@ -163,6 +167,7 @@ pub const THEMES: [Theme; 2] = [
         change_result_pulse_start: 0xFF88FF_AA,
         change_result_pulse_end: 0xFFFFFF_55,
         current_line_bg: 0xFFFFCC_FF,
+        parenthesis: 0x565869_FF,
     },
     // DARK
     Theme {
@@ -191,14 +196,14 @@ pub const THEMES: [Theme; 2] = [
         line_num_simple: 0x4e6164_FF,
         scrollbar_hovered: 0x4f4f4f_FF,
         scrollbar_normal: 0x4b4b4b_FF,
-        //line_ref_bg: Theme::DRACULA_COMMENT,
-        line_ref_bg: Theme::DRACULA_BG + 0x333300_00,
+        line_ref_bg: 0x7C92A7_FF,
         line_ref_text: 0x000000_FF,
         line_ref_selector: Theme::DRACULA_BG + 0x333300_00,
         referenced_matrix_text: 0x000000_FF,
         change_result_pulse_start: 0xFF88FF_AA,
         change_result_pulse_end: Theme::DRACULA_BG - 0xFF,
         current_line_bg: Theme::DRACULA_CURRENT_LINE,
+        parenthesis: Theme::DRACULA_ORANGE,
     },
 ];
 
@@ -322,79 +327,103 @@ pub mod helper {
     }
 
     #[derive(Copy, Clone)]
-    pub struct BitFlag128 {
-        bitset: u128,
+    pub struct BitFlag256 {
+        pub bitset: [u128; 2],
     }
 
-    impl BitFlag128 {
-        pub fn empty() -> BitFlag128 {
-            BitFlag128 { bitset: 0 }
+    impl BitFlag256 {
+        pub fn empty() -> BitFlag256 {
+            BitFlag256 { bitset: [0; 2] }
         }
 
-        pub fn as_u128(&self) -> u128 {
-            self.bitset
+        fn get_index(row_index: usize) -> (usize, usize) {
+            let array_index = (row_index & (!127) > 0) as usize;
+            let index_inside_u128 = row_index & 127;
+            return (array_index, index_inside_u128);
         }
 
         pub fn set(&mut self, row_index: usize) {
-            self.bitset |= 1u128 << row_index;
+            let (array_index, index_inside_u128) = BitFlag256::get_index(row_index);
+            self.bitset[array_index] |= 1u128 << index_inside_u128;
         }
 
-        pub fn single_row(row_index: usize) -> BitFlag128 {
-            let bitset = 1u128 << row_index;
-            BitFlag128 { bitset }
+        pub fn single_row(row_index: usize) -> BitFlag256 {
+            let (array_index, index_inside_u128) = BitFlag256::get_index(row_index);
+            let mut bitset = [0; 2];
+            bitset[array_index] = 1u128 << index_inside_u128;
+            BitFlag256 { bitset }
         }
 
         #[inline]
         pub fn clear(&mut self) {
-            self.bitset = 0;
+            self.bitset[0] = 0;
+            self.bitset[1] = 0;
         }
 
-        pub fn all_rows_starting_at(row_index: usize) -> BitFlag128 {
+        pub fn all_rows_starting_at(row_index: usize) -> BitFlag256 {
             if row_index >= MAX_LINE_COUNT {
-                return BitFlag128 { bitset: 0 };
+                return BitFlag256::empty();
             }
-            let s = 1u128 << row_index;
+            let mut bitset = [0; 2];
+
+            let (array_index, index_inside_u128) = BitFlag256::get_index(row_index);
+            let s = 1u128 << index_inside_u128;
             let right_to_s_bits = s - 1;
             let left_to_s_and_s_bits = !right_to_s_bits;
-            let bitset = left_to_s_and_s_bits;
+            bitset[array_index] = left_to_s_and_s_bits;
+            // the other int is either fully 1s (if the array_index is 0) or 0s (if array_index is 1)
+            let other_index = array_index ^ 1;
+            bitset[other_index] = std::u128::MAX * other_index as u128;
 
-            BitFlag128 { bitset }
+            BitFlag256 { bitset }
         }
         // TODO multiple2(a, b), multiple3(a,b,c) etc, faster
-        pub fn multiple(indices: &[usize]) -> BitFlag128 {
-            let mut b = 0;
+        pub fn multiple(indices: &[usize]) -> BitFlag256 {
+            let mut b = [0; 2];
             for i in indices {
-                b |= 1 << i;
+                let (array_index, index_inside_u128) = BitFlag256::get_index(*i);
+                b[array_index] |= 1 << index_inside_u128;
             }
             let bitset = b;
 
-            BitFlag128 { bitset }
+            BitFlag256 { bitset }
         }
 
-        pub fn range(from: usize, to: usize) -> BitFlag128 {
+        pub fn range_incl(from: usize, to: usize) -> BitFlag256 {
             debug_assert!(to >= from);
             if from >= MAX_LINE_COUNT {
-                return BitFlag128 { bitset: 0 };
+                return BitFlag256::empty();
             } else if to >= MAX_LINE_COUNT {
-                return BitFlag128::range(from, MAX_LINE_COUNT - 1);
+                return BitFlag256::range_incl(from, MAX_LINE_COUNT - 1);
             }
-            let top = 1 << to;
-            let right_to_top_bits = top - 1;
-            let bottom = 1 << from;
-            let right_to_bottom_bits = bottom - 1;
-            let bitset = (right_to_top_bits ^ right_to_bottom_bits) | top;
+            fn set_range_u128(from: usize, to: usize) -> u128 {
+                let top = 1 << to;
+                let right_to_top_bits = top - 1;
+                let bottom = 1 << from;
+                let right_to_bottom_bits = bottom - 1;
+                return (right_to_top_bits ^ right_to_bottom_bits) | top;
+            }
+            let mut b = BitFlag256::empty();
+            if from < 128 {
+                b.bitset[0] = set_range_u128(from, to.min(127));
+            }
+            if to >= 128 {
+                b.bitset[1] = set_range_u128(((from as isize) - 128).max(0) as usize, to - 128);
+            }
 
-            BitFlag128 { bitset }
+            return b;
         }
 
         #[inline]
-        pub fn merge(&mut self, other: BitFlag128) {
-            self.bitset |= other.bitset;
+        pub fn merge(&mut self, other: BitFlag256) {
+            self.bitset[0] |= other.bitset[0];
+            self.bitset[1] |= other.bitset[1];
         }
 
         #[inline]
         pub fn need(&self, line_index: ContentIndex) -> bool {
-            ((1 << line_index.0) & self.bitset) != 0
+            let (array_index, index_inside_u128) = BitFlag256::get_index(line_index.0);
+            ((1 << index_inside_u128) & self.bitset[array_index]) != 0
         }
 
         #[inline]
@@ -409,7 +438,7 @@ pub mod helper {
 
         #[inline]
         pub fn is_non_zero(&self) -> bool {
-            self.bitset != 0
+            (self.bitset[0] | self.bitset[1]) != 0
         }
     }
 
@@ -783,6 +812,13 @@ pub struct RenderUtf8TextMsg<'a> {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct RenderChar {
+    pub col: usize,
+    pub row: CanvasY,
+    pub char: char,
+}
+
+#[derive(Debug, PartialEq)]
 pub struct RenderAsciiTextMsg<'a> {
     pub text: &'a [u8],
     pub row: CanvasY,
@@ -814,7 +850,7 @@ pub struct PulsingRectangle {
 pub enum OutputMessage<'a> {
     SetStyle(TextStyle),
     SetColor(u32),
-    RenderChar(usize, usize, char),
+    RenderChar(RenderChar),
     RenderUtf8Text(RenderUtf8TextMsg<'a>),
     RenderAsciiText(RenderAsciiTextMsg<'a>),
     RenderString(RenderStringMsg),
@@ -862,6 +898,7 @@ pub struct RenderBuckets<'a> {
     pub number_errors: Vec<RenderUtf8TextMsg<'a>>,
     pub units: Vec<RenderUtf8TextMsg<'a>>,
     pub operators: Vec<RenderUtf8TextMsg<'a>>,
+    pub parenthesis: Vec<RenderChar>,
     pub variable: Vec<RenderUtf8TextMsg<'a>>,
     pub line_ref_results: Vec<RenderStringMsg>,
     pub custom_commands: [Vec<OutputMessage<'a>>; 3],
@@ -904,6 +941,7 @@ impl<'a> RenderBuckets<'a> {
             number_errors: Vec::with_capacity(32),
             units: Vec::with_capacity(32),
             operators: Vec::with_capacity(32),
+            parenthesis: Vec::with_capacity(32),
             variable: Vec::with_capacity(32),
             line_ref_results: Vec::with_capacity(32),
             pulses: Vec::with_capacity(8),
@@ -929,6 +967,7 @@ impl<'a> RenderBuckets<'a> {
         self.variable.clear();
         self.line_ref_results.clear();
         self.pulses.clear();
+        self.parenthesis.clear();
         self.clear_pulses = false;
     }
 
@@ -940,8 +979,12 @@ impl<'a> RenderBuckets<'a> {
         self.custom_commands[layer as usize].push(OutputMessage::RenderRectangle { x, y, w, h });
     }
 
-    pub fn draw_char(&mut self, layer: Layer, x: usize, y: CanvasY, ch: char) {
-        self.custom_commands[layer as usize].push(OutputMessage::RenderChar(x, y.as_usize(), ch));
+    pub fn draw_char(&mut self, layer: Layer, col: usize, row: CanvasY, char: char) {
+        self.custom_commands[layer as usize].push(OutputMessage::RenderChar(RenderChar {
+            col,
+            row,
+            char,
+        }));
     }
 
     pub fn draw_text(&mut self, layer: Layer, x: usize, y: CanvasY, text: &'a [char]) {
@@ -1490,7 +1533,7 @@ impl NoteCalcApp {
         matrix_editing: &mut Option<MatrixEditing>,
         line_reference_chooser: &mut Option<ContentIndex>,
         render_buckets: &mut RenderBuckets<'b>,
-        result_change_flag: BitFlag128,
+        result_change_flag: BitFlag256,
         gr: &mut GlobalRenderData,
         allocator: &'b Bump,
         tokens: &AppTokens<'b>,
@@ -1805,7 +1848,7 @@ impl NoteCalcApp {
                 _readonly_(results),
                 _readonly_(vars),
                 editor_objs,
-                BitFlag128::empty(),
+                BitFlag256::empty(),
             );
             self.set_editor_and_result_panel_widths_and_rerender_if_necessary(
                 units,
@@ -1815,7 +1858,7 @@ impl NoteCalcApp {
                 _readonly_(results),
                 _readonly_(vars),
                 editor_objs,
-                BitFlag128::empty(),
+                BitFlag256::empty(),
             );
         }
         return has_moved;
@@ -2006,7 +2049,7 @@ impl NoteCalcApp {
                 results,
                 vars,
                 editor_objs,
-                BitFlag128::empty(),
+                BitFlag256::empty(),
             );
             // HACK
             // if there is a selection in a row which contains a matrix, the matrix is
@@ -2155,7 +2198,7 @@ impl NoteCalcApp {
                 results,
                 vars,
                 editor_objs,
-                BitFlag128::empty(),
+                BitFlag256::empty(),
             );
         }
         return self.mouse_hover_type as usize;
@@ -2227,7 +2270,7 @@ impl NoteCalcApp {
                 results,
                 vars,
                 editor_objs,
-                BitFlag128::empty(),
+                BitFlag256::empty(),
             );
             self.editor_objs_referencing_current_line_might_changed(
                 tokens,
@@ -2284,7 +2327,7 @@ impl NoteCalcApp {
             _readonly_(results),
             _readonly_(vars),
             editor_objs,
-            BitFlag128::empty(),
+            BitFlag256::empty(),
         );
     }
 
@@ -2318,7 +2361,7 @@ impl NoteCalcApp {
             results,
             vars,
             editor_objs,
-            BitFlag128::empty(),
+            BitFlag256::empty(),
         );
     }
 
@@ -2347,7 +2390,7 @@ impl NoteCalcApp {
                 results,
                 vars,
                 editor_objs,
-                BitFlag128::empty(),
+                BitFlag256::empty(),
             );
         }
         need_rerender
@@ -2564,7 +2607,7 @@ impl NoteCalcApp {
                 _readonly_(results),
                 _readonly_(vars),
                 editor_objs,
-                BitFlag128::empty(),
+                BitFlag256::empty(),
             );
             return;
         }
@@ -2888,7 +2931,7 @@ impl NoteCalcApp {
                 _readonly_(results),
                 _readonly_(vars),
                 editor_objs,
-                BitFlag128::empty(),
+                BitFlag256::empty(),
             );
             self.set_editor_and_result_panel_widths_and_rerender_if_necessary(
                 units,
@@ -2898,7 +2941,7 @@ impl NoteCalcApp {
                 _readonly_(results),
                 _readonly_(vars),
                 editor_objs,
-                BitFlag128::empty(),
+                BitFlag256::empty(),
             );
         }
 
@@ -2961,7 +3004,7 @@ impl NoteCalcApp {
             vars: &mut Variables,
             editor_y: ContentIndex,
             updated_line_ref_obj_indices: &mut Vec<EditorObjId>,
-        ) -> (bool, BitFlag128) {
+        ) -> (bool, BitFlag256) {
             // TODO avoid clone
             let prev_var_name = vars[editor_y.as_usize()].as_ref().map(|it| it.name.clone());
 
@@ -3004,7 +3047,7 @@ impl NoteCalcApp {
                 }
             };
 
-            let mut rows_to_recalc = BitFlag128::empty();
+            let mut rows_to_recalc = BitFlag256::empty();
             if result_has_changed {
                 let line_ref_name =
                     NoteCalcApp::get_line_ref_name(&editor_content, editor_y.as_usize());
@@ -3032,8 +3075,8 @@ impl NoteCalcApp {
             return (result_has_changed, rows_to_recalc);
         }
 
-        fn find_sum_variable_name(tokens_per_lines: &AppTokens, editor_y: usize) -> BitFlag128 {
-            let mut rows_to_recalc = BitFlag128::empty();
+        fn find_sum_variable_name(tokens_per_lines: &AppTokens, editor_y: usize) -> BitFlag256 {
+            let mut rows_to_recalc = BitFlag256::empty();
             'outer: for (line_index, tokens) in
                 tokens_per_lines.iter().skip(editor_y + 1).enumerate()
             {
@@ -3047,7 +3090,7 @@ impl NoteCalcApp {
                                 if var_index == SUM_VARIABLE_INDEX =>
                             {
                                 rows_to_recalc
-                                    .merge(BitFlag128::single_row(editor_y + 1 + line_index));
+                                    .merge(BitFlag256::single_row(editor_y + 1 + line_index));
                                 break 'outer;
                             }
                             _ => {}
@@ -3064,8 +3107,8 @@ impl NoteCalcApp {
             prev_var_name: Option<Box<[char]>>,
             tokens_per_lines: &AppTokens<'b>,
             editor_y: usize,
-        ) -> BitFlag128 {
-            let mut rows_to_recalc = BitFlag128::empty();
+        ) -> BitFlag256 {
+            let mut rows_to_recalc = BitFlag256::empty();
             match (prev_var_name, curr_var_name) {
                 (None, Some(var_name)) => {
                     // nem volt még, de most van
@@ -3076,7 +3119,7 @@ impl NoteCalcApp {
                                 match token.typ {
                                     TokenType::StringLiteral if *token.ptr == **var_name => {
                                         rows_to_recalc
-                                            .merge(BitFlag128::single_row(editor_y + 1 + i));
+                                            .merge(BitFlag256::single_row(editor_y + 1 + i));
                                     }
                                     _ => {}
                                 }
@@ -3093,7 +3136,7 @@ impl NoteCalcApp {
                                 match token.typ {
                                     TokenType::Variable { .. } if *token.ptr == *old_var_name => {
                                         rows_to_recalc
-                                            .merge(BitFlag128::single_row(editor_y + 1 + i));
+                                            .merge(BitFlag256::single_row(editor_y + 1 + i));
                                     }
                                     _ => {}
                                 }
@@ -3112,7 +3155,7 @@ impl NoteCalcApp {
                                     _ => false,
                                 };
                                 if recalc {
-                                    rows_to_recalc.merge(BitFlag128::single_row(editor_y + 1 + i));
+                                    rows_to_recalc.merge(BitFlag256::single_row(editor_y + 1 + i));
                                 }
                             }
                         }
@@ -3120,7 +3163,7 @@ impl NoteCalcApp {
                 }
                 (Some(_old_var_name), Some(var_name)) => {
                     if !needs_dependency_check {
-                        return BitFlag128::empty();
+                        return BitFlag256::empty();
                     }
                     // volt is, van is, a neve is ugyanaz
                     for (i, tokens) in tokens_per_lines.iter().skip(editor_y + 1).enumerate() {
@@ -3131,7 +3174,7 @@ impl NoteCalcApp {
                                     _ => false,
                                 };
                                 if recalc {
-                                    rows_to_recalc.merge(BitFlag128::single_row(editor_y + 1 + i));
+                                    rows_to_recalc.merge(BitFlag256::single_row(editor_y + 1 + i));
                                 }
                             }
                         }
@@ -3143,8 +3186,8 @@ impl NoteCalcApp {
         }
 
         let mut sum_is_null = true;
-        let mut dependant_rows = BitFlag128::empty();
-        let mut result_change_flag = BitFlag128::empty();
+        let mut dependant_rows = BitFlag256::empty();
+        let mut result_change_flag = BitFlag256::empty();
         for editor_y in 0..self.editor_content.line_count().min(MAX_LINE_COUNT) {
             let recalc = match input_effect {
                 RowModificationType::SingleLine(to_change_index) if to_change_index == editor_y => {
@@ -3176,7 +3219,7 @@ impl NoteCalcApp {
                     &mut self.updated_line_ref_obj_indices,
                 );
                 if result_has_changed {
-                    result_change_flag.merge(BitFlag128::single_row(editor_y));
+                    result_change_flag.merge(BitFlag256::single_row(editor_y));
                 }
                 dependant_rows.merge(rows_to_recalc);
                 let new_h = calc_rendered_height(y, &self.matrix_editing, tokens, results, vars);
@@ -3267,7 +3310,7 @@ impl NoteCalcApp {
                 results,
                 vars,
                 editor_objs,
-                BitFlag128::empty(),
+                BitFlag256::empty(),
             );
         }
     }
@@ -3281,7 +3324,7 @@ impl NoteCalcApp {
         results: &Results,
         vars: &Variables,
         editor_objs: &mut EditorObjects,
-        result_change_flag: BitFlag128,
+        result_change_flag: BitFlag256,
     ) {
         let current_result_g_x = self.render_data.result_gutter_x;
         set_editor_and_result_panel_widths(
@@ -3347,11 +3390,11 @@ impl NoteCalcApp {
         tokens_per_lines: &AppTokens<'b>,
         editor_y: usize,
         updated_line_ref_obj_indices: &mut Vec<EditorObjId>,
-    ) -> BitFlag128 {
-        let mut rows_to_recalc = BitFlag128::empty();
+    ) -> BitFlag256 {
+        let mut rows_to_recalc = BitFlag256::empty();
         for (token_line_index, tokens) in tokens_per_lines.iter().skip(editor_y + 1).enumerate() {
             if let Some(tokens) = tokens {
-                let mut already_added = BitFlag128::empty();
+                let mut already_added = BitFlag256::empty();
                 for token in &tokens.tokens {
                     let var_index = match token.typ {
                         TokenType::LineReference { var_index }
@@ -3377,7 +3420,7 @@ impl NoteCalcApp {
                         content_index: content_y(index),
                         var_index,
                     });
-                    rows_to_recalc.merge(BitFlag128::single_row(index));
+                    rows_to_recalc.merge(BitFlag256::single_row(index));
                     already_added.set(var_index);
                 }
             } else {
@@ -4269,7 +4312,7 @@ impl NoteCalcApp {
         results: &Results,
         vars: &Variables,
         editor_objs: &mut EditorObjects,
-        result_change_flag: BitFlag128,
+        result_change_flag: BitFlag256,
     ) {
         render_buckets.clear();
         NoteCalcApp::renderr(
@@ -4424,7 +4467,7 @@ pub fn pulse_changed_results(
     render_buckets: &mut RenderBuckets,
     gr: &GlobalRenderData,
     longest_rendered_result_len: usize,
-    result_change_flag: &BitFlag128,
+    result_change_flag: &BitFlag256,
     theme: &Theme,
 ) {
     if gr.get_render_y(content_y(0)).is_none() {
@@ -4581,12 +4624,14 @@ fn render_tokens<'text_ptr>(
     editor_objects.clear();
     let cursor_pos = editor.get_selection().get_cursor_pos();
 
+    let parenthesis_around_cursor = find_parentesis_around_cursor(tokens, r, cursor_pos);
+
     let mut token_index = 0;
     while token_index < tokens.len() {
         let token = &tokens[token_index];
 
         if !need_matrix_renderer {
-            simple_draw(r, gr, render_buckets, editor_objects, token);
+            simple_draw_normal(r, gr, render_buckets, editor_objects, token, theme);
             token_index += 1;
         } else {
             match &token.typ {
@@ -4606,6 +4651,7 @@ fn render_tokens<'text_ptr>(
                         &editor,
                         &matrix_editing,
                         decimal_count,
+                        theme,
                     );
                 }
                 TokenType::Variable { var_index } => {
@@ -4628,6 +4674,8 @@ fn render_tokens<'text_ptr>(
                         gr.current_editor_width,
                         gr.left_gutter_width,
                         render_buckets,
+                        false, // is bold
+                        theme,
                     );
 
                     token_index += 1;
@@ -4672,18 +4720,105 @@ fn render_tokens<'text_ptr>(
                         },
                     );
                 }
+                TokenType::Operator(OperatorTokenType::ParenOpen) => {
+                    let is_bold = parenthesis_around_cursor
+                        .map(|(opening_paren_index, _closing_paren_index)| {
+                            opening_paren_index == token_index
+                        })
+                        .unwrap_or(false);
+                    simple_draw(r, gr, render_buckets, editor_objects, token, is_bold, theme);
+                    token_index += 1;
+                }
+                TokenType::Operator(OperatorTokenType::ParenClose) => {
+                    let is_bold = parenthesis_around_cursor
+                        .map(|(_opening_paren_index, closing_paren_index)| {
+                            closing_paren_index == token_index
+                        })
+                        .unwrap_or(false);
+                    simple_draw(r, gr, render_buckets, editor_objects, token, is_bold, theme);
+                    token_index += 1;
+                }
                 TokenType::StringLiteral
                 | TokenType::Header
                 | TokenType::NumberLiteral(_)
                 | TokenType::Operator(_)
                 | TokenType::Unit(_)
                 | TokenType::NumberErr => {
-                    simple_draw(r, gr, render_buckets, editor_objects, token);
+                    simple_draw_normal(r, gr, render_buckets, editor_objects, token, theme);
                     token_index += 1;
                 }
             }
         }
     }
+}
+
+fn find_parentesis_around_cursor(
+    tokens: &[Token],
+    r: &PerLineRenderData,
+    cursor_pos: Pos,
+) -> Option<(usize, usize)> {
+    let mut active_parenthesis: Option<(usize, usize)> = None;
+    if cursor_pos.row == r.editor_y.as_usize() {
+        let mut parenth_token_indices_stack = [0; 32];
+        let mut next_paren_stack_ptr = 0;
+        let mut stack_index_of_closes_open_parenth = 0;
+        let mut tokens_x_pos = 0;
+        for (i, token) in tokens.iter().enumerate() {
+            let before_cursor = tokens_x_pos < cursor_pos.column;
+            if !before_cursor && next_paren_stack_ptr == 0 {
+                // no opening bracket
+                break;
+            }
+            match (&token.typ, before_cursor) {
+                (TokenType::Operator(OperatorTokenType::ParenOpen), true) => {
+                    parenth_token_indices_stack[next_paren_stack_ptr] = i;
+                    stack_index_of_closes_open_parenth = next_paren_stack_ptr;
+                    next_paren_stack_ptr += 1;
+                }
+                (TokenType::Operator(OperatorTokenType::ParenClose), true) => {
+                    // TODO: kell ez az if, lehet ParenClose operator ParenOpen nélkül a tokenek között?
+                    if next_paren_stack_ptr > 0 {
+                        next_paren_stack_ptr -= 1;
+                        if next_paren_stack_ptr > 0 {
+                            stack_index_of_closes_open_parenth = next_paren_stack_ptr - 1;
+                        } else {
+                            stack_index_of_closes_open_parenth = 0;
+                        }
+                    }
+                }
+                //
+                (TokenType::Operator(OperatorTokenType::ParenOpen), false) => {
+                    parenth_token_indices_stack[next_paren_stack_ptr] = i;
+                    next_paren_stack_ptr += 1;
+                }
+                (TokenType::Operator(OperatorTokenType::ParenClose), false) => {
+                    if next_paren_stack_ptr - 1 == stack_index_of_closes_open_parenth {
+                        // this is the closes closing parenthesis
+                        active_parenthesis = Some((
+                            parenth_token_indices_stack[stack_index_of_closes_open_parenth],
+                            i,
+                        ));
+                        break;
+                    }
+                    next_paren_stack_ptr -= 1;
+                }
+                _ => {}
+            }
+            tokens_x_pos += token.ptr.len();
+        }
+    }
+    active_parenthesis
+}
+
+fn simple_draw_normal<'text_ptr>(
+    r: &mut PerLineRenderData,
+    gr: &mut GlobalRenderData,
+    render_buckets: &mut RenderBuckets<'text_ptr>,
+    editor_objects: &mut Vec<EditorObject>,
+    token: &Token<'text_ptr>,
+    theme: &Theme,
+) {
+    simple_draw(r, gr, render_buckets, editor_objects, token, false, theme);
 }
 
 fn simple_draw<'text_ptr>(
@@ -4692,6 +4827,8 @@ fn simple_draw<'text_ptr>(
     render_buckets: &mut RenderBuckets<'text_ptr>,
     editor_objects: &mut Vec<EditorObject>,
     token: &Token<'text_ptr>,
+    is_bold: bool,
+    theme: &Theme,
 ) {
     if let Some(EditorObject {
         typ: EditorObjectType::SimpleTokens,
@@ -4722,6 +4859,8 @@ fn simple_draw<'text_ptr>(
         gr.current_editor_width,
         gr.left_gutter_width,
         render_buckets,
+        is_bold,
+        theme,
     );
 
     r.token_render_done(token.ptr.len(), token.ptr.len(), 0);
@@ -4945,6 +5084,7 @@ fn render_matrix<'text_ptr>(
     matrix_editing: &Option<MatrixEditing>,
     // TODO: why unused?
     _decimal_count: Option<usize>,
+    theme: &Theme,
 ) -> usize {
     let mut text_width = 0;
     let mut end_token_index = token_index;
@@ -4989,6 +5129,7 @@ fn render_matrix<'text_ptr>(
             &tokens[token_index..],
             render_buckets,
             r.rendered_row_height,
+            theme,
         )
     };
 
@@ -5115,6 +5256,7 @@ fn render_matrix_obj<'text_ptr>(
     tokens: &[Token<'text_ptr>],
     render_buckets: &mut RenderBuckets<'text_ptr>,
     rendered_row_height: usize,
+    theme: &Theme,
 ) -> usize {
     let vert_align_offset = (rendered_row_height - MatrixData::calc_render_height(row_count)) / 2;
 
@@ -5196,6 +5338,8 @@ fn render_matrix_obj<'text_ptr>(
                         current_editor_width,
                         left_gutter_width,
                         render_buckets,
+                        false,
+                        theme,
                     );
                 }
                 local_x += token.ptr.len();
@@ -5849,7 +5993,7 @@ fn draw_line_refs_and_vars_referenced_from_cur_row<'b>(
     render_buckets: &mut RenderBuckets<'b>,
 ) {
     let mut color_index = 0;
-    let mut highlighted = BitFlag128::empty();
+    let mut highlighted = BitFlag256::empty();
     for editor_obj in editor_objs {
         match editor_obj.typ {
             EditorObjectType::LineReference { var_index }
@@ -5901,6 +6045,8 @@ fn draw_token<'text_ptr>(
     current_editor_width: usize,
     left_gutter_width: usize,
     render_buckets: &mut RenderBuckets<'text_ptr>,
+    is_bold: bool,
+    theme: &Theme,
 ) {
     let dst = if token.has_error() {
         &mut render_buckets.number_errors
@@ -5914,6 +6060,68 @@ fn draw_token<'text_ptr>(
             TokenType::NumberErr => &mut render_buckets.number_errors,
             TokenType::Operator(OperatorTokenType::ApplyUnit(_)) => &mut render_buckets.units,
             TokenType::Unit(_) => &mut render_buckets.units,
+            TokenType::Operator(OperatorTokenType::ParenClose) => {
+                if is_bold {
+                    render_buckets.set_color(Layer::BehindText, theme.line_ref_bg);
+                    render_buckets.draw_rect(
+                        Layer::BehindText,
+                        render_x + left_gutter_width,
+                        render_y,
+                        1,
+                        1,
+                    );
+
+                    render_buckets.set_color(Layer::Text, theme.parenthesis);
+
+                    let b = &mut render_buckets.custom_commands[Layer::Text as usize];
+                    b.push(OutputMessage::FollowingTextCommandsAreHeaders(true));
+                    b.push(OutputMessage::RenderChar(RenderChar {
+                        col: render_x + left_gutter_width,
+                        row: render_y,
+                        char: ')',
+                    }));
+                    b.push(OutputMessage::FollowingTextCommandsAreHeaders(false));
+                } else {
+                    render_buckets.parenthesis.push(RenderChar {
+                        col: render_x + left_gutter_width,
+                        row: render_y,
+                        char: ')',
+                    });
+                }
+                return;
+            }
+            TokenType::Operator(OperatorTokenType::ParenOpen) => {
+                if is_bold {
+                    render_buckets.set_color(Layer::BehindText, theme.line_ref_bg);
+                    render_buckets.draw_rect(
+                        Layer::BehindText,
+                        render_x + left_gutter_width,
+                        render_y,
+                        1,
+                        1,
+                    );
+                    render_buckets.set_color(Layer::Text, theme.parenthesis);
+
+                    render_buckets.custom_commands[Layer::Text as usize]
+                        .push(OutputMessage::FollowingTextCommandsAreHeaders(true));
+                    &mut render_buckets.custom_commands[Layer::Text as usize].push(
+                        OutputMessage::RenderChar(RenderChar {
+                            col: render_x + left_gutter_width,
+                            row: render_y,
+                            char: '(',
+                        }),
+                    );
+                    render_buckets.custom_commands[Layer::Text as usize]
+                        .push(OutputMessage::FollowingTextCommandsAreHeaders(false));
+                } else {
+                    &mut render_buckets.parenthesis.push(RenderChar {
+                        col: render_x + left_gutter_width,
+                        row: render_y,
+                        char: '(',
+                    });
+                }
+                return;
+            }
             TokenType::Operator(_) => &mut render_buckets.operators,
         }
     };
@@ -5943,6 +6151,11 @@ fn render_buckets_into(buckets: &RenderBuckets, canvas: &mut [[char; 256]]) {
         }
     }
 
+    fn write_char(canvas: &mut [[char; 256]], row: CanvasY, col: usize, char: char) {
+        let str = &mut canvas[row.as_usize()];
+        str[col] = char;
+    }
+
     fn write_ascii(canvas: &mut [[char; 256]], row: CanvasY, col: usize, src: &[u8]) {
         let str = &mut canvas[row.as_usize()];
         for (dst_char, src_char) in str[col..].iter_mut().zip(src.iter()) {
@@ -5958,9 +6171,8 @@ fn render_buckets_into(buckets: &RenderBuckets, canvas: &mut [[char; 256]]) {
             OutputMessage::SetStyle(..) => {}
             OutputMessage::SetColor(..) => {}
             OutputMessage::RenderRectangle { .. } => {}
-            OutputMessage::RenderChar(x, y, ch) => {
-                let str = &mut canvas[*y];
-                str[*x] = *ch;
+            OutputMessage::RenderChar(r) => {
+                write_char(canvas, r.row, r.col, r.char);
             }
             OutputMessage::RenderString(text) => {
                 write_str(canvas, text.row, text.column, &text.text);
@@ -6001,9 +6213,16 @@ fn render_buckets_into(buckets: &RenderBuckets, canvas: &mut [[char; 256]]) {
     for command in &buckets.operators {
         write_char_slice(canvas, command.row, command.column, command.text);
     }
+    for command in &buckets.parenthesis {
+        write_char(canvas, command.row, command.col, command.char);
+    }
 
     for command in &buckets.line_ref_results {
         write_str(canvas, command.row, command.column, &command.text);
+    }
+
+    for command in &buckets.headers {
+        write_char_slice(canvas, command.row, command.column, command.text);
     }
 
     for command in &buckets.variable {
@@ -6348,6 +6567,241 @@ fn default_result_gutter_x(client_width: usize) -> usize {
 }
 
 #[cfg(test)]
+mod bitflag_tests {
+    use crate::helper::{content_y, BitFlag256};
+
+    #[test]
+    fn test_single_row() {
+        let b = BitFlag256::single_row(0);
+        assert_eq!(
+            b.bitset[0],
+            0b00000000_00000000_00000000_00000000_00000000_00000000_00000000_00000001
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b00000000_00000000_00000000_00000000_00000000_00000000_00000000_00000000
+        );
+        assert_eq!(true, b.need(content_y(0)));
+        assert_eq!(false, b.need(content_y(1)));
+    }
+
+    #[test]
+    fn test_single_row2() {
+        let b = BitFlag256::single_row(32);
+        assert_eq!(
+            b.bitset[0],
+            0b00000000_00000000_00000000_00000001_00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b00000000_00000000_00000000_00000000_00000000_00000000_00000000_00000000
+        );
+        assert_eq!(false, b.need(content_y(0)));
+        assert_eq!(false, b.need(content_y(1)));
+        assert_eq!(true, b.need(content_y(32)));
+    }
+
+    #[test]
+    fn test_single_row3() {
+        let b = BitFlag256::single_row(128);
+        assert_eq!(
+            b.bitset[0],
+            0b00000000_00000000_00000000_00000000_00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b00000000_00000000_00000000_00000000_00000000_00000000_00000000_00000001
+        );
+        assert_eq!(false, b.need(content_y(0)));
+        assert_eq!(false, b.need(content_y(1)));
+        assert_eq!(true, b.need(content_y(128)));
+    }
+
+    #[test]
+    fn test_single_row4() {
+        let b = BitFlag256::single_row(128 + 32);
+        assert_eq!(
+            b.bitset[0],
+            0b00000000_00000000_00000000_00000000_00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b00000000_00000000_00000000_00000001_00000000_00000000_00000000_00000000
+        );
+        assert_eq!(false, b.need(content_y(0)));
+        assert_eq!(false, b.need(content_y(1)));
+        assert_eq!(false, b.need(content_y(128)));
+        assert_eq!(false, b.need(content_y(32)));
+        assert_eq!(true, b.need(content_y(128 + 32)));
+    }
+
+    #[test]
+    fn test_single_row5() {
+        let b = BitFlag256::single_row(255);
+        assert_eq!(
+            b.bitset[0],
+            0b00000000_00000000_00000000_00000000_00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b10000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000
+        );
+        assert_eq!(false, b.need(content_y(0)));
+        assert_eq!(false, b.need(content_y(1)));
+        assert_eq!(false, b.need(content_y(128)));
+        assert_eq!(false, b.need(content_y(127)));
+        assert_eq!(true, b.need(content_y(255)));
+    }
+
+    #[test]
+    fn test_all_rows_starting_at() {
+        let b = BitFlag256::all_rows_starting_at(192);
+        assert_eq!(
+            b.bitset[0],
+            0b00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000
+        );
+        for i in 0..256 {
+            assert_eq!(i >= 192, b.need(content_y(i)));
+        }
+    }
+
+    #[test]
+    fn test_all_rows_starting_at2() {
+        let b = BitFlag256::all_rows_starting_at(128);
+        assert_eq!(
+            b.bitset[0],
+            0b00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111
+        );
+        for i in 0..256 {
+            assert_eq!(i >= 128, b.need(content_y(i)));
+        }
+    }
+
+    #[test]
+    fn test_all_rows_starting_at3() {
+        let b = BitFlag256::all_rows_starting_at(64);
+        assert_eq!(
+            b.bitset[0],
+            0b11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111
+        );
+        for i in 0..256 {
+            assert_eq!(i >= 64, b.need(content_y(i)));
+        }
+    }
+
+    #[test]
+    fn test_all_rows_starting_at4() {
+        let b = BitFlag256::all_rows_starting_at(0);
+        assert_eq!(
+            b.bitset[0],
+            0b11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111
+        );
+        for i in 0..256 {
+            assert_eq!(true, b.need(content_y(i)));
+        }
+    }
+
+    #[test]
+    fn test_all_rows_multiple() {
+        let b = BitFlag256::multiple(&[32, 64, 128, 192, 255]);
+        assert_eq!(
+            b.bitset[0],
+            0b00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000001__00000000_00000000_00000000_00000001__00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b10000000_00000000_00000000_00000000__00000000_00000000_00000000_00000001__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000001
+        );
+        for i in 0..256 {
+            assert_eq!(
+                i == 32 || i == 64 || i == 128 || i == 192 || i == 255,
+                b.need(content_y(i))
+            );
+        }
+    }
+
+    #[test]
+    fn test_all_rows_range_incl() {
+        let b = BitFlag256::range_incl(32, 64);
+        assert_eq!(
+            b.bitset[0],
+            0b00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000001__11111111_11111111_11111111_11111111__00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000
+        );
+        for i in 0..256 {
+            assert_eq!(i >= 32 && i <= 64, b.need(content_y(i)), "{}", i);
+        }
+    }
+
+    #[test]
+    fn test_all_rows_range_incl2() {
+        let b = BitFlag256::range_incl(32, 192);
+        assert_eq!(
+            b.bitset[0],
+            0b11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b00000000_00000000_00000000_00000000__00000000_00000000_00000000_000000001__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111
+        );
+        for i in 0..256 {
+            assert_eq!(i >= 32 && i <= 192, b.need(content_y(i)), "{}", i);
+        }
+    }
+
+    #[test]
+    fn test_all_rows_range_incl3() {
+        let b = BitFlag256::range_incl(32, 32);
+        assert_eq!(
+            b.bitset[0],
+            0b00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000001__00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000
+        );
+        for i in 0..256 {
+            assert_eq!(i == 32, b.need(content_y(i)), "{}", i);
+        }
+    }
+
+    #[test]
+    fn test_all_rows_range_incl4() {
+        let b = BitFlag256::range_incl(0, 255);
+        assert_eq!(
+            b.bitset[0],
+            0b11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111
+        );
+        for i in 0..256 {
+            assert_eq!(true, b.need(content_y(i)), "{}", i);
+        }
+    }
+}
+
+#[cfg(test)]
 mod main_tests {
     use super::*;
 
@@ -6503,7 +6957,7 @@ mod main_tests {
                     self.mut_results(),
                     self.mut_vars(),
                     self.mut_editor_objects(),
-                    BitFlag128::empty(),
+                    BitFlag256::empty(),
                 );
         }
 
@@ -8873,7 +9327,11 @@ aaaaaaaaaaaaaaaaaaaaaa &[1]",
             assert_contains(
                 render_commands,
                 1,
-                OutputMessage::RenderChar(test.get_render_data().result_gutter_x - 1, 1, '…'),
+                OutputMessage::RenderChar(RenderChar {
+                    col: test.get_render_data().result_gutter_x - 1,
+                    row: canvas_y(1),
+                    char: '…',
+                }),
             );
             assert_contains_pulse(
                 &test.render_bucket().pulses,
@@ -8925,7 +9383,11 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
                 assert_contains(
                     render_commands,
                     1,
-                    OutputMessage::RenderChar(test.get_render_data().result_gutter_x - 1, 1, '…'),
+                    OutputMessage::RenderChar(RenderChar {
+                        col: test.get_render_data().result_gutter_x - 1,
+                        row: canvas_y(1),
+                        char: '…',
+                    }),
                 );
                 assert_contains_pulse(
                     &test.render_bucket().pulses,
@@ -8953,7 +9415,11 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
                 assert_contains(
                     render_commands,
                     1,
-                    OutputMessage::RenderChar(test.get_render_data().result_gutter_x - 1, 1, '…'),
+                    OutputMessage::RenderChar(RenderChar {
+                        col: test.get_render_data().result_gutter_x - 1,
+                        row: canvas_y(1),
+                        char: '…',
+                    }),
                 );
             }
         }
@@ -9348,8 +9814,25 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
         let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
         let expected_x = left_gutter_width + 4;
         let commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-        assert_contains(commands, 1, OutputMessage::RenderChar(expected_x, 1, '⎫'));
-        assert_contains(commands, 1, OutputMessage::RenderChar(expected_x, 2, '⎭'));
+        assert_contains(
+            commands,
+            1,
+            OutputMessage::RenderChar(RenderChar {
+                col: expected_x,
+                row: canvas_y(1),
+                char: '⎫',
+            }),
+        );
+
+        assert_contains(
+            commands,
+            1,
+            OutputMessage::RenderChar(RenderChar {
+                col: expected_x,
+                row: canvas_y(2),
+                char: '⎭',
+            }),
+        );
         assert_contains(
             commands,
             1,
@@ -9371,8 +9854,24 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
         let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
         let expected_x = left_gutter_width + 4;
         let commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-        assert_contains(commands, 1, OutputMessage::RenderChar(expected_x, 1, '⎫'));
-        assert_contains(commands, 1, OutputMessage::RenderChar(expected_x, 2, '⎭'));
+        assert_contains(
+            commands,
+            1,
+            OutputMessage::RenderChar(RenderChar {
+                col: expected_x,
+                row: canvas_y(1),
+                char: '⎫',
+            }),
+        );
+        assert_contains(
+            commands,
+            1,
+            OutputMessage::RenderChar(RenderChar {
+                col: expected_x,
+                row: canvas_y(2),
+                char: '⎭',
+            }),
+        );
         assert_contains(
             commands,
             1,
@@ -11741,7 +12240,11 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
     #[test]
     fn test_matrix_renders_dots_on_gutter_on_every_line_it_takes() {
         let expected_char_at = |test: &BorrowCheckerFighter, at: usize| {
-            OutputMessage::RenderChar(test.get_render_data().result_gutter_x - 1, at, '…')
+            OutputMessage::RenderChar(RenderChar {
+                col: test.get_render_data().result_gutter_x - 1,
+                row: canvas_y(at as isize),
+                char: '…',
+            })
         };
 
         let test = create_app3(25, 35);
@@ -11811,7 +12314,11 @@ asd",
     #[test]
     fn test_matrix_dots_are_not_rendered_sometimes() {
         let expected_char_at = |test: &BorrowCheckerFighter, at: usize| {
-            OutputMessage::RenderChar(test.get_render_data().result_gutter_x - 1, at, '…')
+            OutputMessage::RenderChar(RenderChar {
+                col: test.get_render_data().result_gutter_x - 1,
+                row: canvas_y(at as isize),
+                char: '…',
+            })
         };
 
         let test = create_app3(30, 35);
@@ -11953,14 +12460,22 @@ asd",
         assert_contains(
             &test.render_bucket().custom_commands[Layer::AboveText as usize],
             1,
-            OutputMessage::RenderChar(18, 0, '▏'),
+            OutputMessage::RenderChar(RenderChar {
+                col: 18,
+                row: canvas_y(0),
+                char: '▏',
+            }),
         );
 
         test.input(EditorInputEvent::Char('7'), InputModifiers::none());
         assert_contains(
             &test.render_bucket().custom_commands[Layer::AboveText as usize],
             1,
-            OutputMessage::RenderChar(19, 0, '▏'),
+            OutputMessage::RenderChar(RenderChar {
+                col: 19,
+                row: canvas_y(0),
+                char: '▏',
+            }),
         );
     }
 
@@ -12470,5 +12985,75 @@ asd",
             test.paste("var = 12 byte\nvar ok kilobyte");
             test.assert_results(&["12 bytes", "12 bytes"][..]);
         }
+    }
+
+    #[test]
+    fn test_paren_highlighting() {
+        let test = create_app3(84, 36);
+        test.paste("asdasd hehe(12)");
+        test.input(EditorInputEvent::Left, InputModifiers::none());
+        let render_bucket = &test.render_bucket().custom_commands[Layer::Text as usize];
+        assert_contains(
+            render_bucket,
+            2,
+            OutputMessage::SetColor(THEMES[0].parenthesis),
+        );
+        assert_contains(
+            render_bucket,
+            2,
+            OutputMessage::FollowingTextCommandsAreHeaders(true),
+        );
+        assert_contains(
+            render_bucket,
+            2,
+            OutputMessage::FollowingTextCommandsAreHeaders(false),
+        );
+        assert_contains(
+            render_bucket,
+            1,
+            OutputMessage::RenderChar(RenderChar {
+                col: 11 + test.get_render_data().left_gutter_width,
+                row: canvas_y(0),
+                char: '(',
+            }),
+        );
+
+        assert_contains(
+            render_bucket,
+            1,
+            OutputMessage::RenderChar(RenderChar {
+                col: 14 + test.get_render_data().left_gutter_width,
+                row: canvas_y(0),
+                char: ')',
+            }),
+        );
+    }
+
+    #[test]
+    fn test_paren_highlighting2() {
+        let test = create_app3(84, 36);
+        test.paste("asdasd hehe((12))");
+        test.input(EditorInputEvent::Left, InputModifiers::none());
+        test.input(EditorInputEvent::Left, InputModifiers::none());
+        let render_bucket = &test.render_bucket().custom_commands[Layer::Text as usize];
+        assert_contains(
+            render_bucket,
+            1,
+            OutputMessage::RenderChar(RenderChar {
+                col: 12 + test.get_render_data().left_gutter_width,
+                row: canvas_y(0),
+                char: '(',
+            }),
+        );
+
+        assert_contains(
+            render_bucket,
+            1,
+            OutputMessage::RenderChar(RenderChar {
+                col: 15 + test.get_render_data().left_gutter_width,
+                row: canvas_y(0),
+                char: ')',
+            }),
+        );
     }
 }

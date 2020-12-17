@@ -1,6 +1,6 @@
-use std::ops::BitXor;
-use std::ops::Neg;
 use std::ops::Not;
+use std::ops::{BitXor, Shl};
+use std::ops::{Neg, Shr};
 
 use crate::matrix::MatrixData;
 use crate::token_parser::{OperatorTokenType, Token, TokenType};
@@ -193,14 +193,16 @@ fn apply_operation<'text_ptr>(
         | OperatorTokenType::Pow
         | OperatorTokenType::ShiftLeft
         | OperatorTokenType::ShiftRight
-        | OperatorTokenType::PercNumIsXPercOnWhat
-        | OperatorTokenType::PercWhatPlusXPercIsNum
-        | OperatorTokenType::PercOnWhatIsNum
-        | OperatorTokenType::PercNumIsWhatPercOnNum
-        | OperatorTokenType::PercNumIsXPercOffWhat
-        | OperatorTokenType::PercWhatMinusXPercIsNum
-        | OperatorTokenType::PercOffWhatIsNum
-        | OperatorTokenType::PercNumIsWhatPercOffNum
+        | OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X
+        | OperatorTokenType::Percentage_Find_Base_From_X_Icrease_Result
+        | OperatorTokenType::Percentage_Find_Base_From_Icrease_X_Result
+        | OperatorTokenType::Percentage_Find_Incr_Rate_From_Result_X_Base
+        | OperatorTokenType::Percentage_Find_Base_From_Result_Decrease_X
+        | OperatorTokenType::Percentage_Find_Base_From_X_Decrease_Result
+        | OperatorTokenType::Percentage_Find_Base_From_Decrease_X_Result
+        | OperatorTokenType::Percentage_Find_Decr_Rate_From_Result_X_Base
+        | OperatorTokenType::Percentage_Find_Rate_From_Result_Base
+        | OperatorTokenType::Percentage_Find_Base_From_Result_Rate
         | OperatorTokenType::UnitConverter => {
             if stack.len() > 1 {
                 let (lhs, rhs) = (&stack[stack.len() - 2], &stack[stack.len() - 1]);
@@ -330,15 +332,37 @@ fn binary_operation(
         OperatorTokenType::Pow => pow_op(lhs, rhs),
         OperatorTokenType::ShiftLeft => bitwise_shift_left(lhs, rhs),
         OperatorTokenType::ShiftRight => bitwise_shift_right(lhs, rhs),
-        OperatorTokenType::PercNumIsXPercOnWhat => perc_num_is_xperc_on_what(lhs, rhs),
-        OperatorTokenType::PercWhatPlusXPercIsNum => perc_num_is_xperc_on_what(rhs, lhs),
-        OperatorTokenType::PercOnWhatIsNum => perc_num_is_xperc_on_what(rhs, lhs),
-        OperatorTokenType::PercNumIsWhatPercOnNum => perc_num_is_what_perc_on_num(lhs, rhs),
+        OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X => {
+            perc_num_is_xperc_on_what(lhs, rhs)
+        }
+        OperatorTokenType::Percentage_Find_Base_From_X_Icrease_Result => {
+            perc_num_is_xperc_on_what(rhs, lhs)
+        }
+        OperatorTokenType::Percentage_Find_Base_From_Icrease_X_Result => {
+            perc_num_is_xperc_on_what(rhs, lhs)
+        }
+        OperatorTokenType::Percentage_Find_Incr_Rate_From_Result_X_Base => {
+            perc_num_is_what_perc_on_num(lhs, rhs)
+        }
         //
-        OperatorTokenType::PercNumIsXPercOffWhat => perc_num_is_xperc_off_what(lhs, rhs),
-        OperatorTokenType::PercWhatMinusXPercIsNum => perc_num_is_xperc_off_what(rhs, lhs),
-        OperatorTokenType::PercOffWhatIsNum => perc_num_is_xperc_off_what(rhs, lhs),
-        OperatorTokenType::PercNumIsWhatPercOffNum => perc_num_is_what_perc_off_num(lhs, rhs),
+        OperatorTokenType::Percentage_Find_Base_From_Result_Decrease_X => {
+            perc_num_is_xperc_off_what(lhs, rhs)
+        }
+        OperatorTokenType::Percentage_Find_Base_From_X_Decrease_Result => {
+            perc_num_is_xperc_off_what(rhs, lhs)
+        }
+        OperatorTokenType::Percentage_Find_Base_From_Decrease_X_Result => {
+            perc_num_is_xperc_off_what(rhs, lhs)
+        }
+        OperatorTokenType::Percentage_Find_Decr_Rate_From_Result_X_Base => {
+            perc_num_is_what_perc_off_num(lhs, rhs)
+        }
+        OperatorTokenType::Percentage_Find_Rate_From_Result_Base => {
+            percentage_find_rate_from_result_base(lhs, rhs)
+        }
+        OperatorTokenType::Percentage_Find_Base_From_Result_Rate => {
+            percentage_find_base_from_result_rate(lhs, rhs)
+        }
         OperatorTokenType::UnitConverter => {
             return match (&lhs.typ, &rhs.typ) {
                 (
@@ -502,15 +526,43 @@ fn perc_num_is_what_perc_off_num(lhs: &CalcResult, rhs: &CalcResult) -> Option<C
     }
 }
 
+fn percentage_find_rate_from_result_base(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+    // lhs is what percent of lhs
+    // 20 is what percent of 60
+    match (&lhs.typ, &rhs.typ) {
+        (CalcResultType::Number(y), CalcResultType::Number(x)) => {
+            let p = y.checked_div(x)?.checked_mul(&DECIMAL_100)?;
+            Some(CalcResult::new(CalcResultType::Percentage(p), 0))
+        }
+        _ => None,
+    }
+}
+
+fn percentage_find_base_from_result_rate(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+    // lhs is rhs% of what
+    // 5 is 25% of what
+    match (&lhs.typ, &rhs.typ) {
+        (CalcResultType::Number(y), CalcResultType::Percentage(p)) => {
+            let x = y.checked_div(p)?.checked_mul(&DECIMAL_100)?;
+            Some(CalcResult::new(CalcResultType::Number(x), 0))
+        }
+        _ => None,
+    }
+}
+
 fn bitwise_shift_right(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     match (&lhs.typ, &rhs.typ) {
         (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             let lhs = lhs.to_u64()?;
             let rhs = rhs.to_u32()?;
-            Some(CalcResult::new(
-                CalcResultType::Number(dec(lhs.wrapping_shr(rhs))),
-                0,
-            ))
+            if rhs > 63 {
+                None
+            } else {
+                Some(CalcResult::new(
+                    CalcResultType::Number(dec(lhs.shr(rhs))),
+                    0,
+                ))
+            }
         }
         _ => None,
     }
@@ -521,10 +573,14 @@ fn bitwise_shift_left(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> 
         (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             let lhs = lhs.to_u64()?;
             let rhs = rhs.to_u32()?;
-            Some(CalcResult::new(
-                CalcResultType::Number(dec(lhs.wrapping_shl(rhs))),
-                0,
-            ))
+            if rhs > 63 {
+                None
+            } else {
+                Some(CalcResult::new(
+                    CalcResultType::Number(dec(lhs.shl(rhs))),
+                    0,
+                ))
+            }
         }
         _ => None,
     }
@@ -2141,7 +2197,7 @@ mod tests {
                 num(17),
                 op(OperatorTokenType::Perc),
                 str(" "),
-                op(OperatorTokenType::PercNumIsXPercOnWhat),
+                op(OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X),
             ],
         );
     }
@@ -2158,16 +2214,16 @@ mod tests {
 
     #[test]
     fn test_calc_percentage_what_plus() {
-        test("what + 17% is 41", "35.0427");
+        test("what plus 17% is 41", "35.0427");
     }
 
     #[test]
     fn test_calc_percentage_what_plus_2() {
-        test("what + (16%+1%) is 41", "35.0427");
+        test("what plus (16%+1%) is 41", "35.0427");
     }
     #[test]
     fn test_calc_percentage_what_plus_3() {
-        test("what + (16+1)% is 41", "35.0427");
+        test("what plus (16+1)% is 41", "35.0427");
     }
 
     #[test]
@@ -2183,7 +2239,7 @@ mod tests {
                 num(17),
                 op(OperatorTokenType::Perc),
                 str(" "),
-                op(OperatorTokenType::PercOnWhatIsNum),
+                op(OperatorTokenType::Percentage_Find_Base_From_Icrease_X_Result),
                 str(" "),
                 num(41),
             ],
@@ -2222,7 +2278,7 @@ mod tests {
                 num(17),
                 op(OperatorTokenType::Perc),
                 str(" "),
-                op(OperatorTokenType::PercNumIsXPercOffWhat),
+                op(OperatorTokenType::Percentage_Find_Base_From_Result_Decrease_X),
             ],
         );
     }
@@ -2239,16 +2295,16 @@ mod tests {
 
     #[test]
     fn test_calc_percentage_what_minus() {
-        test("what - 17% is 41", "49.3976");
+        test("what minus 17% is 41", "49.3976");
     }
 
     #[test]
     fn test_calc_percentage_what_minus_2() {
-        test("what - (16%+1%) is 41", "49.3976");
+        test("what minus (16%+1%) is 41", "49.3976");
     }
     #[test]
     fn test_calc_percentage_what_minus_3() {
-        test("what - (16+1)% is 41", "49.3976");
+        test("what minus (16+1)% is 41", "49.3976");
     }
 
     #[test]
@@ -2264,7 +2320,7 @@ mod tests {
                 num(17),
                 op(OperatorTokenType::Perc),
                 str(" "),
-                op(OperatorTokenType::PercOffWhatIsNum),
+                op(OperatorTokenType::Percentage_Find_Base_From_Decrease_X_Result),
                 str(" "),
                 num(41),
             ],
@@ -2284,5 +2340,125 @@ mod tests {
     #[test]
     fn test_calc_num_what_perc_off_num_tokens() {
         test("35 is what % off 41", "14.6341 %");
+    }
+
+    #[test]
+    fn test_percent_complex_1() {
+        test("44 is (220 is what % on 200) on what", "40");
+    }
+
+    #[test]
+    fn test_percent_complex_2() {
+        test("44 is (180 is what % off 200) on what", "40");
+    }
+
+    #[test]
+    fn test_percent_complex_3() {
+        test("(44 is 10% on what) is 60% on what", "25");
+    }
+
+    #[test]
+    fn test_percent_complex_4() {
+        test("what plus (180 is what % off 200) is 44", "40");
+    }
+
+    #[test]
+    fn test_percent_complex_5() {
+        test("(180 is what % off 200) on what is 44", "40");
+    }
+
+    #[test]
+    fn test_percent_complex_6() {
+        test(
+            "44 is what % on ((180 is what % off 200) on what is 44)",
+            "10 %",
+        );
+    }
+
+    #[test]
+    fn test_percent_complex_7() {
+        test(
+            "44 is what % on ((180 is what % off (what plus 10% is 220)) on what is 44)",
+            "10 %",
+        );
+    }
+
+    #[test]
+    fn test_calc_percentage_find_rate_from_result_base() {
+        test("20 is what percent of 60", "33.3333 %");
+    }
+
+    #[test]
+    fn test_calc_percentage_find_rate_from_result_base_tokens() {
+        test_tokens(
+            "20 is what percent of 60",
+            &[
+                num(20),
+                str(" "),
+                op(OperatorTokenType::Percentage_Find_Rate_From_Result_Base),
+                str(" "),
+                num(60),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_calc_percentage_find_base_from_result_rate() {
+        test("5 is 25% of what", "20");
+    }
+
+    #[test]
+    fn test_calc_percentage_find_base_from_result_rate_tokens() {
+        test_tokens(
+            "5 is 25% of what",
+            &[
+                num(5),
+                str(" "),
+                op(OperatorTokenType::PercentageIs),
+                str(" "),
+                num(25),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::Percentage_Find_Base_From_Result_Rate),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_invalid_left_shift_to_string2() {
+        test("1 << 200", "Err");
+    }
+
+    #[test]
+    fn test_invalid_left_shift_to_string() {
+        test_tokens(
+            "1 << 200",
+            &[
+                num_with_err(1),
+                str(" "),
+                op_err(OperatorTokenType::ShiftLeft),
+                str(" "),
+                num_with_err(200),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_invalid_right_shift_to_string2() {
+        test("1 >> 64", "Err");
+    }
+
+    #[test]
+    fn test_invalid_right_shift_to_string() {
+        test_tokens(
+            "1 >> 64",
+            &[
+                num_with_err(1),
+                str(" "),
+                op_err(OperatorTokenType::ShiftRight),
+                str(" "),
+                num_with_err(64),
+            ],
+        );
     }
 }

@@ -268,14 +268,6 @@ impl ShuntingYard {
                 "Input token: {:?} {:?}",
                 input_token.typ, input_token.ptr
             ));
-            if matches!(
-                input_token.typ,
-                TokenType::Operator(OperatorTokenType::PercWhatMinusXPercIsNum)
-            ) {
-                // nocheckin
-                ShuntingYard::shunting_state_debug_print("debugger", output_stack, &operator_stack);
-                let _debugger = 1;
-            }
             match &input_token.typ {
                 TokenType::Header => {
                     debug_print(&format!("  ignore ({:?})", input_token.ptr));
@@ -768,8 +760,8 @@ impl ShuntingYard {
                         if !matches!(
                             op,
                             OperatorTokenType::BinNot
-                                | OperatorTokenType::PercWhatPlusXPercIsNum
-                                | OperatorTokenType::PercWhatMinusXPercIsNum
+                                | OperatorTokenType::Percentage_Find_Base_From_X_Icrease_Result
+                                | OperatorTokenType::Percentage_Find_Base_From_X_Decrease_Result
                         ) && v.expect_expression
                         {
                             ShuntingYard::rollback(
@@ -783,8 +775,8 @@ impl ShuntingYard {
                         v.had_operator = true;
                         v.expect_expression = if matches!(
                             op,
-                            OperatorTokenType::PercNumIsXPercOnWhat
-                                | OperatorTokenType::PercNumIsXPercOffWhat
+                            OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X
+                                | OperatorTokenType::Percentage_Find_Base_From_Result_Decrease_X
                         ) {
                             false
                         } else {
@@ -891,8 +883,9 @@ impl ShuntingYard {
         );
         for op in operator_stack.into_iter().rev() {
             match op.op_type {
-                OperatorTokenType::PercNumIsXPercOnWhat
-                | OperatorTokenType::PercWhatPlusXPercIsNum => {
+                OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X
+                | OperatorTokenType::Percentage_Find_Base_From_X_Icrease_Result
+                | OperatorTokenType::Percentage_Find_Base_From_Result_Rate => {
                     // the top must be PercentageIs to be valid
                     let output_stack_len = output_stack.len();
                     let ok = if let Some(top) = output_stack.last_mut() {
@@ -929,7 +922,7 @@ impl ShuntingYard {
         ShuntingYard::shunting_state_debug_print("after into iter rev", output_stack, &[]);
 
         // set everything to string which is not closed
-        if let Some((start, end)) = dbg!(v.last_valid_input_token_range) {
+        if let Some((start, end)) = v.last_valid_input_token_range {
             if start > 0 {
                 ShuntingYard::set_tokens_to_string(tokens, 0, start - 1);
             }
@@ -974,8 +967,18 @@ impl ShuntingYard {
         match (&v.in_progress_percentage_op, op) {
             // 41 is 17% on what
             // 41 is 17% off what
-            (Some(OperatorTokenType::PercentageIs), OperatorTokenType::PercNumIsXPercOnWhat)
-            | (Some(OperatorTokenType::PercentageIs), OperatorTokenType::PercNumIsXPercOffWhat) => {
+            (
+                Some(OperatorTokenType::PercentageIs),
+                OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X,
+            )
+            | (
+                Some(OperatorTokenType::PercentageIs),
+                OperatorTokenType::Percentage_Find_Base_From_Result_Decrease_X,
+            )
+            | (
+                Some(OperatorTokenType::PercentageIs),
+                OperatorTokenType::Percentage_Find_Base_From_Result_Rate,
+            ) => {
                 v.in_progress_percentage_op = None;
                 if v.can_be_valid_closing_token() {
                     v.close_valid_range(output_stack.len(), input_index, operator_stack.len());
@@ -984,20 +987,25 @@ impl ShuntingYard {
             (None, OperatorTokenType::PercentageIs) => {
                 v.in_progress_percentage_op = Some(OperatorTokenType::PercentageIs);
             }
-            // what + 17% is 41
-            // what - 17% is 41
-            (None, OperatorTokenType::PercWhatPlusXPercIsNum)
-            | (None, OperatorTokenType::PercWhatMinusXPercIsNum) => {
+            // what plus 17% is 41
+            // what minus 17% is 41
+            (None, OperatorTokenType::Percentage_Find_Base_From_X_Icrease_Result)
+            | (None, OperatorTokenType::Percentage_Find_Base_From_X_Decrease_Result) => {
                 v.in_progress_percentage_op = Some(op.clone());
             }
-            (Some(OperatorTokenType::PercWhatPlusXPercIsNum), OperatorTokenType::PercentageIs)
-            | (Some(OperatorTokenType::PercWhatMinusXPercIsNum), OperatorTokenType::PercentageIs) =>
-            {
+            (
+                Some(OperatorTokenType::Percentage_Find_Base_From_X_Icrease_Result),
+                OperatorTokenType::PercentageIs,
+            )
+            | (
+                Some(OperatorTokenType::Percentage_Find_Base_From_X_Decrease_Result),
+                OperatorTokenType::PercentageIs,
+            ) => {
                 v.in_progress_percentage_op = None;
             }
             // 17% on what is 41
-            (None, OperatorTokenType::PercOnWhatIsNum)
-            | (None, OperatorTokenType::PercOffWhatIsNum) => {
+            (None, OperatorTokenType::Percentage_Find_Base_From_Icrease_X_Result)
+            | (None, OperatorTokenType::Percentage_Find_Base_From_Decrease_X_Result) => {
                 v.in_progress_percentage_op = None;
             }
             _ => {
@@ -1016,6 +1024,9 @@ impl ShuntingYard {
         output_stack: &[ShuntingYardResult],
         operator_stack: &[ShuntingYardOperatorResult],
     ) {
+        if true {
+            return;
+        }
         let mut msg = String::with_capacity(200);
         msg.push_str(where_);
         msg.push('\n');
@@ -2665,7 +2676,7 @@ pub mod tests {
                 num(17),
                 op(OperatorTokenType::Perc),
                 op(OperatorTokenType::PercentageIs),
-                op(OperatorTokenType::PercNumIsXPercOnWhat),
+                op(OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X),
             ],
         );
     }
@@ -2682,7 +2693,7 @@ pub mod tests {
                 num(17),
                 op(OperatorTokenType::Perc),
                 str(" "),
-                op(OperatorTokenType::PercNumIsXPercOnWhat),
+                op(OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X),
             ],
         );
     }
@@ -2700,7 +2711,7 @@ pub mod tests {
                 num(17),
                 op(OperatorTokenType::Perc),
                 str(" "),
-                op(OperatorTokenType::PercNumIsXPercOnWhat),
+                op(OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X),
                 op(OperatorTokenType::ParenClose),
             ],
         );
@@ -2709,13 +2720,13 @@ pub mod tests {
     #[test]
     fn test_shunting_percentage_what_plus() {
         test_output(
-            "what + 17% is 41",
+            "what plus 17% is 41",
             &[
                 num(17),
                 op(OperatorTokenType::Perc),
                 num(41),
                 op(OperatorTokenType::PercentageIs),
-                op(OperatorTokenType::PercWhatPlusXPercIsNum),
+                op(OperatorTokenType::Percentage_Find_Base_From_X_Icrease_Result),
             ],
         );
     }
@@ -2723,9 +2734,9 @@ pub mod tests {
     #[test]
     fn test_shunting_percentage_what_plus_tokens() {
         test_tokens(
-            "what + 17% is 41",
+            "what plus 17% is 41",
             &[
-                op(OperatorTokenType::PercWhatPlusXPercIsNum),
+                op(OperatorTokenType::Percentage_Find_Base_From_X_Icrease_Result),
                 str(" "),
                 num(17),
                 op(OperatorTokenType::Perc),
@@ -2745,7 +2756,7 @@ pub mod tests {
                 num(17),
                 op(OperatorTokenType::Perc),
                 num(41),
-                op(OperatorTokenType::PercOnWhatIsNum),
+                op(OperatorTokenType::Percentage_Find_Base_From_Icrease_X_Result),
             ],
         );
     }
@@ -2758,7 +2769,7 @@ pub mod tests {
                 num(17),
                 op(OperatorTokenType::Perc),
                 str(" "),
-                op(OperatorTokenType::PercOnWhatIsNum),
+                op(OperatorTokenType::Percentage_Find_Base_From_Icrease_X_Result),
                 str(" "),
                 num(41),
             ],
@@ -2772,7 +2783,7 @@ pub mod tests {
             &[
                 num(41),
                 str(" "),
-                op(OperatorTokenType::PercNumIsWhatPercOnNum),
+                op(OperatorTokenType::Percentage_Find_Incr_Rate_From_Result_X_Base),
                 str(" "),
                 num(35),
             ],
@@ -2786,7 +2797,7 @@ pub mod tests {
             &[
                 num(41),
                 num(35),
-                op(OperatorTokenType::PercNumIsWhatPercOnNum),
+                op(OperatorTokenType::Percentage_Find_Incr_Rate_From_Result_X_Base),
             ],
         );
     }
@@ -2800,7 +2811,7 @@ pub mod tests {
                 num(17),
                 op(OperatorTokenType::Perc),
                 op(OperatorTokenType::PercentageIs),
-                op(OperatorTokenType::PercNumIsXPercOffWhat),
+                op(OperatorTokenType::Percentage_Find_Base_From_Result_Decrease_X),
             ],
         );
     }
@@ -2817,7 +2828,7 @@ pub mod tests {
                 num(17),
                 op(OperatorTokenType::Perc),
                 str(" "),
-                op(OperatorTokenType::PercNumIsXPercOffWhat),
+                op(OperatorTokenType::Percentage_Find_Base_From_Result_Decrease_X),
             ],
         );
     }
@@ -2835,7 +2846,7 @@ pub mod tests {
                 num(17),
                 op(OperatorTokenType::Perc),
                 str(" "),
-                op(OperatorTokenType::PercNumIsXPercOffWhat),
+                op(OperatorTokenType::Percentage_Find_Base_From_Result_Decrease_X),
                 op(OperatorTokenType::ParenClose),
             ],
         );
@@ -2844,13 +2855,13 @@ pub mod tests {
     #[test]
     fn test_shunting_percentage_what_minus() {
         test_output(
-            "what - 17% is 41",
+            "what minus 17% is 41",
             &[
                 num(17),
                 op(OperatorTokenType::Perc),
                 num(41),
                 op(OperatorTokenType::PercentageIs),
-                op(OperatorTokenType::PercWhatMinusXPercIsNum),
+                op(OperatorTokenType::Percentage_Find_Base_From_X_Decrease_Result),
             ],
         );
     }
@@ -2858,9 +2869,9 @@ pub mod tests {
     #[test]
     fn test_shunting_percentage_what_minus_tokens() {
         test_tokens(
-            "what - 17% is 41",
+            "what minus 17% is 41",
             &[
-                op(OperatorTokenType::PercWhatMinusXPercIsNum),
+                op(OperatorTokenType::Percentage_Find_Base_From_X_Decrease_Result),
                 str(" "),
                 num(17),
                 op(OperatorTokenType::Perc),
@@ -2880,7 +2891,7 @@ pub mod tests {
                 num(17),
                 op(OperatorTokenType::Perc),
                 num(41),
-                op(OperatorTokenType::PercOffWhatIsNum),
+                op(OperatorTokenType::Percentage_Find_Base_From_Decrease_X_Result),
             ],
         );
     }
@@ -2893,7 +2904,7 @@ pub mod tests {
                 num(17),
                 op(OperatorTokenType::Perc),
                 str(" "),
-                op(OperatorTokenType::PercOffWhatIsNum),
+                op(OperatorTokenType::Percentage_Find_Base_From_Decrease_X_Result),
                 str(" "),
                 num(41),
             ],
@@ -2907,7 +2918,7 @@ pub mod tests {
             &[
                 num(41),
                 str(" "),
-                op(OperatorTokenType::PercNumIsWhatPercOffNum),
+                op(OperatorTokenType::Percentage_Find_Decr_Rate_From_Result_X_Base),
                 str(" "),
                 num(35),
             ],
@@ -2921,7 +2932,64 @@ pub mod tests {
             &[
                 num(41),
                 num(35),
-                op(OperatorTokenType::PercNumIsWhatPercOffNum),
+                op(OperatorTokenType::Percentage_Find_Decr_Rate_From_Result_X_Base),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_percentage_find_rate_from_result_base() {
+        test_output(
+            "20 is what percent of 60",
+            &[
+                num(20),
+                num(60),
+                op(OperatorTokenType::Percentage_Find_Rate_From_Result_Base),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_percentage_find_rate_from_result_base_tokens() {
+        test_tokens(
+            "20 is what percent of 60",
+            &[
+                num(20),
+                str(" "),
+                op(OperatorTokenType::Percentage_Find_Rate_From_Result_Base),
+                str(" "),
+                num(60),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_percentage_find_base_from_result_rate() {
+        test_output(
+            "5 is 25% of what",
+            &[
+                num(5),
+                num(25),
+                op(OperatorTokenType::Perc),
+                op(OperatorTokenType::PercentageIs),
+                op(OperatorTokenType::Percentage_Find_Base_From_Result_Rate),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_shunting_percentage_find_base_from_result_rate_tokens() {
+        test_tokens(
+            "5 is 25% of what",
+            &[
+                num(5),
+                str(" "),
+                op(OperatorTokenType::PercentageIs),
+                str(" "),
+                num(25),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::Percentage_Find_Base_From_Result_Rate),
             ],
         );
     }
