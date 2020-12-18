@@ -126,22 +126,26 @@ pub fn create_app(client_width: usize, client_height: usize) -> u32 {
     set_panic_hook();
     js_log(&format!("client_width: {}", client_width));
     js_log(&format!("client_height: {}", client_height));
-    let editor_objects = EditorObjects::new();
-    let tokens = AppTokens::new();
-    let results = Results::new();
-    let vars = create_vars();
-
-    let app = NoteCalcApp::new(client_width, client_height);
-    to_box_ptr(AppPointers {
-        app_ptr: to_box_ptr(app),
-        units_ptr: to_box_ptr(Units::new()),
-        render_bucket_ptr: to_box_ptr(RenderBuckets::new()),
-        tokens_ptr: to_box_ptr(tokens),
-        results_ptr: to_box_ptr(results),
-        vars_ptr: to_box_ptr(vars),
-        editor_objects_ptr: to_box_ptr(editor_objects),
-        allocator: to_box_ptr(Bump::with_capacity(MAX_LINE_COUNT * 120)),
-    })
+    // put them immediately on the heap
+    let editor_objects = to_box_ptr(EditorObjects::new());
+    let tokens = to_box_ptr(AppTokens::new());
+    let results = to_box_ptr(Results::new());
+    let vars = to_box_ptr(create_vars());
+    let app = to_box_ptr(NoteCalcApp::new(client_width, client_height));
+    let units = to_box_ptr(Units::new());
+    let render_buckets = to_box_ptr(RenderBuckets::new());
+    let bumper = to_box_ptr(Bump::with_capacity(MAX_LINE_COUNT * 120));
+    let ret = to_box_ptr(AppPointers {
+        app_ptr: app,
+        units_ptr: units,
+        render_bucket_ptr: render_buckets,
+        tokens_ptr: tokens,
+        results_ptr: results,
+        vars_ptr: vars,
+        editor_objects_ptr: editor_objects,
+        allocator: bumper,
+    });
+    return ret;
 }
 
 #[wasm_bindgen]

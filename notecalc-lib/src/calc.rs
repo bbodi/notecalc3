@@ -5,7 +5,7 @@ use std::ops::{Neg, Shr};
 use crate::matrix::MatrixData;
 use crate::token_parser::{OperatorTokenType, Token, TokenType};
 use crate::units::consts::EMPTY_UNIT_DIMENSIONS;
-use crate::units::units::UnitOutput;
+use crate::units::units::{UnitOutput, MAX_UNIT_COUNT};
 use crate::Variables;
 use rust_decimal::prelude::*;
 
@@ -106,7 +106,8 @@ pub fn evaluate_tokens<'text_ptr>(
     let mut assignment = false;
     let mut last_success_operation_result_index = None;
 
-    for token in shunting_tokens.iter_mut() {
+    for i in 0..shunting_tokens.len() {
+        let token = &shunting_tokens[i];
         match &token.typ {
             TokenType::NumberLiteral(num) => stack.push(CalcResult::new(
                 CalcResultType::Number(num.clone()),
@@ -116,11 +117,27 @@ pub fn evaluate_tokens<'text_ptr>(
                 return Err(());
             }
             TokenType::Unit(target_unit) => {
-                // TODO clone
-                stack.push(CalcResult::new(
-                    CalcResultType::Unit(target_unit.clone()),
-                    token.index_into_tokens,
-                ))
+                // next token must be an ApplyToken or UnitConverter
+                if shunting_tokens
+                    .get(i + 1)
+                    .map(|it| {
+                        matches!(
+                            dbg!(&it.typ),
+                            TokenType::Operator(OperatorTokenType::UnitConverter)
+                                | TokenType::Operator(OperatorTokenType::Div)
+                                | TokenType::Operator(OperatorTokenType::ApplyUnit)
+                        )
+                    })
+                    .unwrap_or(false)
+                {
+                    // TODO clone
+                    stack.push(CalcResult::new(
+                        CalcResultType::Unit(target_unit.clone()),
+                        token.index_into_tokens,
+                    ));
+                } else {
+                    tokens[token.index_into_tokens].typ = TokenType::StringLiteral;
+                }
             }
             TokenType::Operator(typ) => {
                 if *typ == OperatorTokenType::Assign {
@@ -159,7 +176,11 @@ pub fn evaluate_tokens<'text_ptr>(
     return match last_success_operation_result_index {
         Some(last_success_operation_index) => {
             // e.g. "1+2 some text 3"
-            // in this case prefer the result of 1+2 and ignore the number 3
+            // in this case prefer the result of 1+2 and convert 3 to String
+
+            for stack_elem in stack.iter().skip(last_success_operation_index + 1) {
+                tokens[stack_elem.index_into_tokens].typ = TokenType::StringLiteral;
+            }
             Ok(Some(EvaluationResult {
                 there_was_unit_conversion,
                 there_was_operation: true,
@@ -203,6 +224,7 @@ fn apply_operation<'text_ptr>(
         | OperatorTokenType::Percentage_Find_Decr_Rate_From_Result_X_Base
         | OperatorTokenType::Percentage_Find_Rate_From_Result_Base
         | OperatorTokenType::Percentage_Find_Base_From_Result_Rate
+        | OperatorTokenType::ApplyUnit
         | OperatorTokenType::UnitConverter => {
             if stack.len() > 1 {
                 let (lhs, rhs) = (&stack[stack.len() - 2], &stack[stack.len() - 1]);
@@ -267,16 +289,6 @@ fn apply_operation<'text_ptr>(
             // check test_panic_fuzz_3
             return false;
         }
-        OperatorTokenType::ApplyUnit(target_unit) => {
-            let maybe_top = stack.last();
-            if let Some(result) = maybe_top.and_then(|top| unit_conversion(top, &target_unit)) {
-                stack.pop();
-                stack.push(result);
-                true
-            } else {
-                false
-            }
-        }
         OperatorTokenType::PercentageIs => {
             // ignore
             true
@@ -285,20 +297,13 @@ fn apply_operation<'text_ptr>(
     return succeed;
 }
 
-fn unit_conversion<'text_ptr>(top: &CalcResult, target_unit: &UnitOutput) -> Option<CalcResult> {
-    match &top.typ {
-        CalcResultType::Number(num) => {
-            let norm = target_unit.normalize(num);
-            if target_unit.dimensions == EMPTY_UNIT_DIMENSIONS {
-                // the units cancelled each other, e.g. km/m
-                norm.map(|norm| CalcResult::new(CalcResultType::Number(norm), 0))
-            } else {
-                norm.map(|norm| {
-                    CalcResult::new(CalcResultType::Quantity(norm, target_unit.clone()), 0)
-                })
-            }
-        }
-        _ => None,
+fn unit_conversion<'text_ptr>(num: &Decimal, target_unit: &UnitOutput) -> Option<CalcResult> {
+    let norm = target_unit.normalize(num);
+    if target_unit.dimensions == EMPTY_UNIT_DIMENSIONS {
+        // the units cancelled each other, e.g. km/m
+        norm.map(|norm| CalcResult::new(CalcResultType::Number(norm), 0))
+    } else {
+        norm.map(|norm| CalcResult::new(CalcResultType::Quantity(norm, target_unit.clone()), 0))
     }
 }
 
@@ -332,6 +337,16 @@ fn binary_operation(
         OperatorTokenType::Pow => pow_op(lhs, rhs),
         OperatorTokenType::ShiftLeft => bitwise_shift_left(lhs, rhs),
         OperatorTokenType::ShiftRight => bitwise_shift_right(lhs, rhs),
+        OperatorTokenType::ApplyUnit => {
+            let target_unit = rhs;
+            let operand = lhs;
+            match (&operand.typ, &target_unit.typ) {
+                (CalcResultType::Number(operand), CalcResultType::Unit(target_unit)) => {
+                    unit_conversion(operand, target_unit)
+                }
+                _ => None,
+            }
+        }
         OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X => {
             perc_num_is_xperc_on_what(lhs, rhs)
         }
@@ -701,15 +716,19 @@ pub fn multiply_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
             CalcResultType::Quantity(rhs_num, rhs_unit),
         ) => {
             // 2s * 3s
-            let new_unit = lhs_unit * rhs_unit;
-            if new_unit.is_unitless() {
-                lhs_num
-                    .checked_mul(&rhs_num)
-                    .map(|num| CalcResult::new(CalcResultType::Number(num), 0))
+            if lhs_unit.unit_count + rhs_unit.unit_count >= MAX_UNIT_COUNT {
+                None
             } else {
-                lhs_num
-                    .checked_mul(rhs_num)
-                    .map(|num| CalcResult::new(CalcResultType::Quantity(num, new_unit), 0))
+                let new_unit = lhs_unit * rhs_unit;
+                if new_unit.is_unitless() {
+                    lhs_num
+                        .checked_mul(&rhs_num)
+                        .map(|num| CalcResult::new(CalcResultType::Number(num), 0))
+                } else {
+                    lhs_num
+                        .checked_mul(rhs_num)
+                        .map(|num| CalcResult::new(CalcResultType::Quantity(num, new_unit), 0))
+                }
             }
         }
         (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Percentage(rhs)) => {
@@ -1046,7 +1065,6 @@ pub fn divide_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         (CalcResultType::Number(num), CalcResultType::Unit(unit)) => {
             let new_unit = unit.pow(-1)?;
             let num_part = new_unit.normalize(&num)?;
-            //let _asd = new_unit.from_base_to_this_unit(&num)?;
             Some(CalcResult::new(
                 CalcResultType::Quantity(num_part, new_unit),
                 0,
@@ -1115,11 +1133,14 @@ pub fn divide_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
             // 12 km / 3s
             if rhs.is_zero() {
                 return None;
+            } else if lhs_unit.unit_count + rhs_unit.unit_count >= MAX_UNIT_COUNT {
+                None
+            } else {
+                Some(CalcResult::new(
+                    CalcResultType::Quantity(lhs / rhs, lhs_unit / rhs_unit),
+                    0,
+                ))
             }
-            Some(CalcResult::new(
-                CalcResultType::Quantity(lhs / rhs, lhs_unit / rhs_unit),
-                0,
-            ))
         }
         (CalcResultType::Quantity(_lhs, _lhs_unit), CalcResultType::Percentage(_rhs)) => {
             // 2m / 50%
@@ -1212,13 +1233,20 @@ mod tests {
     use crate::functions::FnType;
     use crate::helper::create_vars;
     use crate::renderer::render_result;
-    use crate::token_parser::{OperatorTokenType, Token};
+    use crate::token_parser::{OperatorTokenType, Token, TokenType};
     use bumpalo::Bump;
     use rust_decimal::prelude::*;
 
     const DECIMAL_COUNT: usize = 4;
 
-    fn test_tokens(text: &str, expected_tokens: &[Token]) {
+    fn test_tokens(text: &str, expected_tokens_: &[Token]) {
+        let mut expected_tokens = Vec::with_capacity(expected_tokens_.len());
+        for t in expected_tokens_ {
+            if matches!(t.typ, TokenType::Operator(OperatorTokenType::ApplyUnit)) {
+                expected_tokens.push(unit(unsafe { std::mem::transmute(t.ptr) }));
+            }
+            expected_tokens.push(t.clone());
+        }
         println!("===================================================");
         println!("{}", text);
         let units = Units::new();
@@ -1235,7 +1263,7 @@ mod tests {
         );
         let _result_stack = crate::calc::evaluate_tokens(&mut tokens, &mut shunting_output, &vars);
 
-        crate::shunting_yard::tests::compare_tokens(text, expected_tokens, &tokens);
+        crate::shunting_yard::tests::compare_tokens(text, &expected_tokens, &tokens);
     }
 
     fn test_vars(vars: &Variables, text: &str, expected: &str, dec_count: usize) {
@@ -1416,8 +1444,42 @@ mod tests {
     }
 
     #[test]
-    fn test_longer_texts() {
+    fn test_longer_texts3() {
         test("I traveled 13km at a rate / 40km/h in min", "19.5 min");
+    }
+
+    #[test]
+    fn test_longer_texts3_tokens() {
+        test_tokens(
+            "I traveled 13km at a rate / 40km/h in min",
+            &[
+                str("I"),
+                str(" "),
+                str("traveled"),
+                str(" "),
+                num(13),
+                apply_to_prev_token_unit("km"),
+                str(" "),
+                str("at"),
+                str(" "),
+                str("a"),
+                str(" "),
+                str("rate"),
+                str(" "),
+                op(OperatorTokenType::Div),
+                str(" "),
+                num(40),
+                apply_to_prev_token_unit("km / h"),
+                str(" "),
+                op(OperatorTokenType::UnitConverter),
+                str(" "),
+                unit("min"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_longer_texts() {
         test(
             "I traveled 24 miles and rode my bike  / 2 hours",
             "12 mile / hour",
@@ -2460,5 +2522,64 @@ mod tests {
                 num_with_err(64),
             ],
         );
+    }
+
+    #[test]
+    fn test_multiplying_too_much_units() {
+        test("1 km*h*s*b*J*A*ft * 2 L*mi", "Err");
+    }
+
+    #[test]
+    fn test_dividing_too_much_units() {
+        test("1 km*h*s*b*J*A*ft / 2 L*mi", "Err");
+    }
+
+    #[test]
+    fn test_unit_conversion_26() {
+        test_tokens(
+            "(256byte * 120) in MiB",
+            &[
+                op(OperatorTokenType::ParenOpen),
+                num(256),
+                apply_to_prev_token_unit("bytes"),
+                str(" "),
+                op(OperatorTokenType::Mult),
+                str(" "),
+                num(120),
+                op(OperatorTokenType::ParenClose),
+                str(" "),
+                op(OperatorTokenType::UnitConverter),
+                str(" "),
+                unit("MiB"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_explicit_multipl_is_mandatory_before_units() {
+        test_tokens(
+            "2m^4kg/s^3",
+            &[num(2), apply_to_prev_token_unit("m^4"), str("kg/s^3")],
+        );
+        // it is the accepted form
+        test_tokens(
+            "2m^4*kg/s^3",
+            &[num(2), apply_to_prev_token_unit("(m^4 kg) / s^3")],
+        );
+    }
+
+    #[test]
+    fn not_in_must_be_str_if_we_are_sure_it_cant_be_unit() {
+        test_tokens(
+            "12 m in",
+            &[
+                num(12),
+                str(" "),
+                apply_to_prev_token_unit("m"),
+                str(" "),
+                str("in"),
+            ],
+        );
+        test("12 m in", "12 m");
     }
 }

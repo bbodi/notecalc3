@@ -1,8 +1,6 @@
 use crate::calc::ShuntingYardResult;
 use crate::functions::FnType;
-use crate::token_parser::{
-    debug_print, pad_rust_is_shit, Assoc, OperatorTokenType, Token, TokenType,
-};
+use crate::token_parser::{debug_print, Assoc, OperatorTokenType, Token, TokenType};
 use crate::units::units::{UnitOutput, Units};
 use std::ops::Neg;
 
@@ -274,7 +272,6 @@ impl ShuntingYard {
                     return;
                 }
                 TokenType::StringLiteral => {
-                    debug_print(&format!("  {:?}", input_token.ptr));
                     if let Some(fn_type) = FnType::value_of(input_token.ptr) {
                         // next token is parenthesis
                         if tokens
@@ -312,14 +309,53 @@ impl ShuntingYard {
                     }
                 }
                 TokenType::Unit(_) => {
-                    // TODO: a token ownershipjét nem vehetem el mert kell a rendereléshez (checkold le azért)
-                    // de a toketyp-bol nből kivehetem a unit-ot, az már nem fog kelleni.
-                    // CODESMELL!!!
-                    // a shunting yard kapja meg a tokens owvershipjét, és adjon vissza egy csak r
-                    // rendereléshez elegendő ptr + type-ot
-                    if !output_stack.is_empty() {
-                        to_out(output_stack, &input_token.typ, input_index);
+                    ShuntingYard::shunting_state_debug_print(
+                        "    TokenType::Unit",
+                        output_stack,
+                        &operator_stack,
+                    );
+
+                    if tokens
+                        .get(input_index as usize + 1)
+                        .map(|it| {
+                            matches!(it.typ, TokenType::Operator(OperatorTokenType::ApplyUnit))
+                        })
+                        .unwrap_or(false)
+                    {
+                        if ShuntingYard::get_next_nonstring_token(tokens, input_index as usize + 2)
+                            .map(|(token, _offset)| matches!(token.typ, TokenType::Unit(_)))
+                            .unwrap_or(false)
+                            && input_token.ptr == &['i', 'n']
+                        {
+                            debug_print("  it is UnitConverter, promote it");
+                            // this is an in operator, not an 'inch' unit
+                            // remove the ApplyUnit and reparse this token as 'UnitConverter'
+                            tokens.remove(input_index as usize + 1);
+                            tokens[input_index as usize].typ =
+                                TokenType::Operator(OperatorTokenType::UnitConverter);
+                            // reparse this 'inch' as 'in' operator
+                            input_index -= 1;
+                            continue;
+                        }
+                        ShuntingYard::operator_rule(
+                            OperatorTokenType::ApplyUnit.precedence(),
+                            OperatorTokenType::ApplyUnit.assoc(),
+                            &mut operator_stack,
+                            output_stack,
+                            &mut v.last_valid_operator_index,
+                            &mut v.last_valid_output_range,
+                            input_index,
+                        );
+
+                        to_out2(output_stack, input_token.typ.clone(), input_index);
+                        to_out2(
+                            output_stack,
+                            TokenType::Operator(OperatorTokenType::ApplyUnit),
+                            input_index,
+                        );
                         v.prev_token_type = ValidationTokenType::Expr;
+                        // Skip ApplyUnit
+                        input_index += 1;
                         if v.can_be_valid_closing_token() {
                             ShuntingYard::send_everything_to_output(
                                 &mut operator_stack,
@@ -333,8 +369,31 @@ impl ShuntingYard {
                                 operator_stack.len(),
                             );
                         }
-                        v.prev_token_type = ValidationTokenType::Expr;
-                        v.expect_expression = false;
+                    } else {
+                        // TODO: a token ownershipjét nem vehetem el mert kell a rendereléshez (checkold le azért)
+                        // de a toketyp-bol nből kivehetem a unit-ot, az már nem fog kelleni.
+                        // CODESMELL!!!
+                        // a shunting yard kapja meg a tokens owvershipjét, és adjon vissza egy csak r
+                        // rendereléshez elegendő ptr + type-ot
+                        if !output_stack.is_empty() {
+                            to_out(output_stack, &input_token.typ, input_index);
+                            v.prev_token_type = ValidationTokenType::Expr;
+                            if v.can_be_valid_closing_token() {
+                                ShuntingYard::send_everything_to_output(
+                                    &mut operator_stack,
+                                    output_stack,
+                                    &mut v.last_valid_operator_index,
+                                    &mut v.last_valid_output_range,
+                                );
+                                v.close_valid_range(
+                                    output_stack.len(),
+                                    input_index,
+                                    operator_stack.len(),
+                                );
+                            }
+                            v.prev_token_type = ValidationTokenType::Expr;
+                            v.expect_expression = false;
+                        }
                     }
                 }
                 TokenType::Operator(op) => match op {
@@ -655,22 +714,16 @@ impl ShuntingYard {
                             );
                         }
                     }
-                    OperatorTokenType::ApplyUnit(unit) => {
-                        ShuntingYard::operator_token_type_apply_unit(
-                            output_stack,
-                            &mut operator_stack,
-                            &mut v,
-                            input_index,
-                            op.precedence(),
-                            op.assoc(),
-                            unit.clone(),
-                        )
+                    OperatorTokenType::ApplyUnit => {
+                        // ignore it, It is handled above inside TokenType::Unit
                     }
                     OperatorTokenType::UnitConverter => {
                         // the converter must be the last operator, only a unit can follow it
                         // so clear the operator stack, push the next unit onto the output
 
                         // push the unit onto the output, and close it
+
+                        // TODO asd ha a köv token egy unit és az azutánui az autolsó ami egy applyunit
                         match ShuntingYard::get_next_nonstring_token(
                             tokens,
                             input_index as usize + 1,
@@ -678,13 +731,6 @@ impl ShuntingYard {
                             Some((
                                 Token {
                                     typ: TokenType::Unit(unit),
-                                    ..
-                                },
-                                offset,
-                            ))
-                            | Some((
-                                Token {
-                                    typ: TokenType::Operator(OperatorTokenType::ApplyUnit(unit)),
                                     ..
                                 },
                                 offset,
@@ -733,18 +779,18 @@ impl ShuntingYard {
                                 if let Some(top) = output_stack.last() {
                                     match top {
                                         ShuntingYardResult {
-                                            typ:
-                                                TokenType::Operator(OperatorTokenType::ApplyUnit(..)),
+                                            typ: TokenType::Operator(OperatorTokenType::ApplyUnit),
                                             ..
                                         } => {
+                                            debug_print("  convert to String");
                                             tokens[input_index as usize].typ =
                                                 TokenType::StringLiteral;
                                         }
                                         _ => {
+                                            debug_print("  convert to Unit(inch)");
                                             let unit = UnitOutput::new_inch(units);
-                                            tokens[input_index as usize].typ = TokenType::Operator(
-                                                OperatorTokenType::ApplyUnit(unit),
-                                            );
+                                            tokens[input_index as usize].typ =
+                                                TokenType::Unit(unit);
                                         }
                                     }
                                 }
@@ -804,7 +850,7 @@ impl ShuntingYard {
                             &operator_stack,
                         );
                         ShuntingYard::shunting_state_debug_print(
-                            "token is operator",
+                            "  token is operator",
                             output_stack,
                             &operator_stack,
                         );
@@ -1013,32 +1059,37 @@ impl ShuntingYard {
             }
         }
         debug_print(&format!(
-            "in_progress_percentage_op: {:?}",
+            "  in_progress_percentage_op: {:?}",
             &v.in_progress_percentage_op
         ));
     }
 
-    #[cfg(debug_assertions)]
+    #[allow(dead_code)]
+    #[allow(unused_variables)]
     fn shunting_state_debug_print<'text_ptr>(
         where_: &str,
         output_stack: &[ShuntingYardResult],
         operator_stack: &[ShuntingYardOperatorResult],
     ) {
-        if true {
+        if false {
             return;
         }
-        let mut msg = String::with_capacity(200);
-        msg.push_str(where_);
-        msg.push('\n');
-        msg.push_str("    [operator_stack]\n    ");
-        for op in operator_stack {
-            pad_rust_is_shit(&mut msg, &format!("        {:?}", op.op_type), 35);
+        #[cfg(debug_assertions)]
+        {
+            use crate::token_parser::pad_rust_is_shit;
+            let mut msg = String::with_capacity(200);
+            msg.push_str(where_);
+            msg.push('\n');
+            msg.push_str("    [operator_stack]\n    ");
+            for op in operator_stack {
+                pad_rust_is_shit(&mut msg, &format!("        {:?}", op.op_type), 35);
+            }
+            msg.push_str("\n\n    [output_stack]\n    ");
+            for token in output_stack {
+                pad_rust_is_shit(&mut msg, &format!("        {:?}", token.typ), 35);
+            }
+            println!("{}", msg);
         }
-        msg.push_str("\n\n    [output_stack]\n    ");
-        for token in output_stack {
-            pad_rust_is_shit(&mut msg, &format!("        {:?}", token.typ), 35);
-        }
-        println!("{}", msg);
     }
 
     fn operator_token_type_unit_converter(
@@ -1067,42 +1118,6 @@ impl ShuntingYard {
         }
     }
 
-    fn operator_token_type_apply_unit(
-        output_stack: &mut Vec<ShuntingYardResult>,
-        operator_stack: &mut Vec<ShuntingYardOperatorResult>,
-        v: &mut ValidationState,
-        input_index: isize,
-        incoming_op_prec: usize,
-        incoming_op_assoc: Assoc,
-        unit: UnitOutput,
-    ) {
-        ShuntingYard::operator_rule(
-            incoming_op_prec,
-            incoming_op_assoc,
-            operator_stack,
-            output_stack,
-            &mut v.last_valid_operator_index,
-            &mut v.last_valid_output_range,
-            input_index,
-        );
-
-        to_out2(
-            output_stack,
-            TokenType::Operator(OperatorTokenType::ApplyUnit(unit)),
-            input_index,
-        );
-        v.prev_token_type = ValidationTokenType::Expr;
-        if v.can_be_valid_closing_token() {
-            ShuntingYard::send_everything_to_output(
-                operator_stack,
-                output_stack,
-                &mut v.last_valid_operator_index,
-                &mut v.last_valid_output_range,
-            );
-            v.close_valid_range(output_stack.len(), input_index, operator_stack.len());
-        }
-    }
-
     fn handle_num_token<'text_ptr>(
         into_output: TokenType,
         v: &mut ValidationState,
@@ -1120,12 +1135,7 @@ impl ShuntingYard {
             if let Some((next_token, offset)) =
                 ShuntingYard::get_next_nonstring_token(tokens, *input_index as usize + 1)
             {
-                if let TokenType::Unit(unit) = &next_token.typ {
-                    // if the next token is unit, push it to the stack immediately, and
-                    // skip the next iteration
-                    *input_index += 1 + offset as isize;
-                    to_out2(output_stack, TokenType::Unit(unit.clone()), *input_index);
-                } else if let TokenType::Operator(OperatorTokenType::Perc) = next_token.typ {
+                if let TokenType::Operator(OperatorTokenType::Perc) = next_token.typ {
                     // if the next token is '%', push it to the stack immediately, and
                     // skip the next iteration
                     *input_index += 1 + offset as isize;
@@ -1369,7 +1379,7 @@ pub mod tests {
     pub fn apply_to_prev_token_unit<'text_ptr>(op_repr: &'static str) -> Token<'text_ptr> {
         Token {
             ptr: unsafe { std::mem::transmute(op_repr) },
-            typ: TokenType::Operator(OperatorTokenType::ApplyUnit(UnitOutput::new())),
+            typ: TokenType::Operator(OperatorTokenType::ApplyUnit),
             has_error: false,
         }
     }
@@ -1408,24 +1418,26 @@ pub mod tests {
 
     pub fn compare_tokens(input: &str, expected_tokens: &[Token], actual_tokens: &[Token]) {
         if expected_tokens.len() != actual_tokens.len() {
-            print_tokens_compare_error_and_panic(input, actual_tokens, None);
+            print_tokens_compare_error_and_panic(
+                &format!("Text: {}\nActual Tokens", input),
+                actual_tokens,
+                expected_tokens,
+                None,
+            );
         }
         for (index, (actual_token, expected_token)) in
             actual_tokens.iter().zip(expected_tokens.iter()).enumerate()
         {
             if actual_token.has_error != expected_token.has_error {
                 print_tokens_compare_error_and_panic(
-                    input,
+                    &format!("Text: {}\nActual Tokens\n", input),
                     actual_tokens,
+                    &expected_tokens,
                     Some((index, expected_token)),
                 );
             }
             match (&expected_token.typ, &actual_token.typ) {
-                (TokenType::Unit(..), TokenType::Unit(actual_unit))
-                | (
-                    TokenType::Operator(OperatorTokenType::ApplyUnit(..)),
-                    TokenType::Operator(OperatorTokenType::ApplyUnit(actual_unit)),
-                ) => {
+                (TokenType::Unit(..), TokenType::Unit(actual_unit)) => {
                     //     expected_op is an &str
                     let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
                     assert_eq!(&actual_unit.to_string(), str_slice)
@@ -1453,8 +1465,9 @@ pub mod tests {
                 _ => {
                     if expected_token.typ != actual_token.typ {
                         print_tokens_compare_error_and_panic(
-                            input,
+                            &format!("Text: {}\nActual Tokens\n", input),
                             actual_tokens,
+                            &expected_tokens,
                             Some((index, expected_token)),
                         );
                     }
@@ -1476,7 +1489,14 @@ pub mod tests {
         return output;
     }
 
-    fn test_output_vars(var_names: &[&'static [char]], text: &str, expected_tokens: &[Token]) {
+    fn test_output_vars(var_names: &[&'static [char]], text: &str, expected_tokens_: &[Token]) {
+        let mut expected_tokens = Vec::with_capacity(expected_tokens_.len());
+        for t in expected_tokens_ {
+            if matches!(t.typ, TokenType::Operator(OperatorTokenType::ApplyUnit)) {
+                expected_tokens.push(unit(unsafe { std::mem::transmute(t.ptr) }));
+            }
+            expected_tokens.push(t.clone());
+        }
         let var_names: Vec<Option<Variable>> = (0..MAX_LINE_COUNT + 1)
             .into_iter()
             .map(|index| {
@@ -1499,7 +1519,7 @@ pub mod tests {
         let output = do_shunting_yard(&temp, &units, &mut tokens, &var_names, &Bump::new());
         compare_tokens(
             text,
-            expected_tokens,
+            &expected_tokens,
             output
                 .iter()
                 .map(|it| Token {
@@ -1516,7 +1536,14 @@ pub mod tests {
         test_output_vars(&[], text, expected_tokens);
     }
 
-    fn test_tokens(text: &str, expected_tokens: &[Token]) {
+    fn test_tokens(text: &str, expected_tokens_: &[Token]) {
+        let mut expected_tokens = Vec::with_capacity(expected_tokens_.len());
+        for t in expected_tokens_ {
+            if matches!(t.typ, TokenType::Operator(OperatorTokenType::ApplyUnit)) {
+                expected_tokens.push(unit(unsafe { std::mem::transmute(t.ptr) }));
+            }
+            expected_tokens.push(t.clone());
+        }
         println!("===================================================");
         println!("{}", text);
         let temp = text.chars().collect::<Vec<char>>();
@@ -1533,7 +1560,7 @@ pub mod tests {
             value: Ok(CalcResult::new(CalcResultType::Number(Decimal::zero()), 0)),
         });
         let _ = do_shunting_yard(&temp, &units, &mut tokens, &vars, &arena);
-        compare_tokens(text, expected_tokens, &tokens);
+        compare_tokens(text, &expected_tokens, &tokens);
     }
 
     #[test]
@@ -2036,22 +2063,6 @@ pub mod tests {
                 str(" "),
             ],
         );
-        test_tokens(
-            "100 ft * lbf in (in*lbg)",
-            &[
-                num(100),
-                str(" "),
-                apply_to_prev_token_unit("ft lbf"),
-                str(" "),
-                str("in"),
-                str(" "),
-                str("("),
-                str("in"),
-                str("*"),
-                str("lbg"),
-                str(")"),
-            ],
-        );
 
         // typo: the text contain 'lbG' and not lbF
         test_output(
@@ -2154,6 +2165,26 @@ pub mod tests {
             "15 EUR adómentes azaz 75-15 euróból kell adózni",
             &[num(75), num(15), op(OperatorTokenType::Sub)],
         );
+    }
+
+    #[test]
+    fn test_invalid_unit_in_conversion_target() {
+        test_tokens(
+            "100 ft * lbf in (in*lbg)",
+            &[
+                num(100),
+                str(" "),
+                apply_to_prev_token_unit("ft lbf"),
+                str(" "),
+                str("in"),
+                str(" "),
+                str("("),
+                str("in"),
+                str("*"),
+                str("lbg"),
+                str(")"),
+            ],
+        )
     }
 
     #[test]
@@ -2990,6 +3021,73 @@ pub mod tests {
                 op(OperatorTokenType::Perc),
                 str(" "),
                 op(OperatorTokenType::Percentage_Find_Base_From_Result_Rate),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_unit_conversion_26() {
+        test_tokens(
+            "(256byte * 120) in MiB",
+            &[
+                op(OperatorTokenType::ParenOpen),
+                num(256),
+                apply_to_prev_token_unit("bytes"),
+                str(" "),
+                op(OperatorTokenType::Mult),
+                str(" "),
+                num(120),
+                op(OperatorTokenType::ParenClose),
+                str(" "),
+                op(OperatorTokenType::UnitConverter),
+                str(" "),
+                unit("MiB"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_unit_conversion_26_output() {
+        test_output(
+            "(256byte * 120) in MiB",
+            &[
+                num(256),
+                apply_to_prev_token_unit("bytes"),
+                num(120),
+                op(OperatorTokenType::Mult),
+                unit("MiB"),
+                op(OperatorTokenType::UnitConverter),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_explicit_multipl_is_mandatory_before_units() {
+        test_tokens(
+            "2m^4kg/s^3",
+            &[
+                num(2),
+                apply_to_prev_token_unit("m^4"),
+                unit("kg / s^3"), // here, it must be unit for now, 'calc' can recognize that it is illegal and transform it to string
+            ],
+        );
+        // it is the accepted form
+        test_tokens(
+            "2m^4*kg/s^3",
+            &[num(2), apply_to_prev_token_unit("(m^4 kg) / s^3")],
+        );
+    }
+
+    #[test]
+    fn not_in_must_be_str_if_we_are_sure_it_cant_be_unit() {
+        test_tokens(
+            "12 m in",
+            &[
+                num(12),
+                str(" "),
+                apply_to_prev_token_unit("m"),
+                str(" "),
+                str("in"),
             ],
         );
     }

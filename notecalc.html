@@ -423,9 +423,6 @@
                 need_update_selected_text = true;
                 render_for_reason('dragging');
                 last_drag_event = {x: char_x, y: char_y};
-                if (char_y !== cursor_y) {
-                    cursor_y = char_y;
-                }
             }
         } else {
             measure_start = new Date().getTime();

@@ -5,6 +5,8 @@ use bumpalo::Bump;
 use rust_decimal::prelude::*;
 use std::str::FromStr;
 
+// TODO
+#[allow(variant_size_differences)]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum TokenType {
     StringLiteral,
@@ -75,7 +77,7 @@ pub enum OperatorTokenType {
     ShiftRight,
     Assign,
     UnitConverter,
-    ApplyUnit(UnitOutput),
+    ApplyUnit,
     Matrix { row_count: usize, col_count: usize },
     Fn { arg_count: usize, typ: FnType },
     PercentageIs,
@@ -134,7 +136,7 @@ impl OperatorTokenType {
             OperatorTokenType::BracketClose => 0,
             OperatorTokenType::Matrix { .. } => 0,
             OperatorTokenType::Fn { .. } => 0,
-            OperatorTokenType::ApplyUnit(_) => 5,
+            OperatorTokenType::ApplyUnit => 5,
             OperatorTokenType::PercentageIs => 20,
             OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X => 10,
             OperatorTokenType::Percentage_Find_Base_From_X_Icrease_Result => 10,
@@ -175,7 +177,7 @@ impl OperatorTokenType {
             OperatorTokenType::BracketClose => Assoc::Left,
             OperatorTokenType::Matrix { .. } => Assoc::Left,
             OperatorTokenType::Fn { .. } => Assoc::Left,
-            OperatorTokenType::ApplyUnit(_) => Assoc::Left,
+            OperatorTokenType::ApplyUnit => Assoc::Left,
             OperatorTokenType::PercentageIs => Assoc::Left,
             OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X => Assoc::Left,
             OperatorTokenType::Percentage_Find_Base_From_X_Icrease_Result => Assoc::Left,
@@ -260,7 +262,9 @@ impl TokenParser {
                         })
                     })
                 });
+
             if let Some(token) = parse_result {
+                let mut put_apply_unit = false;
                 match &token.typ {
                     TokenType::Header => {
                         // the functions already returned in this case
@@ -279,7 +283,8 @@ impl TokenParser {
                         can_be_unit_converter = false;
                     }
                     TokenType::Unit(..) => {
-                        can_be_unit = CanBeUnit::Not;
+                        put_apply_unit = matches!(can_be_unit, CanBeUnit::ApplyToPrevToken);
+                        can_be_unit = CanBeUnit::StandInItself;
                         can_be_unit_converter = true;
                     }
                     TokenType::Operator(typ) => {
@@ -295,9 +300,8 @@ impl TokenParser {
                                 can_be_unit_converter = false;
                             }
                             OperatorTokenType::Div => can_be_unit = CanBeUnit::StandInItself,
-                            OperatorTokenType::ApplyUnit(_) => {
-                                can_be_unit = CanBeUnit::Not;
-                                can_be_unit_converter = true;
+                            OperatorTokenType::ApplyUnit => {
+                                panic!("ApplyUnit is put manually to the stack, the parser can't extrac it ");
                             }
                             _ => {
                                 can_be_unit = CanBeUnit::Not;
@@ -312,6 +316,13 @@ impl TokenParser {
                 }
                 index += token.ptr.len();
                 dst.push(token);
+                if put_apply_unit {
+                    dst.push(Token {
+                        typ: TokenType::Operator(OperatorTokenType::ApplyUnit),
+                        ptr: &[],
+                        has_error: false,
+                    })
+                }
             } else {
                 break;
             }
@@ -571,12 +582,7 @@ impl TokenParser {
             } else {
                 match can_be_unit {
                     CanBeUnit::Not => panic!("impossible"),
-                    CanBeUnit::ApplyToPrevToken => Some(Token {
-                        typ: TokenType::Operator(OperatorTokenType::ApplyUnit(unit)),
-                        ptr,
-                        has_error: false,
-                    }),
-                    CanBeUnit::StandInItself => Some(Token {
+                    CanBeUnit::ApplyToPrevToken | CanBeUnit::StandInItself => Some(Token {
                         typ: TokenType::Unit(unit),
                         ptr,
                         has_error: false,
@@ -870,20 +876,28 @@ impl TokenParser {
     }
 }
 
-#[cfg(debug_assertions)]
+#[allow(dead_code)]
+#[allow(unused_variables)]
 pub fn debug_print(str: &str) {
-    if true {
+    if false {
         return;
     }
-    println!("{}", str);
+    #[cfg(debug_assertions)]
+    {
+        println!("{}", str);
+    }
 }
 
-#[cfg(debug_assertions)]
+#[allow(dead_code)]
+#[allow(unused_variables)]
 pub fn pad_rust_is_shit(error: &mut String, str: &str, len: usize) {
-    error.push_str(str);
-    if str.len() < len {
-        for _ in 0..len - str.len() {
-            error.push(' ');
+    #[cfg(debug_assertions)]
+    {
+        error.push_str(str);
+        if str.len() < len {
+            for _ in 0..len - str.len() {
+                error.push(' ');
+            }
         }
     }
 }
@@ -958,7 +972,14 @@ pub mod tests {
         test_parse_f("123.456.3", "123.456");
     }
 
-    fn test_vars(var_names: &[&'static [char]], text: &str, expected_tokens: &[Token]) {
+    fn test_vars(var_names: &[&'static [char]], text: &str, expected_tokens_: &[Token]) {
+        let mut expected_tokens = Vec::with_capacity(expected_tokens_.len());
+        for t in expected_tokens_ {
+            if matches!(t.typ, TokenType::Operator(OperatorTokenType::ApplyUnit)) {
+                expected_tokens.push(unit(unsafe { std::mem::transmute(t.ptr) }));
+            }
+            expected_tokens.push(t.clone());
+        }
         let var_names: Vec<Option<Variable>> = (0..MAX_LINE_COUNT + 1)
             .into_iter()
             .map(|index| {
@@ -980,7 +1001,12 @@ pub mod tests {
         // line index is 10 so the search for the variable does not stop at 0
         TokenParser::parse_line(&temp, &var_names, &mut vec, &units, 10, &arena);
         if expected_tokens.len() != vec.len() {
-            print_tokens_compare_error_and_panic(text, &vec, None);
+            print_tokens_compare_error_and_panic(
+                &format!("Text: {}\nActual Tokens", text),
+                &vec,
+                &expected_tokens,
+                None,
+            );
         }
         for (error_index, (actual_token, expected_token)) in
             vec.iter().zip(expected_tokens.iter()).enumerate()
@@ -989,11 +1015,7 @@ pub mod tests {
                 (TokenType::NumberLiteral(expected_num), TokenType::NumberLiteral(actual_num)) => {
                     assert_eq!(expected_num, actual_num)
                 }
-                (TokenType::Unit(_), TokenType::Unit(_))
-                | (
-                    TokenType::Operator(OperatorTokenType::ApplyUnit(_)),
-                    TokenType::Operator(OperatorTokenType::ApplyUnit(_)),
-                ) => {
+                (TokenType::Unit(_), TokenType::Unit(_)) => {
                     //     expected_op is an &str
                     let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
                     let expected_chars = str_slice.chars().collect::<Vec<char>>();
@@ -1018,8 +1040,9 @@ pub mod tests {
                     assert_eq!(actual_token.ptr, expected_chars.as_slice())
                 }
                 _ => print_tokens_compare_error_and_panic(
-                    text,
+                    &format!("Text: {}\nActual Tokens", text),
                     &vec,
+                    &expected_tokens,
                     Some((error_index, &expected_token)),
                 ),
             }
@@ -1027,8 +1050,9 @@ pub mod tests {
     }
 
     pub fn print_tokens_compare_error_and_panic(
-        text: &str,
-        vec: &[Token],
+        name: &str,
+        actual_tokens: &[Token],
+        expected_tokens: &[Token],
         single_token_error: Option<(usize, &Token)>,
     ) -> ! {
         fn println_token(error: &mut String, token: &Token) {
@@ -1039,15 +1063,19 @@ pub mod tests {
         }
         // Rust's format! macro escapes newline characters...
         let mut error = String::with_capacity(200);
-        error.push_str("\ntext: ");
-        error.push_str(text);
+        error.push_str(name);
+        error.push('\n');
 
-        if let Some((error_index, expected_token)) = single_token_error {
+        if let Some((error_index, _expected_token)) = single_token_error {
             error.push_str("\nerror at index ");
             error.push_str(&error_index.to_string());
             error.push('\n');
-            for (i, actual_token) in vec.iter().enumerate() {
+        }
+        for (i, actual_token) in actual_tokens.iter().enumerate() {
+            let mut shit_rust_no_let_if_and = false;
+            if let Some((error_index, expected_token)) = single_token_error {
                 if i == error_index {
+                    shit_rust_no_let_if_and = true;
                     error.push_str(&format!(
                         "{}. ERR --------------------------------------------------------------------------------------------------------------",
                         i
@@ -1059,18 +1087,28 @@ pub mod tests {
                     error.push_str(
                         "---------------------------------------------------------------------------------------------------------------------\n",
                     );
-                } else {
-                    error.push_str(&format!("{}. ok     ", i));
-                    println_token(&mut error, actual_token);
                 }
             }
-        } else {
-            error.push('\n');
-            for (i, actual_token) in vec.iter().enumerate() {
-                error.push_str(&format!("{}.      ", i));
+            if shit_rust_no_let_if_and == false {
+                error.push_str(&format!("{}. ok           ", i));
                 println_token(&mut error, actual_token);
+                if let Some(expected_token) = expected_tokens.get(i) {
+                    error.push_str(&format!("{}. expected     ", i));
+                    println_token(&mut error, expected_token);
+                } else {
+                    error.push_str(&format!("{}. expected     NOTHING\n", i));
+                }
             }
         }
+        for (i, expected_token) in expected_tokens.iter().skip(actual_tokens.len()).enumerate() {
+            error.push_str(&format!(
+                "{}. actual       NOTHING\n",
+                actual_tokens.len() + i
+            ));
+            error.push_str(&format!("{}. expected     ", actual_tokens.len() + i));
+            println_token(&mut error, expected_token);
+        }
+
         panic!(error);
     }
 
@@ -1378,18 +1416,6 @@ pub mod tests {
             &[num(1), str(" "), apply_to_prev_token_unit("(m*kg)/(s^2)")],
         );
 
-        // explicit multiplication is mandatory before units
-        test(
-            "2m^4kg/s^3",
-            &[
-                num(2),
-                apply_to_prev_token_unit("m^4"),
-                str("kg"),
-                op(OperatorTokenType::Div),
-                unit("s^3"),
-            ],
-        );
-
         // test("5kg*m/s^2", "5 (kg m) / s^2")
 
         test(
@@ -1430,6 +1456,25 @@ pub mod tests {
                 str(" "),
                 apply_to_prev_token_unit("s"),
             ],
+        );
+    }
+
+    #[test]
+    fn test_explicit_multipl_is_mandatory_before_units() {
+        test(
+            "2m^4kg/s^3",
+            &[
+                num(2),
+                apply_to_prev_token_unit("m^4"),
+                unit("kg/s^3"), // here, it must be unit for now, calc or shunting can recognize that it is illegal and transform it to string
+                                //op(OperatorTokenType::Div),
+                                //unit("s^3"),
+            ],
+        );
+        // this is the accepted form
+        test(
+            "2m^4*kg/s^3",
+            &[num(2), apply_to_prev_token_unit("m^4*kg/s^3")],
         );
     }
 
@@ -2053,7 +2098,7 @@ pub mod tests {
     }
 
     #[test]
-    fn in_must_be_str_if_we_are_sure_it_cant_be_unit() {
+    fn not_in_must_be_str_if_we_are_sure_it_cant_be_unit() {
         test(
             "12 m in",
             &[
@@ -2061,7 +2106,7 @@ pub mod tests {
                 str(" "),
                 apply_to_prev_token_unit("m"),
                 str(" "),
-                str("in"),
+                op(OperatorTokenType::UnitConverter),
             ],
         );
     }
@@ -2301,6 +2346,27 @@ pub mod tests {
                 op(OperatorTokenType::Perc),
                 str(" "),
                 op(OperatorTokenType::Percentage_Find_Base_From_Result_Rate),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_unit_conversion_26() {
+        test(
+            "(256byte * 120) in MiB",
+            &[
+                op(OperatorTokenType::ParenOpen),
+                num(256),
+                apply_to_prev_token_unit("byte"),
+                str(" "),
+                op(OperatorTokenType::Mult),
+                str(" "),
+                num(120),
+                op(OperatorTokenType::ParenClose),
+                str(" "),
+                apply_to_prev_token_unit("in"),
+                str(" "),
+                unit("MiB"),
             ],
         );
     }

@@ -76,6 +76,8 @@ to be able to place the cursor at the right place, since the text rendering
   Now pulses are rendered above "BelowText" layer and below the "Text" layer.
 - underscore is allowed in binary numbers (e.g. ``0b11_00``)
 - Parenthesis have different color than operators.
+- Remove `Vec` and dynamic allocation from unit parsing and operations.
+- Replaced all unit `RefCells` to `Rc`, it was a mistake to use `RefCells` in the first place.
 
 ### Fixed
 - Longest visible result length was calculated wrongly when there were multiple headers

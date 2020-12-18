@@ -6058,7 +6058,7 @@ fn draw_token<'text_ptr>(
             TokenType::LineReference { .. } => &mut render_buckets.variable,
             TokenType::NumberLiteral(_) => &mut render_buckets.numbers,
             TokenType::NumberErr => &mut render_buckets.number_errors,
-            TokenType::Operator(OperatorTokenType::ApplyUnit(_)) => &mut render_buckets.units,
+            TokenType::Operator(OperatorTokenType::ApplyUnit) => &mut render_buckets.units,
             TokenType::Unit(_) => &mut render_buckets.units,
             TokenType::Operator(OperatorTokenType::ParenClose) => {
                 if is_bold {
@@ -7275,20 +7275,20 @@ mod main_tests {
             self.mut_app().handle_mouse_up();
         }
 
-        fn get_render_data(&self) -> GlobalRenderData {
-            return self.mut_app().render_data.clone();
+        fn get_render_data(&self) -> &GlobalRenderData {
+            return &self.app().render_data;
         }
 
         fn get_editor_content(&self) -> String {
-            return self.mut_app().editor_content.get_content();
+            return self.app().editor_content.get_content();
         }
 
         fn get_cursor_pos(&self) -> Pos {
-            return self.mut_app().editor.get_selection().get_cursor_pos();
+            return self.app().editor.get_selection().get_cursor_pos();
         }
 
         fn get_selection(&self) -> Selection {
-            return self.mut_app().editor.get_selection();
+            return self.app().editor.get_selection();
         }
 
         fn set_selection(&self, selection: Selection) {
@@ -7305,24 +7305,27 @@ mod main_tests {
         for b in unsafe { &mut RESULT_BUFFER } {
             *b = 0;
         }
-        let app = NoteCalcApp::new(client_width, client_height);
-        let editor_objects = EditorObjects::new();
-        let tokens = AppTokens::new();
-        let results = Results::new();
-        let vars = create_vars();
         fn to_box_ptr<T>(t: T) -> u64 {
             let ptr = Box::into_raw(Box::new(t)) as u64;
             ptr
         }
+        let app = to_box_ptr(NoteCalcApp::new(client_width, client_height));
+        let editor_objects = to_box_ptr(EditorObjects::new());
+        let tokens = to_box_ptr(AppTokens::new());
+        let results = to_box_ptr(Results::new());
+        let vars = to_box_ptr(create_vars());
+        let units = to_box_ptr(Units::new());
+        let render_buckets = to_box_ptr(RenderBuckets::new());
+        let bumper = to_box_ptr(Bump::with_capacity(MAX_LINE_COUNT * 120));
         return BorrowCheckerFighter {
-            app_ptr: to_box_ptr(app),
-            units_ptr: to_box_ptr(Units::new()),
-            render_bucket_ptr: to_box_ptr(RenderBuckets::new()),
-            tokens_ptr: to_box_ptr(tokens),
-            results_ptr: to_box_ptr(results),
-            vars_ptr: to_box_ptr(vars),
-            editor_objects_ptr: to_box_ptr(editor_objects),
-            allocator: to_box_ptr(Bump::with_capacity(MAX_LINE_COUNT * 120)),
+            app_ptr: app,
+            units_ptr: units,
+            render_bucket_ptr: render_buckets,
+            tokens_ptr: tokens,
+            results_ptr: results,
+            vars_ptr: vars,
+            editor_objects_ptr: editor_objects,
+            allocator: bumper,
         };
     }
 
@@ -8048,7 +8051,6 @@ mod main_tests {
             }
             // This step moves the matrix out of vision, so 6 line will appear instead of it at the bottom
             test.input(EditorInputEvent::Down, InputModifiers::none());
-            test.render();
             assert_eq!(test.get_render_data().scroll_y, 4);
             assert_eq!(
                 test.get_render_data().get_render_y(content_y(33)),

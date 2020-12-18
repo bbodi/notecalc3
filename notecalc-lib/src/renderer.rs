@@ -55,7 +55,7 @@ pub fn render_result_into(
                 unit.simplify(units)
             };
             let unit = final_unit.as_ref().unwrap_or(unit);
-            if unit.units.is_empty() {
+            if unit.unit_count == 0 {
                 num_to_string(f, &num, &ResultFormat::Dec, decimal_count, use_grouping)
             } else {
                 let denormalized_num = unit.from_base_to_this_unit(num);
@@ -70,18 +70,17 @@ pub fn render_result_into(
                     f.write_u8(b' ').expect("");
                     // TODO:mem to_string -> into(buf)
                     // implement a into(std::io:Write) method for UnitOutput
-                    if unit.units.len() == 1 && unit.units[0].power == -1 {
-                        let unit = &unit.units[0];
+                    if unit.unit_count == 1 && unit.get_unit(0).power == -1 {
+                        let unit = &unit.get_unit(0);
                         f.write_u8(b'/').expect("");
                         f.write_u8(b' ').expect("");
-                        for ch in unit.prefix.borrow().name {
+                        for ch in unit.prefix.name {
                             f.write_u8(*ch as u8).expect("");
                         }
-                        for ch in unit.unit.borrow().name {
+                        for ch in unit.unit.name {
                             f.write_u8(*ch as u8).expect("");
                         }
-                        lens.unit_part_len +=
-                            2 + unit.prefix.borrow().name.len() + unit.unit.borrow().name.len();
+                        lens.unit_part_len += 2 + unit.prefix.name.len() + unit.unit.name.len();
                     } else {
                         for ch in unit.to_string().as_bytes() {
                             f.write_u8(*ch).expect("");

@@ -3,7 +3,7 @@
 use crate::units::consts::BASE_UNIT_DIMENSION_COUNT;
 use rust_decimal::prelude::*;
 use smallvec::alloc::fmt::Formatter;
-use std::cell::RefCell;
+use std::rc::Rc;
 
 pub mod consts;
 pub mod units;
@@ -14,8 +14,8 @@ pub struct Unit {
     pub base: [i8; BASE_UNIT_DIMENSION_COUNT],
     // e.g. prefix_groups: (Some(&prefixes.short), Some(&prefixes.long)),
     pub prefix_groups: (
-        Option<RefCell<Box<Vec<RefCell<Prefix>>>>>,
-        Option<RefCell<Box<Vec<RefCell<Prefix>>>>>,
+        Option<Rc<Box<Vec<Rc<Prefix>>>>>,
+        Option<Rc<Box<Vec<Rc<Prefix>>>>>,
     ),
     pub value: Decimal,
     pub offset: Decimal,
@@ -32,15 +32,15 @@ impl std::fmt::Debug for Unit {
 }
 
 pub struct UnitPrefixes {
-    short: RefCell<Box<Vec<RefCell<Prefix>>>>,
-    long: RefCell<Box<Vec<RefCell<Prefix>>>>,
-    squared: RefCell<Box<Vec<RefCell<Prefix>>>>,
-    cubic: RefCell<Box<Vec<RefCell<Prefix>>>>,
-    binary_short_si: RefCell<Box<Vec<RefCell<Prefix>>>>,
-    binary_short_iec: RefCell<Box<Vec<RefCell<Prefix>>>>,
-    binary_long_si: RefCell<Box<Vec<RefCell<Prefix>>>>,
-    binary_long_iec: RefCell<Box<Vec<RefCell<Prefix>>>>,
-    btu: RefCell<Box<Vec<RefCell<Prefix>>>>,
+    short: Rc<Box<Vec<Rc<Prefix>>>>,
+    long: Rc<Box<Vec<Rc<Prefix>>>>,
+    squared: Rc<Box<Vec<Rc<Prefix>>>>,
+    cubic: Rc<Box<Vec<Rc<Prefix>>>>,
+    binary_short_si: Rc<Box<Vec<Rc<Prefix>>>>,
+    binary_short_iec: Rc<Box<Vec<Rc<Prefix>>>>,
+    binary_long_si: Rc<Box<Vec<Rc<Prefix>>>>,
+    binary_long_iec: Rc<Box<Vec<Rc<Prefix>>>>,
+    btu: Rc<Box<Vec<Rc<Prefix>>>>,
 }
 
 #[derive(Eq, PartialEq, Clone, Debug)]
