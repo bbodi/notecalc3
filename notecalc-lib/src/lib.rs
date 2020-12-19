@@ -3023,6 +3023,7 @@ impl NoteCalcApp {
                     &mut tokens.tokens,
                     &mut tokens.shunting_output_stack,
                     editor_content.get_line_valid_chars(editor_y.as_usize()),
+                    units,
                 );
                 let result = result.map(|it| it.map(|it| it.result));
                 result
@@ -4982,8 +4983,9 @@ fn evaluate_tokens_and_save_result<'text_ptr>(
     tokens: &mut [Token<'text_ptr>],
     shunting_output_stack: &mut Vec<ShuntingYardResult>,
     line: &[char],
+    units: &Units,
 ) -> Result<Option<EvaluationResult>, ()> {
-    let result = evaluate_tokens(tokens, shunting_output_stack, &vars);
+    let result = evaluate_tokens(tokens, shunting_output_stack, &vars, units);
     if let Ok(Some(result)) = &result {
         fn replace_or_insert_var(
             vars: &mut Variables,
@@ -5243,7 +5245,7 @@ fn evaluate_text<'text_ptr>(
     TokenParser::parse_line(text, vars, tokens, &units, editor_y, allocator);
     let mut shunting_output_stack = Vec::with_capacity(4);
     ShuntingYard::shunting_yard(tokens, &mut shunting_output_stack, units);
-    return evaluate_tokens(tokens, &mut shunting_output_stack, &vars);
+    return evaluate_tokens(tokens, &mut shunting_output_stack, &vars, units);
 }
 
 fn render_matrix_obj<'text_ptr>(
@@ -6061,6 +6063,9 @@ fn draw_token<'text_ptr>(
             TokenType::Operator(OperatorTokenType::ApplyUnit) => &mut render_buckets.units,
             TokenType::Unit(_) => &mut render_buckets.units,
             TokenType::Operator(OperatorTokenType::ParenClose) => {
+                if current_editor_width <= render_x {
+                    return;
+                }
                 if is_bold {
                     render_buckets.set_color(Layer::BehindText, theme.line_ref_bg);
                     render_buckets.draw_rect(
@@ -6091,6 +6096,9 @@ fn draw_token<'text_ptr>(
                 return;
             }
             TokenType::Operator(OperatorTokenType::ParenOpen) => {
+                if current_editor_width <= render_x {
+                    return;
+                }
                 if is_bold {
                     render_buckets.set_color(Layer::BehindText, theme.line_ref_bg);
                     render_buckets.draw_rect(
@@ -13057,5 +13065,63 @@ asd",
                 char: ')',
             }),
         );
+    }
+
+    #[test]
+    fn asd() {
+        let test = create_app3(51, 36);
+        test.paste("1+e()^100");
+        // test.paste(
+        //     "halflife = 1.5 years
+        // decayconst = ln(2)/halflife
+        // n0 = 1 mol
+        // n0*e()^(decayconst*100 years)",
+        // );
+    }
+
+    #[test]
+    fn test_parenthesis_must_not_rendered_outside_of_editor() {
+        let test = create_app3(51, 36);
+        test.paste("1000 (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)");
+        // there is enough space, everything is rendered
+        let render_bucket = &test.render_bucket().parenthesis;
+        assert_eq!(render_bucket.iter().filter(|it| it.char == '(').count(), 1);
+        assert_eq!(render_bucket.iter().filter(|it| it.char == ')').count(), 1);
+
+        // put the cursor right after '1000'
+        test.input(EditorInputEvent::Home, InputModifiers::none());
+        test.input(EditorInputEvent::Right, InputModifiers::ctrl());
+
+        // the right parenth is on the scrollbar column, no render
+        test.input(EditorInputEvent::Char('0'), InputModifiers::none());
+        let render_bucket = &test.render_bucket().parenthesis;
+        assert_eq!(render_bucket.iter().filter(|it| it.char == '(').count(), 1);
+        assert_eq!(render_bucket.iter().filter(|it| it.char == ')').count(), 0);
+
+        // the right parenth is on the right gutter, no render
+        test.input(EditorInputEvent::Char('0'), InputModifiers::none());
+        let render_bucket = &test.render_bucket().parenthesis;
+        assert_eq!(render_bucket.iter().filter(|it| it.char == '(').count(), 1);
+        assert_eq!(render_bucket.iter().filter(|it| it.char == ')').count(), 0);
+
+        // the right parenth is on the result panel, no render
+        test.input(EditorInputEvent::Char('0'), InputModifiers::none());
+        let render_bucket = &test.render_bucket().parenthesis;
+        assert_eq!(render_bucket.iter().filter(|it| it.char == '(').count(), 1);
+        assert_eq!(render_bucket.iter().filter(|it| it.char == ')').count(), 0);
+
+        // the left parenth is on the right gutter, no render
+        for _ in 0..13 {
+            test.input(EditorInputEvent::Char('0'), InputModifiers::none());
+        }
+        let render_bucket = &test.render_bucket().parenthesis;
+        assert_eq!(render_bucket.iter().filter(|it| it.char == '(').count(), 0);
+        assert_eq!(render_bucket.iter().filter(|it| it.char == ')').count(), 0);
+
+        // the left parenth is on the result panel gutter, no render
+        test.input(EditorInputEvent::Char('0'), InputModifiers::none());
+        let render_bucket = &test.render_bucket().parenthesis;
+        assert_eq!(render_bucket.iter().filter(|it| it.char == '(').count(), 0);
+        assert_eq!(render_bucket.iter().filter(|it| it.char == ')').count(), 0);
     }
 }

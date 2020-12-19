@@ -451,8 +451,12 @@
         }
     }
 
+    let expect_keypress = false;
     function doKeyDown(e) {
         // console.log(e.key, 'alt', e.altKey, 'ctrl', e.ctrlKey, 'shift', e.shiftKey);
+
+        expect_keypress = false;
+
         let key;
         if (is_mobile && e.handled_for_mobile === undefined) {
             return;
@@ -502,6 +506,7 @@
         } else if (e.key === "AltGraph") {
             return;
         } else if (e.key === "Dead") {
+            expect_keypress = true;
             return;
         } else if (e.ctrlKey &&
             (
@@ -535,8 +540,8 @@
         if (content_was_modified) {
             set_content_was_modified();
         }
-        update_selected_text();
         if (e.ctrlKey && (e.key === 'c' || e.key === 'x')) {
+            update_selected_text();
             if (e.key === 'x') {
                 render_for_reason('ctrl-x');
             }
@@ -983,6 +988,11 @@
 
         // window
         window.addEventListener('keydown', doKeyDown);
+        window.addEventListener('keypress', function (evt) {
+            if (expect_keypress) {
+                doKeyDown(evt);
+            }
+        });
         window.addEventListener('keyup', doKeyUp, true);
         window.addEventListener('paste', (event) => {
             paste_from_clipboard((event.clipboardData || window.clipboardData).getData('text'));

@@ -3,6 +3,7 @@ use std::str::FromStr;
 
 use rust_decimal::prelude::*;
 
+use crate::token_parser::DECIMAL_PI;
 use crate::units::units::{UnitInstance, Units};
 use crate::units::{Prefix, Unit, UnitPrefixes};
 use std::rc::Rc;
@@ -16,7 +17,7 @@ const E27: &str = "1000000000000000000000000000";
 //const E48: &str = "1000000000000000000000000000000000000000000000000";
 
 #[repr(C)]
-enum UnitType {
+pub enum UnitType {
     Mass,
     Length,
     Time,
@@ -302,7 +303,7 @@ fn create_prefixes() -> UnitPrefixes {
 
 pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
     let prefixes = create_prefixes();
-    let pi: Decimal = Decimal::from_str("3.14159265358979323846264338327950288").unwrap();
+    let pi: Decimal = DECIMAL_PI;
     let mut map = HashMap::<&str, Unit>::with_capacity(168);
 
     map.insert(

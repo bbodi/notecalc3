@@ -1,7 +1,7 @@
 use crate::calc::pow;
 use crate::units::consts::{
-    get_base_unit_for, init_aliases, init_units, UnitDimensionExponent, BASE_UNIT_DIMENSIONS,
-    BASE_UNIT_DIMENSION_COUNT,
+    get_base_unit_for, init_aliases, init_units, UnitDimensionExponent, UnitType,
+    BASE_UNIT_DIMENSIONS, BASE_UNIT_DIMENSION_COUNT,
 };
 use crate::units::{Prefix, Unit, UnitPrefixes};
 use rust_decimal::Decimal;
@@ -463,6 +463,16 @@ impl UnitOutput {
         return unit;
     }
 
+    pub fn new_rad(units: &Units) -> UnitOutput {
+        let mut unit = UnitOutput::new();
+        let _ = unit.add_unit(UnitInstance::new(
+            Rc::clone(&units.units["rad"]),
+            Rc::clone(&units.no_prefix),
+            1,
+        ));
+        return unit;
+    }
+
     #[must_use]
     pub fn add_unit(&mut self, unit: UnitInstance) -> bool {
         for i in 0..BASE_UNIT_DIMENSION_COUNT {
@@ -532,6 +542,10 @@ impl UnitOutput {
                 None
             }
         }
+    }
+
+    pub fn is(&self, typ: UnitType) -> bool {
+        self.dimensions == BASE_UNIT_DIMENSIONS[typ as usize]
     }
 }
 

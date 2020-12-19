@@ -1,19 +1,30 @@
 use crate::calc::{add_op, CalcResult, CalcResultType};
-use crate::token_parser::Token;
+use crate::token_parser::{Token, DECIMAL_E, DECIMAL_PI};
+use crate::units::consts::UnitType;
+use crate::units::units::{UnitOutput, Units};
 use rust_decimal::prelude::*;
-use std::str::FromStr;
+use std::ops::Neg;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, EnumIter)]
 pub enum FnType {
-    Sin,
-    Cos,
     Nth,
     Sum,
     Transpose,
     Pi,
+    E,
     Ceil,
+    Ln,
+    Lg,
+    Log,
+    Abs,
+    Sin,
+    Asin,
+    Cos,
+    Acos,
+    Tan,
+    Atan,
 }
 
 impl FnType {
@@ -30,13 +41,22 @@ impl FnType {
     #[inline]
     pub fn name(&self) -> &'static [char] {
         match self {
+            FnType::Abs => &['a', 'b', 's'],
             FnType::Sin => &['s', 'i', 'n'],
             FnType::Cos => &['c', 'o', 's'],
+            FnType::Asin => &['a', 's', 'i', 'n'],
+            FnType::Acos => &['a', 'c', 'o', 's'],
+            FnType::Tan => &['t', 'a', 'n'],
+            FnType::Atan => &['a', 't', 'a', 'n'],
             FnType::Nth => &['n', 't', 'h'],
             FnType::Sum => &['s', 'u', 'm'],
             FnType::Transpose => &['t', 'r', 'a', 'n', 's', 'p', 'o', 's', 'e'],
             FnType::Pi => &['p', 'i'],
+            FnType::E => &['e'],
             FnType::Ceil => &['c', 'e', 'i', 'l'],
+            FnType::Ln => &['l', 'n'],
+            FnType::Lg => &['l', 'g'],
+            FnType::Log => &['l', 'o', 'g'],
         }
     }
 
@@ -47,45 +67,281 @@ impl FnType {
         stack: &mut Vec<CalcResult>,
         fn_token_index: usize,
         tokens: &mut [Token<'text_ptr>],
+        units: &Units,
     ) -> bool {
         match self {
+            FnType::Abs => {
+                fn_single_param_decimal(arg_count, stack, tokens, fn_token_index, Decimal::abs)
+            }
             FnType::Nth => fn_nth(arg_count, stack, tokens, fn_token_index),
             FnType::Sum => fn_sum(arg_count, stack),
             FnType::Transpose => fn_transpose(arg_count, stack),
-            FnType::Pi => fn_pi(arg_count, stack, fn_token_index),
-            FnType::Sin => true,
-            FnType::Cos => true,
-            FnType::Ceil => fn_ceil(arg_count, stack, tokens, fn_token_index),
+            FnType::Pi => fn_const(arg_count, stack, fn_token_index, tokens, DECIMAL_PI),
+            FnType::E => fn_const(arg_count, stack, fn_token_index, tokens, DECIMAL_E),
+            FnType::Sin => fn_f64_rad_to_num(arg_count, stack, tokens, fn_token_index, f64::sin),
+            FnType::Asin => {
+                fn_f64_num_to_rad(arg_count, stack, tokens, fn_token_index, f64::asin, units)
+            }
+            FnType::Cos => fn_f64_rad_to_num(arg_count, stack, tokens, fn_token_index, f64::cos),
+            FnType::Acos => {
+                fn_f64_num_to_rad(arg_count, stack, tokens, fn_token_index, f64::acos, units)
+            }
+            FnType::Tan => fn_f64_rad_to_num(arg_count, stack, tokens, fn_token_index, f64::tan),
+            FnType::Atan => {
+                fn_f64_num_to_rad(arg_count, stack, tokens, fn_token_index, f64::atan, units)
+            }
+            FnType::Ceil => {
+                fn_single_param_decimal(arg_count, stack, tokens, fn_token_index, Decimal::ceil)
+            }
+            FnType::Ln => fn_single_param_f64(arg_count, stack, tokens, fn_token_index, f64::ln),
+            FnType::Lg => fn_single_param_f64(arg_count, stack, tokens, fn_token_index, f64::log2),
+            FnType::Log => fn_double_param_f64(arg_count, stack, tokens, fn_token_index, |a, b| {
+                f64::log(b, a)
+            }),
         }
     }
 }
 
-fn fn_pi(arg_count: usize, stack: &mut Vec<CalcResult>, token_index: usize) -> bool {
+fn fn_const<'text_ptr>(
+    arg_count: usize,
+    stack: &mut Vec<CalcResult>,
+    token_index: usize,
+    tokens: &mut [Token<'text_ptr>],
+    const_value: Decimal,
+) -> bool {
     if arg_count != 0 {
+        for i in 0..arg_count {
+            stack[stack.len() - 1 - i].set_token_error_flag(tokens);
+        }
         return false;
     }
 
-    stack.push(CalcResult::new(CalcResultType::Number(
-        Decimal::from_str("3.1415926535897932384626433832795028841971693993751058209749445923078164062862089986280348253421170679821480865132823066470938446095505822317253594081284811174502841027019385211055596446229489549303819644288109756659334461284756482337867831652712019091456485669234603486104543266482133936072602491412737245870066063155881748815209209628292540917153643678925903600113305305488204665213841469519415116094330572703657595919530921861173819326117931051185480744623799627495673518857527248912279381830119491298336733624406566430860213949463952247371907021798609437027705392171762931767523846748184676694051320005681271452635608277857713427577896091736371787214684409012249534301465495853710507922796892589235420199561121290219608640344181598136297747713099605187072113499999983729780499510597317328160963185950244594553469083026425223082533446850352619311881710100031378387528865875332083814206171776691473035982534904287554687311595628638823537875937519577818577805321712268066130019278766111959092164201989").unwrap()
-    ), token_index));
+    stack.push(CalcResult::new(
+        CalcResultType::Number(const_value),
+        token_index,
+    ));
 
     true
 }
 
-fn fn_ceil<'text_ptr>(
+fn fn_single_param_f64<'text_ptr, F>(
     arg_count: usize,
     stack: &mut Vec<CalcResult>,
     tokens: &mut [Token<'text_ptr>],
     fn_token_index: usize,
-) -> bool {
-    if arg_count < 1 || stack.len() < 1 {
+    action: F,
+) -> bool
+where
+    F: Fn(f64) -> f64,
+{
+    if arg_count == 0 {
+        Token::set_token_error_flag_by_index(fn_token_index, tokens);
+        false
+    } else if arg_count > 1 {
+        for i in 0..arg_count {
+            stack[stack.len() - 1 - i].set_token_error_flag(tokens);
+        }
+        false
+    } else {
+        let param = &stack[stack.len() - 1];
+        match &param.typ {
+            CalcResultType::Number(num) => {
+                if let Some(result) = num
+                    .to_f64()
+                    .map(|numf| action(numf))
+                    .and_then(|ln_result| Decimal::from_f64(ln_result))
+                {
+                    let token_index = param.get_index_into_tokens();
+                    stack.pop();
+                    stack.push(CalcResult::new(CalcResultType::Number(result), token_index));
+                    true
+                } else {
+                    param.set_token_error_flag(tokens);
+                    false
+                }
+            }
+            _ => {
+                param.set_token_error_flag(tokens);
+                false
+            }
+        }
+    }
+}
+
+fn fn_double_param_f64<'text_ptr, F>(
+    arg_count: usize,
+    stack: &mut Vec<CalcResult>,
+    tokens: &mut [Token<'text_ptr>],
+    fn_token_index: usize,
+    action: F,
+) -> bool
+where
+    F: Fn(f64, f64) -> f64,
+{
+    if arg_count < 2 {
+        Token::set_token_error_flag_by_index(fn_token_index, tokens);
+        false
+    } else if arg_count > 2 {
+        for i in 2..arg_count {
+            stack[stack.len() - 1 - i].set_token_error_flag(tokens);
+        }
+        false
+    } else {
+        let first_param = &stack[stack.len() - 2];
+        let second_param = &stack[stack.len() - 1];
+        match (&first_param.typ, &second_param.typ) {
+            (CalcResultType::Number(p1_dec), CalcResultType::Number(p2_dec)) => {
+                let p1_f64 = p1_dec.to_f64();
+                let p2_f64 = p2_dec.to_f64();
+                if p1_f64.is_some() && p2_f64.is_some() {
+                    if let Some(result) =
+                        Decimal::from_f64(action(p1_f64.unwrap(), p2_f64.unwrap()))
+                    {
+                        let token_index = first_param.get_index_into_tokens();
+                        stack.pop();
+                        stack.pop();
+                        stack.push(CalcResult::new(CalcResultType::Number(result), token_index));
+                        true
+                    } else {
+                        Token::set_token_error_flag_by_index(fn_token_index, tokens);
+                        false
+                    }
+                } else {
+                    if p1_f64.is_none() {
+                        stack[first_param.get_index_into_tokens()].set_token_error_flag(tokens);
+                    }
+                    if p2_f64.is_none() {
+                        stack[second_param.get_index_into_tokens()].set_token_error_flag(tokens);
+                    }
+                    false
+                }
+            }
+            _ => {
+                stack[first_param.get_index_into_tokens()].set_token_error_flag(tokens);
+                stack[second_param.get_index_into_tokens()].set_token_error_flag(tokens);
+                false
+            }
+        }
+    }
+}
+
+fn fn_f64_rad_to_num<'text_ptr, F>(
+    arg_count: usize,
+    stack: &mut Vec<CalcResult>,
+    tokens: &mut [Token<'text_ptr>],
+    fn_token_index: usize,
+    action: F,
+) -> bool
+where
+    F: Fn(f64) -> f64,
+{
+    if arg_count < 1 {
+        Token::set_token_error_flag_by_index(fn_token_index, tokens);
+        false
+    } else if arg_count > 1 {
+        for i in 1..arg_count {
+            stack[stack.len() - 1 - i].set_token_error_flag(tokens);
+        }
+        false
+    } else {
+        let param = &stack[stack.len() - 1];
+        match &param.typ {
+            CalcResultType::Quantity(num, unit) if unit.is(UnitType::Angle) => {
+                let rad = num; // the base unit is rad, so num is already in radian
+                if let Some(result) = rad
+                    .to_f64()
+                    .map(|it| action(it))
+                    .and_then(|it| Decimal::from_f64(it))
+                {
+                    let token_index = param.get_index_into_tokens();
+                    stack.pop();
+                    stack.push(CalcResult::new(CalcResultType::Number(result), token_index));
+                    true
+                } else {
+                    param.set_token_error_flag(tokens);
+                    false
+                }
+            }
+            _ => {
+                dbg!(param);
+                dbg!(param.get_index_into_tokens());
+                param.set_token_error_flag(tokens);
+                false
+            }
+        }
+    }
+}
+
+fn fn_f64_num_to_rad<'text_ptr, F>(
+    arg_count: usize,
+    stack: &mut Vec<CalcResult>,
+    tokens: &mut [Token<'text_ptr>],
+    fn_token_index: usize,
+    action: F,
+    units: &Units,
+) -> bool
+where
+    F: Fn(f64) -> f64,
+{
+    if arg_count < 1 {
+        Token::set_token_error_flag_by_index(fn_token_index, tokens);
+        false
+    } else if arg_count > 1 {
+        for i in 1..arg_count {
+            stack[stack.len() - 1 - i].set_token_error_flag(tokens);
+        }
+        false
+    } else {
+        let param = &stack[stack.len() - 1];
+        match &param.typ {
+            CalcResultType::Number(num) => {
+                if num > &Decimal::one() || num < &Decimal::one().neg() {
+                    param.set_token_error_flag(tokens);
+                    return false;
+                }
+                if let Some(result) = num
+                    .to_f64()
+                    .map(|it| action(it))
+                    .and_then(|it| Decimal::from_f64(it))
+                {
+                    let token_index = param.get_index_into_tokens();
+                    stack.pop();
+                    stack.push(CalcResult::new(
+                        CalcResultType::Quantity(result, UnitOutput::new_rad(units)),
+                        token_index,
+                    ));
+                    true
+                } else {
+                    param.set_token_error_flag(tokens);
+                    false
+                }
+            }
+            _ => {
+                param.set_token_error_flag(tokens);
+                false
+            }
+        }
+    }
+}
+
+fn fn_single_param_decimal<'text_ptr, F>(
+    arg_count: usize,
+    stack: &mut Vec<CalcResult>,
+    tokens: &mut [Token<'text_ptr>],
+    fn_token_index: usize,
+    action: F,
+) -> bool
+where
+    F: Fn(&Decimal) -> Decimal,
+{
+    if arg_count != 1 || stack.len() < 1 {
         Token::set_token_error_flag_by_index(fn_token_index, tokens);
         false
     } else {
         let param = &stack[stack.len() - 1];
         match &param.typ {
             CalcResultType::Number(num) => {
-                let result = num.ceil();
+                let result = action(num);
                 let token_index = param.get_index_into_tokens();
                 stack.pop();
                 stack.push(CalcResult::new(CalcResultType::Number(result), token_index));

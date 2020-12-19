@@ -3,9 +3,9 @@ use std::ops::{BitXor, Shl};
 use std::ops::{Neg, Shr};
 
 use crate::matrix::MatrixData;
-use crate::token_parser::{OperatorTokenType, Token, TokenType};
+use crate::token_parser::{debug_print, OperatorTokenType, Token, TokenType};
 use crate::units::consts::EMPTY_UNIT_DIMENSIONS;
-use crate::units::units::{UnitOutput, MAX_UNIT_COUNT};
+use crate::units::units::{UnitOutput, Units, MAX_UNIT_COUNT};
 use crate::Variables;
 use rust_decimal::prelude::*;
 
@@ -100,6 +100,7 @@ pub fn evaluate_tokens<'text_ptr>(
     tokens: &mut [Token<'text_ptr>],
     shunting_tokens: &mut Vec<ShuntingYardResult>,
     variables: &Variables,
+    units: &Units,
 ) -> Result<Option<EvaluationResult>, ()> {
     let mut stack: Vec<CalcResult> = vec![];
     let mut there_was_unit_conversion = false;
@@ -144,7 +145,8 @@ pub fn evaluate_tokens<'text_ptr>(
                     assignment = true;
                     continue;
                 }
-                if apply_operation(tokens, &mut stack, &typ, token.index_into_tokens) == true {
+                if apply_operation(tokens, &mut stack, &typ, token.index_into_tokens, units) == true
+                {
                     if matches!(typ, OperatorTokenType::UnitConverter) {
                         there_was_unit_conversion = true;
                     }
@@ -202,6 +204,7 @@ fn apply_operation<'text_ptr>(
     stack: &mut Vec<CalcResult>,
     op: &OperatorTokenType,
     op_token_index: usize,
+    units: &Units,
 ) -> bool {
     let succeed = match &op {
         OperatorTokenType::Mult
@@ -274,7 +277,7 @@ fn apply_operation<'text_ptr>(
             }
         }
         OperatorTokenType::Fn { arg_count, typ } => {
-            typ.execute(*arg_count, stack, op_token_index, tokens)
+            typ.execute(*arg_count, stack, op_token_index, tokens, units)
         }
         OperatorTokenType::Semicolon | OperatorTokenType::Comma => {
             // ignore
@@ -297,13 +300,24 @@ fn apply_operation<'text_ptr>(
     return succeed;
 }
 
-fn unit_conversion<'text_ptr>(num: &Decimal, target_unit: &UnitOutput) -> Option<CalcResult> {
+fn unit_conversion<'text_ptr>(
+    num: &Decimal,
+    target_unit: &UnitOutput,
+    operand_token_index: usize,
+    unit_token_index: usize,
+) -> Option<CalcResult> {
     let norm = target_unit.normalize(num);
     if target_unit.dimensions == EMPTY_UNIT_DIMENSIONS {
         // the units cancelled each other, e.g. km/m
-        norm.map(|norm| CalcResult::new(CalcResultType::Number(norm), 0))
+        norm.map(|norm| CalcResult::new(CalcResultType::Number(norm), operand_token_index))
     } else {
-        norm.map(|norm| CalcResult::new(CalcResultType::Quantity(norm, target_unit.clone()), 0))
+        norm.map(|norm| {
+            CalcResult::new2(
+                CalcResultType::Quantity(norm, target_unit.clone()),
+                operand_token_index,
+                unit_token_index,
+            )
+        })
     }
 }
 
@@ -342,7 +356,12 @@ fn binary_operation(
             let operand = lhs;
             match (&operand.typ, &target_unit.typ) {
                 (CalcResultType::Number(operand), CalcResultType::Unit(target_unit)) => {
-                    unit_conversion(operand, target_unit)
+                    unit_conversion(
+                        operand,
+                        target_unit,
+                        lhs.get_index_into_tokens(),
+                        rhs.get_index_into_tokens(),
+                    )
                 }
                 _ => None,
             }
@@ -417,6 +436,7 @@ fn binary_operation(
         // , csinálj egy TokenType::BinaryOp::Add
         _ => panic!(),
     };
+    debug_print(&format!("{:?} {:?} {:?} = {:?}", lhs, op, rhs, &result));
     result
 }
 
@@ -644,6 +664,8 @@ fn unary_minus_op(lhs: &CalcResult) -> Option<CalcResult> {
 }
 
 fn pow_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+    dbg!(lhs);
+    dbg!(rhs);
     match (&lhs.typ, &rhs.typ) {
         //////////////
         // 1^x
@@ -661,6 +683,9 @@ fn pow_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
             let p = rhs.to_i64()?;
             let num_powered = pow(lhs.clone(), p)?;
             let unit_powered = lhs_unit.pow(p);
+            dbg!(&p);
+            dbg!(&num_powered);
+            dbg!(&unit_powered);
             Some(CalcResult::new(
                 CalcResultType::Quantity(num_powered, unit_powered?),
                 0,
@@ -1223,7 +1248,8 @@ fn percentage_of(this: &Decimal, base: &Decimal) -> Option<Decimal> {
 #[cfg(test)]
 mod tests {
     use crate::shunting_yard::tests::{
-        apply_to_prev_token_unit, num, num_with_err, op, op_err, str, unit,
+        apply_to_prev_token_unit, apply_to_prev_token_unit_with_err, num, num_with_err, op, op_err,
+        str, unit, unit_with_err,
     };
     use crate::units::units::Units;
     use crate::{ResultFormat, Variable, Variables};
@@ -1243,9 +1269,20 @@ mod tests {
         let mut expected_tokens = Vec::with_capacity(expected_tokens_.len());
         for t in expected_tokens_ {
             if matches!(t.typ, TokenType::Operator(OperatorTokenType::ApplyUnit)) {
-                expected_tokens.push(unit(unsafe { std::mem::transmute(t.ptr) }));
+                if t.has_error {
+                    expected_tokens.push(unit_with_err(unsafe { std::mem::transmute(t.ptr) }));
+                    let mut token = t.clone();
+                    token.has_error = false;
+                    expected_tokens.push(token);
+                } else {
+                    expected_tokens.push(unit(unsafe { std::mem::transmute(t.ptr) }));
+                    let mut token = t.clone();
+                    token.has_error = false;
+                    expected_tokens.push(t.clone());
+                }
+            } else {
+                expected_tokens.push(t.clone());
             }
-            expected_tokens.push(t.clone());
         }
         println!("===================================================");
         println!("{}", text);
@@ -1261,7 +1298,8 @@ mod tests {
             &vars,
             &arena,
         );
-        let _result_stack = crate::calc::evaluate_tokens(&mut tokens, &mut shunting_output, &vars);
+        let _result_stack =
+            crate::calc::evaluate_tokens(&mut tokens, &mut shunting_output, &vars, &units);
 
         crate::shunting_yard::tests::compare_tokens(text, &expected_tokens, &tokens);
     }
@@ -1278,7 +1316,7 @@ mod tests {
         let mut shunting_output =
             crate::shunting_yard::tests::do_shunting_yard(&temp, &units, &mut tokens, vars, &arena);
 
-        let result = crate::calc::evaluate_tokens(&mut tokens, &mut shunting_output, vars);
+        let result = crate::calc::evaluate_tokens(&mut tokens, &mut shunting_output, vars, &units);
 
         if let Err(..) = &result {
             assert_eq!("Err", expected);
@@ -1996,6 +2034,135 @@ mod tests {
     }
 
     #[test]
+    fn test_func_e() {
+        test_with_dec_count(1000, "e()", "2.7182818284590452353602874714");
+        test("e(1)", "Err");
+    }
+
+    #[test]
+    fn test_func_ln() {
+        test_with_dec_count(1000, "ln(2)", "0.693147180559945");
+        test_with_dec_count(1000, "ln(100)", "4.60517018598809");
+        test("ln()", "Err");
+        test("ln(2, 3)", "Err");
+    }
+
+    #[test]
+    fn test_func_lg() {
+        test_with_dec_count(1000, "lg(2)", "1");
+        test_with_dec_count(1000, "lg(100)", "6.64385618977472");
+        test("lg()", "Err");
+        test("lg(2, 3)", "Err");
+    }
+
+    #[test]
+    fn test_func_log() {
+        test_with_dec_count(1000, "log(3, 2)", "0.630929753571457");
+        test_with_dec_count(1000, "log(2, 100)", "6.64385618977473");
+        test("log()", "Err");
+        test("log(1)", "Err");
+        test("log(1, 2, 3)", "Err");
+    }
+
+    #[test]
+    fn test_func_cos() {
+        test_with_dec_count(1000, "cos(2 degree)", "0.999390827019096");
+        test_with_dec_count(1000, "cos(1 degree)", "0.999847695156391");
+        test_with_dec_count(1000, "cos(1 rad)", "0.54030230586814");
+        test("cos()", "Err");
+        test("cos(1)", "Err");
+        test("cos(1 rad^2)", "Err");
+        test("cos(1, 2)", "Err");
+    }
+
+    #[test]
+    fn test_func_sin() {
+        test_with_dec_count(1000, "sin(2 degree)", "0.03489949670250097");
+        test_with_dec_count(1000, "sin(1 degree)", "0.01745240643728351");
+        test_with_dec_count(1000, "sin(1 rad)", "0.841470984807897");
+        test("sin()", "Err");
+        test("sin(1)", "Err");
+        test("sin(1 rad^2)", "Err");
+        test("sin(1, 2)", "Err");
+        test("sin(1 m)", "Err");
+        test_tokens(
+            "sin(1 m)",
+            &[
+                op(OperatorTokenType::Fn {
+                    arg_count: 0,
+                    typ: FnType::Sin,
+                }),
+                op(OperatorTokenType::ParenOpen),
+                num_with_err(1),
+                str(" "),
+                apply_to_prev_token_unit_with_err("m"),
+                op(OperatorTokenType::ParenClose),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_func_acos() {
+        test_with_dec_count(1000, "acos(1)", "0 rad");
+        test_with_dec_count(1000, "acos(0.5)", "1.047197551196598 rad");
+        test_with_dec_count(1000, "acos(-0.5)", "2.094395102393196 rad");
+        test("acos()", "Err");
+        test("acos(1 rad)", "Err");
+        test("acos(1 degree)", "Err");
+        test("acos(2)", "Err");
+        test("acos(-2)", "Err");
+        test("acos(1 rad^2)", "Err");
+        test("acos(1, 2)", "Err");
+    }
+
+    #[test]
+    fn test_func_asin() {
+        test_with_dec_count(1000, "asin(1)", "1.570796326794897 rad");
+        test_with_dec_count(1000, "asin(0.5)", "0.523598775598299 rad");
+        test_with_dec_count(1000, "asin(-0.5)", "-0.523598775598299 rad");
+        test("asin()", "Err");
+        test("asin(1 rad)", "Err");
+        test("asin(1 degree)", "Err");
+        test("asin(2)", "Err");
+        test("asin(-2)", "Err");
+        test("asin(1 rad^2)", "Err");
+        test("asin(1, 2)", "Err");
+    }
+
+    #[test]
+    fn test_func_tan() {
+        test_with_dec_count(1000, "tan(2 degree)", "0.03492076949174773");
+        test_with_dec_count(1000, "tan(1 degree)", "0.01745506492821759");
+        test_with_dec_count(1000, "tan(1 rad)", "1.557407724654902");
+        test("tan()", "Err");
+        test("tan(1)", "Err");
+        test("tan(1 rad^2)", "Err");
+        test("tan(1, 2)", "Err");
+    }
+
+    #[test]
+    fn test_func_atan() {
+        test_with_dec_count(1000, "atan(1)", "0.785398163397448 rad");
+        test_with_dec_count(1000, "atan(0.5)", "0.463647609000806 rad");
+        test_with_dec_count(1000, "atan(-0.5)", "-0.463647609000806 rad");
+        test("atan()", "Err");
+        test("atan(1 rad)", "Err");
+        test("atan(1 degree)", "Err");
+        test("atan(2)", "Err");
+        test("atan(-2)", "Err");
+        test("atan(1 rad^2)", "Err");
+        test("atan(1, 2)", "Err");
+    }
+
+    #[test]
+    fn test_func_abs() {
+        test_with_dec_count(1000, "abs(10)", "10");
+        test_with_dec_count(1000, "abs(-10)", "10");
+        test("abs()", "Err");
+        test("abs(1, 2)", "Err");
+    }
+
+    #[test]
     fn test_fraction_reduction_rounding() {
         test_with_dec_count(1000, "0.0030899999999999999999999999", "0.003090");
     }
@@ -2581,5 +2748,26 @@ mod tests {
             ],
         );
         test("12 m in", "12 m");
+    }
+
+    #[test]
+    fn test_bug_no_paren_around_100() {
+        test_tokens(
+            "1+e()^(100)",
+            &[
+                num(1),
+                op(OperatorTokenType::Add),
+                op_err(OperatorTokenType::Fn {
+                    arg_count: 0,
+                    typ: FnType::E,
+                }),
+                op(OperatorTokenType::ParenOpen),
+                op(OperatorTokenType::ParenClose),
+                op_err(OperatorTokenType::Pow),
+                op(OperatorTokenType::ParenOpen),
+                num_with_err(100),
+                op(OperatorTokenType::ParenClose),
+            ],
+        );
     }
 }

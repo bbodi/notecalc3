@@ -61,6 +61,19 @@ a text is selected
   ```
 - Max row count was increased from 128 to 256
 - Matching parenthesis are highlighted if the cursor is inside them
+- e (Euler's Number) was added, currently as a function (`e()`)
+- new functions:
+  - abs(num)
+  - ln(num)
+  - lg(num)
+  - log(num, num)
+  - sin(angle) -> num
+  - cos(angle) -> num
+  - tan(angle) -> num
+  - asin(num) -> angle
+  - acos(num) -> angle
+  - atan(num) -> angle
+- Invalid argument types for functions are highlighted as errors
 
 ### Changed
 - When opening a not empty note, the result panel now tries
@@ -80,6 +93,7 @@ to be able to place the cursor at the right place, since the text rendering
 - Replaced all unit `RefCells` to `Rc`, it was a mistake to use `RefCells` in the first place.
 
 ### Fixed
+- Dead characters (e.g. '^' on a hungarian keyboard) were not possible to type
 - Longest visible result length was calculated wrongly when there were multiple headers
 in a note, which affected the result panel size.
 - `sum` variable get emptied at #Headers

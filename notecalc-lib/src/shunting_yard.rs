@@ -97,7 +97,7 @@ impl ValidationState {
         } else {
             None
         };
-        debug_print(&format!("  close_valid_range"));
+        debug_print(&format!("  close_valid_range {:?}", self));
     }
 
     fn reset(&mut self, output_stack_index: usize, token_index: isize) {
@@ -404,6 +404,11 @@ impl ShuntingYard {
                         });
                         v.parenthesis_stack.push(ParenStackEntry::Simple);
                         v.prev_token_type = ValidationTokenType::Nothing;
+                        ShuntingYard::shunting_state_debug_print(
+                            "  op was '('",
+                            output_stack,
+                            &operator_stack,
+                        );
                     }
                     OperatorTokenType::ParenClose => {
                         let is_error = match v.parenthesis_stack.last() {
@@ -428,10 +433,20 @@ impl ShuntingYard {
                             v.expect_expression = false;
                             v.prev_token_type = ValidationTokenType::Expr;
                         }
+                        ShuntingYard::shunting_state_debug_print(
+                            "  op was ')', before send_anything_until_opening_bracket",
+                            output_stack,
+                            &operator_stack,
+                        );
                         ShuntingYard::send_anything_until_opening_bracket(
                             &mut operator_stack,
                             output_stack,
                             &OperatorTokenType::ParenOpen,
+                        );
+                        ShuntingYard::shunting_state_debug_print(
+                            "  op was ')', after send_anything_until_opening_bracket",
+                            output_stack,
+                            &operator_stack,
                         );
                         if let Some(fn_entry) = v.pop_as_fn() {
                             let fn_token_type = TokenType::Operator(OperatorTokenType::Fn {
@@ -449,12 +464,6 @@ impl ShuntingYard {
                             );
                         }
                         if v.can_be_valid_closing_token() && !output_stack.is_empty() {
-                            ShuntingYard::send_everything_to_output(
-                                &mut operator_stack,
-                                output_stack,
-                                &mut v.last_valid_operator_index,
-                                &mut v.last_valid_output_range,
-                            );
                             v.close_valid_range(
                                 output_stack.len(),
                                 input_index,
@@ -1384,11 +1393,27 @@ pub mod tests {
         }
     }
 
+    pub fn apply_to_prev_token_unit_with_err<'text_ptr>(op_repr: &'static str) -> Token<'text_ptr> {
+        Token {
+            ptr: unsafe { std::mem::transmute(op_repr) },
+            typ: TokenType::Operator(OperatorTokenType::ApplyUnit),
+            has_error: true,
+        }
+    }
+
     pub fn unit<'text_ptr>(op_repr: &'static str) -> Token<'text_ptr> {
         Token {
             ptr: unsafe { std::mem::transmute(op_repr) },
             typ: TokenType::Unit(UnitOutput::new()),
             has_error: false,
+        }
+    }
+
+    pub fn unit_with_err<'text_ptr>(op_repr: &'static str) -> Token<'text_ptr> {
+        Token {
+            ptr: unsafe { std::mem::transmute(op_repr) },
+            typ: TokenType::Unit(UnitOutput::new()),
+            has_error: true,
         }
     }
 
@@ -1493,9 +1518,20 @@ pub mod tests {
         let mut expected_tokens = Vec::with_capacity(expected_tokens_.len());
         for t in expected_tokens_ {
             if matches!(t.typ, TokenType::Operator(OperatorTokenType::ApplyUnit)) {
-                expected_tokens.push(unit(unsafe { std::mem::transmute(t.ptr) }));
+                if t.has_error {
+                    expected_tokens.push(unit_with_err(unsafe { std::mem::transmute(t.ptr) }));
+                    let mut token = t.clone();
+                    token.has_error = false;
+                    expected_tokens.push(token);
+                } else {
+                    expected_tokens.push(unit(unsafe { std::mem::transmute(t.ptr) }));
+                    let mut token = t.clone();
+                    token.has_error = false;
+                    expected_tokens.push(t.clone());
+                }
+            } else {
+                expected_tokens.push(t.clone());
             }
-            expected_tokens.push(t.clone());
         }
         let var_names: Vec<Option<Variable>> = (0..MAX_LINE_COUNT + 1)
             .into_iter()
@@ -1540,9 +1576,20 @@ pub mod tests {
         let mut expected_tokens = Vec::with_capacity(expected_tokens_.len());
         for t in expected_tokens_ {
             if matches!(t.typ, TokenType::Operator(OperatorTokenType::ApplyUnit)) {
-                expected_tokens.push(unit(unsafe { std::mem::transmute(t.ptr) }));
+                if t.has_error {
+                    expected_tokens.push(unit_with_err(unsafe { std::mem::transmute(t.ptr) }));
+                    let mut token = t.clone();
+                    token.has_error = false;
+                    expected_tokens.push(token);
+                } else {
+                    expected_tokens.push(unit(unsafe { std::mem::transmute(t.ptr) }));
+                    let mut token = t.clone();
+                    token.has_error = false;
+                    expected_tokens.push(t.clone());
+                }
+            } else {
+                expected_tokens.push(t.clone());
             }
-            expected_tokens.push(t.clone());
         }
         println!("===================================================");
         println!("{}", text);
@@ -3088,6 +3135,23 @@ pub mod tests {
                 apply_to_prev_token_unit("m"),
                 str(" "),
                 str("in"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_bug_no_paren_around_100() {
+        test_output(
+            "1+e()^(100)",
+            &[
+                num(1),
+                op(OperatorTokenType::Fn {
+                    arg_count: 0,
+                    typ: FnType::E,
+                }),
+                num(100),
+                op(OperatorTokenType::Pow),
+                op(OperatorTokenType::Add),
             ],
         );
     }
