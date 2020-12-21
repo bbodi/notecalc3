@@ -1,0 +1,45 @@
+source: https://rippedbody.com/how-to-calculate-leangains-macros/
+
+weight = 80 kg
+height = 190 cm
+age = 31
+
+# Step 1: Calculate your  (Basal Metabolic Rate) (BMR)
+men BMR = 66 + (13.7 * weight/1kg) + (5 * height/1cm) - (6.8 * age)
+
+# STEP 2. FIND YOUR TDEE BY ADJUSTING FOR ACTIVITY
+Choose Activity
+1 - Sedentary (little or no exercise) [BMR x 1.15]
+2 - Mostly sedentary (office work), plus 36 days of weight lifting [BMR x 1.35]
+3 - Lightly active, plus 36 days of weight lifting [BMR x 1.55]
+4 - Highly active, plus 36 days of weight lifting [BMR x 1.75]
+activity = 2
+TDEE = (men BMR * nth([1.15,1.35,1.55,1.75], activity-1))
+
+# STEP 3. ADJUST CALORIE INTAKE BASED ON YOUR GOAL
+## Fat loss
+    target weekly fat loss rate = 0.5%
+    (TDEE - ((weight/1kg) * target weekly fat loss rate * 1100)) kcal
+## Muscle gain
+    monthly rates of weight gain = 1%
+    (TDEE + (weight/1kg * monthly rates of weight gain * 330)) kcal
+
+## Protein intake
+// choose a value between 1.6 g/kg and 2.2 g/kg
+    p = 2.2 g/kg
+    protein intake = weight * p in g
+    calories from protein = protein intake * 4kcal/g in kcal
+## Fat intake
+// 0.5g/kg or at least 30% of the calories
+    fat contains 9kcal/g
+    calories from fat = &[22] * 30%
+    fat intake = calories from fat / &[34] in g
+## Carb intake
+    Carb is the remainder of your total budget
+    protein contains 4kcal/gram
+    calories from carb = (&[22] - calories from fat - calories from protein)
+    carb intake = calories from carb / &[39] in g
+
+Check
+calories from carb + calories from fat + calories from protein
+P, C, F intake [protein intake,carb intake,fat intake]

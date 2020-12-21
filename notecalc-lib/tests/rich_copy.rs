@@ -165,3 +165,18 @@ fn test_line_ref_inlining() {
         0..=1,
     );
 }
+
+#[test]
+fn test_headers() {
+    t(
+        "# Header1\n\
+         23\n\
+         ## Header 2\n\
+         &[2]",
+        "# Header1    █\n\
+         23           █ 23\n\
+         ## Header 2  █\n\
+         23           █ 23\n",
+        0..=3,
+    );
+}

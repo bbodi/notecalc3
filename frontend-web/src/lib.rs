@@ -1,15 +1,15 @@
-#![deny(
-warnings,
-anonymous_parameters,
-unused_extern_crates,
-unused_import_braces,
-trivial_casts,
-variant_size_differences,
-//missing_debug_implementations,
-trivial_numeric_casts,
-unused_qualifications,
-clippy::all
-)]
+// #![deny(
+// warnings,
+// anonymous_parameters,
+// unused_extern_crates,
+// unused_import_braces,
+// trivial_casts,
+// variant_size_differences,
+// //missing_debug_implementations,
+// trivial_numeric_casts,
+// unused_qualifications,
+// clippy::all
+// )]
 #![feature(const_in_array_repeat_expressions)]
 
 use wasm_bindgen::prelude::*;
@@ -126,22 +126,26 @@ pub fn create_app(client_width: usize, client_height: usize) -> u32 {
     set_panic_hook();
     js_log(&format!("client_width: {}", client_width));
     js_log(&format!("client_height: {}", client_height));
-    let editor_objects = EditorObjects::new();
-    let tokens = AppTokens::new();
-    let results = Results::new();
-    let vars = create_vars();
-
-    let app = NoteCalcApp::new(client_width, client_height);
-    to_box_ptr(AppPointers {
-        app_ptr: to_box_ptr(app),
-        units_ptr: to_box_ptr(Units::new()),
-        render_bucket_ptr: to_box_ptr(RenderBuckets::new()),
-        tokens_ptr: to_box_ptr(tokens),
-        results_ptr: to_box_ptr(results),
-        vars_ptr: to_box_ptr(vars),
-        editor_objects_ptr: to_box_ptr(editor_objects),
-        allocator: to_box_ptr(Bump::with_capacity(MAX_LINE_COUNT * 120)),
-    })
+    // put them immediately on the heap
+    let editor_objects = to_box_ptr(EditorObjects::new());
+    let tokens = to_box_ptr(AppTokens::new());
+    let results = to_box_ptr(Results::new());
+    let vars = to_box_ptr(create_vars());
+    let app = to_box_ptr(NoteCalcApp::new(client_width, client_height));
+    let units = to_box_ptr(Units::new());
+    let render_buckets = to_box_ptr(RenderBuckets::new());
+    let bumper = to_box_ptr(Bump::with_capacity(MAX_LINE_COUNT * 120));
+    let ret = to_box_ptr(AppPointers {
+        app_ptr: app,
+        units_ptr: units,
+        render_bucket_ptr: render_buckets,
+        tokens_ptr: tokens,
+        results_ptr: results,
+        vars_ptr: vars,
+        editor_objects_ptr: editor_objects,
+        allocator: bumper,
+    });
+    return ret;
 }
 
 #[wasm_bindgen]
@@ -175,6 +179,21 @@ pub fn alt_key_released(app_ptr: u32) {
 pub fn handle_resize(app_ptr: u32, new_client_width: usize) {
     AppPointers::mut_app(app_ptr).handle_resize(
         new_client_width,
+        AppPointers::mut_editor_objects(app_ptr),
+        AppPointers::units(app_ptr),
+        AppPointers::allocator(app_ptr),
+        AppPointers::mut_tokens(app_ptr),
+        AppPointers::mut_results(app_ptr),
+        AppPointers::mut_vars(app_ptr),
+        AppPointers::mut_render_bucket(app_ptr),
+    );
+}
+
+#[wasm_bindgen]
+pub fn set_theme(app_ptr: u32, theme_index: usize) {
+    let app = AppPointers::mut_app(app_ptr);
+    app.set_theme(
+        theme_index,
         AppPointers::mut_editor_objects(app_ptr),
         AppPointers::units(app_ptr),
         AppPointers::allocator(app_ptr),
@@ -370,13 +389,10 @@ pub fn reparse_everything(app_ptr: u32) {
 }
 
 #[wasm_bindgen]
-pub fn rerender(app_ptr: u32) {
-    send_render_commands_to_js(AppPointers::mut_render_bucket(app_ptr));
-}
-
-#[wasm_bindgen]
 pub fn render(app_ptr: u32) {
-    send_render_commands_to_js(AppPointers::mut_render_bucket(app_ptr));
+    let app = AppPointers::app(app_ptr);
+    let bucket = AppPointers::mut_render_bucket(app_ptr);
+    send_render_commands_to_js(bucket, &THEMES[app.render_data.theme_index]);
 }
 
 #[wasm_bindgen]
@@ -457,16 +473,7 @@ pub fn handle_input(app_ptr: u32, input: u32, modifiers: u8) -> bool {
     return modif.is_some();
 }
 
-pub const COLOR_TEXT: u32 = 0x595959_FF;
-pub const COLOR_HEADER: u32 = 0x000000_FF;
-pub const COLOR_RESULTS: u32 = 0x000000_FF;
-pub const COLOR_NUMBER: u32 = 0xF92672_FF;
-pub const COLOR_NUMBER_ERROR: u32 = 0xFF0000_FF;
-pub const COLOR_OPERATOR: u32 = 0x000000_FF;
-pub const COLOR_UNIT: u32 = 0x000BED_FF;
-pub const COLOR_VARIABLE: u32 = 0x269d94_FF;
-
-fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
+fn send_render_commands_to_js(render_buckets: &RenderBuckets, theme: &Theme) {
     use byteorder::{LittleEndian, WriteBytesExt};
     use std::io::Cursor;
     let mut js_command_buffer = unsafe { Cursor::new(&mut RENDER_COMMAND_BUFFER[..]) };
@@ -539,6 +546,47 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
         }
     }
 
+    const PULSING_RECTANGLE_ID: usize = 100;
+    const CLEAR_PULSING_RECTANGLE_ID: usize = 101;
+    fn write_pulse_commands(
+        js_command_buffer: &mut Cursor<&mut [u8]>,
+        pulses: &[PulsingRectangle],
+    ) {
+        js_command_buffer
+            .write_u8(PULSING_RECTANGLE_ID as u8)
+            .expect("");
+        js_command_buffer.write_u8(pulses.len() as u8).expect("");
+        for p in pulses {
+            js_command_buffer.write_u8(p.x as u8).expect("");
+            js_command_buffer.write_u8(p.y.as_usize() as u8).expect("");
+            js_command_buffer.write_u8(p.w as u8).expect("");
+            js_command_buffer.write_u8(p.h as u8).expect("");
+            js_command_buffer
+                .write_u32::<LittleEndian>(p.start_color)
+                .expect("");
+            js_command_buffer
+                .write_u32::<LittleEndian>(p.end_color)
+                .expect("");
+            js_command_buffer
+                .write_u16::<LittleEndian>(p.animation_time.as_millis() as u16)
+                .expect("");
+            js_command_buffer.write_u8(p.repeat as u8).expect("");
+        }
+    }
+
+    fn write_char(js_command_buffer: &mut Cursor<&mut [u8]>, cmd: &RenderChar) {
+        js_command_buffer
+            .write_u8(OutputMessageCommandId::RenderChar as u8 + 1)
+            .expect("");
+        js_command_buffer.write_u8(cmd.col as u8).expect("");
+        js_command_buffer
+            .write_u8(cmd.row.as_usize() as u8)
+            .expect("");
+        js_command_buffer
+            .write_u32::<LittleEndian>(cmd.char as u32)
+            .expect("");
+    }
+
     fn write_command(js_command_buffer: &mut Cursor<&mut [u8]>, command: &OutputMessage) {
         match command {
             OutputMessage::RenderUtf8Text(text) => {
@@ -550,32 +598,12 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
                     .expect("");
                 js_command_buffer.write_u8(*style as u8).expect("");
             }
-            OutputMessage::SetColor(color) => {
-                js_command_buffer
-                    .write_u8(OutputMessageCommandId::SetColor as u8 + 1)
-                    .expect("");
-                js_command_buffer
-                    .write_u32::<LittleEndian>(*color)
-                    .expect("");
-            }
+            OutputMessage::SetColor(color) => write_color(js_command_buffer, *color),
             OutputMessage::RenderRectangle { x, y, w, h } => {
-                js_command_buffer
-                    .write_u8(OutputMessageCommandId::RenderRectangle as u8 + 1)
-                    .expect("");
-                js_command_buffer.write_u8(*x as u8).expect("");
-                js_command_buffer.write_u8(y.as_usize() as u8).expect("");
-                js_command_buffer.write_u8(*w as u8).expect("");
-                js_command_buffer.write_u8(*h as u8).expect("");
+                write_rectangle(js_command_buffer, *x, *y, *w, *h)
             }
-            OutputMessage::RenderChar(x, y, ch) => {
-                js_command_buffer
-                    .write_u8(OutputMessageCommandId::RenderChar as u8 + 1)
-                    .expect("");
-                js_command_buffer.write_u8(*x as u8).expect("");
-                js_command_buffer.write_u8(*y as u8).expect("");
-                js_command_buffer
-                    .write_u32::<LittleEndian>(*ch as u32)
-                    .expect("");
+            OutputMessage::RenderChar(cmd) => {
+                write_char(js_command_buffer, cmd);
             }
             OutputMessage::RenderString(text) => {
                 write_string_command(js_command_buffer, text);
@@ -583,39 +611,62 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
             OutputMessage::RenderAsciiText(text) => {
                 write_ascii_text_command(js_command_buffer, text);
             }
-            OutputMessage::PulsingRectangle {
-                x,
-                y,
-                w,
-                h,
-                start_color,
-                end_color,
-                animation_time,
-            } => {
-                js_command_buffer
-                    .write_u8(OutputMessageCommandId::PulsingRectangle as u8 + 1)
-                    .expect("");
-                js_command_buffer.write_u8(*x as u8).expect("");
-                js_command_buffer.write_u8(y.as_usize() as u8).expect("");
-                js_command_buffer.write_u8(*w as u8).expect("");
-                js_command_buffer.write_u8(*h as u8).expect("");
-                js_command_buffer
-                    .write_u32::<LittleEndian>(*start_color)
-                    .expect("");
-                js_command_buffer
-                    .write_u32::<LittleEndian>(*end_color)
-                    .expect("");
-                js_command_buffer
-                    .write_u16::<LittleEndian>(animation_time.as_millis() as u16)
-                    .expect("");
-            }
             OutputMessage::FollowingTextCommandsAreHeaders(b) => {
                 js_command_buffer
                     .write_u8(OutputMessageCommandId::FollowingTextCommandsAreHeaders as u8 + 1)
                     .expect("");
                 js_command_buffer.write_u8(*b as u8).expect("");
             }
+            OutputMessage::RenderUnderline { x, y, w } => {
+                js_command_buffer
+                    .write_u8(OutputMessageCommandId::RenderUnderline as u8 + 1)
+                    .expect("");
+                js_command_buffer.write_u8(*x as u8).expect("");
+                js_command_buffer.write_u8(y.as_usize() as u8).expect("");
+                js_command_buffer.write_u8(*w as u8).expect("");
+            }
+            OutputMessage::UpdatePulses => {
+                js_command_buffer
+                    .write_u8(OutputMessageCommandId::UpdatePulses as u8 + 1)
+                    .expect("");
+            }
         }
+    }
+
+    fn write_color(js_command_buffer: &mut Cursor<&mut [u8]>, color: u32) {
+        js_command_buffer
+            .write_u8(OutputMessageCommandId::SetColor as u8 + 1)
+            .expect("");
+        js_command_buffer
+            .write_u32::<LittleEndian>(color)
+            .expect("");
+    }
+
+    fn write_rectangle(
+        js_command_buffer: &mut Cursor<&mut [u8]>,
+        x: usize,
+        y: CanvasY,
+        w: usize,
+        h: usize,
+    ) {
+        js_command_buffer
+            .write_u8(OutputMessageCommandId::RenderRectangle as u8 + 1)
+            .expect("");
+        js_command_buffer.write_u8(x as u8).expect("");
+        js_command_buffer.write_u8(y.as_usize() as u8).expect("");
+        js_command_buffer.write_u8(w as u8).expect("");
+        js_command_buffer.write_u8(h as u8).expect("");
+    }
+
+    fn write_color_rect(js_command_buffer: &mut Cursor<&mut [u8]>, rect: &Rect, color: u32) {
+        write_color(js_command_buffer, color);
+        write_rectangle(
+            js_command_buffer,
+            rect.x as usize,
+            canvas_y(rect.y as isize),
+            rect.w as usize,
+            rect.h as usize,
+        );
     }
 
     fn write_commands(js_command_buffer: &mut Cursor<&mut [u8]>, commands: &[RenderUtf8TextMsg]) {
@@ -624,20 +675,50 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
         }
     }
 
-    for command in &render_buckets.clear_commands {
-        write_command(&mut js_command_buffer, command);
+    // Current line highlight bg, it is at the most bottom position, so I can draw rectangles
+    // between it and thexts above it
+    write_color_rect(
+        &mut js_command_buffer,
+        &render_buckets.left_gutter_bg,
+        theme.left_gutter_bg,
+    );
+    write_color_rect(
+        &mut js_command_buffer,
+        &render_buckets.right_gutter_bg,
+        theme.result_gutter_bg,
+    );
+    write_color_rect(
+        &mut js_command_buffer,
+        &render_buckets.result_panel_bg,
+        theme.result_bg_color,
+    );
+    if let Some((color, rect)) = &render_buckets.scroll_bar {
+        write_color_rect(&mut js_command_buffer, rect, *color);
+    }
+    if let Some(rect) = &render_buckets.current_line_highlight {
+        write_color_rect(&mut js_command_buffer, rect, theme.current_line_bg);
     }
 
     for command in &render_buckets.custom_commands[Layer::BehindText as usize] {
         write_command(&mut js_command_buffer, command);
     }
 
+    if render_buckets.clear_pulses {
+        js_command_buffer
+            .write_u8(CLEAR_PULSING_RECTANGLE_ID as u8)
+            .expect("");
+    }
+    if NOT(render_buckets.pulses.is_empty()) {
+        write_pulse_commands(&mut js_command_buffer, &render_buckets.pulses);
+    }
+    write_command(&mut js_command_buffer, &OutputMessage::UpdatePulses);
+
     for command in &render_buckets.custom_commands[Layer::Text as usize] {
         write_command(&mut js_command_buffer, command);
     }
 
     if !render_buckets.utf8_texts.is_empty() {
-        write_command(&mut js_command_buffer, &OutputMessage::SetColor(COLOR_TEXT));
+        write_command(&mut js_command_buffer, &OutputMessage::SetColor(theme.text));
         write_commands(&mut js_command_buffer, &render_buckets.utf8_texts);
     }
 
@@ -648,7 +729,7 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
         );
         write_command(
             &mut js_command_buffer,
-            &OutputMessage::SetColor(COLOR_HEADER),
+            &OutputMessage::SetColor(theme.header),
         );
         write_commands(&mut js_command_buffer, &render_buckets.headers);
         write_command(
@@ -660,7 +741,7 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
     if !render_buckets.ascii_texts.is_empty() {
         write_command(
             &mut js_command_buffer,
-            &OutputMessage::SetColor(COLOR_RESULTS),
+            &OutputMessage::SetColor(theme.result_text),
         );
         for text in &render_buckets.ascii_texts {
             write_ascii_text_command(&mut js_command_buffer, text);
@@ -670,29 +751,44 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
     if !render_buckets.numbers.is_empty() {
         write_command(
             &mut js_command_buffer,
-            &OutputMessage::SetColor(COLOR_NUMBER),
+            &OutputMessage::SetColor(theme.number),
         );
         write_commands(&mut js_command_buffer, &render_buckets.numbers);
     }
     if !render_buckets.number_errors.is_empty() {
         write_command(
             &mut js_command_buffer,
-            &OutputMessage::SetColor(COLOR_NUMBER_ERROR),
+            &OutputMessage::SetColor(theme.number_error),
         );
         write_commands(&mut js_command_buffer, &render_buckets.number_errors);
     }
 
     if !render_buckets.units.is_empty() {
-        write_command(&mut js_command_buffer, &OutputMessage::SetColor(COLOR_UNIT));
+        write_command(&mut js_command_buffer, &OutputMessage::SetColor(theme.unit));
         write_commands(&mut js_command_buffer, &render_buckets.units);
     }
 
-    if !render_buckets.operators.is_empty() || !render_buckets.line_ref_results.is_empty() {
+    if !render_buckets.operators.is_empty() {
         write_command(
             &mut js_command_buffer,
-            &OutputMessage::SetColor(COLOR_OPERATOR),
+            &OutputMessage::SetColor(theme.operator),
         );
         write_commands(&mut js_command_buffer, &render_buckets.operators);
+    }
+    if !render_buckets.parenthesis.is_empty() {
+        write_command(
+            &mut js_command_buffer,
+            &OutputMessage::SetColor(theme.parenthesis),
+        );
+        for cmd in &render_buckets.parenthesis {
+            write_char(&mut js_command_buffer, cmd);
+        }
+    }
+    if !render_buckets.line_ref_results.is_empty() {
+        write_command(
+            &mut js_command_buffer,
+            &OutputMessage::SetColor(theme.line_ref_text),
+        );
         for command in &render_buckets.line_ref_results {
             write_string_command(&mut js_command_buffer, command);
         }
@@ -701,7 +797,7 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets) {
     if !render_buckets.variable.is_empty() {
         write_command(
             &mut js_command_buffer,
-            &OutputMessage::SetColor(COLOR_VARIABLE),
+            &OutputMessage::SetColor(theme.variable),
         );
         write_commands(&mut js_command_buffer, &render_buckets.variable);
     }

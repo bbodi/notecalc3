@@ -1,0 +1,22 @@
+# Write your input here
+input = 0xc0e00000
+// use ALT+(Left|Right) while 
+// the cursor is on the above line
+// to change to hex or binary representation
+
+# interpreting input as...
+## ...several unsigned data types
+input AND 0xFF                  //  u8
+input AND 0xFFFF                // u16
+input AND 0xFFFFFFFF            // u32
+input AND 0xFFFFFFFFFFFFFFFF    // u64
+
+## ...file sizes / number of bytes
+input = input byte
+input in kilobyte
+input in MB
+input in GB
+// ... *ibi-bytes
+input in KiB
+input in MiB
+input in GiB

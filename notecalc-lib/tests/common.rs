@@ -76,7 +76,7 @@ impl BorrowCheckerFighter {
                 self.mut_results(),
                 self.mut_vars(),
                 self.mut_editor_objects(),
-                BitFlag128::empty(),
+                BitFlag256::empty(),
             );
     }
 
@@ -270,24 +270,27 @@ impl BorrowCheckerFighter {
 }
 
 pub fn create_app3<'a>(client_width: usize, client_height: usize) -> BorrowCheckerFighter {
-    let app = NoteCalcApp::new(client_width, client_height);
-    let editor_objects = EditorObjects::new();
-    let tokens = AppTokens::new();
-    let results = Results::new();
-    let vars = create_vars();
     fn to_box_ptr<T>(t: T) -> u64 {
         let ptr = Box::into_raw(Box::new(t)) as u64;
         ptr
     }
+    let app = to_box_ptr(NoteCalcApp::new(client_width, client_height));
+    let editor_objects = to_box_ptr(EditorObjects::new());
+    let tokens = to_box_ptr(AppTokens::new());
+    let results = to_box_ptr(Results::new());
+    let vars = to_box_ptr(create_vars());
+    let units = to_box_ptr(Units::new());
+    let render_buckets = to_box_ptr(RenderBuckets::new());
+    let bumper = to_box_ptr(Bump::with_capacity(MAX_LINE_COUNT * 120));
     return BorrowCheckerFighter {
-        app_ptr: to_box_ptr(app),
-        units_ptr: to_box_ptr(Units::new()),
-        render_bucket_ptr: to_box_ptr(RenderBuckets::new()),
-        tokens_ptr: to_box_ptr(tokens),
-        results_ptr: to_box_ptr(results),
-        vars_ptr: to_box_ptr(vars),
-        editor_objects_ptr: to_box_ptr(editor_objects),
-        allocator: to_box_ptr(Bump::with_capacity(MAX_LINE_COUNT * 120)),
+        app_ptr: app,
+        units_ptr: units,
+        render_bucket_ptr: render_buckets,
+        tokens_ptr: tokens,
+        results_ptr: results,
+        vars_ptr: vars,
+        editor_objects_ptr: editor_objects,
+        allocator: bumper,
     };
 }
 

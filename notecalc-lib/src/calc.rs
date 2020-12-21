@@ -1,11 +1,11 @@
-use std::ops::BitXor;
-use std::ops::Neg;
 use std::ops::Not;
+use std::ops::{BitXor, Shl};
+use std::ops::{Neg, Shr};
 
 use crate::matrix::MatrixData;
-use crate::token_parser::{OperatorTokenType, Token, TokenType};
+use crate::token_parser::{debug_print, OperatorTokenType, Token, TokenType, UnitTokenType};
 use crate::units::consts::EMPTY_UNIT_DIMENSIONS;
-use crate::units::units::UnitOutput;
+use crate::units::units::{UnitOutput, Units, MAX_UNIT_COUNT};
 use crate::Variables;
 use rust_decimal::prelude::*;
 
@@ -100,13 +100,15 @@ pub fn evaluate_tokens<'text_ptr>(
     tokens: &mut [Token<'text_ptr>],
     shunting_tokens: &mut Vec<ShuntingYardResult>,
     variables: &Variables,
+    units: &Units,
 ) -> Result<Option<EvaluationResult>, ()> {
     let mut stack: Vec<CalcResult> = vec![];
     let mut there_was_unit_conversion = false;
     let mut assignment = false;
     let mut last_success_operation_result_index = None;
 
-    for token in shunting_tokens.iter_mut() {
+    for i in 0..shunting_tokens.len() {
+        let token = &shunting_tokens[i];
         match &token.typ {
             TokenType::NumberLiteral(num) => stack.push(CalcResult::new(
                 CalcResultType::Number(num.clone()),
@@ -115,19 +117,69 @@ pub fn evaluate_tokens<'text_ptr>(
             TokenType::NumberErr => {
                 return Err(());
             }
-            TokenType::Unit(target_unit) => {
-                // TODO clone
-                stack.push(CalcResult::new(
-                    CalcResultType::Unit(target_unit.clone()),
-                    token.index_into_tokens,
-                ))
+            TokenType::Unit(unit_typ, target_unit) => {
+                // next token must be a UnitConverter or Div
+                match unit_typ {
+                    UnitTokenType::ApplyToPrevToken => {
+                        let operand = stack.last();
+                        if let Some(CalcResult {
+                            typ: CalcResultType::Number(operand_num),
+                            index_into_tokens,
+                            index2_into_tokens: _index2_into_tokens,
+                        }) = operand
+                        {
+                            if let Some(result) = unit_conversion(
+                                operand_num,
+                                target_unit,
+                                *index_into_tokens,
+                                token.index_into_tokens,
+                            ) {
+                                stack.pop();
+                                stack.push(result);
+                                last_success_operation_result_index = Some(stack.len() - 1);
+                            } else {
+                                Token::set_token_error_flag_by_index(
+                                    token.index_into_tokens,
+                                    tokens,
+                                );
+                                return Err(());
+                            }
+                        } else {
+                            Token::set_token_error_flag_by_index(token.index_into_tokens, tokens);
+                            return Err(());
+                        }
+                    }
+                    UnitTokenType::StandInItself => {
+                        if shunting_tokens
+                            .get(i + 1)
+                            .map(|it| {
+                                matches!(
+                                    it.typ,
+                                    TokenType::Operator(OperatorTokenType::UnitConverter)
+                                        | TokenType::Operator(OperatorTokenType::Div)
+                                )
+                            })
+                            .unwrap_or(false)
+                        {
+                            // TODO clone
+                            stack.push(CalcResult::new(
+                                CalcResultType::Unit(target_unit.clone()),
+                                token.index_into_tokens,
+                            ));
+                        } else {
+                            dbg!(&tokens);
+                            tokens[token.index_into_tokens].typ = TokenType::StringLiteral;
+                        }
+                    }
+                }
             }
             TokenType::Operator(typ) => {
                 if *typ == OperatorTokenType::Assign {
                     assignment = true;
                     continue;
                 }
-                if apply_operation(tokens, &mut stack, &typ, token.index_into_tokens) == true {
+                if apply_operation(tokens, &mut stack, &typ, token.index_into_tokens, units) == true
+                {
                     if matches!(typ, OperatorTokenType::UnitConverter) {
                         there_was_unit_conversion = true;
                     }
@@ -159,7 +211,16 @@ pub fn evaluate_tokens<'text_ptr>(
     return match last_success_operation_result_index {
         Some(last_success_operation_index) => {
             // e.g. "1+2 some text 3"
-            // in this case prefer the result of 1+2 and ignore the number 3
+            // in this case prefer the result of 1+2 and convert 3 to String
+            for (i, stack_elem) in stack.iter().enumerate() {
+                if last_success_operation_index != i {
+                    debug_print(&format!(
+                        " calc> {:?} --> String",
+                        &tokens[stack_elem.index_into_tokens]
+                    ));
+                    tokens[stack_elem.index_into_tokens].typ = TokenType::StringLiteral;
+                }
+            }
             Ok(Some(EvaluationResult {
                 there_was_unit_conversion,
                 there_was_operation: true,
@@ -181,6 +242,7 @@ fn apply_operation<'text_ptr>(
     stack: &mut Vec<CalcResult>,
     op: &OperatorTokenType,
     op_token_index: usize,
+    units: &Units,
 ) -> bool {
     let succeed = match &op {
         OperatorTokenType::Mult
@@ -193,6 +255,16 @@ fn apply_operation<'text_ptr>(
         | OperatorTokenType::Pow
         | OperatorTokenType::ShiftLeft
         | OperatorTokenType::ShiftRight
+        | OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X
+        | OperatorTokenType::Percentage_Find_Base_From_X_Icrease_Result
+        | OperatorTokenType::Percentage_Find_Base_From_Icrease_X_Result
+        | OperatorTokenType::Percentage_Find_Incr_Rate_From_Result_X_Base
+        | OperatorTokenType::Percentage_Find_Base_From_Result_Decrease_X
+        | OperatorTokenType::Percentage_Find_Base_From_X_Decrease_Result
+        | OperatorTokenType::Percentage_Find_Base_From_Decrease_X_Result
+        | OperatorTokenType::Percentage_Find_Decr_Rate_From_Result_X_Base
+        | OperatorTokenType::Percentage_Find_Rate_From_Result_Base
+        | OperatorTokenType::Percentage_Find_Base_From_Result_Rate
         | OperatorTokenType::UnitConverter => {
             if stack.len() > 1 {
                 let (lhs, rhs) = (&stack[stack.len() - 2], &stack[stack.len() - 1]);
@@ -215,9 +287,14 @@ fn apply_operation<'text_ptr>(
         | OperatorTokenType::Perc
         | OperatorTokenType::BinNot => {
             let maybe_top = stack.last();
-            if let Some(result) =
-                maybe_top.and_then(|top| unary_operation(&op, top, op_token_index))
-            {
+            let result = maybe_top.and_then(|top| unary_operation(&op, top, op_token_index));
+            debug_print(&format!(
+                "calc> {:?} {:?} = {:?}",
+                &op,
+                &maybe_top.as_ref().map(|it| &it.typ),
+                &result
+            ));
+            if let Some(result) = result {
                 stack.pop();
                 stack.push(result);
                 true
@@ -236,13 +313,16 @@ fn apply_operation<'text_ptr>(
                     CalcResultType::Matrix(MatrixData::new(matrix_args, *row_count, *col_count)),
                     op_token_index,
                 ));
+                debug_print("calc> Matrix");
                 true
             } else {
+                debug_print("calc> Matrix");
                 false
             }
         }
         OperatorTokenType::Fn { arg_count, typ } => {
-            typ.execute(*arg_count, stack, op_token_index, tokens)
+            debug_print(&format!("calc> Fn {:?}", typ));
+            typ.execute(*arg_count, stack, op_token_index, tokens, units)
         }
         OperatorTokenType::Semicolon | OperatorTokenType::Comma => {
             // ignore
@@ -257,40 +337,32 @@ fn apply_operation<'text_ptr>(
             // check test_panic_fuzz_3
             return false;
         }
-        OperatorTokenType::ApplyUnit(target_unit) => {
-            let maybe_top = stack.last();
-            if let Some(result) = maybe_top.and_then(|top| unit_conversion(top, &target_unit)) {
-                stack.pop();
-                stack.push(result);
-            } else {
-                // it is the unit operand for "in" conversion
-                // e.g. "3m in cm",
-                // put the unit name into the stack, the next operator is probably an 'in'
-                stack.push(CalcResult::new(
-                    CalcResultType::Unit(target_unit.clone()),
-                    op_token_index,
-                ));
-            }
+        OperatorTokenType::PercentageIs => {
+            // ignore
             true
         }
     };
     return succeed;
 }
 
-fn unit_conversion(top: &CalcResult, target_unit: &UnitOutput) -> Option<CalcResult> {
-    match &top.typ {
-        CalcResultType::Number(num) => {
-            let norm = target_unit.normalize(num);
-            if target_unit.dimensions == EMPTY_UNIT_DIMENSIONS {
-                // the units cancelled each other, e.g. km/m
-                norm.map(|norm| CalcResult::new(CalcResultType::Number(norm), 0))
-            } else {
-                norm.map(|norm| {
-                    CalcResult::new(CalcResultType::Quantity(norm, target_unit.clone()), 0)
-                })
-            }
-        }
-        _ => None,
+fn unit_conversion<'text_ptr>(
+    num: &Decimal,
+    target_unit: &UnitOutput,
+    operand_token_index: usize,
+    unit_token_index: usize,
+) -> Option<CalcResult> {
+    let norm = target_unit.normalize(num);
+    if target_unit.dimensions == EMPTY_UNIT_DIMENSIONS {
+        // the units cancelled each other, e.g. km/m
+        norm.map(|norm| CalcResult::new(CalcResultType::Number(norm), operand_token_index))
+    } else {
+        norm.map(|norm| {
+            CalcResult::new2(
+                CalcResultType::Quantity(norm, target_unit.clone()),
+                operand_token_index,
+                unit_token_index,
+            )
+        })
     }
 }
 
@@ -303,7 +375,7 @@ fn unary_operation(
         OperatorTokenType::UnaryPlus => Some(top.clone()),
         OperatorTokenType::UnaryMinus => unary_minus_op(top),
         OperatorTokenType::Perc => percentage_operator(top, op_token_index),
-        OperatorTokenType::BinNot => binary_complement(top),
+        OperatorTokenType::BinNot => bitwise_not(top),
         _ => None,
     };
 }
@@ -318,12 +390,43 @@ fn binary_operation(
         OperatorTokenType::Div => divide_op(lhs, rhs),
         OperatorTokenType::Add => add_op(lhs, rhs),
         OperatorTokenType::Sub => sub_op(lhs, rhs),
-        OperatorTokenType::BinAnd => binary_and_op(lhs, rhs),
-        OperatorTokenType::BinOr => binary_or_op(lhs, rhs),
-        OperatorTokenType::BinXor => binary_xor_op(lhs, rhs),
+        OperatorTokenType::BinAnd => bitwise_and_op(lhs, rhs),
+        OperatorTokenType::BinOr => bitwise_or_op(lhs, rhs),
+        OperatorTokenType::BinXor => bitwise_xor_op(lhs, rhs),
         OperatorTokenType::Pow => pow_op(lhs, rhs),
-        OperatorTokenType::ShiftLeft => binary_shift_left(lhs, rhs),
-        OperatorTokenType::ShiftRight => binary_shift_right(lhs, rhs),
+        OperatorTokenType::ShiftLeft => bitwise_shift_left(lhs, rhs),
+        OperatorTokenType::ShiftRight => bitwise_shift_right(lhs, rhs),
+        OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X => {
+            perc_num_is_xperc_on_what(lhs, rhs)
+        }
+        OperatorTokenType::Percentage_Find_Base_From_X_Icrease_Result => {
+            perc_num_is_xperc_on_what(rhs, lhs)
+        }
+        OperatorTokenType::Percentage_Find_Base_From_Icrease_X_Result => {
+            perc_num_is_xperc_on_what(rhs, lhs)
+        }
+        OperatorTokenType::Percentage_Find_Incr_Rate_From_Result_X_Base => {
+            perc_num_is_what_perc_on_num(lhs, rhs)
+        }
+        //
+        OperatorTokenType::Percentage_Find_Base_From_Result_Decrease_X => {
+            perc_num_is_xperc_off_what(lhs, rhs)
+        }
+        OperatorTokenType::Percentage_Find_Base_From_X_Decrease_Result => {
+            perc_num_is_xperc_off_what(rhs, lhs)
+        }
+        OperatorTokenType::Percentage_Find_Base_From_Decrease_X_Result => {
+            perc_num_is_xperc_off_what(rhs, lhs)
+        }
+        OperatorTokenType::Percentage_Find_Decr_Rate_From_Result_X_Base => {
+            perc_num_is_what_perc_off_num(lhs, rhs)
+        }
+        OperatorTokenType::Percentage_Find_Rate_From_Result_Base => {
+            percentage_find_rate_from_result_base(lhs, rhs)
+        }
+        OperatorTokenType::Percentage_Find_Base_From_Result_Rate => {
+            percentage_find_base_from_result_rate(lhs, rhs)
+        }
         OperatorTokenType::UnitConverter => {
             return match (&lhs.typ, &rhs.typ) {
                 (
@@ -363,6 +466,10 @@ fn binary_operation(
         // , csinálj egy TokenType::BinaryOp::Add
         _ => panic!(),
     };
+    debug_print(&format!(
+        "calc> {:?} {:?} {:?} = {:?}",
+        &lhs.typ, op, &rhs.typ, &result
+    ));
     result
 }
 
@@ -380,11 +487,11 @@ fn percentage_operator(lhs: &CalcResult, op_token_index: usize) -> Option<CalcRe
     }
 }
 
-fn binary_complement(lhs: &CalcResult) -> Option<CalcResult> {
+fn bitwise_not(lhs: &CalcResult) -> Option<CalcResult> {
     match &lhs.typ {
         CalcResultType::Number(lhs_num) => {
             // 0b01 and 0b10
-            let lhs_num = lhs_num.to_i64()?;
+            let lhs_num = lhs_num.to_u64()?;
             Some(CalcResult::new(
                 CalcResultType::Number(dec(lhs_num.not())),
                 lhs.index_into_tokens,
@@ -394,15 +501,15 @@ fn binary_complement(lhs: &CalcResult) -> Option<CalcResult> {
     }
 }
 
-fn binary_xor_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+fn bitwise_xor_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     match (&lhs.typ, &rhs.typ) {
         //////////////
         // 12 and x
         //////////////
         (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             // 0b01 and 0b10
-            let lhs = lhs.to_i64()?;
-            let rhs = rhs.to_i64()?;
+            let lhs = lhs.to_u64()?;
+            let rhs = rhs.to_u64()?;
             Some(CalcResult::new(
                 CalcResultType::Number(dec(lhs.bitxor(rhs))),
                 0,
@@ -412,58 +519,150 @@ fn binary_xor_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     }
 }
 
-fn binary_or_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+fn bitwise_or_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     match (&lhs.typ, &rhs.typ) {
         //////////////
         // 12 and x
         //////////////
         (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             // 0b01 and 0b10
-            let lhs = lhs.to_i64()?;
-            let rhs = rhs.to_i64()?;
+            let lhs = lhs.to_u64()?;
+            let rhs = rhs.to_u64()?;
             Some(CalcResult::new(CalcResultType::Number(dec(lhs | rhs)), 0))
         }
         _ => None,
     }
 }
 
-fn binary_shift_right(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+fn perc_num_is_xperc_on_what(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+    // 'lhs' is 'rhs' on what
+    // 41 is 17% on what
     match (&lhs.typ, &rhs.typ) {
-        (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
-            let lhs = lhs.to_i64()?;
-            let rhs = rhs.to_u32()?;
-            Some(CalcResult::new(
-                CalcResultType::Number(dec(lhs.wrapping_shr(rhs))),
-                0,
-            ))
+        (CalcResultType::Number(y), CalcResultType::Percentage(p)) => {
+            let x = y
+                .checked_mul(&DECIMAL_100)?
+                .checked_div(&p.checked_add(&DECIMAL_100)?)?;
+            Some(CalcResult::new(CalcResultType::Number(x), 0))
         }
         _ => None,
     }
 }
 
-fn binary_shift_left(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+fn perc_num_is_xperc_off_what(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+    // 'lhs' is 'rhs' off what
+    // 41 is 17% off what
+    // x = (y*100)/(100-p)
     match (&lhs.typ, &rhs.typ) {
-        (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
-            let lhs = lhs.to_i64()?;
-            let rhs = rhs.to_u32()?;
-            Some(CalcResult::new(
-                CalcResultType::Number(dec(lhs.wrapping_shl(rhs))),
-                0,
-            ))
+        (CalcResultType::Number(y), CalcResultType::Percentage(p)) => {
+            let x = y
+                .checked_mul(&DECIMAL_100)?
+                .checked_div(&DECIMAL_100.checked_sub(&p)?)?;
+            Some(CalcResult::new(CalcResultType::Number(x), 0))
         }
         _ => None,
     }
 }
 
-fn binary_and_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+fn perc_num_is_what_perc_on_num(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+    // lhs is what % on rhs
+    // 41 is what % on 35
+    match (&lhs.typ, &rhs.typ) {
+        (CalcResultType::Number(y), CalcResultType::Number(x)) => {
+            let p = y
+                .checked_mul(&DECIMAL_100)?
+                .checked_div(x)?
+                .checked_sub(&DECIMAL_100)?;
+            Some(CalcResult::new(CalcResultType::Percentage(p), 0))
+        }
+        _ => None,
+    }
+}
+
+fn perc_num_is_what_perc_off_num(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+    // lhs is what % off rhs
+    // 35 is what % off 41
+    match (&lhs.typ, &rhs.typ) {
+        (CalcResultType::Number(y), CalcResultType::Number(x)) => {
+            let p = y
+                .checked_mul(&DECIMAL_100)?
+                .checked_div(x)?
+                .checked_sub(&DECIMAL_100)?
+                .neg();
+            Some(CalcResult::new(CalcResultType::Percentage(p), 0))
+        }
+        _ => None,
+    }
+}
+
+fn percentage_find_rate_from_result_base(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+    // lhs is what percent of lhs
+    // 20 is what percent of 60
+    match (&lhs.typ, &rhs.typ) {
+        (CalcResultType::Number(y), CalcResultType::Number(x)) => {
+            let p = y.checked_div(x)?.checked_mul(&DECIMAL_100)?;
+            Some(CalcResult::new(CalcResultType::Percentage(p), 0))
+        }
+        _ => None,
+    }
+}
+
+fn percentage_find_base_from_result_rate(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+    // lhs is rhs% of what
+    // 5 is 25% of what
+    match (&lhs.typ, &rhs.typ) {
+        (CalcResultType::Number(y), CalcResultType::Percentage(p)) => {
+            let x = y.checked_div(p)?.checked_mul(&DECIMAL_100)?;
+            Some(CalcResult::new(CalcResultType::Number(x), 0))
+        }
+        _ => None,
+    }
+}
+
+fn bitwise_shift_right(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+    match (&lhs.typ, &rhs.typ) {
+        (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
+            let lhs = lhs.to_u64()?;
+            let rhs = rhs.to_u32()?;
+            if rhs > 63 {
+                None
+            } else {
+                Some(CalcResult::new(
+                    CalcResultType::Number(dec(lhs.shr(rhs))),
+                    0,
+                ))
+            }
+        }
+        _ => None,
+    }
+}
+
+fn bitwise_shift_left(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
+    match (&lhs.typ, &rhs.typ) {
+        (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
+            let lhs = lhs.to_u64()?;
+            let rhs = rhs.to_u32()?;
+            if rhs > 63 {
+                None
+            } else {
+                Some(CalcResult::new(
+                    CalcResultType::Number(dec(lhs.shl(rhs))),
+                    0,
+                ))
+            }
+        }
+        _ => None,
+    }
+}
+
+fn bitwise_and_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
     match (&lhs.typ, &rhs.typ) {
         //////////////
         // 12 and x
         //////////////
         (CalcResultType::Number(lhs), CalcResultType::Number(rhs)) => {
             // 0b01 and 0b10
-            let lhs = lhs.to_i64()?;
-            let rhs = rhs.to_i64()?;
+            let lhs = lhs.to_u64()?;
+            let rhs = rhs.to_u64()?;
             Some(CalcResult::new(CalcResultType::Number(dec(lhs & rhs)), 0))
         }
         _ => None,
@@ -515,6 +714,9 @@ fn pow_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
             let p = rhs.to_i64()?;
             let num_powered = pow(lhs.clone(), p)?;
             let unit_powered = lhs_unit.pow(p);
+            dbg!(&p);
+            dbg!(&num_powered);
+            dbg!(&unit_powered);
             Some(CalcResult::new(
                 CalcResultType::Quantity(num_powered, unit_powered?),
                 0,
@@ -570,23 +772,19 @@ pub fn multiply_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
             CalcResultType::Quantity(rhs_num, rhs_unit),
         ) => {
             // 2s * 3s
-            let new_unit = lhs_unit * rhs_unit;
-            if new_unit.is_unitless() {
-                if let Some(lhs_num) = lhs_unit.from_base_to_this_unit(lhs_num) {
-                    if let Some(rhs_num) = rhs_unit.from_base_to_this_unit(rhs_num) {
-                        lhs_num
-                            .checked_mul(&rhs_num)
-                            .map(|num| CalcResult::new(CalcResultType::Number(num), 0))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
+            if lhs_unit.unit_count + rhs_unit.unit_count >= MAX_UNIT_COUNT {
+                None
             } else {
-                lhs_num
-                    .checked_mul(rhs_num)
-                    .map(|num| CalcResult::new(CalcResultType::Quantity(num, new_unit), 0))
+                let new_unit = lhs_unit * rhs_unit;
+                if new_unit.is_unitless() {
+                    lhs_num
+                        .checked_mul(&rhs_num)
+                        .map(|num| CalcResult::new(CalcResultType::Number(num), 0))
+                } else {
+                    lhs_num
+                        .checked_mul(rhs_num)
+                        .map(|num| CalcResult::new(CalcResultType::Quantity(num, new_unit), 0))
+                }
             }
         }
         (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Percentage(rhs)) => {
@@ -991,11 +1189,14 @@ pub fn divide_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
             // 12 km / 3s
             if rhs.is_zero() {
                 return None;
+            } else if lhs_unit.unit_count + rhs_unit.unit_count >= MAX_UNIT_COUNT {
+                None
+            } else {
+                Some(CalcResult::new(
+                    CalcResultType::Quantity(lhs / rhs, lhs_unit / rhs_unit),
+                    0,
+                ))
             }
-            Some(CalcResult::new(
-                CalcResultType::Quantity(lhs / rhs, lhs_unit / rhs_unit),
-                0,
-            ))
         }
         (CalcResultType::Quantity(_lhs, _lhs_unit), CalcResultType::Percentage(_rhs)) => {
             // 2m / 50%
@@ -1065,8 +1266,8 @@ pub fn pow(this: Decimal, mut exp: i64) -> Option<Decimal> {
     })
 }
 
-pub fn dec(num: i64) -> Decimal {
-    Decimal::from_i64(num).unwrap()
+pub fn dec<T: Into<Decimal>>(num: T) -> Decimal {
+    num.into()
 }
 
 const DECIMAL_100: Decimal = Decimal::from_parts(100, 0, 0, false, 0);
@@ -1078,7 +1279,8 @@ fn percentage_of(this: &Decimal, base: &Decimal) -> Option<Decimal> {
 #[cfg(test)]
 mod tests {
     use crate::shunting_yard::tests::{
-        apply_to_prev_token_unit, num, num_with_err, op, op_err, str, unit,
+        apply_to_prev_token_unit, apply_to_prev_token_unit_with_err, num, num_with_err, op, op_err,
+        str, unit,
     };
     use crate::units::units::Units;
     use crate::{ResultFormat, Variable, Variables};
@@ -1109,9 +1311,10 @@ mod tests {
             &vars,
             &arena,
         );
-        let _result_stack = crate::calc::evaluate_tokens(&mut tokens, &mut shunting_output, &vars);
+        let _result_stack =
+            crate::calc::evaluate_tokens(&mut tokens, &mut shunting_output, &vars, &units);
 
-        crate::shunting_yard::tests::compare_tokens(expected_tokens, &tokens);
+        crate::shunting_yard::tests::compare_tokens(text, &expected_tokens, &tokens);
     }
 
     fn test_vars(vars: &Variables, text: &str, expected: &str, dec_count: usize) {
@@ -1126,7 +1329,7 @@ mod tests {
         let mut shunting_output =
             crate::shunting_yard::tests::do_shunting_yard(&temp, &units, &mut tokens, vars, &arena);
 
-        let result = crate::calc::evaluate_tokens(&mut tokens, &mut shunting_output, vars);
+        let result = crate::calc::evaluate_tokens(&mut tokens, &mut shunting_output, vars, &units);
 
         if let Err(..) = &result {
             assert_eq!("Err", expected);
@@ -1203,14 +1406,14 @@ mod tests {
         test("100 ft * lbf in (in*lbf)", "1200 in lbf");
         test("100 N in kg*m / s ^ 2", "100 (kg m) / s^2");
         test("100 cm in m", "1 m");
-        test("100 Hz in 1/s", "100 s^-1");
+        test("100 Hz in 1/s", "100 / s");
         test("() Hz", " ");
 
         test("1 ft * lbf * 2 rad", "2 ft lbf rad");
         test("1 ft * lbf * 2 rad in in*lbf*rad", "24 in lbf rad");
         test("(2/3)m", "0.6667 m");
         test_with_dec_count(50, "(2/3)m", "0.6667 m");
-        test_with_dec_count(50, "2/3m", "0.6667 m^-1");
+        test_with_dec_count(50, "2/3m", "0.6667 / m");
 
         test("123 N in (kg m)/s^2", "123 (kg m) / s^2");
 
@@ -1292,8 +1495,42 @@ mod tests {
     }
 
     #[test]
-    fn test_longer_texts() {
+    fn test_longer_texts3() {
         test("I traveled 13km at a rate / 40km/h in min", "19.5 min");
+    }
+
+    #[test]
+    fn test_longer_texts3_tokens() {
+        test_tokens(
+            "I traveled 13km at a rate / 40km/h in min",
+            &[
+                str("I"),
+                str(" "),
+                str("traveled"),
+                str(" "),
+                num(13),
+                apply_to_prev_token_unit("km"),
+                str(" "),
+                str("at"),
+                str(" "),
+                str("a"),
+                str(" "),
+                str("rate"),
+                str(" "),
+                op(OperatorTokenType::Div),
+                str(" "),
+                num(40),
+                apply_to_prev_token_unit("km / h"),
+                str(" "),
+                op(OperatorTokenType::UnitConverter),
+                str(" "),
+                unit("min"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_longer_texts() {
         test(
             "I traveled 24 miles and rode my bike  / 2 hours",
             "12 mile / hour",
@@ -1307,12 +1544,16 @@ mod tests {
             "64373.76 m",
         );
         test(
-            "transfer of around 1.587GB in about / 3 seconds",
-            "0.529 GB / second",
-        );
-        test(
             " is a unit but should not be handled here so... 37.5MB*1 of DNA information in it.",
             "37.5 MB",
+        );
+    }
+
+    #[test]
+    fn test_longer_texts2() {
+        test(
+            "transfer of around 1.587GB in about / 3 seconds",
+            "0.529 GB / second",
         );
     }
 
@@ -1351,13 +1592,12 @@ mod tests {
 
     #[test]
     fn test_quant_vs_non_quant() {
-        // test("12 km/h * 5 ", "60 km / h");
-        // test("200kg alma + 300 kg banán ", "500 kg");
-        // test("(1 alma + 4 körte) * 3 ember", "15");
+        test("12 km/h * 5 ", "60 km / h");
+        test("200kg alma + 300 kg banán ", "500 kg");
 
-        test("3000/50ml", "60 ml^-1");
+        test("3000/50ml", "60 / ml");
         test("(3000/50)ml", "60 ml");
-        test("3000/(50ml)", "60 ml^-1");
+        test("3000/(50ml)", "60 / ml");
         test("1/(2km/h)", "0.5 h / km");
     }
 
@@ -1431,7 +1671,6 @@ mod tests {
         // there are no empty vectors
 
         // matrix
-        test_tokens("[]", &[str("["), str("]")]); // there are no empty vectors
         test_tokens(
             "1 + [2,]",
             &[
@@ -1601,6 +1840,22 @@ mod tests {
     }
 
     #[test]
+    fn kcal_unit_tokens() {
+        test_tokens(
+            "1 cal in J",
+            &[
+                num(1),
+                str(" "),
+                apply_to_prev_token_unit("cal"),
+                str(" "),
+                op(OperatorTokenType::UnitConverter),
+                str(" "),
+                unit("J"),
+            ],
+        );
+    }
+
+    #[test]
     fn kcal_unit() {
         test("1 cal in J", "4.1868 J");
         test("3kcal in J", "12560.4 J");
@@ -1620,7 +1875,7 @@ mod tests {
     }
 
     #[test]
-    fn test_binary_ops() {
+    fn test_bitwise_ops() {
         test("0xFF AND 0b111", "7");
 
         test_tokens(
@@ -1735,7 +1990,6 @@ mod tests {
                     row_count: 1,
                     col_count: 1,
                 }),
-                op(OperatorTokenType::BracketOpen),
                 num(1),
                 op(OperatorTokenType::BracketClose),
                 op(OperatorTokenType::ParenClose),
@@ -1757,7 +2011,6 @@ mod tests {
                     row_count: 1,
                     col_count: 1,
                 }),
-                op(OperatorTokenType::BracketOpen),
                 num(1),
                 op(OperatorTokenType::BracketClose),
                 op(OperatorTokenType::Comma),
@@ -1773,8 +2026,8 @@ mod tests {
     }
 
     #[test]
-    fn test_binary_not() {
-        test("NOT(0b11)", "-4");
+    fn test_bitwise_not() {
+        test("NOT(0b11)", "18446744073709551612");
         test("13 AND NOT(4 - 1)", "12");
     }
 
@@ -1789,6 +2042,135 @@ mod tests {
     fn test_func_pi() {
         test_with_dec_count(1000, "pi()", "3.1415926535897932384626433833");
         test("pi(1)", "Err");
+    }
+
+    #[test]
+    fn test_func_e() {
+        test_with_dec_count(1000, "e()", "2.7182818284590452353602874714");
+        test("e(1)", "Err");
+    }
+
+    #[test]
+    fn test_func_ln() {
+        test_with_dec_count(1000, "ln(2)", "0.693147180559945");
+        test_with_dec_count(1000, "ln(100)", "4.60517018598809");
+        test("ln()", "Err");
+        test("ln(2, 3)", "Err");
+    }
+
+    #[test]
+    fn test_func_lg() {
+        test_with_dec_count(1000, "lg(2)", "1");
+        test_with_dec_count(1000, "lg(100)", "6.64385618977472");
+        test("lg()", "Err");
+        test("lg(2, 3)", "Err");
+    }
+
+    #[test]
+    fn test_func_log() {
+        test_with_dec_count(1000, "log(3, 2)", "0.630929753571457");
+        test_with_dec_count(1000, "log(2, 100)", "6.64385618977473");
+        test("log()", "Err");
+        test("log(1)", "Err");
+        test("log(1, 2, 3)", "Err");
+    }
+
+    #[test]
+    fn test_func_cos() {
+        test_with_dec_count(1000, "cos(2 degree)", "0.999390827019096");
+        test_with_dec_count(1000, "cos(1 degree)", "0.999847695156391");
+        test_with_dec_count(1000, "cos(1 rad)", "0.54030230586814");
+        test("cos()", "Err");
+        test("cos(1)", "Err");
+        test("cos(1 rad^2)", "Err");
+        test("cos(1, 2)", "Err");
+    }
+
+    #[test]
+    fn test_func_sin() {
+        test_with_dec_count(1000, "sin(2 degree)", "0.03489949670250097");
+        test_with_dec_count(1000, "sin(1 degree)", "0.01745240643728351");
+        test_with_dec_count(1000, "sin(1 rad)", "0.841470984807897");
+        test("sin()", "Err");
+        test("sin(1)", "Err");
+        test("sin(1 rad^2)", "Err");
+        test("sin(1, 2)", "Err");
+        test("sin(1 m)", "Err");
+        test_tokens(
+            "sin(1 m)",
+            &[
+                op(OperatorTokenType::Fn {
+                    arg_count: 0,
+                    typ: FnType::Sin,
+                }),
+                op(OperatorTokenType::ParenOpen),
+                num_with_err(1),
+                str(" "),
+                apply_to_prev_token_unit_with_err("m"),
+                op(OperatorTokenType::ParenClose),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_func_acos() {
+        test_with_dec_count(1000, "acos(1)", "0 rad");
+        test_with_dec_count(1000, "acos(0.5)", "1.047197551196598 rad");
+        test_with_dec_count(1000, "acos(-0.5)", "2.094395102393196 rad");
+        test("acos()", "Err");
+        test("acos(1 rad)", "Err");
+        test("acos(1 degree)", "Err");
+        test("acos(2)", "Err");
+        test("acos(-2)", "Err");
+        test("acos(1 rad^2)", "Err");
+        test("acos(1, 2)", "Err");
+    }
+
+    #[test]
+    fn test_func_asin() {
+        test_with_dec_count(1000, "asin(1)", "1.570796326794897 rad");
+        test_with_dec_count(1000, "asin(0.5)", "0.523598775598299 rad");
+        test_with_dec_count(1000, "asin(-0.5)", "-0.523598775598299 rad");
+        test("asin()", "Err");
+        test("asin(1 rad)", "Err");
+        test("asin(1 degree)", "Err");
+        test("asin(2)", "Err");
+        test("asin(-2)", "Err");
+        test("asin(1 rad^2)", "Err");
+        test("asin(1, 2)", "Err");
+    }
+
+    #[test]
+    fn test_func_tan() {
+        test_with_dec_count(1000, "tan(2 degree)", "0.03492076949174773");
+        test_with_dec_count(1000, "tan(1 degree)", "0.01745506492821759");
+        test_with_dec_count(1000, "tan(1 rad)", "1.557407724654902");
+        test("tan()", "Err");
+        test("tan(1)", "Err");
+        test("tan(1 rad^2)", "Err");
+        test("tan(1, 2)", "Err");
+    }
+
+    #[test]
+    fn test_func_atan() {
+        test_with_dec_count(1000, "atan(1)", "0.785398163397448 rad");
+        test_with_dec_count(1000, "atan(0.5)", "0.463647609000806 rad");
+        test_with_dec_count(1000, "atan(-0.5)", "-0.463647609000806 rad");
+        test("atan()", "Err");
+        test("atan(1 rad)", "Err");
+        test("atan(1 degree)", "Err");
+        test("atan(2)", "Err");
+        test("atan(-2)", "Err");
+        test("atan(1 rad^2)", "Err");
+        test("atan(1, 2)", "Err");
+    }
+
+    #[test]
+    fn test_func_abs() {
+        test_with_dec_count(1000, "abs(10)", "10");
+        test_with_dec_count(1000, "abs(-10)", "10");
+        test("abs()", "Err");
+        test("abs(1, 2)", "Err");
     }
 
     #[test]
@@ -1841,7 +2223,7 @@ mod tests {
 
     #[test]
     fn test_unit_in_denominator() {
-        test("12/year", "12 year^-1");
+        test("12/year", "12 / year");
     }
 
     #[test]
@@ -1985,4 +2367,508 @@ mod tests {
     fn test_fuzzing_issue() {
         test("90-/9b^72^4", "Err");
     }
+
+    #[test]
+    fn calc_bug_period_calc() {
+        test("(1000/month) + (2000/year)", "1166.6667 / month");
+    }
+
+    #[test]
+    fn calc_bug_period_calc2() {
+        test("((1000/month) + (2000/year)) * 12 month", "14000");
+    }
+
+    #[test]
+    fn calc_bug_period_calc3() {
+        test("50 000 / month * 1 year", "600000");
+    }
+
+    #[test]
+    fn test_u64_hex_bitwise_and() {
+        test("0xFF AND 0xFFFFFFFFFFFFFFFF", &0xFFu64.to_string());
+    }
+
+    #[test]
+    fn test_u64_hex_bitwise_or() {
+        test(
+            "0xFF OR 0xFFFFFFFFFFFFFFFF",
+            &0xFFFFFFFFFFFFFFFFu64.to_string(),
+        );
+    }
+
+    #[test]
+    fn test_u64_hex_bitwise_xor() {
+        test(
+            "0xFF XOR 0xFFFFFFFFFFFFFFFF",
+            &0xFFFFFFFFFFFFFF00u64.to_string(),
+        );
+    }
+
+    #[test]
+    fn test_u64_hex_bitwise_shift_left() {
+        test(
+            "0x00FFFFFF_FFFFFFFF << 8",
+            &0xFFFFFFFF_FFFFFF00u64.to_string(),
+        );
+    }
+
+    #[test]
+    fn test_u64_hex_bitwise_shift_right() {
+        test(
+            "0xFFFFFFFF_FFFFFFFF >> 8",
+            &0x00FFFFFF_FFFFFFFFu64.to_string(),
+        );
+    }
+
+    #[test]
+    fn test_calc_num_perc_on_what() {
+        test("41 is 17% on what", "35.0427");
+    }
+
+    #[test]
+    fn test_calc_num_perc_on_what_tokens() {
+        test_tokens(
+            "41 is 17% on what",
+            &[
+                num(41),
+                str(" "),
+                op(OperatorTokenType::PercentageIs),
+                str(" "),
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_calc_num_perc_on_what_2() {
+        test("41 is (16%+1%) on what", "35.0427");
+    }
+
+    #[test]
+    fn test_calc_num_perc_on_what_3() {
+        test("41 is (16+1)% on what", "35.0427");
+    }
+
+    #[test]
+    fn test_calc_percentage_what_plus() {
+        test("what plus 17% is 41", "35.0427");
+    }
+
+    #[test]
+    fn test_calc_percentage_what_plus_2() {
+        test("what plus (16%+1%) is 41", "35.0427");
+    }
+    #[test]
+    fn test_calc_percentage_what_plus_3() {
+        test("what plus (16+1)% is 41", "35.0427");
+    }
+
+    #[test]
+    fn test_calc_perc_on_what_is() {
+        test("17% on what is 41", "35.0427");
+    }
+
+    #[test]
+    fn test_calc_perc_on_what_is_tokens() {
+        test_tokens(
+            "17% on what is 41",
+            &[
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::Percentage_Find_Base_From_Icrease_X_Result),
+                str(" "),
+                num(41),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_calc_perc_on_what_is_2() {
+        test("(16%+1%) on what is 41", "35.0427");
+    }
+
+    #[test]
+    fn test_calc_perc_on_what_is_3() {
+        test("(16+1)% on what is 41", "35.0427");
+    }
+
+    #[test]
+    fn test_calc_num_what_perc_on_num_tokens() {
+        test("41 is what % on 35", "17.1429 %");
+    }
+
+    #[test]
+    fn test_calc_num_perc_off_what() {
+        test("41 is 17% off what", "49.3976");
+    }
+
+    #[test]
+    fn test_calc_num_perc_off_what_tokens() {
+        test_tokens(
+            "41 is 17% off what",
+            &[
+                num(41),
+                str(" "),
+                op(OperatorTokenType::PercentageIs),
+                str(" "),
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::Percentage_Find_Base_From_Result_Decrease_X),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_calc_num_perc_off_what_2() {
+        test("41 is (16%+1%) off what", "49.3976");
+    }
+
+    #[test]
+    fn test_calc_num_perc_off_what_3() {
+        test("41 is (16+1)% off what", "49.3976");
+    }
+
+    #[test]
+    fn test_calc_percentage_what_minus() {
+        test("what minus 17% is 41", "49.3976");
+    }
+
+    #[test]
+    fn test_calc_percentage_what_minus_2() {
+        test("what minus (16%+1%) is 41", "49.3976");
+    }
+    #[test]
+    fn test_calc_percentage_what_minus_3() {
+        test("what minus (16+1)% is 41", "49.3976");
+    }
+
+    #[test]
+    fn test_calc_perc_off_what_is() {
+        test("17% off what is 41", "49.3976");
+    }
+
+    #[test]
+    fn test_calc_perc_off_what_is_tokens() {
+        test_tokens(
+            "17% off what is 41",
+            &[
+                num(17),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::Percentage_Find_Base_From_Decrease_X_Result),
+                str(" "),
+                num(41),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_calc_perc_off_what_is_2() {
+        test("(16%+1%) off what is 41", "49.3976");
+    }
+
+    #[test]
+    fn test_calc_perc_off_what_is_3() {
+        test("(16+1)% off what is 41", "49.3976");
+    }
+
+    #[test]
+    fn test_calc_num_what_perc_off_num_tokens() {
+        test("35 is what % off 41", "14.6341 %");
+    }
+
+    #[test]
+    fn test_percent_complex_1() {
+        test("44 is (220 is what % on 200) on what", "40");
+    }
+
+    #[test]
+    fn test_percent_complex_2() {
+        test("44 is (180 is what % off 200) on what", "40");
+    }
+
+    #[test]
+    fn test_percent_complex_3() {
+        test("(44 is 10% on what) is 60% on what", "25");
+    }
+
+    #[test]
+    fn test_percent_complex_4() {
+        test("what plus (180 is what % off 200) is 44", "40");
+    }
+
+    #[test]
+    fn test_percent_complex_5() {
+        test("(180 is what % off 200) on what is 44", "40");
+    }
+
+    #[test]
+    fn test_percent_complex_6() {
+        test(
+            "44 is what % on ((180 is what % off 200) on what is 44)",
+            "10 %",
+        );
+    }
+
+    #[test]
+    fn test_percent_complex_7() {
+        test(
+            "44 is what % on ((180 is what % off (what plus 10% is 220)) on what is 44)",
+            "10 %",
+        );
+    }
+
+    #[test]
+    fn test_calc_percentage_find_rate_from_result_base() {
+        test("20 is what percent of 60", "33.3333 %");
+    }
+
+    #[test]
+    fn test_calc_percentage_find_rate_from_result_base_tokens() {
+        test_tokens(
+            "20 is what percent of 60",
+            &[
+                num(20),
+                str(" "),
+                op(OperatorTokenType::Percentage_Find_Rate_From_Result_Base),
+                str(" "),
+                num(60),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_calc_percentage_find_base_from_result_rate() {
+        test("5 is 25% of what", "20");
+    }
+
+    #[test]
+    fn test_calc_percentage_find_base_from_result_rate_tokens() {
+        test_tokens(
+            "5 is 25% of what",
+            &[
+                num(5),
+                str(" "),
+                op(OperatorTokenType::PercentageIs),
+                str(" "),
+                num(25),
+                op(OperatorTokenType::Perc),
+                str(" "),
+                op(OperatorTokenType::Percentage_Find_Base_From_Result_Rate),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_invalid_left_shift_to_string2() {
+        test("1 << 200", "Err");
+    }
+
+    #[test]
+    fn test_invalid_left_shift_to_string() {
+        test_tokens(
+            "1 << 200",
+            &[
+                num_with_err(1),
+                str(" "),
+                op_err(OperatorTokenType::ShiftLeft),
+                str(" "),
+                num_with_err(200),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_invalid_right_shift_to_string2() {
+        test("1 >> 64", "Err");
+    }
+
+    #[test]
+    fn test_invalid_right_shift_to_string() {
+        test_tokens(
+            "1 >> 64",
+            &[
+                num_with_err(1),
+                str(" "),
+                op_err(OperatorTokenType::ShiftRight),
+                str(" "),
+                num_with_err(64),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_multiplying_too_much_units() {
+        test("1 km*h*s*b*J*A*ft * 2 L*mi", "Err");
+    }
+
+    #[test]
+    fn test_dividing_too_much_units() {
+        test("1 km*h*s*b*J*A*ft / 2 L*mi", "Err");
+    }
+
+    #[test]
+    fn test_unit_conversion_26() {
+        test_tokens(
+            "(256byte * 120) in MiB",
+            &[
+                op(OperatorTokenType::ParenOpen),
+                num(256),
+                apply_to_prev_token_unit("bytes"),
+                str(" "),
+                op(OperatorTokenType::Mult),
+                str(" "),
+                num(120),
+                op(OperatorTokenType::ParenClose),
+                str(" "),
+                op(OperatorTokenType::UnitConverter),
+                str(" "),
+                unit("MiB"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_explicit_multipl_is_mandatory_before_units() {
+        test_tokens(
+            "2m^4kg/s^3",
+            &[num(2), apply_to_prev_token_unit("m^4"), str("kg/s^3")],
+        );
+        // it is the accepted form
+        test_tokens(
+            "2m^4*kg/s^3",
+            &[num(2), apply_to_prev_token_unit("(m^4 kg) / s^3")],
+        );
+    }
+
+    #[test]
+    fn not_in_must_be_str_if_we_are_sure_it_cant_be_unit() {
+        test_tokens(
+            "12 m in",
+            &[
+                num(12),
+                str(" "),
+                apply_to_prev_token_unit("m"),
+                str(" "),
+                str("in"),
+            ],
+        );
+        test("12 m in", "12 m");
+    }
+
+    #[test]
+    fn test_bug_no_paren_around_100() {
+        test_tokens(
+            "1+e()^(100)",
+            &[
+                num(1),
+                op(OperatorTokenType::Add),
+                op_err(OperatorTokenType::Fn {
+                    arg_count: 0,
+                    typ: FnType::E,
+                }),
+                op(OperatorTokenType::ParenOpen),
+                op(OperatorTokenType::ParenClose),
+                op_err(OperatorTokenType::Pow),
+                op(OperatorTokenType::ParenOpen),
+                num_with_err(100),
+                op(OperatorTokenType::ParenClose),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_fuzz_bug_201220() {
+        test(")5)t[Mr/(K)", "5 t");
+    }
+
+    #[test]
+    fn test_fuzz_bug_201221_2_no_panic_if_arg_is_not_valid_token() {
+        test("e(R())", "Err");
+    }
+
+    #[test]
+    fn test_fuzz_bug_201221_3_no_panic_if_arg_is_not_valid_token() {
+        test("sin(R())", "Err");
+    }
+
+    #[test]
+    fn test_fuzz_bug_201221_4_no_panic_if_arg_is_not_valid_token() {
+        test("ln(R())", "Err");
+        test("ln(R(), R())", "Err");
+        test("ln()", "Err");
+    }
+
+    #[test]
+    fn test_fuzz_bug_201221_5_no_panic_if_arg_is_not_valid_token() {
+        test("log(R(), R())", "Err");
+    }
+
+    #[test]
+    fn test_fuzz_bug_201221_6_no_panic_if_arg_is_not_valid_token() {
+        test("ceil(R())", "Err");
+    }
+
+    #[test]
+    fn test_fuzz_bug_201220_2() {
+        test("[]8F(*^5+[2)]/)=^]0/", "[2]");
+        test_tokens(
+            "[]8F(*^5+[2)]/)=^]0/",
+            &[
+                str("["),
+                str("]"),
+                str("8"),
+                str("F"),
+                str("("),
+                str("*"),
+                str("^"),
+                str("5"),
+                str("+"),
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 1,
+                }),
+                num(2),
+                str(")"),
+                op(OperatorTokenType::BracketClose),
+                str("/"),
+                str(")"),
+                str("="),
+                str("^"),
+                str("]"),
+                str("0"),
+                str("/"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_illegal_unary_minus_is_not_added_to_the_output() {
+        test_tokens(
+            "[7*7]*9#8=-+",
+            &[
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 1,
+                }),
+                num(7),
+                op(OperatorTokenType::Mult),
+                num(7),
+                op(OperatorTokenType::BracketClose),
+                str("*"),
+                str("9"),
+                str("#8"),
+                str("="),
+                str("-"),
+                str("+"),
+            ],
+        );
+    }
+
+    // "str".split('').map(function(it){return 'str("'+it+'")';}).join(',')
 }

@@ -72,7 +72,11 @@ impl InputModifiers {
     }
 
     pub fn is_ctrl_shift(&self) -> bool {
-        self.ctrl & self.shift
+        self.ctrl && self.shift
+    }
+
+    pub fn is_none(&self) -> bool {
+        !self.ctrl && !self.shift && !self.alt
     }
 }
 
@@ -168,7 +172,7 @@ impl Selection {
         }
     }
 
-    pub fn get_range(&self) -> (Pos, Pos) {
+    pub fn get_range_ordered(&self) -> (Pos, Pos) {
         if let Some(end) = self.end {
             let end_index = end.row * 1024 + end.column;
             let start_index = self.start.row * 1024 + self.start.column;
@@ -182,7 +186,19 @@ impl Selection {
         }
     }
 
-    pub fn is_range(&self) -> Option<(Pos, Pos)> {
+    pub fn get_range(&self) -> (Pos, Pos) {
+        if let Some(end) = self.end {
+            (self.start, end)
+        } else {
+            (self.start, self.start)
+        }
+    }
+
+    pub fn is_range(&self) -> bool {
+        self.end.is_some()
+    }
+
+    pub fn is_range_ordered(&self) -> Option<(Pos, Pos)> {
         if let Some(end) = self.end {
             let end_index = end.row * 1024 + end.column;
             let start_index = self.start.row * 1024 + self.start.column;
@@ -256,7 +272,7 @@ pub enum RowModificationType {
 }
 
 impl RowModificationType {
-    fn merge(&mut self, other: Option<&RowModificationType>) {
+    pub fn merge(&mut self, other: Option<&RowModificationType>) {
         let self_row = match self {
             RowModificationType::SingleLine(row) => *row,
             RowModificationType::AllLinesFrom(row) => *row,
@@ -471,7 +487,7 @@ impl Editor {
             }
             EditorInputEvent::Esc => None,
             EditorInputEvent::Del => {
-                if let Some((start, end)) = selection.is_range() {
+                if let Some((start, end)) = selection.is_range_ordered() {
                     Some(EditorCommand::DelSelection {
                         removed_text: Editor::clone_range(start, end, content),
                         selection,
@@ -517,7 +533,7 @@ impl Editor {
             EditorInputEvent::Enter => {
                 if modifiers.ctrl {
                     Some(EditorCommand::InsertEmptyRow(cur_pos.row))
-                } else if let Some((start, end)) = selection.is_range() {
+                } else if let Some((start, end)) = selection.is_range_ordered() {
                     Some(EditorCommand::EnterSelection {
                         selection,
                         selected_text: Editor::clone_range(start, end, content),
@@ -527,7 +543,7 @@ impl Editor {
                 }
             }
             EditorInputEvent::Backspace => {
-                if let Some((start, end)) = selection.is_range() {
+                if let Some((start, end)) = selection.is_range_ordered() {
                     Some(EditorCommand::BackspaceSelection {
                         removed_text: Editor::clone_range(start, end, content),
                         selection,
@@ -579,7 +595,7 @@ impl Editor {
                 } else if *ch == 'c' && modifiers.ctrl {
                     None
                 } else if *ch == 'x' && modifiers.ctrl {
-                    if let Some((start, end)) = selection.is_range() {
+                    if let Some((start, end)) = selection.is_range_ordered() {
                         Some(EditorCommand::DelSelection {
                             selection,
                             removed_text: Editor::clone_range(start, end, content),
@@ -609,7 +625,7 @@ impl Editor {
                     None
                 } else if ch.to_ascii_lowercase() == 'z' && modifiers.ctrl {
                     None
-                } else if let Some((start, end)) = selection.is_range() {
+                } else if let Some((start, end)) = selection.is_range_ordered() {
                     Some(EditorCommand::InsertCharSelection {
                         ch: *ch,
                         selection,
@@ -627,10 +643,27 @@ impl Editor {
         };
     }
 
-    pub fn insert_text<T: Default + Clone + Debug>(
+    pub fn insert_text_no_undo<T: Default + Clone + Debug>(
         &mut self,
         str: &str,
         content: &mut EditorContent<T>,
+    ) -> Option<RowModificationType> {
+        self.insert_text(str, content, false)
+    }
+
+    pub fn insert_text_undoable<T: Default + Clone + Debug>(
+        &mut self,
+        str: &str,
+        content: &mut EditorContent<T>,
+    ) -> Option<RowModificationType> {
+        self.insert_text(str, content, true)
+    }
+
+    fn insert_text<T: Default + Clone + Debug>(
+        &mut self,
+        str: &str,
+        content: &mut EditorContent<T>,
+        undoable: bool,
     ) -> Option<RowModificationType> {
         let selection = self.selection;
         let cur_pos = selection.get_first();
@@ -639,7 +672,7 @@ impl Editor {
         let remaining_text_len_in_this_row = content.line_len(cur_pos.row) - cur_pos.column;
         let is_there_line_overflow =
             inserted_text_end_pos.column + remaining_text_len_in_this_row > content.max_line_len();
-        let command = if let Some((start, end)) = selection.is_range() {
+        let command = if let Some((start, end)) = selection.is_range_ordered() {
             EditorCommand::InsertTextSelection {
                 selection,
                 removed_text: Editor::clone_range(start, end, content),
@@ -654,14 +687,33 @@ impl Editor {
                 is_there_line_overflow,
             }
         };
-        return self.execute_user_input(command, content);
+        return self.execute_user_input(command, content, undoable);
     }
 
-    pub fn handle_input<T: Default + Clone + Debug>(
+    pub fn handle_input_no_undo<T: Default + Clone + Debug>(
         &mut self,
         input: EditorInputEvent,
         modifiers: InputModifiers,
         content: &mut EditorContent<T>,
+    ) -> Option<RowModificationType> {
+        self.handle_input(input, modifiers, content, false)
+    }
+
+    pub fn handle_input_undoable<T: Default + Clone + Debug>(
+        &mut self,
+        input: EditorInputEvent,
+        modifiers: InputModifiers,
+        content: &mut EditorContent<T>,
+    ) -> Option<RowModificationType> {
+        self.handle_input(input, modifiers, content, true)
+    }
+
+    fn handle_input<T: Default + Clone + Debug>(
+        &mut self,
+        input: EditorInputEvent,
+        modifiers: InputModifiers,
+        content: &mut EditorContent<T>,
+        undoable: bool,
     ) -> Option<RowModificationType> {
         if (input == EditorInputEvent::Char('x') || input == EditorInputEvent::Char('c'))
             && modifiers.ctrl
@@ -680,7 +732,7 @@ impl Editor {
             }
             _ => {
                 if let Some(command) = self.create_command(&input, modifiers, content) {
-                    self.execute_user_input(command, content)
+                    self.execute_user_input(command, content, undoable)
                 } else {
                     self.next_blink_at = self.time + EDITOR_CURSOR_TICK_MS;
                     self.show_cursor = true;
@@ -695,11 +747,12 @@ impl Editor {
         &mut self,
         command: EditorCommand<T>,
         content: &mut EditorContent<T>,
+        undoable: bool,
     ) -> Option<RowModificationType> {
         self.next_blink_at = self.time + EDITOR_CURSOR_TICK_MS;
         self.show_cursor = true;
         let modif_type = self.do_command(&command, content);
-        if modif_type.is_some() {
+        if modif_type.is_some() && undoable {
             if self.modif_time_treshold_expires_at < self.time || content.undo_stack.is_empty() {
                 // new undo group
                 content.undo_stack.push(Vec::with_capacity(4));
@@ -1015,7 +1068,7 @@ impl Editor {
                 };
                 let selection = if modifiers.shift {
                     self.selection.extend(new_pos)
-                } else if let Some((_start, end)) = self.selection.is_range() {
+                } else if let Some((_start, end)) = self.selection.is_range_ordered() {
                     Selection::single(end)
                 } else {
                     Selection::single(new_pos)
@@ -1041,7 +1094,7 @@ impl Editor {
 
                 let selection = if modifiers.shift {
                     self.selection.extend(new_pos)
-                } else if let Some((start, _end)) = self.selection.is_range() {
+                } else if let Some((start, _end)) = self.selection.is_range_ordered() {
                     Selection::single(start)
                 } else {
                     Selection::single(new_pos)
@@ -1091,7 +1144,7 @@ impl Editor {
                 if *ch == 'w' && modifiers.ctrl {
                     let prev_index = content.jump_word_backward(
                         &selection.get_first(),
-                        if selection.is_range().is_some() {
+                        if selection.is_range() {
                             JumpMode::IgnoreWhitespaces
                         } else {
                             JumpMode::BlockOnWhitespace
@@ -1099,7 +1152,7 @@ impl Editor {
                     );
                     let next_index = content.jump_word_forward(
                         &selection.get_second(),
-                        if selection.is_range().is_some() {
+                        if selection.is_range() {
                             JumpMode::IgnoreWhitespaces
                         } else {
                             JumpMode::BlockOnWhitespace
@@ -1374,7 +1427,7 @@ impl Editor {
         selection: Selection,
         content: &mut EditorContent<T>,
     ) {
-        if let Some((first, second)) = selection.is_range() {
+        if let Some((first, second)) = selection.is_range_ordered() {
             content.remove_selection(Selection::range(first, second));
             content.split_line(first.row, first.column);
             self.set_selection_save_col(Selection::single(Pos::from_row_column(first.row + 1, 0)));

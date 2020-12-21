@@ -3,9 +3,10 @@ use std::str::FromStr;
 
 use rust_decimal::prelude::*;
 
+use crate::token_parser::DECIMAL_PI;
 use crate::units::units::{UnitInstance, Units};
 use crate::units::{Prefix, Unit, UnitPrefixes};
-use std::cell::RefCell;
+use std::rc::Rc;
 
 const E21: &str = "1000000000000000000000";
 const E24: &str = "1000000000000000000000000";
@@ -16,7 +17,7 @@ const E27: &str = "1000000000000000000000000000";
 //const E48: &str = "1000000000000000000000000000000000000000000000000";
 
 #[repr(C)]
-enum UnitType {
+pub enum UnitType {
     Mass,
     Length,
     Time,
@@ -84,215 +85,215 @@ pub(crate) const BASE_UNIT_DIMENSIONS: [[UnitDimensionExponent; BASE_UNIT_DIMENS
 
 fn create_prefixes() -> UnitPrefixes {
     UnitPrefixes {
-        short: RefCell::new(Box::new(vec![
-            RefCell::new(Prefix::from_scientific(&['d', 'a'], "1e1", false)),
-            RefCell::new(Prefix::from_scientific(&['h'], "1e2", false)),
-            RefCell::new(Prefix::from_scientific(&['k'], "1e3", true)),
-            RefCell::new(Prefix::from_scientific(&['M'], "1e6", true)),
-            RefCell::new(Prefix::from_scientific(&['G'], "1e9", true)),
-            RefCell::new(Prefix::from_scientific(&['T'], "1e12", true)),
-            RefCell::new(Prefix::from_scientific(&['P'], "1e15", true)),
-            RefCell::new(Prefix::from_scientific(&['E'], "1e18", true)),
-            RefCell::new(Prefix::from_decimal(&['Z'], E21, true)),
-            RefCell::new(Prefix::from_decimal(&['Y'], E24, true)),
-            RefCell::new(Prefix::from_scientific(&['d'], "1e-1", false)),
-            RefCell::new(Prefix::from_scientific(&['c'], "1e-2", false)),
-            RefCell::new(Prefix::from_scientific(&['m'], "1e-3", true)),
-            RefCell::new(Prefix::from_scientific(&['u'], "1e-6", true)),
-            RefCell::new(Prefix::from_scientific(&['n'], "1e-9", true)),
-            RefCell::new(Prefix::from_scientific(&['p'], "1e-12", true)),
-            RefCell::new(Prefix::from_scientific(&['f'], "1e-15", true)),
-            RefCell::new(Prefix::from_scientific(&['a'], "1e-18", true)),
-            RefCell::new(Prefix::from_scientific(&['z'], "1e-21", true)),
-            RefCell::new(Prefix::from_scientific(&['y'], "1e-24", true)),
+        short: Rc::new(Box::new(vec![
+            Rc::new(Prefix::from_scientific(&['d', 'a'], "1e1", false)),
+            Rc::new(Prefix::from_scientific(&['h'], "1e2", false)),
+            Rc::new(Prefix::from_scientific(&['k'], "1e3", true)),
+            Rc::new(Prefix::from_scientific(&['M'], "1e6", true)),
+            Rc::new(Prefix::from_scientific(&['G'], "1e9", true)),
+            Rc::new(Prefix::from_scientific(&['T'], "1e12", true)),
+            Rc::new(Prefix::from_scientific(&['P'], "1e15", true)),
+            Rc::new(Prefix::from_scientific(&['E'], "1e18", true)),
+            Rc::new(Prefix::from_decimal(&['Z'], E21, true)),
+            Rc::new(Prefix::from_decimal(&['Y'], E24, true)),
+            Rc::new(Prefix::from_scientific(&['d'], "1e-1", false)),
+            Rc::new(Prefix::from_scientific(&['c'], "1e-2", false)),
+            Rc::new(Prefix::from_scientific(&['m'], "1e-3", true)),
+            Rc::new(Prefix::from_scientific(&['u'], "1e-6", true)),
+            Rc::new(Prefix::from_scientific(&['n'], "1e-9", true)),
+            Rc::new(Prefix::from_scientific(&['p'], "1e-12", true)),
+            Rc::new(Prefix::from_scientific(&['f'], "1e-15", true)),
+            Rc::new(Prefix::from_scientific(&['a'], "1e-18", true)),
+            Rc::new(Prefix::from_scientific(&['z'], "1e-21", true)),
+            Rc::new(Prefix::from_scientific(&['y'], "1e-24", true)),
         ])),
-        long: RefCell::new(Box::new(vec![
-            RefCell::new(Prefix::from_scientific(&['d', 'e', 'c', 'a'], "1e1", false)),
-            RefCell::new(Prefix::from_scientific(
+        long: Rc::new(Box::new(vec![
+            Rc::new(Prefix::from_scientific(&['d', 'e', 'c', 'a'], "1e1", false)),
+            Rc::new(Prefix::from_scientific(
                 &['h', 'e', 'c', 't', 'o'],
                 "1e2",
                 false,
             )),
-            RefCell::new(Prefix::from_scientific(&['k', 'i', 'l', 'o'], "1e3", true)),
-            RefCell::new(Prefix::from_scientific(&['m', 'e', 'g', 'a'], "1e6", true)),
-            RefCell::new(Prefix::from_scientific(&['g', 'i', 'g', 'a'], "1e9", true)),
-            RefCell::new(Prefix::from_scientific(&['t', 'e', 'r', 'a'], "1e12", true)),
-            RefCell::new(Prefix::from_scientific(&['p', 'e', 't', 'a'], "1e15", true)),
-            RefCell::new(Prefix::from_scientific(&['e', 'x', 'a'], "1e18", true)),
-            RefCell::new(Prefix::from_decimal(&['z', 'e', 't', 't', 'a'], E21, true)),
-            RefCell::new(Prefix::from_decimal(&['y', 'o', 't', 't', 'a'], E24, true)),
-            RefCell::new(Prefix::from_scientific(
+            Rc::new(Prefix::from_scientific(&['k', 'i', 'l', 'o'], "1e3", true)),
+            Rc::new(Prefix::from_scientific(&['m', 'e', 'g', 'a'], "1e6", true)),
+            Rc::new(Prefix::from_scientific(&['g', 'i', 'g', 'a'], "1e9", true)),
+            Rc::new(Prefix::from_scientific(&['t', 'e', 'r', 'a'], "1e12", true)),
+            Rc::new(Prefix::from_scientific(&['p', 'e', 't', 'a'], "1e15", true)),
+            Rc::new(Prefix::from_scientific(&['e', 'x', 'a'], "1e18", true)),
+            Rc::new(Prefix::from_decimal(&['z', 'e', 't', 't', 'a'], E21, true)),
+            Rc::new(Prefix::from_decimal(&['y', 'o', 't', 't', 'a'], E24, true)),
+            Rc::new(Prefix::from_scientific(
                 &['d', 'e', 'c', 'i'],
                 "1e-1",
                 false,
             )),
-            RefCell::new(Prefix::from_scientific(
+            Rc::new(Prefix::from_scientific(
                 &['c', 'e', 'n', 't', 'i'],
                 "1e-2",
                 false,
             )),
-            RefCell::new(Prefix::from_scientific(
+            Rc::new(Prefix::from_scientific(
                 &['m', 'i', 'l', 'l', 'i'],
                 "1e-3",
                 true,
             )),
-            RefCell::new(Prefix::from_scientific(
+            Rc::new(Prefix::from_scientific(
                 &['m', 'i', 'c', 'r', 'o'],
                 "1e-6",
                 true,
             )),
-            RefCell::new(Prefix::from_scientific(&['n', 'a', 'n', 'o'], "1e-9", true)),
-            RefCell::new(Prefix::from_scientific(
+            Rc::new(Prefix::from_scientific(&['n', 'a', 'n', 'o'], "1e-9", true)),
+            Rc::new(Prefix::from_scientific(
                 &['p', 'i', 'c', 'o'],
                 "1e-12",
                 true,
             )),
-            RefCell::new(Prefix::from_scientific(
+            Rc::new(Prefix::from_scientific(
                 &['f', 'e', 'm', 't', 'o'],
                 "1e-15",
                 true,
             )),
-            RefCell::new(Prefix::from_scientific(
+            Rc::new(Prefix::from_scientific(
                 &['a', 't', 't', 'o'],
                 "1e-18",
                 true,
             )),
-            RefCell::new(Prefix::from_scientific(
+            Rc::new(Prefix::from_scientific(
                 &['z', 'e', 'p', 't', 'o'],
                 "1e-21",
                 true,
             )),
-            RefCell::new(Prefix::from_scientific(
+            Rc::new(Prefix::from_scientific(
                 &['y', 'o', 'c', 't', 'o'],
                 "1e-24",
                 true,
             )),
         ])),
-        squared: RefCell::new(Box::new(vec![
-            RefCell::new(Prefix::from_scientific(&['d', 'a'], "1e2", false)),
-            RefCell::new(Prefix::from_scientific(&['h'], "1e4", false)),
-            RefCell::new(Prefix::from_scientific(&['k'], "1e6", true)),
-            RefCell::new(Prefix::from_scientific(&['M'], "1e12", true)),
-            RefCell::new(Prefix::from_scientific(&['G'], "1e18", true)),
-            RefCell::new(Prefix::from_decimal(&['T'], E24, true)),
+        squared: Rc::new(Box::new(vec![
+            Rc::new(Prefix::from_scientific(&['d', 'a'], "1e2", false)),
+            Rc::new(Prefix::from_scientific(&['h'], "1e4", false)),
+            Rc::new(Prefix::from_scientific(&['k'], "1e6", true)),
+            Rc::new(Prefix::from_scientific(&['M'], "1e12", true)),
+            Rc::new(Prefix::from_scientific(&['G'], "1e18", true)),
+            Rc::new(Prefix::from_decimal(&['T'], E24, true)),
             // TODO rust_decimal can't support these big numbers
-            //RefCell::new(Prefix::new2(&['P'], E30, true)),
-            //RefCell::new(Prefix::new2(&['E'], E36, true)),
-            //RefCell::new(Prefix::new2(&['Z'], E42, true)),
-            //RefCell::new(Prefix::new2(&['Y'], E48, true)),
-            RefCell::new(Prefix::from_scientific(&['d'], "1e-2", false)),
-            RefCell::new(Prefix::from_scientific(&['c'], "1e-4", false)),
-            RefCell::new(Prefix::from_scientific(&['m'], "1e-6", true)),
-            RefCell::new(Prefix::from_scientific(&['u'], "1e-12", true)),
-            RefCell::new(Prefix::from_scientific(&['n'], "1e-18", true)),
-            RefCell::new(Prefix::from_scientific(&['p'], "1e-24", true)),
+            //Rc::new(Prefix::new2(&['P'], E30, true)),
+            //Rc::new(Prefix::new2(&['E'], E36, true)),
+            //Rc::new(Prefix::new2(&['Z'], E42, true)),
+            //Rc::new(Prefix::new2(&['Y'], E48, true)),
+            Rc::new(Prefix::from_scientific(&['d'], "1e-2", false)),
+            Rc::new(Prefix::from_scientific(&['c'], "1e-4", false)),
+            Rc::new(Prefix::from_scientific(&['m'], "1e-6", true)),
+            Rc::new(Prefix::from_scientific(&['u'], "1e-12", true)),
+            Rc::new(Prefix::from_scientific(&['n'], "1e-18", true)),
+            Rc::new(Prefix::from_scientific(&['p'], "1e-24", true)),
             // TODO rust_decimal can't support these small numbers
-            //RefCell::new(Prefix::new(&['f'], "1e-30", true)),
-            //RefCell::new(Prefix::new(&['a'], "1e-36", true)),
-            //RefCell::new(Prefix::new(&['z'], "1e-42", true)),
-            //RefCell::new(Prefix::new(&['y'], "1e-48", true)),
+            //Rc::new(Prefix::new(&['f'], "1e-30", true)),
+            //Rc::new(Prefix::new(&['a'], "1e-36", true)),
+            //Rc::new(Prefix::new(&['z'], "1e-42", true)),
+            //Rc::new(Prefix::new(&['y'], "1e-48", true)),
         ])),
-        cubic: RefCell::new(Box::new(vec![
-            RefCell::new(Prefix::from_scientific(&['d', 'a'], "1e3", false)),
-            RefCell::new(Prefix::from_scientific(&['h'], "1e6", false)),
-            RefCell::new(Prefix::from_scientific(&['k'], "1e9", true)),
-            RefCell::new(Prefix::from_scientific(&['M'], "1e18", true)),
+        cubic: Rc::new(Box::new(vec![
+            Rc::new(Prefix::from_scientific(&['d', 'a'], "1e3", false)),
+            Rc::new(Prefix::from_scientific(&['h'], "1e6", false)),
+            Rc::new(Prefix::from_scientific(&['k'], "1e9", true)),
+            Rc::new(Prefix::from_scientific(&['M'], "1e18", true)),
             // TODO
-            RefCell::new(Prefix::from_decimal(&['G'], E27, true)),
-            // RefCell::new(Prefix::new(&['T'], "1e36", true)),
-            // RefCell::new(Prefix::new(&['P'], "1e45", true)),
-            // RefCell::new(Prefix::new(&['E'], "1e54", true)),
-            // RefCell::new(Prefix::new(&['Z'], "1e63", true)),
-            // RefCell::new(Prefix::new(&['Y'], "1e72", true)),
-            RefCell::new(Prefix::from_scientific(&['d'], "1e-3", false)),
-            RefCell::new(Prefix::from_scientific(&['c'], "1e-6", false)),
-            RefCell::new(Prefix::from_scientific(&['m'], "1e-9", true)),
-            RefCell::new(Prefix::from_scientific(&['u'], "1e-18", true)),
-            RefCell::new(Prefix::from_scientific(&['n'], "1e-27", true)),
+            Rc::new(Prefix::from_decimal(&['G'], E27, true)),
+            // Rc::new(Prefix::new(&['T'], "1e36", true)),
+            // Rc::new(Prefix::new(&['P'], "1e45", true)),
+            // Rc::new(Prefix::new(&['E'], "1e54", true)),
+            // Rc::new(Prefix::new(&['Z'], "1e63", true)),
+            // Rc::new(Prefix::new(&['Y'], "1e72", true)),
+            Rc::new(Prefix::from_scientific(&['d'], "1e-3", false)),
+            Rc::new(Prefix::from_scientific(&['c'], "1e-6", false)),
+            Rc::new(Prefix::from_scientific(&['m'], "1e-9", true)),
+            Rc::new(Prefix::from_scientific(&['u'], "1e-18", true)),
+            Rc::new(Prefix::from_scientific(&['n'], "1e-27", true)),
             // TODO
-            //RefCell::new(Prefix::new(&['p'], "1e-36", true)),
-            //RefCell::new(Prefix::new(&['f'], "1e-45", true)),
-            //RefCell::new(Prefix::new(&['a'], "1e-54", true)),
-            //RefCell::new(Prefix::new(&['z'], "1e-63", true)),
-            //RefCell::new(Prefix::new(&['y'], "1e-72", true)),
+            //Rc::new(Prefix::new(&['p'], "1e-36", true)),
+            //Rc::new(Prefix::new(&['f'], "1e-45", true)),
+            //Rc::new(Prefix::new(&['a'], "1e-54", true)),
+            //Rc::new(Prefix::new(&['z'], "1e-63", true)),
+            //Rc::new(Prefix::new(&['y'], "1e-72", true)),
         ])),
-        binary_short_si: RefCell::new(Box::new(vec![
-            RefCell::new(Prefix::from_scientific(&['k'], "1e3", true)),
-            RefCell::new(Prefix::from_scientific(&['M'], "1e6", true)),
-            RefCell::new(Prefix::from_scientific(&['G'], "1e9", true)),
-            RefCell::new(Prefix::from_scientific(&['T'], "1e12", true)),
-            RefCell::new(Prefix::from_scientific(&['P'], "1e15", true)),
-            RefCell::new(Prefix::from_scientific(&['E'], "1e18", true)),
-            RefCell::new(Prefix::from_decimal(&['Z'], E21, true)),
-            RefCell::new(Prefix::from_decimal(&['Y'], E24, true)),
+        binary_short_si: Rc::new(Box::new(vec![
+            Rc::new(Prefix::from_scientific(&['k'], "1e3", true)),
+            Rc::new(Prefix::from_scientific(&['M'], "1e6", true)),
+            Rc::new(Prefix::from_scientific(&['G'], "1e9", true)),
+            Rc::new(Prefix::from_scientific(&['T'], "1e12", true)),
+            Rc::new(Prefix::from_scientific(&['P'], "1e15", true)),
+            Rc::new(Prefix::from_scientific(&['E'], "1e18", true)),
+            Rc::new(Prefix::from_decimal(&['Z'], E21, true)),
+            Rc::new(Prefix::from_decimal(&['Y'], E24, true)),
         ])),
-        binary_short_iec: RefCell::new(Box::new(vec![
-            RefCell::new(Prefix::from_decimal(&['K', 'i'], "1024", true)),
-            RefCell::new(Prefix::from_decimal(&['M', 'i'], "1048576", true)),
-            RefCell::new(Prefix::from_decimal(&['G', 'i'], "1073741824", true)),
-            RefCell::new(Prefix::from_scientific(&['T', 'i'], "1.0995116e+12", true)),
-            RefCell::new(Prefix::from_scientific(&['P', 'i'], "1.1258999e+15", true)),
-            RefCell::new(Prefix::from_scientific(&['E', 'i'], "1.1529215e+18", true)),
-            RefCell::new(Prefix::from_decimal(
+        binary_short_iec: Rc::new(Box::new(vec![
+            Rc::new(Prefix::from_decimal(&['K', 'i'], "1024", true)),
+            Rc::new(Prefix::from_decimal(&['M', 'i'], "1048576", true)),
+            Rc::new(Prefix::from_decimal(&['G', 'i'], "1073741824", true)),
+            Rc::new(Prefix::from_scientific(&['T', 'i'], "1.0995116e+12", true)),
+            Rc::new(Prefix::from_scientific(&['P', 'i'], "1.1258999e+15", true)),
+            Rc::new(Prefix::from_scientific(&['E', 'i'], "1.1529215e+18", true)),
+            Rc::new(Prefix::from_decimal(
                 &['Z', 'i'],
                 "1180591620717411303424",
                 true,
             )),
-            //RefCell::new(Prefix::from_scientific(&['Z', 'i'], "1.1805916e+21", true)),
-            RefCell::new(Prefix::from_decimal(
+            //Rc::new(Prefix::from_scientific(&['Z', 'i'], "1.1805916e+21", true)),
+            Rc::new(Prefix::from_decimal(
                 &['Y', 'i'],
                 "1208925819614629174706176",
                 true,
             )),
-            //RefCell::new(Prefix::from_scientific(&['Y', 'i'], "1.2089258e+24", true)),
+            //Rc::new(Prefix::from_scientific(&['Y', 'i'], "1.2089258e+24", true)),
         ])),
-        binary_long_si: RefCell::new(Box::new(vec![
-            RefCell::new(Prefix::from_scientific(&['k', 'i', 'l', 'o'], "1e3", true)),
-            RefCell::new(Prefix::from_scientific(&['m', 'e', 'g', 'a'], "1e6", true)),
-            RefCell::new(Prefix::from_scientific(&['g', 'i', 'g', 'a'], "1e9", true)),
-            RefCell::new(Prefix::from_scientific(&['t', 'e', 'r', 'a'], "1e12", true)),
-            RefCell::new(Prefix::from_scientific(&['p', 'e', 't', 'a'], "1e15", true)),
-            RefCell::new(Prefix::from_scientific(&['e', 'x', 'a'], "1e18", true)),
-            RefCell::new(Prefix::from_decimal(&['z', 'e', 't', 't', 'a'], E21, true)),
-            RefCell::new(Prefix::from_decimal(&['y', 'o', 't', 't', 'a'], E24, true)),
+        binary_long_si: Rc::new(Box::new(vec![
+            Rc::new(Prefix::from_scientific(&['k', 'i', 'l', 'o'], "1e3", true)),
+            Rc::new(Prefix::from_scientific(&['m', 'e', 'g', 'a'], "1e6", true)),
+            Rc::new(Prefix::from_scientific(&['g', 'i', 'g', 'a'], "1e9", true)),
+            Rc::new(Prefix::from_scientific(&['t', 'e', 'r', 'a'], "1e12", true)),
+            Rc::new(Prefix::from_scientific(&['p', 'e', 't', 'a'], "1e15", true)),
+            Rc::new(Prefix::from_scientific(&['e', 'x', 'a'], "1e18", true)),
+            Rc::new(Prefix::from_decimal(&['z', 'e', 't', 't', 'a'], E21, true)),
+            Rc::new(Prefix::from_decimal(&['y', 'o', 't', 't', 'a'], E24, true)),
         ])),
-        binary_long_iec: RefCell::new(Box::new(vec![
-            RefCell::new(Prefix::from_decimal(&['k', 'i', 'b', 'i'], "1024", true)),
-            RefCell::new(Prefix::from_decimal(&['m', 'e', 'b', 'i'], "1048576", true)),
-            RefCell::new(Prefix::from_decimal(
+        binary_long_iec: Rc::new(Box::new(vec![
+            Rc::new(Prefix::from_decimal(&['k', 'i', 'b', 'i'], "1024", true)),
+            Rc::new(Prefix::from_decimal(&['m', 'e', 'b', 'i'], "1048576", true)),
+            Rc::new(Prefix::from_decimal(
                 &['g', 'i', 'b', 'i'],
                 "1073741824",
                 true,
             )),
-            RefCell::new(Prefix::from_scientific(
+            Rc::new(Prefix::from_scientific(
                 &['t', 'e', 'b', 'i'],
                 "1.0995116e+12",
                 true,
             )),
-            RefCell::new(Prefix::from_scientific(
+            Rc::new(Prefix::from_scientific(
                 &['p', 'e', 'b', 'i'],
                 "1.1258999e+15",
                 true,
             )),
-            RefCell::new(Prefix::from_scientific(
+            Rc::new(Prefix::from_scientific(
                 &['e', 'x', 'i'],
                 "1.1529215e+18",
                 true,
             )),
-            RefCell::new(Prefix::from_decimal(
+            Rc::new(Prefix::from_decimal(
                 &['z', 'e', 'b', 'i'],
                 "1180591620717411303424",
                 //"1.1805916e+21",
                 true,
             )),
-            RefCell::new(Prefix::from_decimal(
+            Rc::new(Prefix::from_decimal(
                 &['y', 'o', 'b', 'i'],
                 //"1.2089258e+24",
                 "1208925819614629174706176",
                 true,
             )),
         ])),
-        btu: RefCell::new(Box::new(vec![RefCell::new(Prefix::from_scientific(
+        btu: Rc::new(Box::new(vec![Rc::new(Prefix::from_scientific(
             &['M', 'M'],
             "1e6",
             true,
@@ -300,9 +301,9 @@ fn create_prefixes() -> UnitPrefixes {
     }
 }
 
-pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
+pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
     let prefixes = create_prefixes();
-    let pi: Decimal = Decimal::from_str("3.14159265358979323846264338327950288").unwrap();
+    let pi: Decimal = DECIMAL_PI;
     let mut map = HashMap::<&str, Unit>::with_capacity(168);
 
     map.insert(
@@ -311,7 +312,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['m', 'e', 't', 'e', 'r'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             // prefixes: (Some(&prefixes.long), None),
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::one(),
             offset: Decimal::zero(),
         },
@@ -401,7 +402,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['m'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -492,7 +493,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['m', '2'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Surface as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.squared)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.squared)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -593,7 +594,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['m', '3'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.cubic)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.cubic)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -603,7 +604,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['L'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_str("0.001").unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -613,7 +614,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['l'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_str("0.001").unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -623,7 +624,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['l', 'i', 't', 'r', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_str("0.001").unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -919,7 +920,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['g'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_str("0.001").unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -929,7 +930,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['g', 'r', 'a', 'm'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_str("0.001").unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -939,7 +940,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['t', 'o', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_str("907.18474").unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -949,7 +950,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['t'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1000).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -959,7 +960,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['t', 'o', 'n', 'n', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_i64(1000).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1092,7 +1093,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['s'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1122,7 +1123,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['s', 'e', 'c', 'o', 'n', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1132,7 +1133,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['s', 'e', 'c'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1234,7 +1235,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['H', 'e', 'r', 't', 'z'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Frequency as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
             // reciprocal: true,
@@ -1245,7 +1246,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['H', 'z'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Frequency as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
             // reciprocal: true,
@@ -1257,7 +1258,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['r', 'a', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1267,7 +1268,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['r', 'a', 'd', 'i', 'a', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1278,7 +1279,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['d', 'e', 'g'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: &pi / &Decimal::from_isize(180).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1288,7 +1289,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['d', 'e', 'g', 'r', 'e', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: &pi / &Decimal::from_isize(180).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1299,7 +1300,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['g', 'r', 'a', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: &pi / &Decimal::from_isize(200).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1309,7 +1310,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['g', 'r', 'a', 'd', 'i', 'a', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: &pi / &Decimal::from_isize(200).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1353,7 +1354,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['A'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Current as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1363,7 +1364,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['a', 'm', 'p', 'e', 'r', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Current as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1458,7 +1459,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['m', 'o', 'l'],
             base: BASE_UNIT_DIMENSIONS[UnitType::AmountOfSubstance as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1468,7 +1469,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['m', 'o', 'l', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::AmountOfSubstance as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1479,7 +1480,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['c', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::LuminousIntensity as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1489,7 +1490,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['c', 'a', 'n', 'd', 'e', 'l', 'a'],
             base: BASE_UNIT_DIMENSIONS[UnitType::LuminousIntensity as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1504,7 +1505,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['N'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Force as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1514,7 +1515,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['n', 'e', 'w', 't', 'o', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Force as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1524,7 +1525,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['d', 'y', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Force as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_str("0.00001").unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1534,7 +1535,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['d', 'y', 'n', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Force as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_str("0.00001").unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1564,7 +1565,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['k', 'i', 'p'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Force as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_str("4448.2216").unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1575,7 +1576,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['J'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1585,7 +1586,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['j', 'o', 'u', 'l', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1595,7 +1596,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['c', 'a', 'l'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_str("4.1868").unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1615,7 +1616,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['W', 'h'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(3600).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1625,7 +1626,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['B', 'T', 'U'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.btu)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.btu)), None),
             value: Decimal::from_str("1055.05585262").unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1635,7 +1636,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['e', 'V'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_scientific("1.602176565e-19").unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1645,7 +1646,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['e', 'l', 'e', 'c', 't', 'r', 'o', 'n', 'v', 'o', 'l', 't'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_scientific("1.602176565e-19").unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1656,7 +1657,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['W'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Power as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1666,7 +1667,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['w', 'a', 't', 't'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Power as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1687,7 +1688,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
     // Unit {
     //     name: &['V', 'A', 'R'],
     //     base: BASE_UNIT_DIMENSIONS[UnitType::Power as usize],
-    //     prefixes: (Some(RefCell::clone(&prefixes.short)), None),
+    //     prefixes: (Some(Rc::clone(&prefixes.short)), None),
     //     value: Decimal::from_str("Complex.I").unwrap(),
     //     offset: Decimal::from_i64(0).unwrap(),
     // },
@@ -1696,7 +1697,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['V', 'A'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Power as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1707,7 +1708,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['P', 'a'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Pressure as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1738,8 +1739,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['b', 'a', 'r'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Pressure as usize],
             prefix_groups: (
-                Some(RefCell::clone(&prefixes.short)),
-                Some(RefCell::clone(&prefixes.long)),
+                Some(Rc::clone(&prefixes.short)),
+                Some(Rc::clone(&prefixes.long)),
             ),
             value: Decimal::from_i64(100000).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
@@ -1791,7 +1792,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['c', 'o', 'u', 'l', 'o', 'm', 'b'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricCharge as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1801,7 +1802,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['C'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricCharge as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1812,7 +1813,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['f', 'a', 'r', 'a', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricCapacitance as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1822,7 +1823,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['F'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricCapacitance as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1833,7 +1834,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['v', 'o', 'l', 't'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricPotential as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1843,7 +1844,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['V'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricPotential as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1855,8 +1856,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['o', 'h', 'm'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricResistance as usize],
             prefix_groups: (
-                Some(RefCell::clone(&prefixes.short)),
-                Some(RefCell::clone(&prefixes.long)),
+                Some(Rc::clone(&prefixes.short)),
+                Some(Rc::clone(&prefixes.long)),
             ), // Both Mohm and megaohm are acceptable
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
@@ -1867,7 +1868,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['Ω'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricResistance as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1878,7 +1879,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['h', 'e', 'n', 'r', 'y'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricInductance as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1888,7 +1889,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['H'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricInductance as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1899,7 +1900,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['s', 'i', 'e', 'm', 'e', 'n', 's'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricConductance as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1909,7 +1910,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['S'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricConductance as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1920,7 +1921,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['w', 'e', 'b', 'e', 'r'],
             base: BASE_UNIT_DIMENSIONS[UnitType::MagneticFlux as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1930,7 +1931,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['W', 'b'],
             base: BASE_UNIT_DIMENSIONS[UnitType::MagneticFlux as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1941,7 +1942,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['t', 'e', 's', 'l', 'a'],
             base: BASE_UNIT_DIMENSIONS[UnitType::MagneticFluxDensity as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.long)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1951,7 +1952,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
         Unit {
             name: &['T'],
             base: BASE_UNIT_DIMENSIONS[UnitType::MagneticFluxDensity as usize],
-            prefix_groups: (Some(RefCell::clone(&prefixes.short)), None),
+            prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
         },
@@ -1963,8 +1964,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['b'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Bit as usize],
             prefix_groups: (
-                Some(RefCell::clone(&prefixes.binary_short_si)),
-                Some(RefCell::clone(&prefixes.binary_short_iec)),
+                Some(Rc::clone(&prefixes.binary_short_si)),
+                Some(Rc::clone(&prefixes.binary_short_iec)),
             ),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
@@ -1976,8 +1977,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['b', 'i', 't', 's'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Bit as usize],
             prefix_groups: (
-                Some(RefCell::clone(&prefixes.binary_long_si)),
-                Some(RefCell::clone(&prefixes.binary_long_iec)),
+                Some(Rc::clone(&prefixes.binary_long_si)),
+                Some(Rc::clone(&prefixes.binary_long_iec)),
             ),
             value: Decimal::from_i64(1).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
@@ -1989,8 +1990,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['B'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Bit as usize],
             prefix_groups: (
-                Some(RefCell::clone(&prefixes.binary_short_si)),
-                Some(RefCell::clone(&prefixes.binary_short_iec)),
+                Some(Rc::clone(&prefixes.binary_short_si)),
+                Some(Rc::clone(&prefixes.binary_short_iec)),
             ),
             value: Decimal::from_i64(8).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
@@ -2002,8 +2003,8 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
             name: &['b', 'y', 't', 'e', 's'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Bit as usize],
             prefix_groups: (
-                Some(RefCell::clone(&prefixes.binary_long_si)),
-                Some(RefCell::clone(&prefixes.binary_long_iec)),
+                Some(Rc::clone(&prefixes.binary_long_si)),
+                Some(Rc::clone(&prefixes.binary_long_iec)),
             ),
             value: Decimal::from_i64(8).unwrap(),
             offset: Decimal::from_i64(0).unwrap(),
@@ -2023,7 +2024,7 @@ pub fn init_units() -> (HashMap<&'static str, RefCell<Unit>>, UnitPrefixes) {
 
     let map = map
         .into_iter()
-        .map(|(key, value)| (key, RefCell::new(value)))
+        .map(|(key, value)| (key, Rc::new(value)))
         .collect();
 
     return (map, prefixes);
@@ -2137,135 +2138,135 @@ pub fn get_base_unit_for(
 ) -> Option<UnitInstance> {
     if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::Length as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["m"]),
-            prefix: RefCell::clone(&units.no_prefix),
+            unit: Rc::clone(&units.units["m"]),
+            prefix: Rc::clone(&units.no_prefix),
             power: 1,
         })
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::Mass as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["g"]),
-            prefix: RefCell::clone(&units.prefixes.short.borrow()[2]),
+            unit: Rc::clone(&units.units["g"]),
+            prefix: Rc::clone(&units.prefixes.short[2]),
             /*k*/
             power: 1,
         })
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::Time as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["s"]),
-            prefix: RefCell::clone(&units.no_prefix),
+            unit: Rc::clone(&units.units["s"]),
+            prefix: Rc::clone(&units.no_prefix),
             power: 1,
         })
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::Current as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["A"]),
-            prefix: RefCell::clone(&units.no_prefix),
+            unit: Rc::clone(&units.units["A"]),
+            prefix: Rc::clone(&units.no_prefix),
             power: 1,
         })
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::Temperature as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["K"]),
-            prefix: RefCell::clone(&units.no_prefix),
+            unit: Rc::clone(&units.units["K"]),
+            prefix: Rc::clone(&units.no_prefix),
             power: 1,
         })
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::LuminousIntensity as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["cd"]),
-            prefix: RefCell::clone(&units.no_prefix),
+            unit: Rc::clone(&units.units["cd"]),
+            prefix: Rc::clone(&units.no_prefix),
             power: 1,
         })
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::AmountOfSubstance as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["mol"]),
-            prefix: RefCell::clone(&units.no_prefix),
+            unit: Rc::clone(&units.units["mol"]),
+            prefix: Rc::clone(&units.no_prefix),
             power: 1,
         })
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::Angle as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["rad"]),
-            prefix: RefCell::clone(&units.no_prefix),
+            unit: Rc::clone(&units.units["rad"]),
+            prefix: Rc::clone(&units.no_prefix),
             power: 1,
         })
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::Bit as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["bits"]),
-            prefix: RefCell::clone(&units.no_prefix),
+            unit: Rc::clone(&units.units["bits"]),
+            prefix: Rc::clone(&units.no_prefix),
             power: 1,
         })
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::Force as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["N"]),
-            prefix: RefCell::clone(&units.no_prefix),
+            unit: Rc::clone(&units.units["N"]),
+            prefix: Rc::clone(&units.no_prefix),
             power: 1,
         })
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::Energy as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["J"]),
-            prefix: RefCell::clone(&units.no_prefix),
+            unit: Rc::clone(&units.units["J"]),
+            prefix: Rc::clone(&units.no_prefix),
             power: 1,
         })
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::Power as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["W"]),
-            prefix: RefCell::clone(&units.no_prefix),
+            unit: Rc::clone(&units.units["W"]),
+            prefix: Rc::clone(&units.no_prefix),
             power: 1,
         })
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::Pressure as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["Pa"]),
-            prefix: RefCell::clone(&units.no_prefix),
+            unit: Rc::clone(&units.units["Pa"]),
+            prefix: Rc::clone(&units.no_prefix),
             power: 1,
         })
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::ElectricCharge as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["C"]),
-            prefix: RefCell::clone(&units.no_prefix),
+            unit: Rc::clone(&units.units["C"]),
+            prefix: Rc::clone(&units.no_prefix),
             power: 1,
         })
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::ElectricCapacitance as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["F"]),
-            prefix: RefCell::clone(&units.no_prefix),
+            unit: Rc::clone(&units.units["F"]),
+            prefix: Rc::clone(&units.no_prefix),
             power: 1,
         })
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::ElectricResistance as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["ohm"]),
-            prefix: RefCell::clone(&units.no_prefix),
+            unit: Rc::clone(&units.units["ohm"]),
+            prefix: Rc::clone(&units.no_prefix),
             power: 1,
         })
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::ElectricInductance as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["H"]),
-            prefix: RefCell::clone(&units.no_prefix),
+            unit: Rc::clone(&units.units["H"]),
+            prefix: Rc::clone(&units.no_prefix),
             power: 1,
         })
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::ElectricConductance as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["S"]),
-            prefix: RefCell::clone(&units.no_prefix),
+            unit: Rc::clone(&units.units["S"]),
+            prefix: Rc::clone(&units.no_prefix),
             power: 1,
         })
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::MagneticFlux as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["Wb"]),
-            prefix: RefCell::clone(&units.no_prefix),
+            unit: Rc::clone(&units.units["Wb"]),
+            prefix: Rc::clone(&units.no_prefix),
             power: 1,
         })
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::MagneticFluxDensity as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["T"]),
-            prefix: RefCell::clone(&units.no_prefix),
+            unit: Rc::clone(&units.units["T"]),
+            prefix: Rc::clone(&units.no_prefix),
             power: 1,
         })
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::Frequency as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["Hz"]),
-            prefix: RefCell::clone(&units.no_prefix),
+            unit: Rc::clone(&units.units["Hz"]),
+            prefix: Rc::clone(&units.no_prefix),
             power: 1,
         })
     } else if dimensions == &BASE_UNIT_DIMENSIONS[UnitType::Money as usize] {
         Some(UnitInstance {
-            unit: RefCell::clone(&units.units["$"]),
-            prefix: RefCell::clone(&units.no_prefix),
+            unit: Rc::clone(&units.units["$"]),
+            prefix: Rc::clone(&units.no_prefix),
             power: 1,
         })
     } else {

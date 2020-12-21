@@ -279,7 +279,7 @@ fn test_that_inplace_normalization_happens_on_any_kind_of_select() {
 }
 
 #[test]
-fn test_that_editor_objects_are_reacreated() {
+fn test_that_editor_objects_are_recreated() {
     let test = create_app2(35);
     test.paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n");
     test.set_cursor_row_col(4, 0);
@@ -338,4 +338,21 @@ fn test_line_ref_denormalization() {
     assert_eq!(1, content.get_data(0).line_id);
     assert_eq!(2, content.get_data(1).line_id);
     assert_eq!(3, content.get_data(2).line_id);
+}
+
+#[test]
+fn test_that_inplace_normalization_is_not_undoable() {
+    let test = create_app2(35);
+    test.paste("1\n&[1]");
+    test.handle_time(1000);
+    test.input(EditorInputEvent::PageUp, InputModifiers::none());
+    test.input(EditorInputEvent::Enter, InputModifiers::none());
+    test.input(EditorInputEvent::PageDown, InputModifiers::none());
+    test.handle_time(1000);
+    // this selection normalizez the text
+    test.input(EditorInputEvent::Left, InputModifiers::shift());
+    assert_eq!(test.get_editor_content(), "\n1\n&[2]");
+
+    test.input(EditorInputEvent::Char('z'), InputModifiers::ctrl());
+    assert_eq!(test.get_editor_content(), "1\n&[2]");
 }

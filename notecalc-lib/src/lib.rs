@@ -49,25 +49,28 @@ pub mod consts;
 pub mod editor;
 pub mod renderer;
 
-const SCROLLBAR_HOVER_COLOR: u32 = 0xFFBBBB_FF;
-const SCROLLBAR_NORMAL_COLOR: u32 = 0xFFCCCC_FF;
+#[inline]
+fn _readonly_<T: ?Sized>(e: &mut T) -> &T {
+    return e;
+}
+
 const SCROLLBAR_WIDTH: usize = 1;
 
 const RENDERED_RESULT_PRECISION: usize = 28;
-const LINE_REF_BACKGROUND_COLOR: u32 = 0xDCE2F7_FF;
 const MAX_EDITOR_WIDTH: usize = 120;
 const LEFT_GUTTER_MIN_WIDTH: usize = 2;
-pub const MAX_LINE_COUNT: usize = 128;
+
+// Currently y coords are transmitted as u8 to the frontend, if you raise this value,
+// don't forget to update  the communication layer as well
+pub const MAX_LINE_COUNT: usize = 256;
 const RIGHT_GUTTER_WIDTH: usize = 2;
-const CHANGE_RESULT_PULSE_START_COLOR: u32 = 0xFF88FF_AA;
-const CHANGE_RESULT_PULSE_END_COLOR: u32 = 0xFFFFFF_55;
-const REFERENCE_PULSE_PULSE_START_COLOR: u32 = 0x00FF7F_33;
 const MIN_RESULT_PANEL_WIDTH: usize = 7;
 const DEFAULT_RESULT_PANEL_WIDTH_PERCENT: usize = 30;
 const SUM_VARIABLE_INDEX: usize = MAX_LINE_COUNT;
 const MATRIX_ASCII_HEADER_FOOTER_LINE_COUNT: usize = 2;
 const ACTIVE_LINE_REF_HIGHLIGHT_COLORS: [u32; 9] = [
-    0xFFD300, 0xDE3163, 0x73c2fb, 0xc7ea46, 0x702963, 0x997950, 0x777b73, 0xFC6600, 0xED2939,
+    0xFFD300FF, 0xDE3163FF, 0x73c2fbFF, 0xc7ea46FF, 0x702963FF, 0x997950FF, 0x777b73FF, 0xFC6600FF,
+    0xED2939FF,
 ];
 
 // I hate Rust's borrow checker
@@ -76,6 +79,133 @@ const ACTIVE_LINE_REF_HIGHLIGHT_COLORS: [u32; 9] = [
 // because the references to it are removed -_-'.
 // Because of this global var, only single thread test running is possible.
 static mut RESULT_BUFFER: [u8; 2048] = [0; 2048];
+
+#[allow(dead_code)]
+pub struct Theme {
+    pub bg: u32,
+    pub result_bg_color: u32,
+    pub selection_color: u32,
+    pub sum_bg_color: u32,
+    pub sum_text_color: u32,
+    pub reference_pulse_start: u32,
+    pub reference_pulse_end: u32,
+    pub number: u32,
+    pub number_error: u32,
+    pub operator: u32,
+    pub unit: u32,
+    pub variable: u32,
+    pub result_text: u32,
+    pub header: u32,
+    pub text: u32,
+    pub cursor: u32,
+    pub matrix_edit_active_bg: u32,
+    pub matrix_edit_active_text: u32,
+    pub matrix_edit_inactive_text: u32,
+    pub result_gutter_bg: u32,
+    pub left_gutter_bg: u32,
+    pub line_num_active: u32,
+    pub line_num_simple: u32,
+    pub scrollbar_hovered: u32,
+    pub scrollbar_normal: u32,
+    pub line_ref_bg: u32,
+    pub line_ref_text: u32,
+    pub line_ref_selector: u32,
+    pub referenced_matrix_text: u32,
+    pub change_result_pulse_start: u32,
+    pub change_result_pulse_end: u32,
+    pub current_line_bg: u32,
+    pub parenthesis: u32,
+}
+
+#[allow(dead_code)]
+impl Theme {
+    const DRACULA_BG: u32 = 0x282a36_FF;
+    const DRACULA_CURRENT_LINE: u32 = 0x44475a_FF;
+    const DRACULA_FG: u32 = 0xf8f8f2_FF;
+    const DRACULA_CYAN: u32 = 0x8be9fd_FF;
+    const DRACULA_COMMENT: u32 = 0x6272a4_FF;
+    const DRACULA_GREEN: u32 = 0x50fa7b_FF;
+    const DRACULA_ORANGE: u32 = 0xffb86c_FF;
+    const DRACULA_PINK: u32 = 0xff79c6_FF;
+    const DRACULA_PURPLE: u32 = 0xbd93f9_FF;
+    const DRACULA_RED: u32 = 0xff5555_FF;
+    const DRACULA_YELLOW: u32 = 0xf1fa8c_FF;
+}
+
+pub const THEMES: [Theme; 2] = [
+    // LIGHT
+    Theme {
+        bg: 0xFFFFFF_FF,
+        result_bg_color: 0xF2F2F2_FF,
+        result_gutter_bg: 0xD2D2D2_FF,
+        selection_color: 0xA6D2FF_FF,
+        sum_bg_color: 0x008a0d_FF,
+        sum_text_color: 0x000000_FF,
+        reference_pulse_start: 0x00FF7F_33,
+        reference_pulse_end: 0x00FF7F_00,
+        number: 0x8963c4_FF,
+        number_error: 0xde353d_FF,
+        operator: 0x3a88e8_FF,
+        unit: 0x048395_FF,
+        variable: 0xc26406_FF,
+        result_text: 0x000000_FF,
+        header: 0x000000_FF,
+        text: 0x8393c7_FF,
+        cursor: 0x000000_FF,
+        matrix_edit_active_bg: 0xBBBBBB_55,
+        matrix_edit_active_text: 0x000000_FF,
+        matrix_edit_inactive_text: 0x000000_FF,
+        left_gutter_bg: 0xF2F2F2_FF,
+        line_num_active: 0x000000_FF,
+        line_num_simple: 0xADADAD_FF,
+        scrollbar_hovered: 0xFFBBBB_FF,
+        scrollbar_normal: 0xFFCCCC_FF,
+        line_ref_text: 0x000000_FF,
+        line_ref_bg: 0xDCE2F7_FF,
+        line_ref_selector: 0xDCE2F7_FF,
+        referenced_matrix_text: 0x000000_FF,
+        change_result_pulse_start: 0xFF88FF_AA,
+        change_result_pulse_end: 0xFFFFFF_55,
+        current_line_bg: 0xFFFFCC_FF,
+        parenthesis: 0x565869_FF,
+    },
+    // DARK
+    Theme {
+        bg: Theme::DRACULA_BG,
+        result_bg_color: 0x3c3f41_FF,
+        result_gutter_bg: 0x313335_FF,
+        selection_color: 0x214283_FF,
+        sum_bg_color: Theme::DRACULA_GREEN,
+        sum_text_color: 0x000000_FF,
+        reference_pulse_start: 0x00FF7F_33,
+        reference_pulse_end: 0x00FF7F_00,
+        number: Theme::DRACULA_PURPLE,
+        number_error: Theme::DRACULA_RED,
+        operator: 0x5bb0ff_FF, // Theme::DRACULA_YELLOW,
+        unit: Theme::DRACULA_CYAN,
+        variable: Theme::DRACULA_ORANGE,
+        result_text: Theme::DRACULA_FG,
+        header: Theme::DRACULA_FG,
+        text: Theme::DRACULA_COMMENT + 0x444444_00,
+        cursor: Theme::DRACULA_FG,
+        matrix_edit_active_bg: 0xBBBBBB_55,
+        matrix_edit_active_text: 0x000000_FF,
+        matrix_edit_inactive_text: 0x000000_FF,
+        left_gutter_bg: 0x3c3f41_FF,
+        line_num_active: 0xa3a2a0_FF,
+        line_num_simple: 0x4e6164_FF,
+        scrollbar_hovered: 0x4f4f4f_FF,
+        scrollbar_normal: 0x4b4b4b_FF,
+        line_ref_bg: 0x7C92A7_FF,
+        line_ref_text: 0x000000_FF,
+        line_ref_selector: Theme::DRACULA_BG + 0x333300_00,
+        referenced_matrix_text: 0x000000_FF,
+        change_result_pulse_start: 0xFF88FF_AA,
+        change_result_pulse_end: Theme::DRACULA_BG - 0xFF,
+        current_line_bg: Theme::DRACULA_CURRENT_LINE,
+        parenthesis: Theme::DRACULA_ORANGE,
+    },
+];
 
 #[allow(non_snake_case)]
 #[inline]
@@ -197,79 +327,103 @@ pub mod helper {
     }
 
     #[derive(Copy, Clone)]
-    pub struct BitFlag128 {
-        bitset: u128,
+    pub struct BitFlag256 {
+        pub bitset: [u128; 2],
     }
 
-    impl BitFlag128 {
-        pub fn empty() -> BitFlag128 {
-            BitFlag128 { bitset: 0 }
+    impl BitFlag256 {
+        pub fn empty() -> BitFlag256 {
+            BitFlag256 { bitset: [0; 2] }
         }
 
-        pub fn as_u128(&self) -> u128 {
-            self.bitset
+        fn get_index(row_index: usize) -> (usize, usize) {
+            let array_index = (row_index & (!127) > 0) as usize;
+            let index_inside_u128 = row_index & 127;
+            return (array_index, index_inside_u128);
         }
 
         pub fn set(&mut self, row_index: usize) {
-            self.bitset |= 1u128 << row_index;
+            let (array_index, index_inside_u128) = BitFlag256::get_index(row_index);
+            self.bitset[array_index] |= 1u128 << index_inside_u128;
         }
 
-        pub fn single_row(row_index: usize) -> BitFlag128 {
-            let bitset = 1u128 << row_index;
-            BitFlag128 { bitset }
+        pub fn single_row(row_index: usize) -> BitFlag256 {
+            let (array_index, index_inside_u128) = BitFlag256::get_index(row_index);
+            let mut bitset = [0; 2];
+            bitset[array_index] = 1u128 << index_inside_u128;
+            BitFlag256 { bitset }
         }
 
         #[inline]
         pub fn clear(&mut self) {
-            self.bitset = 0;
+            self.bitset[0] = 0;
+            self.bitset[1] = 0;
         }
 
-        pub fn all_rows_starting_at(row_index: usize) -> BitFlag128 {
+        pub fn all_rows_starting_at(row_index: usize) -> BitFlag256 {
             if row_index >= MAX_LINE_COUNT {
-                return BitFlag128 { bitset: 0 };
+                return BitFlag256::empty();
             }
-            let s = 1u128 << row_index;
+            let mut bitset = [0; 2];
+
+            let (array_index, index_inside_u128) = BitFlag256::get_index(row_index);
+            let s = 1u128 << index_inside_u128;
             let right_to_s_bits = s - 1;
             let left_to_s_and_s_bits = !right_to_s_bits;
-            let bitset = left_to_s_and_s_bits;
+            bitset[array_index] = left_to_s_and_s_bits;
+            // the other int is either fully 1s (if the array_index is 0) or 0s (if array_index is 1)
+            let other_index = array_index ^ 1;
+            bitset[other_index] = std::u128::MAX * other_index as u128;
 
-            BitFlag128 { bitset }
+            BitFlag256 { bitset }
         }
         // TODO multiple2(a, b), multiple3(a,b,c) etc, faster
-        pub fn multiple(indices: &[usize]) -> BitFlag128 {
-            let mut b = 0;
+        pub fn multiple(indices: &[usize]) -> BitFlag256 {
+            let mut b = [0; 2];
             for i in indices {
-                b |= 1 << i;
+                let (array_index, index_inside_u128) = BitFlag256::get_index(*i);
+                b[array_index] |= 1 << index_inside_u128;
             }
             let bitset = b;
 
-            BitFlag128 { bitset }
+            BitFlag256 { bitset }
         }
 
-        pub fn range(from: usize, to: usize) -> BitFlag128 {
+        pub fn range_incl(from: usize, to: usize) -> BitFlag256 {
             debug_assert!(to >= from);
             if from >= MAX_LINE_COUNT {
-                return BitFlag128 { bitset: 0 };
+                return BitFlag256::empty();
             } else if to >= MAX_LINE_COUNT {
-                return BitFlag128::range(from, MAX_LINE_COUNT - 1);
+                return BitFlag256::range_incl(from, MAX_LINE_COUNT - 1);
             }
-            let top = 1 << to;
-            let right_to_top_bits = top - 1;
-            let bottom = 1 << from;
-            let right_to_bottom_bits = bottom - 1;
-            let bitset = (right_to_top_bits ^ right_to_bottom_bits) | top;
+            fn set_range_u128(from: usize, to: usize) -> u128 {
+                let top = 1 << to;
+                let right_to_top_bits = top - 1;
+                let bottom = 1 << from;
+                let right_to_bottom_bits = bottom - 1;
+                return (right_to_top_bits ^ right_to_bottom_bits) | top;
+            }
+            let mut b = BitFlag256::empty();
+            if from < 128 {
+                b.bitset[0] = set_range_u128(from, to.min(127));
+            }
+            if to >= 128 {
+                b.bitset[1] = set_range_u128(((from as isize) - 128).max(0) as usize, to - 128);
+            }
 
-            BitFlag128 { bitset }
+            return b;
         }
 
         #[inline]
-        pub fn merge(&mut self, other: BitFlag128) {
-            self.bitset |= other.bitset;
+        pub fn merge(&mut self, other: BitFlag256) {
+            self.bitset[0] |= other.bitset[0];
+            self.bitset[1] |= other.bitset[1];
         }
 
         #[inline]
         pub fn need(&self, line_index: ContentIndex) -> bool {
-            ((1 << line_index.0) & self.bitset) != 0
+            let (array_index, index_inside_u128) = BitFlag256::get_index(line_index.0);
+            ((1 << index_inside_u128) & self.bitset[array_index]) != 0
         }
 
         #[inline]
@@ -284,11 +438,11 @@ pub mod helper {
 
         #[inline]
         pub fn is_non_zero(&self) -> bool {
-            self.bitset != 0
+            (self.bitset[0] | self.bitset[1]) != 0
         }
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     pub struct GlobalRenderData {
         pub client_height: usize,
         pub scroll_y: usize,
@@ -300,6 +454,7 @@ pub mod helper {
         pub current_result_panel_width: usize,
         editor_y_to_render_y: [Option<CanvasY>; MAX_LINE_COUNT],
         editor_y_to_rendered_height: [usize; MAX_LINE_COUNT],
+        pub theme_index: usize,
     }
 
     impl GlobalRenderData {
@@ -329,6 +484,7 @@ pub mod helper {
                 editor_y_to_render_y: [None; MAX_LINE_COUNT],
                 editor_y_to_rendered_height: [0; MAX_LINE_COUNT],
                 client_height,
+                theme_index: 0,
             };
 
             r.current_editor_width = (result_gutter_x - left_gutter_width) - 1;
@@ -410,6 +566,7 @@ pub mod helper {
         }
     }
 
+    #[derive(Debug)]
     pub struct PerLineRenderData {
         pub editor_x: usize,
         pub editor_y: ContentIndex,
@@ -656,6 +813,13 @@ pub struct RenderUtf8TextMsg<'a> {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct RenderChar {
+    pub col: usize,
+    pub row: CanvasY,
+    pub char: char,
+}
+
+#[derive(Debug, PartialEq)]
 pub struct RenderAsciiTextMsg<'a> {
     pub text: &'a [u8],
     pub row: CanvasY,
@@ -669,13 +833,25 @@ pub struct RenderStringMsg {
     pub column: usize,
 }
 
+#[derive(Debug, PartialEq)]
+pub struct PulsingRectangle {
+    pub x: usize,
+    pub y: CanvasY,
+    pub w: usize,
+    pub h: usize,
+    pub start_color: u32,
+    pub end_color: u32,
+    pub animation_time: Duration,
+    pub repeat: bool,
+}
+
 #[repr(C)]
 #[derive(Debug, EnumDiscriminants, PartialEq)]
 #[strum_discriminants(name(OutputMessageCommandId))]
 pub enum OutputMessage<'a> {
     SetStyle(TextStyle),
     SetColor(u32),
-    RenderChar(usize, usize, char),
+    RenderChar(RenderChar),
     RenderUtf8Text(RenderUtf8TextMsg<'a>),
     RenderAsciiText(RenderAsciiTextMsg<'a>),
     RenderString(RenderStringMsg),
@@ -685,16 +861,13 @@ pub enum OutputMessage<'a> {
         w: usize,
         h: usize,
     },
-    PulsingRectangle {
+    FollowingTextCommandsAreHeaders(bool),
+    RenderUnderline {
         x: usize,
         y: CanvasY,
         w: usize,
-        h: usize,
-        start_color: u32,
-        end_color: u32,
-        animation_time: Duration,
     },
-    FollowingTextCommandsAreHeaders(bool),
+    UpdatePulses,
 }
 
 #[repr(C)]
@@ -705,7 +878,20 @@ pub enum Layer {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct Rect {
+    pub x: u16,
+    pub y: u16,
+    pub w: u16,
+    pub h: u16,
+}
+
+#[derive(Debug)]
 pub struct RenderBuckets<'a> {
+    pub current_line_highlight: Option<Rect>,
+    pub left_gutter_bg: Rect,
+    pub right_gutter_bg: Rect,
+    pub result_panel_bg: Rect,
+    pub scroll_bar: Option<(u32, Rect)>,
     pub ascii_texts: Vec<RenderAsciiTextMsg<'a>>,
     pub utf8_texts: Vec<RenderUtf8TextMsg<'a>>,
     pub headers: Vec<RenderUtf8TextMsg<'a>>,
@@ -713,15 +899,37 @@ pub struct RenderBuckets<'a> {
     pub number_errors: Vec<RenderUtf8TextMsg<'a>>,
     pub units: Vec<RenderUtf8TextMsg<'a>>,
     pub operators: Vec<RenderUtf8TextMsg<'a>>,
+    pub parenthesis: Vec<RenderChar>,
     pub variable: Vec<RenderUtf8TextMsg<'a>>,
     pub line_ref_results: Vec<RenderStringMsg>,
     pub custom_commands: [Vec<OutputMessage<'a>>; 3],
-    pub clear_commands: Vec<OutputMessage<'a>>,
+    pub pulses: Vec<PulsingRectangle>,
+    pub clear_pulses: bool,
 }
 
 impl<'a> RenderBuckets<'a> {
     pub fn new() -> RenderBuckets<'a> {
         RenderBuckets {
+            current_line_highlight: None,
+            left_gutter_bg: Rect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+            },
+            right_gutter_bg: Rect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+            },
+            result_panel_bg: Rect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+            },
+            scroll_bar: None,
             ascii_texts: Vec::with_capacity(128),
             utf8_texts: Vec::with_capacity(128),
             headers: Vec::with_capacity(16),
@@ -734,9 +942,11 @@ impl<'a> RenderBuckets<'a> {
             number_errors: Vec::with_capacity(32),
             units: Vec::with_capacity(32),
             operators: Vec::with_capacity(32),
+            parenthesis: Vec::with_capacity(32),
             variable: Vec::with_capacity(32),
             line_ref_results: Vec::with_capacity(32),
-            clear_commands: Vec::with_capacity(8),
+            pulses: Vec::with_capacity(8),
+            clear_pulses: false,
         }
     }
 
@@ -757,7 +967,9 @@ impl<'a> RenderBuckets<'a> {
         self.operators.clear();
         self.variable.clear();
         self.line_ref_results.clear();
-        self.clear_commands.clear();
+        self.pulses.clear();
+        self.parenthesis.clear();
+        self.clear_pulses = false;
     }
 
     pub fn set_color(&mut self, layer: Layer, color: u32) {
@@ -768,8 +980,12 @@ impl<'a> RenderBuckets<'a> {
         self.custom_commands[layer as usize].push(OutputMessage::RenderRectangle { x, y, w, h });
     }
 
-    pub fn draw_char(&mut self, layer: Layer, x: usize, y: CanvasY, ch: char) {
-        self.custom_commands[layer as usize].push(OutputMessage::RenderChar(x, y.as_usize(), ch));
+    pub fn draw_char(&mut self, layer: Layer, col: usize, row: CanvasY, char: char) {
+        self.custom_commands[layer as usize].push(OutputMessage::RenderChar(RenderChar {
+            col,
+            row,
+            char,
+        }));
     }
 
     pub fn draw_text(&mut self, layer: Layer, x: usize, y: CanvasY, text: &'a [char]) {
@@ -790,6 +1006,10 @@ impl<'a> RenderBuckets<'a> {
                 column: x,
             },
         ));
+    }
+
+    pub fn draw_underline(&mut self, layer: Layer, x: usize, y: CanvasY, w: usize) {
+        self.custom_commands[layer as usize].push(OutputMessage::RenderUnderline { x, y, w });
     }
 
     pub fn draw_string(&mut self, layer: Layer, x: usize, y: CanvasY, text: String) {
@@ -825,8 +1045,8 @@ impl Default for LineData {
 }
 
 pub struct MatrixEditing {
-    editor_content: EditorContent<usize>,
-    editor: Editor,
+    pub editor_content: EditorContent<usize>,
+    pub editor: Editor,
     row_count: usize,
     col_count: usize,
     current_cell: Pos,
@@ -876,7 +1096,6 @@ impl MatrixEditing {
         };
         let mut str: String = String::with_capacity(8);
         let mut can_ignore_ws = true;
-        dbg!(src_canvas);
         for ch in src_canvas {
             match ch {
                 '[' => {
@@ -904,9 +1123,7 @@ impl MatrixEditing {
                 }
             }
         }
-        if str.len() > 0 {
-            mat_edit.cell_strings.push(str);
-        }
+        mat_edit.cell_strings.push(str);
 
         let cell_index = mat_edit.current_cell.row * col_count + mat_edit.current_cell.column;
         mat_edit
@@ -998,6 +1215,7 @@ impl MatrixEditing {
         left_gutter_width: usize,
         render_buckets: &mut RenderBuckets<'b>,
         rendered_row_height: usize,
+        theme: &Theme,
     ) -> usize {
         let vert_align_offset =
             (rendered_row_height - MatrixData::calc_render_height(self.row_count)) / 2;
@@ -1041,7 +1259,7 @@ impl MatrixEditing {
                 );
 
                 if self.current_cell == Pos::from_row_column(row_i, col_i) {
-                    render_buckets.set_color(Layer::BehindText, 0xBBBBBB_55);
+                    render_buckets.set_color(Layer::BehindText, theme.matrix_edit_active_bg);
                     render_buckets.draw_rect(
                         Layer::BehindText,
                         render_x + padding_x + left_gutter_width,
@@ -1050,7 +1268,7 @@ impl MatrixEditing {
                         1,
                     );
                     let chars = &self.editor_content.lines().next().unwrap();
-                    render_buckets.set_color(Layer::Text, 0x000000_FF);
+                    render_buckets.set_color(Layer::Text, theme.matrix_edit_active_text);
                     for (i, char) in chars.iter().enumerate() {
                         render_buckets.draw_char(
                             Layer::Text,
@@ -1060,9 +1278,9 @@ impl MatrixEditing {
                         );
                     }
                     let sel = self.editor.get_selection();
-                    if let Some((first, second)) = sel.is_range() {
+                    if let Some((first, second)) = sel.is_range_ordered() {
                         let len = second.column - first.column;
-                        render_buckets.set_color(Layer::BehindText, 0xA6D2FF_FF);
+                        render_buckets.set_color(Layer::BehindText, theme.selection_color);
                         render_buckets.draw_rect(
                             Layer::BehindText,
                             render_x + padding_x + left_gutter_width + first.column,
@@ -1073,7 +1291,7 @@ impl MatrixEditing {
                     }
                 } else {
                     let chars = &self.cell_strings[row_i * self.col_count + col_i];
-                    render_buckets.set_color(Layer::Text, 0x000000_FF);
+                    render_buckets.set_color(Layer::Text, theme.matrix_edit_inactive_text);
                     render_buckets.draw_string(
                         Layer::Text,
                         render_x + padding_x + left_gutter_width,
@@ -1085,7 +1303,7 @@ impl MatrixEditing {
                 if self.current_cell == Pos::from_row_column(row_i, col_i)
                     && self.editor.is_cursor_shown()
                 {
-                    render_buckets.set_color(Layer::Text, 0x000000_FF);
+                    render_buckets.set_color(Layer::Text, theme.cursor);
                     render_buckets.draw_char(
                         Layer::Text,
                         (self.editor.get_selection().get_cursor_pos().column + left_gutter_width)
@@ -1186,7 +1404,6 @@ pub struct NoteCalcApp {
     pub mouse_state: Option<MouseClickType>,
     pub mouse_hover_type: MouseHoverType,
     pub updated_line_ref_obj_indices: Vec<EditorObjId>,
-    pub editor_objs_referencing_current_line: Vec<EditorObjId>,
     pub render_data: GlobalRenderData,
     // when pressing Ctrl-c without any selection, the result of the current line will be put into this clipboard
     pub clipboard: Option<String>,
@@ -1208,7 +1425,6 @@ impl NoteCalcApp {
             mouse_state: None,
             mouse_hover_type: MouseHoverType::Normal,
             updated_line_ref_obj_indices: Vec::with_capacity(16),
-            editor_objs_referencing_current_line: Vec::with_capacity(8),
             render_data: GlobalRenderData::new(
                 client_width,
                 client_height,
@@ -1230,10 +1446,12 @@ impl NoteCalcApp {
                 .editor_content
                 .write_selection_into(matrix_editing.editor.get_selection(), &mut str);
             Some(str)
-        } else if self.editor.get_selection().is_range().is_some() {
+        } else if self.editor.get_selection().is_range() {
             self.editor_content
                 .write_selection_into(self.editor.get_selection(), &mut str);
             Some(str)
+        } else if !self.editor.clipboard.is_empty() {
+            Some(std::mem::replace(&mut self.editor.clipboard, String::new()))
         } else {
             None
         };
@@ -1250,7 +1468,8 @@ impl NoteCalcApp {
         editor_objs: &mut EditorObjects,
         render_buckets: &mut RenderBuckets<'b>,
     ) {
-        if text.is_empty() {
+        let content_is_empty = text.is_empty();
+        if content_is_empty {
             text = EMPTY_FILE_DEFUALT_CONTENT;
         }
         self.editor_content.init_with(text);
@@ -1259,6 +1478,13 @@ impl NoteCalcApp {
             data.line_id = i + 1;
         }
         self.line_id_generator = self.editor_content.line_count() + 1;
+
+        self.matrix_editing = None;
+        self.line_reference_chooser = None;
+        self.mouse_state = None;
+        self.mouse_hover_type = MouseHoverType::Normal;
+        self.updated_line_ref_obj_indices.clear();
+        self.clipboard = None;
 
         for r in results.as_mut_slice() {
             *r = Ok(None)
@@ -1271,7 +1497,6 @@ impl NoteCalcApp {
             value: Err(()),
         });
         self.render_data.clear();
-        self.editor_objs_referencing_current_line.clear();
         self.process_and_render_tokens(
             RowModificationType::AllLinesFrom(0),
             units,
@@ -1282,6 +1507,17 @@ impl NoteCalcApp {
             editor_objs,
             render_buckets,
         );
+        if !content_is_empty {
+            self.set_editor_and_result_panel_widths_wrt_editor_and_rerender_if_necessary(
+                units,
+                render_buckets,
+                allocator,
+                _readonly_(tokens),
+                _readonly_(results),
+                _readonly_(vars),
+                editor_objs,
+            );
+        }
     }
 
     pub fn calc_full_content_height(gr: &GlobalRenderData, content_len: usize) -> usize {
@@ -1305,7 +1541,7 @@ impl NoteCalcApp {
         matrix_editing: &mut Option<MatrixEditing>,
         line_reference_chooser: &mut Option<ContentIndex>,
         render_buckets: &mut RenderBuckets<'b>,
-        result_change_flag: BitFlag128,
+        result_change_flag: BitFlag256,
         gr: &mut GlobalRenderData,
         allocator: &'b Bump,
         tokens: &AppTokens<'b>,
@@ -1313,10 +1549,33 @@ impl NoteCalcApp {
         vars: &Variables,
         editor_objs: &mut EditorObjects,
         updated_line_ref_obj_indices: &[EditorObjId],
-        editor_objs_referencing_current_line: &mut Vec<EditorObjId>,
         mouse_hover_type: MouseHoverType,
     ) {
+        let theme = &THEMES[gr.theme_index];
         gr.longest_visible_editor_line_len = 0;
+
+        // result background
+        render_buckets.result_panel_bg = Rect {
+            x: (gr.result_gutter_x + RIGHT_GUTTER_WIDTH) as u16,
+            y: 0,
+            w: gr.current_result_panel_width as u16,
+            h: gr.client_height as u16,
+        };
+        // result gutter
+        render_buckets.right_gutter_bg = Rect {
+            x: gr.result_gutter_x as u16,
+            y: 0,
+            w: RIGHT_GUTTER_WIDTH as u16,
+            h: gr.client_height as u16,
+        };
+        // left gutter
+        render_buckets.left_gutter_bg = Rect {
+            x: 0,
+            y: 0,
+            w: gr.left_gutter_width as u16,
+            h: gr.client_height as u16,
+        };
+
         // x, h
         let mut editor_y_to_render_w: [usize; MAX_LINE_COUNT] = [0; MAX_LINE_COUNT];
         {
@@ -1356,14 +1615,12 @@ impl NoteCalcApp {
                 // "- 1" so if it is even, it always appear higher
                 r.vert_align_offset = (r.rendered_row_height - 1) / 2;
 
-                highlight_current_line(render_buckets, &r, editor, &gr);
-
                 if let Some(tokens) = &tokens[editor_y] {
                     // TODO: choose a better name
                     // it means that either we use the nice token rendering (e.g. for matrix it is the multiline matrix stuff),
                     // or render simply the backend content (e.g. for matrix it is [1;2;3]
                     let need_matrix_renderer =
-                        if let Some((first, second)) = editor.get_selection().is_range() {
+                        if let Some((first, second)) = editor.get_selection().is_range_ordered() {
                             NOT((first.row..=second.row).contains(&(editor_y.as_usize())))
                         } else {
                             true
@@ -1382,17 +1639,17 @@ impl NoteCalcApp {
                         &units,
                         need_matrix_renderer,
                         Some(RENDERED_RESULT_PRECISION),
+                        theme,
                     );
-                    // don't highlight refs in the current row as they will be pulsing in different colors
-                    if editor.get_selection().get_cursor_pos().row != r.editor_y.as_usize() {
-                        highlight_line_ref_background(
-                            &editor_objs[editor_y],
-                            render_buckets,
-                            &r,
-                            gr,
-                        );
-                    } else {
-                        highlight_active_line_refs(&editor_objs[editor_y], render_buckets, &r, gr);
+                    highlight_line_ref_background(
+                        &editor_objs[editor_y],
+                        render_buckets,
+                        &r,
+                        gr,
+                        theme,
+                    );
+                    if editor.get_selection().get_cursor_pos().row == r.editor_y.as_usize() {
+                        underline_active_line_refs(&editor_objs[editor_y], render_buckets, gr);
                     }
                 } else {
                     r.rendered_row_height = 1;
@@ -1407,106 +1664,78 @@ impl NoteCalcApp {
                     &gr,
                     &line_reference_chooser,
                     gr.result_gutter_x,
+                    theme,
                 );
 
-                draw_cursor(render_buckets, &r, &gr, &editor, &matrix_editing);
+                draw_cursor(render_buckets, &r, &gr, &editor, &matrix_editing, theme);
 
                 draw_right_gutter_num_prefixes(
                     render_buckets,
                     gr.result_gutter_x,
                     &editor_content,
                     &r,
-                );
-                // result gutter
-                render_buckets.set_color(Layer::AboveText, 0xD2D2D2_FF);
-                render_buckets.draw_rect(
-                    Layer::AboveText,
-                    gr.result_gutter_x,
-                    render_y,
-                    RIGHT_GUTTER_WIDTH,
-                    r.rendered_row_height,
+                    theme,
                 );
 
-                render_wrap_dots(render_buckets, &r, &gr);
+                render_wrap_dots(render_buckets, &r, &gr, theme);
 
-                // line number
-                {
-                    render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
-                    render_buckets.draw_rect(
-                        Layer::BehindText,
-                        0,
-                        render_y,
-                        gr.left_gutter_width,
-                        r.rendered_row_height,
-                    );
-                    if editor_y.as_usize() == editor.get_selection().get_cursor_pos().row {
-                        render_buckets.set_color(Layer::Text, 0x000000_FF);
-                    } else {
-                        render_buckets.set_color(Layer::Text, 0xADADAD_FF);
-                    }
-                    let vert_align_offset = (r.rendered_row_height - 1) / 2;
-                    let line_num_str = if r.editor_y.as_usize() < 9 {
-                        &(LINE_NUM_CONSTS[editor_y.as_usize()][..])
-                    } else if r.editor_y.as_usize() < 99 {
-                        &(LINE_NUM_CONSTS2[(editor_y.as_usize()) - 9][..])
-                    } else {
-                        &(LINE_NUM_CONSTS3[(editor_y.as_usize()) - 99][..])
-                    };
-                    render_buckets.draw_text(
-                        Layer::Text,
-                        0,
-                        render_y.add(vert_align_offset),
-                        line_num_str,
-                    );
-                }
-                // } else if redraw_result_area.need(editor_y) {
                 draw_right_gutter_num_prefixes(
                     render_buckets,
                     gr.result_gutter_x,
                     &editor_content,
                     &r,
-                );
-                // result background
-                render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
-                render_buckets.draw_rect(
-                    Layer::BehindText,
-                    gr.result_gutter_x + RIGHT_GUTTER_WIDTH,
-                    render_y,
-                    gr.current_result_panel_width,
-                    r.rendered_row_height,
-                );
-                // result gutter
-                render_buckets.set_color(Layer::BehindText, 0xD2D2D2_FF);
-                render_buckets.draw_rect(
-                    Layer::BehindText,
-                    gr.result_gutter_x,
-                    render_y,
-                    RIGHT_GUTTER_WIDTH,
-                    r.rendered_row_height,
+                    theme,
                 );
                 r.line_render_ended(gr.get_rendered_height(editor_y));
                 gr.longest_visible_editor_line_len =
                     gr.longest_visible_editor_line_len.max(r.render_x);
             }
+            // #[cfg(debug_assertions)]
+            // {
+            //     let chars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+            //     for i in 0..(gr.left_gutter_width
+            //         + (gr.current_editor_width + 1)
+            //         + RIGHT_GUTTER_WIDTH
+            //         + gr.current_result_panel_width)
+            //     {
+            //         let d = i + 1;
+            //         render_buckets.draw_char(Layer::AboveText, i, canvas_y(0), chars[d % 10]);
+            //         if d % 10 == 0 && d < 100 {
+            //             render_buckets.draw_char(Layer::AboveText, i, canvas_y(1), chars[d / 10]);
+            //         }
+            //     }
+            // }
+        }
 
-            #[cfg(debug_assertions)]
-            {
-                let chars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
-                for i in 0..(gr.left_gutter_width
-                    + (gr.current_editor_width + 1)
-                    + RIGHT_GUTTER_WIDTH
-                    + gr.current_result_panel_width)
-                {
-                    let d = i + 1;
-                    render_buckets.draw_char(Layer::AboveText, i, r.render_y, chars[d % 10]);
-                    if d % 10 == 0 && d < 100 {
-                        render_buckets.draw_char(
-                            Layer::AboveText,
-                            i,
-                            r.render_y.add(1),
-                            chars[d / 10],
-                        );
-                    }
+        highlight_current_line(render_buckets, editor, &gr, theme);
+
+        // line numbers
+        {
+            let mut target_y = canvas_y(0);
+            render_buckets.set_color(Layer::Text, theme.line_num_simple);
+            for i in 0..gr.client_height {
+                let y = gr.scroll_y + i;
+                if y == editor.get_selection().get_cursor_pos().row {
+                    render_buckets.set_color(Layer::Text, theme.line_num_active);
+                }
+                let row_height = gr.get_rendered_height(content_y(y)).max(1);
+                let vert_align_offset = (row_height - 1) / 2;
+                let line_num_str = if y < 9 {
+                    &(LINE_NUM_CONSTS[y][..])
+                } else if y < 99 {
+                    &(LINE_NUM_CONSTS2[y - 9][..])
+                } else {
+                    &(LINE_NUM_CONSTS3[y - 99][..])
+                };
+                render_buckets.draw_text(
+                    Layer::Text,
+                    0,
+                    target_y.add(vert_align_offset),
+                    line_num_str,
+                );
+                target_y = target_y.add(row_height);
+                if y == editor.get_selection().get_cursor_pos().row {
+                    render_buckets.set_color(Layer::Text, theme.line_num_simple);
                 }
             }
         }
@@ -1515,49 +1744,29 @@ impl NoteCalcApp {
             &editor_objs[content_y(editor.get_selection().get_cursor_pos().row)],
             gr,
             render_buckets,
-            &editor_y_to_render_w,
         );
-
-        NoteCalcApp::fill_editor_objs_referencing_current_line(
-            content_y(editor.get_selection().get_cursor_pos().row),
-            tokens,
-            vars,
-            editor_objs_referencing_current_line,
-            editor_content,
-        );
-
-        render_buckets
-            .clear_commands
-            .push(OutputMessage::SetColor(0xFFFFFF_FF));
-
-        // clear the whole scrollbar area
-        render_buckets
-            .clear_commands
-            .push(OutputMessage::RenderRectangle {
-                x: gr.result_gutter_x - SCROLLBAR_WIDTH,
-                y: canvas_y(0),
-                w: SCROLLBAR_WIDTH,
-                h: gr.client_height,
-            });
 
         // TODO calc it once on content change (scroll_bar_h as well) (it is used in handle_drag)
-        if let Some(scrollbar_info) =
+        render_buckets.scroll_bar = if let Some(scrollbar_info) =
             NoteCalcApp::get_scrollbar_info(gr, editor_content.line_count())
         {
             let color = if mouse_hover_type == MouseHoverType::Scrollbar {
-                SCROLLBAR_HOVER_COLOR
+                theme.scrollbar_hovered
             } else {
-                SCROLLBAR_NORMAL_COLOR
+                theme.scrollbar_normal
             };
-            render_buckets.set_color(Layer::Text, color);
-            render_buckets.draw_rect(
-                Layer::Text,
-                gr.result_gutter_x - SCROLLBAR_WIDTH,
-                canvas_y(scrollbar_info.scroll_bar_render_y as isize),
-                SCROLLBAR_WIDTH,
-                scrollbar_info.scroll_bar_render_h,
-            );
-        }
+            Some((
+                color,
+                Rect {
+                    x: (gr.result_gutter_x - SCROLLBAR_WIDTH) as u16,
+                    y: scrollbar_info.scroll_bar_render_y as u16,
+                    w: SCROLLBAR_WIDTH as u16,
+                    h: scrollbar_info.scroll_bar_render_h as u16,
+                },
+            ))
+        } else {
+            None
+        };
 
         render_selection_and_its_sum(
             &units,
@@ -1568,6 +1777,7 @@ impl NoteCalcApp {
             &gr,
             vars,
             allocator,
+            theme,
         );
 
         let mut tmp = ResultRender::new(SmallVec::with_capacity(MAX_LINE_COUNT));
@@ -1587,6 +1797,7 @@ impl NoteCalcApp {
             render_buckets,
             gr,
             Some(RENDERED_RESULT_PRECISION),
+            theme,
         )
         .max(tmp.max_len);
         gr.longest_visible_result_len = tmp.max_len;
@@ -1596,6 +1807,7 @@ impl NoteCalcApp {
             gr,
             gr.longest_visible_result_len,
             &result_change_flag,
+            theme,
         );
 
         pulse_modified_line_references(
@@ -1603,13 +1815,7 @@ impl NoteCalcApp {
             gr,
             updated_line_ref_obj_indices,
             editor_objs,
-        );
-
-        pulse_editor_objs_referencing_current_line(
-            render_buckets,
-            gr,
-            editor_objs_referencing_current_line,
-            editor_objs,
+            theme,
         );
     }
 
@@ -1646,21 +1852,21 @@ impl NoteCalcApp {
                 units,
                 render_buckets,
                 allocator,
-                tokens,
-                results,
-                vars,
+                _readonly_(tokens),
+                _readonly_(results),
+                _readonly_(vars),
                 editor_objs,
-                BitFlag128::empty(),
+                BitFlag256::empty(),
             );
             self.set_editor_and_result_panel_widths_and_rerender_if_necessary(
                 units,
                 render_buckets,
                 allocator,
-                tokens,
-                results,
-                vars,
+                _readonly_(tokens),
+                _readonly_(results),
+                _readonly_(vars),
                 editor_objs,
-                BitFlag128::empty(),
+                BitFlag256::empty(),
             );
         }
         return has_moved;
@@ -1692,6 +1898,7 @@ impl NoteCalcApp {
                 results,
                 vars,
                 render_buckets,
+                0,
             );
         } else if self.mouse_state.is_none() {
             self.mouse_state = if x - scroll_bar_x < SCROLLBAR_WIDTH {
@@ -1759,11 +1966,15 @@ impl NoteCalcApp {
         results: &mut Results,
         vars: &mut Variables,
         render_buckets: &mut RenderBuckets<'b>,
+        deep: usize,
     ) {
+        if deep > 1 {
+            return;
+        }
         let clicked_x = x - self.render_data.left_gutter_width;
         let clicked_row = self.get_clicked_row_clamped(clicked_y);
 
-        let matrix_row_index = if self.matrix_editing.is_some() {
+        let previously_editing_matrix_row_index = if self.matrix_editing.is_some() {
             let matrix_row_index = self.matrix_editing.as_ref().unwrap().row_index;
             end_matrix_editing(
                 &mut self.matrix_editing,
@@ -1826,7 +2037,7 @@ impl NoteCalcApp {
             self.mouse_state = Some(MouseClickType::ClickedInEditor);
         }
 
-        if let Some(matrix_row_index) = matrix_row_index {
+        if let Some(matrix_row_index) = previously_editing_matrix_row_index {
             self.process_and_render_tokens(
                 RowModificationType::SingleLine(matrix_row_index.as_usize()),
                 units,
@@ -1846,9 +2057,33 @@ impl NoteCalcApp {
                 results,
                 vars,
                 editor_objs,
-                BitFlag128::empty(),
+                BitFlag256::empty(),
+            );
+            // HACK
+            // if there is a selection in a row which contains a matrix, the matrix is
+            // rendered as simpletext, and clicking inside it put the cursor at the clicked position.
+            // To identify that there is a matrix at that pos, we first have to render everything (above),
+            // which fills the editor_objs, then call the click function again so now this click
+            // will be registered as click into a matrix, and the mat_edit will be Some
+            self.handle_editor_area_click(
+                x,
+                clicked_y,
+                editor_objs,
+                units,
+                allocator,
+                tokens,
+                results,
+                vars,
+                render_buckets,
+                deep + 1,
             );
         }
+        self.editor_objs_referencing_current_line_might_changed(
+            tokens,
+            vars,
+            editor_objs,
+            render_buckets,
+        );
     }
 
     pub fn rendered_y_to_editor_y(&self, clicked_y: CanvasY) -> Option<ContentIndex> {
@@ -1971,7 +2206,7 @@ impl NoteCalcApp {
                 results,
                 vars,
                 editor_objs,
-                BitFlag128::empty(),
+                BitFlag256::empty(),
             );
         }
         return self.mouse_hover_type as usize;
@@ -2043,7 +2278,13 @@ impl NoteCalcApp {
                 results,
                 vars,
                 editor_objs,
-                BitFlag128::empty(),
+                BitFlag256::empty(),
+            );
+            self.editor_objs_referencing_current_line_might_changed(
+                tokens,
+                vars,
+                editor_objs,
+                render_buckets,
             );
         }
         return need_render;
@@ -2074,15 +2315,39 @@ impl NoteCalcApp {
         }
     }
 
-    pub fn handle_resize<'b>(
+    pub fn set_theme<'b>(
         &mut self,
-        new_client_width: usize,
+        new_theme_index: usize,
         editor_objs: &mut EditorObjects,
         units: &Units,
         allocator: &'b Bump,
         tokens: &mut AppTokens<'b>,
         results: &mut Results,
         vars: &mut Variables,
+        render_buckets: &mut RenderBuckets<'b>,
+    ) {
+        self.render_data.theme_index = new_theme_index;
+        self.generate_render_commands_and_fill_editor_objs(
+            units,
+            render_buckets,
+            allocator,
+            _readonly_(tokens),
+            _readonly_(results),
+            _readonly_(vars),
+            editor_objs,
+            BitFlag256::empty(),
+        );
+    }
+
+    pub fn handle_resize<'b>(
+        &mut self,
+        new_client_width: usize,
+        editor_objs: &mut EditorObjects,
+        units: &Units,
+        allocator: &'b Bump,
+        tokens: &AppTokens<'b>,
+        results: &Results,
+        vars: &Variables,
         render_buckets: &mut RenderBuckets<'b>,
     ) {
         if new_client_width
@@ -2104,7 +2369,7 @@ impl NoteCalcApp {
             results,
             vars,
             editor_objs,
-            BitFlag128::empty(),
+            BitFlag256::empty(),
         );
     }
 
@@ -2113,9 +2378,9 @@ impl NoteCalcApp {
         now: u32,
         units: &Units,
         allocator: &'b Bump,
-        tokens: &mut AppTokens<'b>,
-        results: &mut Results,
-        vars: &mut Variables,
+        tokens: &AppTokens<'b>,
+        results: &Results,
+        vars: &Variables,
         editor_objs: &mut EditorObjects,
         render_buckets: &mut RenderBuckets<'b>,
     ) -> bool {
@@ -2133,7 +2398,7 @@ impl NoteCalcApp {
                 results,
                 vars,
                 editor_objs,
-                BitFlag128::empty(),
+                BitFlag256::empty(),
             );
         }
         need_rerender
@@ -2197,21 +2462,19 @@ impl NoteCalcApp {
 
     pub fn normalize_line_refs_in_place(&mut self) {
         let mut original_selection = self.editor.get_selection();
-        for line_i in 0..self.editor_content.line_count() {
+        let editor_content = &mut self.editor_content;
+        for line_i in 0..editor_content.line_count() {
             let mut i = 0;
-            'i: while i < self.editor_content.line_len(line_i) {
-                //self.editor_content.get_line_valid_chars(line_i)
+            'i: while i < editor_content.line_len(line_i) {
                 let start = i;
-                if i + 3 < self.editor_content.line_len(line_i)
-                    && self.editor_content.get_char(line_i, i) == '&'
-                    && self.editor_content.get_char(line_i, i + 1) == '['
+                if i + 3 < editor_content.line_len(line_i)
+                    && editor_content.get_char(line_i, i) == '&'
+                    && editor_content.get_char(line_i, i + 1) == '['
                 {
                     let mut end = i + 2;
                     let mut num_inside_lineref: u32 = 0;
-                    while end < self.editor_content.line_len(line_i) {
-                        if self.editor_content.get_char(line_i, end) == ']'
-                            && num_inside_lineref > 0
-                        {
+                    while end < editor_content.line_len(line_i) {
+                        if editor_content.get_char(line_i, end) == ']' && num_inside_lineref > 0 {
                             let num_len = end - (start + 2); // start --> &[num] <- end
 
                             // remove the number from the original line_ref text '&[x]' (remove only x)
@@ -2219,16 +2482,15 @@ impl NoteCalcApp {
                                 let start_pos = Pos::from_row_column(line_i, start + 2);
                                 let end_pos = start_pos.with_column(end);
                                 self.editor.set_cursor_range(start_pos, end_pos);
-                                self.editor.handle_input(
+                                self.editor.handle_input_no_undo(
                                     EditorInputEvent::Del,
                                     InputModifiers::none(),
-                                    &mut self.editor_content,
+                                    editor_content,
                                 );
                             }
                             {
                                 // which row has the id of 'num_inside_lineref'?
-                                let referenced_row_index = self
-                                    .editor_content
+                                let referenced_row_index = editor_content
                                     .data()
                                     .iter()
                                     .position(|it| it.line_id == num_inside_lineref as usize)
@@ -2262,10 +2524,10 @@ impl NoteCalcApp {
                                     }
                                 };
                                 for tmp_arr_i in tmp_rev_index..=2 {
-                                    self.editor.handle_input(
+                                    self.editor.handle_input_no_undo(
                                         EditorInputEvent::Char(tmp_arr[tmp_arr_i]),
                                         InputModifiers::none(),
-                                        &mut self.editor_content,
+                                        editor_content,
                                     );
                                     i += 1;
                                     if (align_selection & 1) > 0 {
@@ -2279,7 +2541,7 @@ impl NoteCalcApp {
                             }
                             continue 'i;
                         } else if let Some(digit) =
-                            self.editor_content.get_char(line_i, end).to_digit(10)
+                            editor_content.get_char(line_i, end).to_digit(10)
                         {
                             num_inside_lineref = if num_inside_lineref == 0 {
                                 digit
@@ -2295,10 +2557,10 @@ impl NoteCalcApp {
                 i += 1;
             }
         }
-        for line_i in 0..self.editor_content.line_count() {
-            self.editor_content.mut_data(line_i).line_id = line_i + 1;
+        for line_i in 0..editor_content.line_count() {
+            editor_content.mut_data(line_i).line_id = line_i + 1;
         }
-        self.line_id_generator = self.editor_content.line_count() + 1;
+        self.line_id_generator = editor_content.line_count() + 1;
 
         self.editor.set_selection_save_col(original_selection);
     }
@@ -2349,11 +2611,11 @@ impl NoteCalcApp {
                 units,
                 render_buckets,
                 allocator,
-                tokens,
-                results,
-                vars,
+                _readonly_(tokens),
+                _readonly_(results),
+                _readonly_(vars),
                 editor_objs,
-                BitFlag128::empty(),
+                BitFlag256::empty(),
             );
             return;
         }
@@ -2363,7 +2625,7 @@ impl NoteCalcApp {
                 let prev_ch = self.editor_content.get_char(pos.row, pos.column - 1);
                 let prev_token_is_lineref = pos.column > 3 /* smallest lineref is 4 char long '&[1]'*/
                     && self.editor_content.get_char(pos.row, pos.column - 1) == ']' && {
-                    let mut i = (pos.column - 2) as  isize;
+                    let mut i = (pos.column - 2) as isize;
                     while i > 1 {
                         if NOT(self.editor_content.get_char(pos.row, i as usize).is_ascii_digit()) {
                             break;
@@ -2372,10 +2634,10 @@ impl NoteCalcApp {
                     }
                     i > 0
                         && self.editor_content.get_char(pos.row, i as usize) == '['
-                        && self.editor_content.get_char(pos.row, (i-1) as usize) == '&'
+                        && self.editor_content.get_char(pos.row, (i - 1) as usize) == '&'
                 };
                 if prev_ch.is_alphanumeric() || prev_ch == '_' || prev_token_is_lineref {
-                    self.editor.handle_input(
+                    self.editor.handle_input_undoable(
                         EditorInputEvent::Char(' '),
                         InputModifiers::none(),
                         &mut self.editor_content,
@@ -2383,7 +2645,7 @@ impl NoteCalcApp {
                 }
             }
             for ch in var.name.iter() {
-                self.editor.handle_input(
+                self.editor.handle_input_undoable(
                     EditorInputEvent::Char(*ch),
                     InputModifiers::none(),
                     &mut self.editor_content,
@@ -2397,7 +2659,7 @@ impl NoteCalcApp {
 
             let inserting_text = format!("&[{}]", line_id);
             self.editor
-                .insert_text(&inserting_text, &mut self.editor_content);
+                .insert_text_undoable(&inserting_text, &mut self.editor_content);
         }
 
         self.process_and_render_tokens(
@@ -2424,7 +2686,10 @@ impl NoteCalcApp {
         render_buckets: &mut RenderBuckets<'b>,
     ) {
         let prev_row = self.editor.get_selection().get_cursor_pos().row;
-        match self.editor.insert_text(&text, &mut self.editor_content) {
+        match self
+            .editor
+            .insert_text_undoable(&text, &mut self.editor_content)
+        {
             Some(modif) => {
                 if self.editor.get_selection().get_cursor_pos().row >= MAX_LINE_COUNT {
                     self.editor.set_cursor_pos_r_c(MAX_LINE_COUNT - 1, 0);
@@ -2490,7 +2755,7 @@ impl NoteCalcApp {
         ) -> Option<RowModificationType> {
             if input == EditorInputEvent::Left {
                 let selection = app.editor.get_selection();
-                let (start, end) = selection.get_range();
+                let (start, end) = selection.get_range_ordered();
                 for row_i in start.row..=end.row {
                     let new_format = match &app.editor_content.get_data(row_i).result_format {
                         ResultFormat::Bin => ResultFormat::Hex,
@@ -2502,7 +2767,7 @@ impl NoteCalcApp {
                 None
             } else if input == EditorInputEvent::Right {
                 let selection = app.editor.get_selection();
-                let (start, end) = selection.get_range();
+                let (start, end) = selection.get_range_ordered();
                 for row_i in start.row..=end.row {
                     let new_format = match &app.editor_content.get_data(row_i).result_format {
                         ResultFormat::Bin => ResultFormat::Dec,
@@ -2556,14 +2821,25 @@ impl NoteCalcApp {
         ////////////////////////////////////////////////////
         ////////////////////////////////////////////////////
         ////////////////////////////////////////////////////
+        //
+        let prev_selection = self.editor.get_selection();
         let prev_row = self.editor.get_selection().get_cursor_pos().row;
+        let mut refactor_me = false;
         let modif = if self.matrix_editing.is_none() && modifiers.alt {
             handle_input_with_alt(&mut *self, input)
-        } else if self.matrix_editing.is_some() {
+        } else if self.is_matrix_editing_or_need_to_create_one(
+            input,
+            _readonly_(editor_objs),
+            &mut refactor_me,
+        ) {
             self.handle_matrix_editor_input(input, modifiers);
             if self.matrix_editing.is_none() {
                 // user left a matrix
-                Some(RowModificationType::SingleLine(prev_row))
+                // TODO sometimes leaving a matrix inserts too many chars in a row
+                // so it overflows, so we have to reparse the consecutive lines as well.
+                // The real solution for it is to allow "unlimited" line width
+                //Some(RowModificationType::SingleLine(prev_row))
+                Some(RowModificationType::AllLinesFrom(prev_row))
             } else {
                 if modifiers.alt {
                     let y = content_y(prev_row);
@@ -2573,13 +2849,13 @@ impl NoteCalcApp {
                 };
                 None
             }
-        } else if self.handle_completion(&input, editor_objs, vars) {
+        } else if self.handle_completion(&input, editor_objs, _readonly_(vars)) {
             Some(RowModificationType::SingleLine(prev_row))
-        } else if let Some(modif_type) = self.handle_obj_deletion(&input, editor_objs) {
+        } else if let Some(modif_type) = self.handle_obj_deletion(&input, editor_objs, modifiers) {
             Some(modif_type)
         } else if input == EditorInputEvent::Char('c')
             && modifiers.ctrl
-            && self.editor.get_selection().is_range().is_none()
+            && !self.editor.get_selection().is_range()
         {
             let row = self.editor.get_selection().get_cursor_pos().row;
             if let Ok(Some(result)) = &results[content_y(row)] {
@@ -2598,29 +2874,27 @@ impl NoteCalcApp {
             None
         } else if self.handle_obj_jump_over(&input, modifiers, editor_objs) {
             None
+        } else if self.handle_parenthesis_wrapping(&input) {
+            Some(RowModificationType::AllLinesFrom(
+                prev_selection.get_first().row,
+            ))
+        } else if self.handle_parenthesis_removal(&input) {
+            Some(RowModificationType::SingleLine(
+                prev_selection.get_first().row,
+            ))
+        } else if self.handle_parenthesis_completion(&input) {
+            Some(RowModificationType::SingleLine(
+                prev_selection.get_first().row,
+            ))
         } else {
-            let prev_selection = self.editor.get_selection();
             let prev_cursor_pos = prev_selection.get_cursor_pos();
 
-            // if the cursor is inside a matrix, put it afterwards
-            if let Some(obj) = self.get_obj_at_inside(
-                prev_cursor_pos.column,
-                content_y(prev_cursor_pos.row),
-                editor_objs,
-            ) {
-                match obj.typ {
-                    EditorObjectType::Matrix { .. } => self
-                        .editor
-                        .set_cursor_pos_r_c(obj.row.as_usize(), obj.end_x),
-                    _ => {}
-                }
-            }
-            let modif_type = self
-                .editor
-                .handle_input(input, modifiers, &mut self.editor_content);
+            let modif_type =
+                self.editor
+                    .handle_input_undoable(input, modifiers, &mut self.editor_content);
 
             if self.editor.get_selection().get_cursor_pos().row >= MAX_LINE_COUNT {
-                if let Some((start, _end)) = self.editor.get_selection().is_range() {
+                if let Some((start, _end)) = self.editor.get_selection().is_range_ordered() {
                     self.editor.set_selection_save_col(Selection::range(
                         start,
                         Pos::from_row_column(MAX_LINE_COUNT - 1, 0),
@@ -2631,13 +2905,18 @@ impl NoteCalcApp {
                 }
             }
 
+            let modif_type = if refactor_me {
+                Some(RowModificationType::AllLinesFrom(0))
+            } else {
+                modif_type
+            };
+
             if modif_type.is_none() {
                 // it is possible to step into a matrix only through navigation
                 self.check_stepping_into_matrix(prev_cursor_pos, editor_objs);
                 // if there was no selection but now there is
-                if prev_selection.is_range().is_none()
-                    && self.editor.get_selection().is_range().is_some()
-                {
+                if !prev_selection.is_range() && self.editor.get_selection().is_range() {
+                    // since the content is modified, it is considered as modification
                     self.normalize_line_refs_in_place();
                     Some(RowModificationType::AllLinesFrom(0))
                 } else {
@@ -2671,25 +2950,60 @@ impl NoteCalcApp {
                 units,
                 render_buckets,
                 allocator,
-                tokens,
-                results,
-                vars,
+                _readonly_(tokens),
+                _readonly_(results),
+                _readonly_(vars),
                 editor_objs,
-                BitFlag128::empty(),
+                BitFlag256::empty(),
             );
             self.set_editor_and_result_panel_widths_and_rerender_if_necessary(
                 units,
                 render_buckets,
                 allocator,
+                _readonly_(tokens),
+                _readonly_(results),
+                _readonly_(vars),
+                editor_objs,
+                BitFlag256::empty(),
+            );
+        }
+
+        // TODO vec alloc
+        if prev_row != cursor_pos.row || modif.is_some() {
+            self.editor_objs_referencing_current_line_might_changed(
                 tokens,
-                results,
                 vars,
                 editor_objs,
-                BitFlag128::empty(),
+                render_buckets,
             );
         }
 
         return modif;
+    }
+
+    pub fn editor_objs_referencing_current_line_might_changed<'b>(
+        &mut self,
+        tokens: &AppTokens<'b>,
+        vars: &Variables,
+        editor_objs: &EditorObjects,
+        render_buckets: &mut RenderBuckets<'b>,
+    ) {
+        let mut editor_objs_referencing_current_line: Vec<EditorObjId> = Vec::with_capacity(8);
+        render_buckets.clear_pulses = true;
+        NoteCalcApp::fill_editor_objs_referencing_current_line(
+            content_y(self.editor.get_selection().get_cursor_pos().row),
+            tokens,
+            vars,
+            &mut editor_objs_referencing_current_line,
+            &self.editor_content,
+        );
+        pulse_editor_objs_referencing_current_line(
+            render_buckets,
+            &self.render_data,
+            &editor_objs_referencing_current_line,
+            editor_objs,
+            &THEMES[self.render_data.theme_index],
+        );
     }
 
     pub fn process_and_render_tokens<'b>(
@@ -2713,7 +3027,7 @@ impl NoteCalcApp {
             vars: &mut Variables,
             editor_y: ContentIndex,
             updated_line_ref_obj_indices: &mut Vec<EditorObjId>,
-        ) -> (bool, BitFlag128) {
+        ) -> (bool, BitFlag256) {
             // TODO avoid clone
             let prev_var_name = vars[editor_y.as_usize()].as_ref().map(|it| it.name.clone());
 
@@ -2732,6 +3046,7 @@ impl NoteCalcApp {
                     &mut tokens.tokens,
                     &mut tokens.shunting_output_stack,
                     editor_content.get_line_valid_chars(editor_y.as_usize()),
+                    units,
                 );
                 let result = result.map(|it| it.map(|it| it.result));
                 result
@@ -2756,7 +3071,7 @@ impl NoteCalcApp {
                 }
             };
 
-            let mut rows_to_recalc = BitFlag128::empty();
+            let mut rows_to_recalc = BitFlag256::empty();
             if result_has_changed {
                 let line_ref_name =
                     NoteCalcApp::get_line_ref_name(&editor_content, editor_y.as_usize());
@@ -2784,8 +3099,8 @@ impl NoteCalcApp {
             return (result_has_changed, rows_to_recalc);
         }
 
-        fn find_sum_variable_name(tokens_per_lines: &AppTokens, editor_y: usize) -> BitFlag128 {
-            let mut rows_to_recalc = BitFlag128::empty();
+        fn find_sum_variable_name(tokens_per_lines: &AppTokens, editor_y: usize) -> BitFlag256 {
+            let mut rows_to_recalc = BitFlag256::empty();
             'outer: for (line_index, tokens) in
                 tokens_per_lines.iter().skip(editor_y + 1).enumerate()
             {
@@ -2799,7 +3114,7 @@ impl NoteCalcApp {
                                 if var_index == SUM_VARIABLE_INDEX =>
                             {
                                 rows_to_recalc
-                                    .merge(BitFlag128::single_row(editor_y + 1 + line_index));
+                                    .merge(BitFlag256::single_row(editor_y + 1 + line_index));
                                 break 'outer;
                             }
                             _ => {}
@@ -2816,8 +3131,8 @@ impl NoteCalcApp {
             prev_var_name: Option<Box<[char]>>,
             tokens_per_lines: &AppTokens<'b>,
             editor_y: usize,
-        ) -> BitFlag128 {
-            let mut rows_to_recalc = BitFlag128::empty();
+        ) -> BitFlag256 {
+            let mut rows_to_recalc = BitFlag256::empty();
             match (prev_var_name, curr_var_name) {
                 (None, Some(var_name)) => {
                     // nem volt még, de most van
@@ -2828,7 +3143,7 @@ impl NoteCalcApp {
                                 match token.typ {
                                     TokenType::StringLiteral if *token.ptr == **var_name => {
                                         rows_to_recalc
-                                            .merge(BitFlag128::single_row(editor_y + 1 + i));
+                                            .merge(BitFlag256::single_row(editor_y + 1 + i));
                                     }
                                     _ => {}
                                 }
@@ -2845,7 +3160,7 @@ impl NoteCalcApp {
                                 match token.typ {
                                     TokenType::Variable { .. } if *token.ptr == *old_var_name => {
                                         rows_to_recalc
-                                            .merge(BitFlag128::single_row(editor_y + 1 + i));
+                                            .merge(BitFlag256::single_row(editor_y + 1 + i));
                                     }
                                     _ => {}
                                 }
@@ -2864,7 +3179,7 @@ impl NoteCalcApp {
                                     _ => false,
                                 };
                                 if recalc {
-                                    rows_to_recalc.merge(BitFlag128::single_row(editor_y + 1 + i));
+                                    rows_to_recalc.merge(BitFlag256::single_row(editor_y + 1 + i));
                                 }
                             }
                         }
@@ -2872,7 +3187,7 @@ impl NoteCalcApp {
                 }
                 (Some(_old_var_name), Some(var_name)) => {
                     if !needs_dependency_check {
-                        return BitFlag128::empty();
+                        return BitFlag256::empty();
                     }
                     // volt is, van is, a neve is ugyanaz
                     for (i, tokens) in tokens_per_lines.iter().skip(editor_y + 1).enumerate() {
@@ -2883,7 +3198,7 @@ impl NoteCalcApp {
                                     _ => false,
                                 };
                                 if recalc {
-                                    rows_to_recalc.merge(BitFlag128::single_row(editor_y + 1 + i));
+                                    rows_to_recalc.merge(BitFlag256::single_row(editor_y + 1 + i));
                                 }
                             }
                         }
@@ -2895,8 +3210,8 @@ impl NoteCalcApp {
         }
 
         let mut sum_is_null = true;
-        let mut dependant_rows = BitFlag128::empty();
-        let mut result_change_flag = BitFlag128::empty();
+        let mut dependant_rows = BitFlag256::empty();
+        let mut result_change_flag = BitFlag256::empty();
         for editor_y in 0..self.editor_content.line_count().min(MAX_LINE_COUNT) {
             let recalc = match input_effect {
                 RowModificationType::SingleLine(to_change_index) if to_change_index == editor_y => {
@@ -2928,7 +3243,7 @@ impl NoteCalcApp {
                     &mut self.updated_line_ref_obj_indices,
                 );
                 if result_has_changed {
-                    result_change_flag.merge(BitFlag128::single_row(editor_y));
+                    result_change_flag.merge(BitFlag256::single_row(editor_y));
                 }
                 dependant_rows.merge(rows_to_recalc);
                 let new_h = calc_rendered_height(y, &self.matrix_editing, tokens, results, vars);
@@ -2939,20 +3254,24 @@ impl NoteCalcApp {
                 .get_line_valid_chars(editor_y)
                 .starts_with(&['#'])
             {
+                vars[SUM_VARIABLE_INDEX] = Some(Variable {
+                    name: Box::from(&['s', 'u', 'm'][..]),
+                    value: Err(()),
+                });
                 sum_is_null = true;
-            }
-
-            match &results[content_y(editor_y)] {
-                Ok(Some(result)) => {
-                    sum_result(
-                        vars[SUM_VARIABLE_INDEX]
-                            .as_mut()
-                            .expect("SUM always exists"),
-                        result,
-                        &mut sum_is_null,
-                    );
+            } else {
+                match &results[content_y(editor_y)] {
+                    Ok(Some(result)) => {
+                        sum_result(
+                            vars[SUM_VARIABLE_INDEX]
+                                .as_mut()
+                                .expect("SUM always exists"),
+                            result,
+                            &mut sum_is_null,
+                        );
+                    }
+                    Err(_) | Ok(None) => {}
                 }
-                Err(_) | Ok(None) => {}
             }
         }
 
@@ -2971,9 +3290,9 @@ impl NoteCalcApp {
             units,
             render_buckets,
             allocator,
-            tokens,
-            results,
-            vars,
+            _readonly_(tokens),
+            _readonly_(results),
+            _readonly_(vars),
             editor_objs,
             result_change_flag,
         );
@@ -2981,12 +3300,43 @@ impl NoteCalcApp {
             units,
             render_buckets,
             allocator,
-            tokens,
-            results,
-            vars,
+            _readonly_(tokens),
+            _readonly_(results),
+            _readonly_(vars),
             editor_objs,
             result_change_flag,
         );
+    }
+
+    fn set_editor_and_result_panel_widths_wrt_editor_and_rerender_if_necessary<'b>(
+        &mut self,
+        units: &Units,
+        render_buckets: &mut RenderBuckets<'b>,
+        allocator: &'b Bump,
+        tokens: &AppTokens<'b>,
+        results: &Results,
+        vars: &Variables,
+        editor_objs: &mut EditorObjects,
+    ) {
+        let minimum_required_space_for_editor =
+            self.render_data.longest_visible_editor_line_len.max(20);
+
+        let desired_gutter_x = self.render_data.left_gutter_width +
+            minimum_required_space_for_editor + 1 /*scrollbar*/;
+        if desired_gutter_x < self.render_data.result_gutter_x {
+            self.result_panel_width_percent =
+                (self.client_width - desired_gutter_x) * 100 / self.client_width;
+            self.set_editor_and_result_panel_widths_and_rerender_if_necessary(
+                units,
+                render_buckets,
+                allocator,
+                tokens,
+                results,
+                vars,
+                editor_objs,
+                BitFlag256::empty(),
+            );
+        }
     }
 
     fn set_editor_and_result_panel_widths_and_rerender_if_necessary<'b>(
@@ -2998,7 +3348,7 @@ impl NoteCalcApp {
         results: &Results,
         vars: &Variables,
         editor_objs: &mut EditorObjects,
-        result_change_flag: BitFlag128,
+        result_change_flag: BitFlag256,
     ) {
         let current_result_g_x = self.render_data.result_gutter_x;
         set_editor_and_result_panel_widths(
@@ -3064,11 +3414,11 @@ impl NoteCalcApp {
         tokens_per_lines: &AppTokens<'b>,
         editor_y: usize,
         updated_line_ref_obj_indices: &mut Vec<EditorObjId>,
-    ) -> BitFlag128 {
-        let mut rows_to_recalc = BitFlag128::empty();
+    ) -> BitFlag256 {
+        let mut rows_to_recalc = BitFlag256::empty();
         for (token_line_index, tokens) in tokens_per_lines.iter().skip(editor_y + 1).enumerate() {
             if let Some(tokens) = tokens {
-                let mut already_added = BitFlag128::empty();
+                let mut already_added = BitFlag256::empty();
                 for token in &tokens.tokens {
                     let var_index = match token.typ {
                         TokenType::LineReference { var_index }
@@ -3094,7 +3444,7 @@ impl NoteCalcApp {
                         content_index: content_y(index),
                         var_index,
                     });
-                    rows_to_recalc.merge(BitFlag128::single_row(index));
+                    rows_to_recalc.merge(BitFlag256::single_row(index));
                     already_added.set(var_index);
                 }
             } else {
@@ -3114,9 +3464,9 @@ impl NoteCalcApp {
         results: &Results,
     ) -> String {
         render_buckets.clear();
-
+        let theme = &THEMES[self.render_data.theme_index];
         let (first_row, second_row) =
-            if let Some((start, end)) = self.editor.get_selection().is_range() {
+            if let Some((start, end)) = self.editor.get_selection().is_range_ordered() {
                 (start.row, end.row)
             } else {
                 (0, self.editor_content.line_count() - 1)
@@ -3160,6 +3510,7 @@ impl NoteCalcApp {
                         &units,
                         true, // force matrix rendering
                         None,
+                        theme,
                     );
                     r.line_render_ended(r.rendered_row_height);
                 }
@@ -3211,6 +3562,7 @@ impl NoteCalcApp {
             render_buckets,
             &gr,
             None,
+            theme,
         );
 
         for i in 0..render_height {
@@ -3234,6 +3586,258 @@ impl NoteCalcApp {
         return result_str;
     }
 
+    fn is_matrix_editing_or_need_to_create_one<'b>(
+        &mut self,
+        input: EditorInputEvent,
+        editor_objs: &EditorObjects,
+        refactor_me: &mut bool,
+    ) -> bool {
+        // either there is an active matrix editing, or the cursor is inside a matrix and
+        // we have to create the active matrix editing then
+        let prev_selection = self.editor.get_selection();
+        let prev_cursor_pos = prev_selection.get_cursor_pos();
+        if let Some(matrix_edit) = &self.matrix_editing {
+            if matrix_edit.row_count == 1
+                && !matrix_edit.editor.get_selection().is_range()
+                && matrix_edit.editor.is_cursor_at_beginning()
+                && matrix_edit.current_cell.column == 0
+                && input == EditorInputEvent::Backspace
+            {
+                let row = matrix_edit.row_index.as_usize();
+                let col = matrix_edit.start_text_index;
+                end_matrix_editing(
+                    &mut self.matrix_editing,
+                    &mut self.editor,
+                    &mut self.editor_content,
+                    Some(Pos::from_row_column(row, col + 1)),
+                );
+                // let the outer code remove the '['
+                *refactor_me = true;
+                return false;
+            } else if matrix_edit.row_count == 1
+                && !matrix_edit.editor.get_selection().is_range()
+                && matrix_edit
+                    .editor
+                    .is_cursor_at_eol(&matrix_edit.editor_content)
+                && input == EditorInputEvent::Del
+            {
+                end_matrix_editing(
+                    &mut self.matrix_editing,
+                    &mut self.editor,
+                    &mut self.editor_content,
+                    None,
+                );
+                self.editor.set_selection_save_col(Selection::single(
+                    self.editor.get_selection().get_cursor_pos().with_prev_col(),
+                ));
+                // let the outer code remove the ']'
+                *refactor_me = true;
+                return false;
+            }
+            return true;
+        } else if let Some(editor_obj) = self.get_obj_at_inside(
+            prev_cursor_pos.column,
+            content_y(prev_cursor_pos.row),
+            editor_objs,
+        ) {
+            match editor_obj.typ {
+                EditorObjectType::Matrix {
+                    col_count,
+                    row_count,
+                } => {
+                    self.matrix_editing = Some(MatrixEditing::new(
+                        row_count,
+                        col_count,
+                        &self
+                            .editor_content
+                            .get_line_valid_chars(editor_obj.row.as_usize())
+                            [editor_obj.start_x..editor_obj.end_x],
+                        editor_obj.row,
+                        editor_obj.start_x,
+                        editor_obj.end_x,
+                        Pos::from_row_column(0, 0),
+                    ));
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        return false;
+    }
+
+    fn handle_parenthesis_completion<'b>(&mut self, input: &EditorInputEvent) -> bool {
+        let closing_char = match input {
+            EditorInputEvent::Char('(') => Some(')'),
+            EditorInputEvent::Char('[') => Some(']'),
+            EditorInputEvent::Char('{') => Some('}'),
+            EditorInputEvent::Char('\"') => Some('\"'),
+            _ => None,
+        };
+        if let Some(closing_char) = closing_char {
+            if self
+                .editor
+                .handle_input_undoable(*input, InputModifiers::none(), &mut self.editor_content)
+                .is_some()
+            {
+                let cursor = self.editor.get_selection().get_cursor_pos();
+                let next_char = self.editor_content.get_char(cursor.row, cursor.column);
+                let closing_paren_allowed = next_char.is_whitespace()
+                    || next_char == ')'
+                    || next_char == ']'
+                    || next_char == '}'
+                    || self.editor.is_cursor_at_eol(&self.editor_content);
+                if !closing_paren_allowed {
+                    return true;
+                }
+
+                if self
+                    .editor
+                    .handle_input_undoable(
+                        EditorInputEvent::Char(closing_char),
+                        InputModifiers::none(),
+                        &mut self.editor_content,
+                    )
+                    .is_some()
+                {
+                    self.editor.handle_input_undoable(
+                        EditorInputEvent::Left,
+                        InputModifiers::none(),
+                        &mut self.editor_content,
+                    );
+                    if closing_char == ']' {
+                        self.matrix_editing = Some(MatrixEditing::new(
+                            1,
+                            1,
+                            &[],
+                            content_y(cursor.row),
+                            cursor.column - 1,
+                            cursor.column + 1,
+                            Pos::from_row_column(0, 0),
+                        ));
+                    }
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn handle_parenthesis_removal<'b>(&mut self, input: &EditorInputEvent) -> bool {
+        let prev_selection = self.editor.get_selection();
+        if prev_selection.is_range() {
+            return false;
+        }
+        let prev_cursor_pos = prev_selection.get_cursor_pos();
+        let char_in_front_of_cursur = if prev_cursor_pos.column > 0 {
+            Some(
+                self.editor_content
+                    .get_char(prev_cursor_pos.row, prev_cursor_pos.column - 1),
+            )
+        } else {
+            None
+        };
+        if *input == EditorInputEvent::Backspace {
+            let closing_char = match char_in_front_of_cursur {
+                Some('(') => Some(')'),
+                Some('[') => Some(']'),
+                Some('{') => Some('}'),
+                Some('\"') => Some('\"'),
+                _ => None,
+            };
+            if let Some(closing_char) = closing_char {
+                let cursor_pos = self.editor.get_selection().get_cursor_pos();
+                if !self.editor.is_cursor_at_eol(&self.editor_content)
+                    && self
+                        .editor_content
+                        .get_char(cursor_pos.row, cursor_pos.column)
+                        == closing_char
+                {
+                    if self
+                        .editor
+                        .handle_input_undoable(
+                            EditorInputEvent::Backspace,
+                            InputModifiers::none(),
+                            &mut self.editor_content,
+                        )
+                        .is_some()
+                    {
+                        self.editor.handle_input_undoable(
+                            EditorInputEvent::Del,
+                            InputModifiers::none(),
+                            &mut self.editor_content,
+                        );
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    fn handle_parenthesis_wrapping<'b>(&mut self, input: &EditorInputEvent) -> bool {
+        let prev_selection = self.editor.get_selection();
+        if let Some((start, end)) = prev_selection.is_range_ordered() {
+            let single_line = start.row == end.row;
+            let closing_char = match input {
+                EditorInputEvent::Char('(') => Some(')'),
+                EditorInputEvent::Char('[') => Some(']'),
+                EditorInputEvent::Char('{') => Some('}'),
+                EditorInputEvent::Char('\"') => Some('\"'),
+                _ => None,
+            };
+            if let Some(closing_char) = closing_char {
+                // end selection and insert closing char
+                self.editor.set_cursor_pos(end);
+                if self
+                    .editor
+                    .handle_input_undoable(
+                        EditorInputEvent::Char(closing_char),
+                        InputModifiers::none(),
+                        &mut self.editor_content,
+                    )
+                    .is_some()
+                {
+                    // insert opening char
+                    self.editor.set_cursor_pos(start);
+                    if self
+                        .editor
+                        .handle_input_undoable(
+                            *input,
+                            InputModifiers::none(),
+                            &mut self.editor_content,
+                        )
+                        .is_some()
+                    {
+                        // restore selection
+                        let (real_start, real_end) = prev_selection.get_range();
+                        if start != real_start {
+                            // the selection is backwards
+                            self.editor.set_selection_save_col(Selection::range(
+                                if single_line {
+                                    real_start.with_next_col()
+                                } else {
+                                    real_start
+                                },
+                                real_end.with_next_col(),
+                            ));
+                        } else {
+                            self.editor.set_selection_save_col(Selection::range(
+                                start.with_next_col(),
+                                if single_line {
+                                    end.with_next_col()
+                                } else {
+                                    end
+                                },
+                            ));
+                        }
+                    }
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     fn handle_completion<'b>(
         &mut self,
         input: &EditorInputEvent,
@@ -3245,7 +3849,6 @@ impl NoteCalcApp {
             return false;
         }
 
-        // matrix autocompletion 'm' + tab
         let cursor_pos = cursor_pos.get_cursor_pos();
 
         for autocompl_const in &AUTOCOMPLETION_CONSTS {
@@ -3263,13 +3866,13 @@ impl NoteCalcApp {
                 let start = cursor_pos.with_column(start_x);
                 self.editor
                     .set_selection_save_col(Selection::range(start, cursor_pos));
-                self.editor.handle_input(
+                self.editor.handle_input_undoable(
                     EditorInputEvent::Backspace,
                     InputModifiers::none(),
                     &mut self.editor_content,
                 );
                 for ch in autocompl_const.replace_to {
-                    self.editor.handle_input(
+                    self.editor.handle_input_undoable(
                         EditorInputEvent::Char(*ch),
                         InputModifiers::none(),
                         &mut self.editor_content,
@@ -3305,7 +3908,10 @@ impl NoteCalcApp {
                         rendered_w: size + 2,
                         rendered_h: 1,
                     });
-                    self.check_stepping_into_matrix(Pos::from_row_column(0, 0), &editor_objects);
+                    self.check_stepping_into_matrix(
+                        Pos::from_row_column(0, 0),
+                        _readonly_(editor_objects),
+                    );
                 }
                 return true;
             }
@@ -3363,7 +3969,7 @@ impl NoteCalcApp {
                 .iter()
                 .skip(expected_len)
             {
-                self.editor.handle_input(
+                self.editor.handle_input_undoable(
                     EditorInputEvent::Char(*ch),
                     InputModifiers::none(),
                     &mut self.editor_content,
@@ -3379,16 +3985,22 @@ impl NoteCalcApp {
         &mut self,
         input: &EditorInputEvent,
         editor_objects: &mut EditorObjects,
+        modifiers: InputModifiers,
     ) -> Option<RowModificationType> {
         let selection = self.editor.get_selection();
         let cursor_pos = selection.get_cursor_pos();
         if *input == EditorInputEvent::Backspace
-            && selection.is_range().is_none()
+            && !selection.is_range()
             && selection.start.column > 0
         {
-            if let Some(index) =
-                self.index_of_matrix_or_lineref_at(cursor_pos.with_prev_col(), editor_objects)
-            {
+            if let Some(index) = if modifiers.ctrl {
+                self.index_of_matrix_or_lineref_at(
+                    cursor_pos.with_prev_col(),
+                    _readonly_(editor_objects),
+                )
+            } else {
+                self.index_of_lineref_at(cursor_pos.with_prev_col(), _readonly_(editor_objects))
+            } {
                 // remove it
                 let obj = editor_objects[content_y(cursor_pos.row)].remove(index);
                 let sel = Selection::range(
@@ -3396,7 +4008,7 @@ impl NoteCalcApp {
                     Pos::from_row_column(obj.row.as_usize(), obj.end_x),
                 );
                 self.editor.set_selection_save_col(sel);
-                self.editor.handle_input(
+                self.editor.handle_input_undoable(
                     EditorInputEvent::Backspace,
                     InputModifiers::none(),
                     &mut self.editor_content,
@@ -3407,8 +4019,12 @@ impl NoteCalcApp {
                     Some(RowModificationType::SingleLine(cursor_pos.row))
                 };
             }
-        } else if *input == EditorInputEvent::Del && selection.is_range().is_none() {
-            if let Some(index) = self.index_of_matrix_or_lineref_at(cursor_pos, editor_objects) {
+        } else if *input == EditorInputEvent::Del && !selection.is_range() {
+            if let Some(index) = if modifiers.ctrl {
+                self.index_of_matrix_or_lineref_at(cursor_pos, _readonly_(editor_objects))
+            } else {
+                self.index_of_lineref_at(cursor_pos, _readonly_(editor_objects))
+            } {
                 // remove it
                 let obj = editor_objects[content_y(cursor_pos.row)].remove(index);
                 let sel = Selection::range(
@@ -3416,7 +4032,7 @@ impl NoteCalcApp {
                     Pos::from_row_column(obj.row.as_usize(), obj.end_x),
                 );
                 self.editor.set_selection_save_col(sel);
-                self.editor.handle_input(
+                self.editor.handle_input_undoable(
                     EditorInputEvent::Del,
                     InputModifiers::none(),
                     &mut self.editor_content,
@@ -3440,7 +4056,7 @@ impl NoteCalcApp {
         let selection = self.editor.get_selection();
         let cursor_pos = selection.get_cursor_pos();
         if *input == EditorInputEvent::Left
-            && selection.is_range().is_none()
+            && !selection.is_range()
             && selection.start.column > 0
             && modifiers.shift == false
         {
@@ -3453,7 +4069,7 @@ impl NoteCalcApp {
                 return true;
             }
         } else if *input == EditorInputEvent::Right
-            && selection.is_range().is_none()
+            && !selection.is_range()
             && modifiers.shift == false
         {
             let obj = self
@@ -3501,9 +4117,7 @@ impl NoteCalcApp {
                     row_count,
                     col_count,
                 } => {
-                    if self.matrix_editing.is_none()
-                        && self.editor.get_selection().is_range().is_none()
-                    {
+                    if self.matrix_editing.is_none() && !self.editor.get_selection().is_range() {
                         self.matrix_editing = Some(MatrixEditing::new(
                             row_count,
                             col_count,
@@ -3574,6 +4188,7 @@ impl NoteCalcApp {
         return None;
     }
 
+    #[allow(dead_code)]
     fn index_of_matrix_or_lineref_at<'b>(
         &self,
         pos: Pos,
@@ -3581,6 +4196,13 @@ impl NoteCalcApp {
     ) -> Option<usize> {
         return editor_objects[content_y(pos.row)].iter().position(|obj| {
             matches!(obj.typ, EditorObjectType::LineReference{..} | EditorObjectType::Matrix {..})
+                && (obj.start_x..obj.end_x).contains(&pos.column)
+        });
+    }
+
+    fn index_of_lineref_at<'b>(&self, pos: Pos, editor_objects: &EditorObjects) -> Option<usize> {
+        return editor_objects[content_y(pos.row)].iter().position(|obj| {
+            matches!(obj.typ, EditorObjectType::LineReference{..})
                 && (obj.start_x..obj.end_x).contains(&pos.column)
         });
     }
@@ -3638,7 +4260,7 @@ impl NoteCalcApp {
             && input == EditorInputEvent::Right
             && mat_edit.editor.is_cursor_at_eol(&mat_edit.editor_content)
         {
-            if let Some((_from, to)) = mat_edit.editor.get_selection().is_range() {
+            if let Some((_from, to)) = mat_edit.editor.get_selection().is_range_ordered() {
                 mat_edit.editor.set_cursor_pos_r_c(0, to.column);
             } else if mat_edit.current_cell.column + 1 < mat_edit.col_count {
                 mat_edit.move_to_cell(mat_edit.current_cell.with_next_col());
@@ -3661,7 +4283,7 @@ impl NoteCalcApp {
                     None,
                 );
                 self.editor
-                    .handle_input(input, modifiers, &mut self.editor_content);
+                    .handle_input_undoable(input, modifiers, &mut self.editor_content);
             }
         } else if simple && input == EditorInputEvent::Down {
             if mat_edit.current_cell.row + 1 < mat_edit.row_count {
@@ -3674,7 +4296,7 @@ impl NoteCalcApp {
                     None,
                 );
                 self.editor
-                    .handle_input(input, modifiers, &mut self.editor_content);
+                    .handle_input_undoable(input, modifiers, &mut self.editor_content);
             }
         } else if simple && input == EditorInputEvent::End {
             if mat_edit.current_cell.column != mat_edit.col_count - 1 {
@@ -3687,7 +4309,7 @@ impl NoteCalcApp {
                     None,
                 );
                 self.editor
-                    .handle_input(input, modifiers, &mut self.editor_content);
+                    .handle_input_undoable(input, modifiers, &mut self.editor_content);
             }
         } else if simple && input == EditorInputEvent::Home {
             if mat_edit.current_cell.column != 0 {
@@ -3701,12 +4323,12 @@ impl NoteCalcApp {
                     Some(cur_pos.with_column(start_index)),
                 );
                 self.editor
-                    .handle_input(input, modifiers, &mut self.editor_content);
+                    .handle_input_undoable(input, modifiers, &mut self.editor_content);
             }
         } else {
             mat_edit
                 .editor
-                .handle_input(input, modifiers, &mut mat_edit.editor_content);
+                .handle_input_undoable(input, modifiers, &mut mat_edit.editor_content);
         }
     }
 
@@ -3719,7 +4341,7 @@ impl NoteCalcApp {
         results: &Results,
         vars: &Variables,
         editor_objs: &mut EditorObjects,
-        result_change_flag: BitFlag128,
+        result_change_flag: BitFlag256,
     ) {
         render_buckets.clear();
         NoteCalcApp::renderr(
@@ -3737,7 +4359,6 @@ impl NoteCalcApp {
             vars,
             editor_objs,
             &self.updated_line_ref_obj_indices,
-            &mut self.editor_objs_referencing_current_line,
             self.mouse_hover_type,
         );
         self.updated_line_ref_obj_indices.clear();
@@ -3771,10 +4392,11 @@ fn draw_cursor(
     gr: &GlobalRenderData,
     editor: &Editor,
     matrix_editing: &Option<MatrixEditing>,
+    theme: &Theme,
 ) {
     let cursor_pos = editor.get_selection().get_cursor_pos();
     if cursor_pos.row == r.editor_y.as_usize() {
-        render_buckets.set_color(Layer::AboveText, 0x000000_FF);
+        render_buckets.set_color(Layer::AboveText, theme.cursor);
         if editor.is_cursor_shown()
             && matrix_editing.is_none()
             && ((cursor_pos.column as isize + r.cursor_render_x_offset) as usize)
@@ -3796,6 +4418,7 @@ pub fn pulse_modified_line_references(
     gr: &GlobalRenderData,
     updated_line_ref_obj_indices: &[EditorObjId],
     editor_objects: &EditorObjects,
+    theme: &Theme,
 ) {
     // Pulsing changed line references
     for id in updated_line_ref_obj_indices {
@@ -3809,17 +4432,16 @@ pub fn pulse_modified_line_references(
                     rendered_h,
                     ..
                 } if *var_index == id.var_index => {
-                    render_buckets.custom_commands[Layer::AboveText as usize].push(
-                        OutputMessage::PulsingRectangle {
-                            x: gr.left_gutter_width + *rendered_x,
-                            y: *rendered_y,
-                            w: *rendered_w,
-                            h: *rendered_h,
-                            start_color: CHANGE_RESULT_PULSE_START_COLOR,
-                            end_color: CHANGE_RESULT_PULSE_END_COLOR,
-                            animation_time: Duration::from_millis(2000),
-                        },
-                    );
+                    render_buckets.pulses.push(PulsingRectangle {
+                        x: gr.left_gutter_width + *rendered_x,
+                        y: *rendered_y,
+                        w: *rendered_w,
+                        h: *rendered_h,
+                        start_color: theme.change_result_pulse_start,
+                        end_color: theme.change_result_pulse_end,
+                        animation_time: Duration::from_millis(2000),
+                        repeat: false,
+                    });
                 }
                 _ => {}
             }
@@ -3832,6 +4454,7 @@ pub fn pulse_editor_objs_referencing_current_line(
     gr: &GlobalRenderData,
     editor_objs_referencing_current_line: &[EditorObjId],
     editor_objects: &EditorObjects,
+    theme: &Theme,
 ) {
     for id in editor_objs_referencing_current_line {
         for ed_obj in &editor_objects[id.content_index] {
@@ -3851,17 +4474,16 @@ pub fn pulse_editor_objs_referencing_current_line(
                         let obj_start_x =
                             (gr.left_gutter_width + ed_obj.rendered_x).min(end_editor_x - 1);
                         let obj_end_x = (obj_start_x + ed_obj.rendered_w).min(end_editor_x);
-                        render_buckets.custom_commands[Layer::AboveText as usize].push(
-                            OutputMessage::PulsingRectangle {
-                                x: obj_start_x,
-                                y: ed_obj.rendered_y.add(vert_align_offset),
-                                w: obj_end_x - obj_start_x,
-                                h: ed_obj.rendered_h,
-                                start_color: REFERENCE_PULSE_PULSE_START_COLOR,
-                                end_color: 0x00FF7F_00,
-                                animation_time: Duration::from_millis(1000),
-                            },
-                        );
+                        render_buckets.pulses.push(PulsingRectangle {
+                            x: obj_start_x,
+                            y: ed_obj.rendered_y.add(vert_align_offset),
+                            w: obj_end_x - obj_start_x,
+                            h: ed_obj.rendered_h,
+                            start_color: theme.reference_pulse_start,
+                            end_color: theme.reference_pulse_end,
+                            animation_time: Duration::from_millis(1000),
+                            repeat: true,
+                        });
                     }
                 }
                 _ => {}
@@ -3874,7 +4496,8 @@ pub fn pulse_changed_results(
     render_buckets: &mut RenderBuckets,
     gr: &GlobalRenderData,
     longest_rendered_result_len: usize,
-    result_change_flag: &BitFlag128,
+    result_change_flag: &BitFlag256,
+    theme: &Theme,
 ) {
     if gr.get_render_y(content_y(0)).is_none() {
         // there were no render yet
@@ -3885,17 +4508,16 @@ pub fn pulse_changed_results(
     for i in 0..MAX_LINE_COUNT {
         if result_change_flag.is_true(i) {
             if let Some(render_y) = gr.get_render_y(content_y(i)) {
-                render_buckets.custom_commands[Layer::AboveText as usize].push(
-                    OutputMessage::PulsingRectangle {
-                        x: gr.result_gutter_x + RIGHT_GUTTER_WIDTH,
-                        y: render_y,
-                        w: longest_rendered_result_len,
-                        h: gr.get_rendered_height(content_y(i)),
-                        start_color: CHANGE_RESULT_PULSE_START_COLOR,
-                        end_color: CHANGE_RESULT_PULSE_END_COLOR,
-                        animation_time: Duration::from_millis(1000),
-                    },
-                );
+                render_buckets.pulses.push(PulsingRectangle {
+                    x: gr.result_gutter_x + RIGHT_GUTTER_WIDTH,
+                    y: render_y,
+                    w: longest_rendered_result_len,
+                    h: gr.get_rendered_height(content_y(i)),
+                    start_color: theme.change_result_pulse_start,
+                    end_color: theme.change_result_pulse_end,
+                    animation_time: Duration::from_millis(1000),
+                    repeat: false,
+                });
             }
         }
     }
@@ -3915,7 +4537,7 @@ pub fn parse_tokens<'b>(
     // TODO: measure is 128 necessary?
     // and remove allocation
     let mut shunting_output_stack = Vec::with_capacity(128);
-    ShuntingYard::shunting_yard(&mut tokens, &mut shunting_output_stack);
+    ShuntingYard::shunting_yard(&mut tokens, &mut shunting_output_stack, units);
     Tokens {
         tokens,
         shunting_output_stack,
@@ -3949,27 +4571,33 @@ fn highlight_line_ref_background<'text_ptr>(
     render_buckets: &mut RenderBuckets<'text_ptr>,
     r: &PerLineRenderData,
     gr: &GlobalRenderData,
+    theme: &Theme,
 ) {
     for editor_obj in editor_objs.iter() {
         if matches!(editor_obj.typ, EditorObjectType::LineReference{..}) {
-            let vert_align_offset = (r.rendered_row_height - editor_obj.rendered_h) / 2;
-            render_buckets.set_color(Layer::BehindText, LINE_REF_BACKGROUND_COLOR);
-            render_buckets.draw_rect(
-                Layer::BehindText,
-                gr.left_gutter_width + editor_obj.rendered_x,
-                editor_obj.rendered_y.add(vert_align_offset),
-                editor_obj.rendered_w,
-                editor_obj.rendered_h,
-            );
+            let start_render_x = gr.left_gutter_width + editor_obj.rendered_x;
+            let allowed_end_x =
+                (start_render_x + editor_obj.rendered_w).min(gr.result_gutter_x - 1);
+            let width = allowed_end_x as isize - start_render_x as isize;
+            if width > 0 {
+                let vert_align_offset = (r.rendered_row_height - editor_obj.rendered_h) / 2;
+                render_buckets.set_color(Layer::BehindText, theme.line_ref_bg);
+                render_buckets.draw_rect(
+                    Layer::BehindText,
+                    start_render_x,
+                    editor_obj.rendered_y.add(vert_align_offset),
+                    width as usize,
+                    editor_obj.rendered_h,
+                );
+            }
         }
     }
 }
 
 #[inline]
-fn highlight_active_line_refs<'text_ptr>(
+fn underline_active_line_refs<'text_ptr>(
     editor_objs: &[EditorObject],
     render_buckets: &mut RenderBuckets<'text_ptr>,
-    r: &PerLineRenderData,
     gr: &GlobalRenderData,
 ) {
     let mut color_index = 0;
@@ -3983,21 +4611,25 @@ fn highlight_active_line_refs<'text_ptr>(
                 let color = if let Some(color) = colors[var_index] {
                     color
                 } else {
-                    let color = ACTIVE_LINE_REF_HIGHLIGHT_COLORS[color_index] << 8 | 0x55;
+                    let color = ACTIVE_LINE_REF_HIGHLIGHT_COLORS[color_index];
                     colors[var_index] = Some(color);
                     color_index = if color_index < 8 { color_index + 1 } else { 0 };
                     color
                 };
 
-                let vert_align_offset = (r.rendered_row_height - editor_obj.rendered_h) / 2;
-                render_buckets.set_color(Layer::BehindText, color);
-                render_buckets.draw_rect(
-                    Layer::BehindText,
-                    gr.left_gutter_width + editor_obj.rendered_x,
-                    editor_obj.rendered_y.add(vert_align_offset),
-                    editor_obj.rendered_w,
-                    editor_obj.rendered_h,
-                );
+                let start_render_x = gr.left_gutter_width + editor_obj.rendered_x;
+                let allowed_end_x =
+                    (start_render_x + editor_obj.rendered_w).min(gr.result_gutter_x - 1);
+                let width = allowed_end_x as isize - start_render_x as isize;
+                if width > 0 {
+                    render_buckets.set_color(Layer::BehindText, color);
+                    render_buckets.draw_underline(
+                        Layer::BehindText,
+                        start_render_x,
+                        editor_obj.rendered_y.add(editor_obj.rendered_h - 1),
+                        width as usize,
+                    );
+                }
             }
             _ => {}
         }
@@ -4016,16 +4648,19 @@ fn render_tokens<'text_ptr>(
     units: &Units,
     need_matrix_renderer: bool,
     decimal_count: Option<usize>,
+    theme: &Theme,
 ) {
     editor_objects.clear();
     let cursor_pos = editor.get_selection().get_cursor_pos();
+
+    let parenthesis_around_cursor = find_parentesis_around_cursor(tokens, r, cursor_pos);
 
     let mut token_index = 0;
     while token_index < tokens.len() {
         let token = &tokens[token_index];
 
         if !need_matrix_renderer {
-            simple_draw(r, gr, render_buckets, editor_objects, token);
+            simple_draw_normal(r, gr, render_buckets, editor_objects, token, theme);
             token_index += 1;
         } else {
             match &token.typ {
@@ -4045,6 +4680,7 @@ fn render_tokens<'text_ptr>(
                         &editor,
                         &matrix_editing,
                         decimal_count,
+                        theme,
                     );
                 }
                 TokenType::Variable { var_index } => {
@@ -4067,6 +4703,8 @@ fn render_tokens<'text_ptr>(
                         gr.current_editor_width,
                         gr.left_gutter_width,
                         render_buckets,
+                        false, // is bold
+                        theme,
                     );
 
                     token_index += 1;
@@ -4082,6 +4720,7 @@ fn render_tokens<'text_ptr>(
                         r,
                         gr,
                         decimal_count,
+                        theme,
                     );
 
                     let var_name_len = var.name.len();
@@ -4110,18 +4749,105 @@ fn render_tokens<'text_ptr>(
                         },
                     );
                 }
+                TokenType::Operator(OperatorTokenType::ParenOpen) => {
+                    let is_bold = parenthesis_around_cursor
+                        .map(|(opening_paren_index, _closing_paren_index)| {
+                            opening_paren_index == token_index
+                        })
+                        .unwrap_or(false);
+                    simple_draw(r, gr, render_buckets, editor_objects, token, is_bold, theme);
+                    token_index += 1;
+                }
+                TokenType::Operator(OperatorTokenType::ParenClose) => {
+                    let is_bold = parenthesis_around_cursor
+                        .map(|(_opening_paren_index, closing_paren_index)| {
+                            closing_paren_index == token_index
+                        })
+                        .unwrap_or(false);
+                    simple_draw(r, gr, render_buckets, editor_objects, token, is_bold, theme);
+                    token_index += 1;
+                }
                 TokenType::StringLiteral
                 | TokenType::Header
                 | TokenType::NumberLiteral(_)
                 | TokenType::Operator(_)
-                | TokenType::Unit(_)
+                | TokenType::Unit(_, _)
                 | TokenType::NumberErr => {
-                    simple_draw(r, gr, render_buckets, editor_objects, token);
+                    simple_draw_normal(r, gr, render_buckets, editor_objects, token, theme);
                     token_index += 1;
                 }
             }
         }
     }
+}
+
+fn find_parentesis_around_cursor(
+    tokens: &[Token],
+    r: &PerLineRenderData,
+    cursor_pos: Pos,
+) -> Option<(usize, usize)> {
+    let mut active_parenthesis: Option<(usize, usize)> = None;
+    if cursor_pos.row == r.editor_y.as_usize() {
+        let mut parenth_token_indices_stack = [0; 32];
+        let mut next_paren_stack_ptr = 0;
+        let mut stack_index_of_closes_open_parenth = 0;
+        let mut tokens_x_pos = 0;
+        for (i, token) in tokens.iter().enumerate() {
+            let before_cursor = tokens_x_pos < cursor_pos.column;
+            if !before_cursor && next_paren_stack_ptr == 0 {
+                // no opening bracket
+                break;
+            }
+            match (&token.typ, before_cursor) {
+                (TokenType::Operator(OperatorTokenType::ParenOpen), true) => {
+                    parenth_token_indices_stack[next_paren_stack_ptr] = i;
+                    stack_index_of_closes_open_parenth = next_paren_stack_ptr;
+                    next_paren_stack_ptr += 1;
+                }
+                (TokenType::Operator(OperatorTokenType::ParenClose), true) => {
+                    // TODO: kell ez az if, lehet ParenClose operator ParenOpen nélkül a tokenek között?
+                    if next_paren_stack_ptr > 0 {
+                        next_paren_stack_ptr -= 1;
+                        if next_paren_stack_ptr > 0 {
+                            stack_index_of_closes_open_parenth = next_paren_stack_ptr - 1;
+                        } else {
+                            stack_index_of_closes_open_parenth = 0;
+                        }
+                    }
+                }
+                //
+                (TokenType::Operator(OperatorTokenType::ParenOpen), false) => {
+                    parenth_token_indices_stack[next_paren_stack_ptr] = i;
+                    next_paren_stack_ptr += 1;
+                }
+                (TokenType::Operator(OperatorTokenType::ParenClose), false) => {
+                    if next_paren_stack_ptr - 1 == stack_index_of_closes_open_parenth {
+                        // this is the closes closing parenthesis
+                        active_parenthesis = Some((
+                            parenth_token_indices_stack[stack_index_of_closes_open_parenth],
+                            i,
+                        ));
+                        break;
+                    }
+                    next_paren_stack_ptr -= 1;
+                }
+                _ => {}
+            }
+            tokens_x_pos += token.ptr.len();
+        }
+    }
+    active_parenthesis
+}
+
+fn simple_draw_normal<'text_ptr>(
+    r: &mut PerLineRenderData,
+    gr: &mut GlobalRenderData,
+    render_buckets: &mut RenderBuckets<'text_ptr>,
+    editor_objects: &mut Vec<EditorObject>,
+    token: &Token<'text_ptr>,
+    theme: &Theme,
+) {
+    simple_draw(r, gr, render_buckets, editor_objects, token, false, theme);
 }
 
 fn simple_draw<'text_ptr>(
@@ -4130,6 +4856,8 @@ fn simple_draw<'text_ptr>(
     render_buckets: &mut RenderBuckets<'text_ptr>,
     editor_objects: &mut Vec<EditorObject>,
     token: &Token<'text_ptr>,
+    is_bold: bool,
+    theme: &Theme,
 ) {
     if let Some(EditorObject {
         typ: EditorObjectType::SimpleTokens,
@@ -4160,6 +4888,8 @@ fn simple_draw<'text_ptr>(
         gr.current_editor_width,
         gr.left_gutter_width,
         render_buckets,
+        is_bold,
+        theme,
     );
 
     r.token_render_done(token.ptr.len(), token.ptr.len(), 0);
@@ -4169,16 +4899,17 @@ fn render_wrap_dots(
     render_buckets: &mut RenderBuckets,
     r: &PerLineRenderData,
     gr: &GlobalRenderData,
+    theme: &Theme,
 ) {
     if r.render_x > gr.current_editor_width {
         // gutter is above text so it has to be abovetext as well
-        render_buckets.set_color(Layer::AboveText, 0x000000_FF);
+        render_buckets.set_color(Layer::AboveText, theme.text);
         for y in 0..r.rendered_row_height {
             render_buckets.draw_char(
                 Layer::AboveText,
                 gr.result_gutter_x - 1,
                 r.render_y.add(y),
-                '…',
+                '…', // '...'
             );
         }
     }
@@ -4190,12 +4921,13 @@ fn draw_line_ref_chooser(
     gr: &GlobalRenderData,
     line_reference_chooser: &Option<ContentIndex>,
     result_gutter_x: usize,
+    theme: &Theme,
 ) {
     if let Some(selection_row) = line_reference_chooser {
         if *selection_row == r.editor_y {
-            render_buckets.set_color(Layer::Text, 0xFFCCCC_FF);
+            render_buckets.set_color(Layer::BehindText, theme.line_ref_selector);
             render_buckets.draw_rect(
-                Layer::Text,
+                Layer::BehindText,
                 0,
                 r.render_y,
                 result_gutter_x + RIGHT_GUTTER_WIDTH + gr.current_result_panel_width,
@@ -4210,14 +4942,15 @@ fn draw_right_gutter_num_prefixes(
     result_gutter_x: usize,
     editor_content: &EditorContent<LineData>,
     r: &PerLineRenderData,
+    theme: &Theme,
 ) {
     match editor_content.get_data(r.editor_y.as_usize()).result_format {
         ResultFormat::Hex => {
-            render_buckets.set_color(Layer::AboveText, 0x000000_FF);
+            render_buckets.set_color(Layer::AboveText, theme.cursor);
             render_buckets.draw_text(Layer::AboveText, result_gutter_x, r.render_y, &['0', 'x']);
         }
         ResultFormat::Bin => {
-            render_buckets.set_color(Layer::AboveText, 0x000000_FF);
+            render_buckets.set_color(Layer::AboveText, theme.cursor);
             render_buckets.draw_text(Layer::AboveText, result_gutter_x, r.render_y, &['0', 'b']);
         }
         ResultFormat::Dec => {}
@@ -4226,21 +4959,49 @@ fn draw_right_gutter_num_prefixes(
 
 fn highlight_current_line(
     render_buckets: &mut RenderBuckets,
-    r: &PerLineRenderData,
     editor: &Editor,
     gr: &GlobalRenderData,
+    theme: &Theme,
 ) {
-    let cursor_pos = editor.get_selection().get_cursor_pos();
-    if cursor_pos.row == r.editor_y.as_usize() {
-        render_buckets.set_color(Layer::Text, 0xFFFFCC_55);
-        render_buckets.draw_rect(
-            Layer::Text,
-            0,
-            r.render_y,
-            gr.result_gutter_x + RIGHT_GUTTER_WIDTH + gr.current_result_panel_width,
-            r.rendered_row_height,
-        );
-    }
+    let cursor_row = editor.get_selection().get_cursor_pos().row;
+    render_buckets.current_line_highlight =
+        if let Some(render_y) = gr.get_render_y(content_y(cursor_row)) {
+            let render_h = gr.get_rendered_height(content_y(cursor_row));
+            render_buckets.set_color(Layer::BehindText, theme.current_line_bg);
+            let result = Some(Rect {
+                x: 0,
+                y: render_y.as_usize() as u16,
+                w: (gr.result_gutter_x + RIGHT_GUTTER_WIDTH + gr.current_result_panel_width) as u16,
+                h: render_h as u16,
+            });
+            // render a blended rectangle to the right gutter as if the highlighting rectangle
+            // would blend into it (without it it hides the gutter and it is ugly).
+            let blended_color = {
+                let src_alpha = 0.5f32;
+                let dst_alpha = 1f32 - src_alpha;
+                let src_r = (theme.result_gutter_bg >> 24 & 0xFF) as f32;
+                let src_g = (theme.result_gutter_bg >> 16 & 0xFF) as f32;
+                let src_b = (theme.result_gutter_bg >> 8 & 0xFF) as f32;
+                let dst_r = (theme.current_line_bg >> 24 & 0xFF) as f32;
+                let dst_g = (theme.current_line_bg >> 16 & 0xFF) as f32;
+                let dst_b = (theme.current_line_bg >> 8 & 0xFF) as f32;
+                let out_r = (src_r * src_alpha + dst_r * dst_alpha) as u32;
+                let out_g = (src_g * src_alpha + dst_g * dst_alpha) as u32;
+                let out_b = (src_b * src_alpha + dst_b * dst_alpha) as u32;
+                (out_r << 24 | out_g << 16 | out_b << 8) | 0xFF
+            };
+            render_buckets.set_color(Layer::BehindText, blended_color);
+            render_buckets.draw_rect(
+                Layer::BehindText,
+                gr.result_gutter_x,
+                render_y,
+                RIGHT_GUTTER_WIDTH,
+                render_h,
+            );
+            result
+        } else {
+            None
+        };
 }
 
 fn evaluate_tokens_and_save_result<'text_ptr>(
@@ -4250,8 +5011,9 @@ fn evaluate_tokens_and_save_result<'text_ptr>(
     tokens: &mut [Token<'text_ptr>],
     shunting_output_stack: &mut Vec<ShuntingYardResult>,
     line: &[char],
+    units: &Units,
 ) -> Result<Option<EvaluationResult>, ()> {
-    let result = evaluate_tokens(tokens, shunting_output_stack, &vars);
+    let result = evaluate_tokens(tokens, shunting_output_stack, &vars, units);
     if let Ok(Some(result)) = &result {
         fn replace_or_insert_var(
             vars: &mut Variables,
@@ -4352,6 +5114,7 @@ fn render_matrix<'text_ptr>(
     matrix_editing: &Option<MatrixEditing>,
     // TODO: why unused?
     _decimal_count: Option<usize>,
+    theme: &Theme,
 ) -> usize {
     let mut text_width = 0;
     let mut end_token_index = token_index;
@@ -4364,7 +5127,7 @@ fn render_matrix<'text_ptr>(
     end_token_index += 1;
 
     let cursor_pos = editor.get_selection().get_cursor_pos();
-    let cursor_inside_matrix: bool = if editor.get_selection().is_range().is_none()
+    let cursor_inside_matrix: bool = if !editor.get_selection().is_range()
         && cursor_pos.row == r.editor_y.as_usize()
         && cursor_pos.column > r.editor_x
         && cursor_pos.column < r.editor_x + text_width
@@ -4383,6 +5146,7 @@ fn render_matrix<'text_ptr>(
             gr.left_gutter_width,
             render_buckets,
             r.rendered_row_height,
+            &THEMES[gr.theme_index],
         )
     } else {
         render_matrix_obj(
@@ -4395,6 +5159,7 @@ fn render_matrix<'text_ptr>(
             &tokens[token_index..],
             render_buckets,
             r.rendered_row_height,
+            theme,
         )
     };
 
@@ -4507,8 +5272,8 @@ fn evaluate_text<'text_ptr>(
 ) -> Result<Option<EvaluationResult>, ()> {
     TokenParser::parse_line(text, vars, tokens, &units, editor_y, allocator);
     let mut shunting_output_stack = Vec::with_capacity(4);
-    ShuntingYard::shunting_yard(tokens, &mut shunting_output_stack);
-    return evaluate_tokens(tokens, &mut shunting_output_stack, &vars);
+    ShuntingYard::shunting_yard(tokens, &mut shunting_output_stack, units);
+    return evaluate_tokens(tokens, &mut shunting_output_stack, &vars, units);
 }
 
 fn render_matrix_obj<'text_ptr>(
@@ -4521,6 +5286,7 @@ fn render_matrix_obj<'text_ptr>(
     tokens: &[Token<'text_ptr>],
     render_buckets: &mut RenderBuckets<'text_ptr>,
     rendered_row_height: usize,
+    theme: &Theme,
 ) -> usize {
     let vert_align_offset = (rendered_row_height - MatrixData::calc_render_height(row_count)) / 2;
 
@@ -4602,6 +5368,8 @@ fn render_matrix_obj<'text_ptr>(
                         current_editor_width,
                         left_gutter_width,
                         render_buckets,
+                        false,
+                        theme,
                     );
                 }
                 local_x += token.ptr.len();
@@ -4705,6 +5473,7 @@ fn render_matrix_result<'text_ptr>(
     prev_mat_result_lengths: Option<&ResultLengths>,
     rendered_row_height: usize,
     decimal_count: Option<usize>,
+    text_color: u32,
 ) -> usize {
     let start_x = render_x;
 
@@ -4750,7 +5519,7 @@ fn render_matrix_result<'text_ptr>(
         }
         max_lengths
     };
-    render_buckets.set_color(Layer::Text, 0x000000_FF);
+    render_buckets.set_color(Layer::Text, text_color);
 
     for col_i in 0..mat.col_count {
         for row_i in 0..mat.row_count {
@@ -4837,6 +5606,7 @@ fn render_result_inside_editor<'text_ptr>(
     r: &PerLineRenderData,
     gr: &GlobalRenderData,
     decimal_count: Option<usize>,
+    theme: &Theme,
 ) -> (usize, usize) {
     return match &result {
         Ok(CalcResult {
@@ -4852,6 +5622,7 @@ fn render_result_inside_editor<'text_ptr>(
                 None,
                 r.rendered_row_height,
                 decimal_count,
+                theme.referenced_matrix_text,
             );
             (rendered_width, mat.render_height())
         }
@@ -4894,6 +5665,7 @@ struct ResultTmp {
 }
 
 pub const MAX_VISIBLE_HEADER_COUNT: usize = 16;
+
 struct ResultRender {
     result_ranges: SmallVec<[ResultTmp; MAX_LINE_COUNT]>,
     max_len: usize,
@@ -4941,14 +5713,14 @@ fn render_results_into_buf_and_calc_len<'text_ptr>(
         }
         if render_y.as_usize() != 0 && editor_content.get_char(editor_y.as_usize(), 0) == '#' {
             let max_lens = &tmp.max_lengths[region_index];
-            tmp.max_len = max_lens.int_part_len
+            tmp.max_len = (max_lens.int_part_len
                 + max_lens.frac_part_len
                 + if max_lens.unit_part_len > 0 {
                     max_lens.unit_part_len + 1
                 } else {
                     0
-                }
-                .max(tmp.max_len);
+                })
+            .max(tmp.max_len);
             tmp.result_counts_in_regions[region_index] =
                 tmp.result_ranges.len() - region_count_offset;
             region_count_offset = tmp.result_ranges.len();
@@ -5041,6 +5813,7 @@ fn create_render_commands_for_results_and_render_matrices<'text_ptr>(
     render_buckets: &mut RenderBuckets<'text_ptr>,
     gr: &GlobalRenderData,
     decimal_count: Option<usize>,
+    theme: &Theme,
 ) -> usize {
     let mut prev_result_matrix_length = None;
     let mut matrix_len = 0;
@@ -5057,16 +5830,6 @@ fn create_render_commands_for_results_and_render_matrices<'text_ptr>(
         let rendered_row_height = gr.get_rendered_height(result_tmp.editor_y);
         let render_y = gr.get_render_y(result_tmp.editor_y).expect("");
         if let Some(result_range) = &result_tmp.buffer_ptr {
-            // result background
-            render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
-            render_buckets.draw_rect(
-                Layer::BehindText,
-                gr.result_gutter_x + RIGHT_GUTTER_WIDTH,
-                render_y,
-                gr.current_result_panel_width,
-                rendered_row_height,
-            );
-
             let lengths = &result_tmp.lengths;
             let from = result_range.start;
             let vert_align_offset = (rendered_row_height - 1) / 2;
@@ -5134,14 +5897,14 @@ fn create_render_commands_for_results_and_render_matrices<'text_ptr>(
             }
             match offset_x {
                 ResultOffsetX::TooLong => {
-                    render_buckets.set_color(Layer::AboveText, 0xF2F2F2_FF);
+                    render_buckets.set_color(Layer::AboveText, theme.result_bg_color);
                     render_buckets.draw_char(
                         Layer::AboveText,
                         gr.result_gutter_x + RIGHT_GUTTER_WIDTH + gr.current_result_panel_width - 1,
                         row,
                         '█',
                     );
-                    render_buckets.set_color(Layer::AboveText, 0xFF0000_FF);
+                    render_buckets.set_color(Layer::AboveText, theme.cursor);
                     render_buckets.draw_char(
                         Layer::AboveText,
                         gr.result_gutter_x + RIGHT_GUTTER_WIDTH + gr.current_result_panel_width - 1,
@@ -5174,6 +5937,7 @@ fn create_render_commands_for_results_and_render_matrices<'text_ptr>(
                         prev_result_matrix_length.as_ref(),
                         gr.get_rendered_height(result_tmp.editor_y),
                         decimal_count,
+                        theme.result_text,
                     );
                     if width > matrix_len {
                         matrix_len = width;
@@ -5181,16 +5945,7 @@ fn create_render_commands_for_results_and_render_matrices<'text_ptr>(
                 }
                 _ => {
                     // no result but need rerender
-                    // result background
                     prev_result_matrix_length = None;
-                    render_buckets.set_color(Layer::BehindText, 0xF2F2F2_FF);
-                    render_buckets.draw_rect(
-                        Layer::BehindText,
-                        gr.result_gutter_x + RIGHT_GUTTER_WIDTH,
-                        render_y,
-                        gr.current_result_panel_width,
-                        rendered_row_height,
-                    );
                 }
             }
         }
@@ -5266,10 +6021,9 @@ fn draw_line_refs_and_vars_referenced_from_cur_row<'b>(
     editor_objs: &[EditorObject],
     gr: &GlobalRenderData,
     render_buckets: &mut RenderBuckets<'b>,
-    editor_y_to_render_w: &[usize; MAX_LINE_COUNT],
 ) {
     let mut color_index = 0;
-    let mut highlighted = BitFlag128::empty();
+    let mut highlighted = BitFlag256::empty();
     for editor_obj in editor_objs {
         match editor_obj.typ {
             EditorObjectType::LineReference { var_index }
@@ -5287,13 +6041,23 @@ fn draw_line_refs_and_vars_referenced_from_cur_row<'b>(
                 };
                 let defined_at = content_y(var_index);
                 if let Some(render_y) = gr.get_render_y(defined_at) {
-                    render_buckets.custom_commands[Layer::AboveText as usize]
-                        .push(OutputMessage::SetColor(color << 8 | 0x33));
-                    render_buckets.custom_commands[Layer::AboveText as usize].push(
+                    // render a rectangle on the *left gutter*
+                    render_buckets.custom_commands[Layer::BehindText as usize]
+                        .push(OutputMessage::SetColor(color));
+                    render_buckets.custom_commands[Layer::BehindText as usize].push(
                         OutputMessage::RenderRectangle {
-                            x: gr.left_gutter_width,
+                            x: 0,
                             y: render_y,
-                            w: editor_y_to_render_w[defined_at.as_usize()],
+                            w: gr.left_gutter_width,
+                            h: gr.get_rendered_height(defined_at),
+                        },
+                    );
+                    // render a rectangle on the *left gutter*
+                    render_buckets.custom_commands[Layer::BehindText as usize].push(
+                        OutputMessage::RenderRectangle {
+                            x: gr.result_gutter_x,
+                            y: render_y,
+                            w: RIGHT_GUTTER_WIDTH,
                             h: gr.get_rendered_height(defined_at),
                         },
                     );
@@ -5311,6 +6075,8 @@ fn draw_token<'text_ptr>(
     current_editor_width: usize,
     left_gutter_width: usize,
     render_buckets: &mut RenderBuckets<'text_ptr>,
+    is_bold: bool,
+    theme: &Theme,
 ) {
     let dst = if token.has_error() {
         &mut render_buckets.number_errors
@@ -5322,8 +6088,75 @@ fn draw_token<'text_ptr>(
             TokenType::LineReference { .. } => &mut render_buckets.variable,
             TokenType::NumberLiteral(_) => &mut render_buckets.numbers,
             TokenType::NumberErr => &mut render_buckets.number_errors,
-            TokenType::Operator(OperatorTokenType::ApplyUnit(_)) => &mut render_buckets.units,
-            TokenType::Unit(_) => &mut render_buckets.units,
+            TokenType::Unit(_, _) => &mut render_buckets.units,
+            TokenType::Operator(OperatorTokenType::ParenClose) => {
+                if current_editor_width <= render_x {
+                    return;
+                }
+                if is_bold {
+                    render_buckets.set_color(Layer::BehindText, theme.line_ref_bg);
+                    render_buckets.draw_rect(
+                        Layer::BehindText,
+                        render_x + left_gutter_width,
+                        render_y,
+                        1,
+                        1,
+                    );
+
+                    render_buckets.set_color(Layer::Text, theme.parenthesis);
+
+                    let b = &mut render_buckets.custom_commands[Layer::Text as usize];
+                    b.push(OutputMessage::FollowingTextCommandsAreHeaders(true));
+                    b.push(OutputMessage::RenderChar(RenderChar {
+                        col: render_x + left_gutter_width,
+                        row: render_y,
+                        char: ')',
+                    }));
+                    b.push(OutputMessage::FollowingTextCommandsAreHeaders(false));
+                } else {
+                    render_buckets.parenthesis.push(RenderChar {
+                        col: render_x + left_gutter_width,
+                        row: render_y,
+                        char: ')',
+                    });
+                }
+                return;
+            }
+            TokenType::Operator(OperatorTokenType::ParenOpen) => {
+                if current_editor_width <= render_x {
+                    return;
+                }
+                if is_bold {
+                    render_buckets.set_color(Layer::BehindText, theme.line_ref_bg);
+                    render_buckets.draw_rect(
+                        Layer::BehindText,
+                        render_x + left_gutter_width,
+                        render_y,
+                        1,
+                        1,
+                    );
+                    render_buckets.set_color(Layer::Text, theme.parenthesis);
+
+                    render_buckets.custom_commands[Layer::Text as usize]
+                        .push(OutputMessage::FollowingTextCommandsAreHeaders(true));
+                    &mut render_buckets.custom_commands[Layer::Text as usize].push(
+                        OutputMessage::RenderChar(RenderChar {
+                            col: render_x + left_gutter_width,
+                            row: render_y,
+                            char: '(',
+                        }),
+                    );
+                    render_buckets.custom_commands[Layer::Text as usize]
+                        .push(OutputMessage::FollowingTextCommandsAreHeaders(false));
+                } else {
+                    &mut render_buckets.parenthesis.push(RenderChar {
+                        col: render_x + left_gutter_width,
+                        row: render_y,
+                        char: '(',
+                    });
+                }
+                return;
+            }
             TokenType::Operator(_) => &mut render_buckets.operators,
         }
     };
@@ -5353,6 +6186,11 @@ fn render_buckets_into(buckets: &RenderBuckets, canvas: &mut [[char; 256]]) {
         }
     }
 
+    fn write_char(canvas: &mut [[char; 256]], row: CanvasY, col: usize, char: char) {
+        let str = &mut canvas[row.as_usize()];
+        str[col] = char;
+    }
+
     fn write_ascii(canvas: &mut [[char; 256]], row: CanvasY, col: usize, src: &[u8]) {
         let str = &mut canvas[row.as_usize()];
         for (dst_char, src_char) in str[col..].iter_mut().zip(src.iter()) {
@@ -5368,9 +6206,8 @@ fn render_buckets_into(buckets: &RenderBuckets, canvas: &mut [[char; 256]]) {
             OutputMessage::SetStyle(..) => {}
             OutputMessage::SetColor(..) => {}
             OutputMessage::RenderRectangle { .. } => {}
-            OutputMessage::RenderChar(x, y, ch) => {
-                let str = &mut canvas[*y];
-                str[*x] = *ch;
+            OutputMessage::RenderChar(r) => {
+                write_char(canvas, r.row, r.col, r.char);
             }
             OutputMessage::RenderString(text) => {
                 write_str(canvas, text.row, text.column, &text.text);
@@ -5378,14 +6215,17 @@ fn render_buckets_into(buckets: &RenderBuckets, canvas: &mut [[char; 256]]) {
             OutputMessage::RenderAsciiText(text) => {
                 write_ascii(canvas, text.row, text.column, &text.text);
             }
-            OutputMessage::PulsingRectangle { .. } => {}
             OutputMessage::FollowingTextCommandsAreHeaders { .. } => {}
+            OutputMessage::RenderUnderline { .. } => {}
+            OutputMessage::UpdatePulses => {}
         }
     }
 
     for command in &buckets.custom_commands[Layer::BehindText as usize] {
         write_command(canvas, command);
     }
+
+    write_command(canvas, &OutputMessage::UpdatePulses);
 
     for command in &buckets.utf8_texts {
         write_char_slice(canvas, command.row, command.column, command.text);
@@ -5408,9 +6248,16 @@ fn render_buckets_into(buckets: &RenderBuckets, canvas: &mut [[char; 256]]) {
     for command in &buckets.operators {
         write_char_slice(canvas, command.row, command.column, command.text);
     }
+    for command in &buckets.parenthesis {
+        write_char(canvas, command.row, command.col, command.char);
+    }
 
     for command in &buckets.line_ref_results {
         write_str(canvas, command.row, command.column, &command.text);
+    }
+
+    for command in &buckets.headers {
+        write_char_slice(canvas, command.row, command.column, command.text);
     }
 
     for command in &buckets.variable {
@@ -5435,9 +6282,10 @@ fn render_selection_and_its_sum<'text_ptr>(
     gr: &GlobalRenderData,
     vars: &Variables,
     allocator: &'text_ptr Bump,
+    theme: &Theme,
 ) {
-    render_buckets.set_color(Layer::BehindText, 0xA6D2FF_FF);
-    if let Some((start, end)) = editor.get_selection().is_range() {
+    render_buckets.set_color(Layer::BehindText, theme.selection_color);
+    if let Some((start, end)) = editor.get_selection().is_range_ordered() {
         if end.row > start.row {
             // first line
             if let Some(start_render_y) = gr.get_render_y(content_y(start.row)) {
@@ -5501,7 +6349,7 @@ fn render_selection_and_its_sum<'text_ptr>(
                     let result_w = partial_result.chars().count();
                     let centered_x =
                         (selection_center as isize - (result_w / 2) as isize).max(0) as usize;
-                    render_buckets.set_color(Layer::AboveText, 0xAAFFAA_FF);
+                    render_buckets.set_color(Layer::AboveText, theme.sum_bg_color);
                     let rect_y = if start.row == 0 {
                         start_render_y.add(1)
                     } else {
@@ -5514,7 +6362,7 @@ fn render_selection_and_its_sum<'text_ptr>(
                         result_w,
                         1,
                     );
-                    render_buckets.set_color(Layer::AboveText, 0x000000_FF);
+                    render_buckets.set_color(Layer::AboveText, theme.sum_text_color);
                     render_buckets.draw_string(
                         Layer::AboveText,
                         gr.left_gutter_width + centered_x,
@@ -5540,7 +6388,7 @@ fn render_selection_and_its_sum<'text_ptr>(
                     - gr.get_render_y(frist_visible_row_index)
                         .expect("")
                         .as_usize();
-                render_buckets.set_color(Layer::AboveText, 0xAAFFAA_FF);
+                render_buckets.set_color(Layer::AboveText, theme.sum_bg_color);
                 render_buckets.draw_rect(
                     Layer::AboveText,
                     gr.left_gutter_width + x,
@@ -5549,7 +6397,7 @@ fn render_selection_and_its_sum<'text_ptr>(
                     inner_height + 1,
                 );
                 // draw the parenthesis
-                render_buckets.set_color(Layer::AboveText, 0x000000_FF);
+                render_buckets.set_color(Layer::AboveText, theme.sum_text_color);
 
                 render_buckets.draw_char(
                     Layer::AboveText,
@@ -5653,23 +6501,38 @@ pub fn end_matrix_editing(
         }
     }
     concat.push(']');
-    let selection = Selection::range(
-        Pos::from_row_column(mat_editor.row_index.as_usize(), mat_editor.start_text_index),
-        Pos::from_row_column(mat_editor.row_index.as_usize(), mat_editor.end_text_index),
-    );
-    editor.set_selection_save_col(selection);
     // TODO: máshogy oldd meg, mert ez modositja az undo stacket is
     // és az miért baj, legalább tudom ctrl z-zni a mátrix edition-t
-    editor.handle_input(
-        EditorInputEvent::Del,
-        InputModifiers::none(),
-        editor_content,
-    );
-    editor.insert_text(&concat, editor_content);
+
+    // TODO: remove width limitation and allow it
+
+    if editor_content.line_len(mat_editor.row_index.as_usize()) + concat.len()
+        - (mat_editor.end_text_index - mat_editor.start_text_index)
+        < MAX_EDITOR_WIDTH
+    {
+        let selection = Selection::range(
+            Pos::from_row_column(mat_editor.row_index.as_usize(), mat_editor.start_text_index),
+            Pos::from_row_column(mat_editor.row_index.as_usize(), mat_editor.end_text_index),
+        );
+        editor.set_selection_save_col(selection);
+        editor.handle_input_undoable(
+            EditorInputEvent::Del,
+            InputModifiers::none(),
+            editor_content,
+        );
+        // TODO: it can overflow, reasuling in AllLinesFrom..
+        editor.insert_text_undoable(&concat, editor_content);
+    }
     *matrix_editing = None;
 
     if let Some(new_cursor_pos) = new_cursor_pos {
-        editor.set_selection_save_col(Selection::single(new_cursor_pos));
+        editor.set_selection_save_col(Selection::single(
+            new_cursor_pos.with_column(
+                new_cursor_pos
+                    .column
+                    .min(editor_content.line_len(new_cursor_pos.row) - 1),
+            ),
+        ));
     }
     editor.blink_cursor();
 }
@@ -5754,53 +6617,303 @@ fn default_result_gutter_x(client_width: usize) -> usize {
 }
 
 #[cfg(test)]
-mod main_tests {
+mod bitflag_tests {
+    use crate::helper::{content_y, BitFlag256};
 
+    #[test]
+    fn test_single_row() {
+        let b = BitFlag256::single_row(0);
+        assert_eq!(
+            b.bitset[0],
+            0b00000000_00000000_00000000_00000000_00000000_00000000_00000000_00000001
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b00000000_00000000_00000000_00000000_00000000_00000000_00000000_00000000
+        );
+        assert_eq!(true, b.need(content_y(0)));
+        assert_eq!(false, b.need(content_y(1)));
+    }
+
+    #[test]
+    fn test_single_row2() {
+        let b = BitFlag256::single_row(32);
+        assert_eq!(
+            b.bitset[0],
+            0b00000000_00000000_00000000_00000001_00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b00000000_00000000_00000000_00000000_00000000_00000000_00000000_00000000
+        );
+        assert_eq!(false, b.need(content_y(0)));
+        assert_eq!(false, b.need(content_y(1)));
+        assert_eq!(true, b.need(content_y(32)));
+    }
+
+    #[test]
+    fn test_single_row3() {
+        let b = BitFlag256::single_row(128);
+        assert_eq!(
+            b.bitset[0],
+            0b00000000_00000000_00000000_00000000_00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b00000000_00000000_00000000_00000000_00000000_00000000_00000000_00000001
+        );
+        assert_eq!(false, b.need(content_y(0)));
+        assert_eq!(false, b.need(content_y(1)));
+        assert_eq!(true, b.need(content_y(128)));
+    }
+
+    #[test]
+    fn test_single_row4() {
+        let b = BitFlag256::single_row(128 + 32);
+        assert_eq!(
+            b.bitset[0],
+            0b00000000_00000000_00000000_00000000_00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b00000000_00000000_00000000_00000001_00000000_00000000_00000000_00000000
+        );
+        assert_eq!(false, b.need(content_y(0)));
+        assert_eq!(false, b.need(content_y(1)));
+        assert_eq!(false, b.need(content_y(128)));
+        assert_eq!(false, b.need(content_y(32)));
+        assert_eq!(true, b.need(content_y(128 + 32)));
+    }
+
+    #[test]
+    fn test_single_row5() {
+        let b = BitFlag256::single_row(255);
+        assert_eq!(
+            b.bitset[0],
+            0b00000000_00000000_00000000_00000000_00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b10000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000
+        );
+        assert_eq!(false, b.need(content_y(0)));
+        assert_eq!(false, b.need(content_y(1)));
+        assert_eq!(false, b.need(content_y(128)));
+        assert_eq!(false, b.need(content_y(127)));
+        assert_eq!(true, b.need(content_y(255)));
+    }
+
+    #[test]
+    fn test_all_rows_starting_at() {
+        let b = BitFlag256::all_rows_starting_at(192);
+        assert_eq!(
+            b.bitset[0],
+            0b00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000
+        );
+        for i in 0..256 {
+            assert_eq!(i >= 192, b.need(content_y(i)));
+        }
+    }
+
+    #[test]
+    fn test_all_rows_starting_at2() {
+        let b = BitFlag256::all_rows_starting_at(128);
+        assert_eq!(
+            b.bitset[0],
+            0b00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111
+        );
+        for i in 0..256 {
+            assert_eq!(i >= 128, b.need(content_y(i)));
+        }
+    }
+
+    #[test]
+    fn test_all_rows_starting_at3() {
+        let b = BitFlag256::all_rows_starting_at(64);
+        assert_eq!(
+            b.bitset[0],
+            0b11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111
+        );
+        for i in 0..256 {
+            assert_eq!(i >= 64, b.need(content_y(i)));
+        }
+    }
+
+    #[test]
+    fn test_all_rows_starting_at4() {
+        let b = BitFlag256::all_rows_starting_at(0);
+        assert_eq!(
+            b.bitset[0],
+            0b11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111
+        );
+        for i in 0..256 {
+            assert_eq!(true, b.need(content_y(i)));
+        }
+    }
+
+    #[test]
+    fn test_all_rows_multiple() {
+        let b = BitFlag256::multiple(&[32, 64, 128, 192, 255]);
+        assert_eq!(
+            b.bitset[0],
+            0b00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000001__00000000_00000000_00000000_00000001__00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b10000000_00000000_00000000_00000000__00000000_00000000_00000000_00000001__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000001
+        );
+        for i in 0..256 {
+            assert_eq!(
+                i == 32 || i == 64 || i == 128 || i == 192 || i == 255,
+                b.need(content_y(i))
+            );
+        }
+    }
+
+    #[test]
+    fn test_all_rows_range_incl() {
+        let b = BitFlag256::range_incl(32, 64);
+        assert_eq!(
+            b.bitset[0],
+            0b00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000001__11111111_11111111_11111111_11111111__00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000
+        );
+        for i in 0..256 {
+            assert_eq!(i >= 32 && i <= 64, b.need(content_y(i)), "{}", i);
+        }
+    }
+
+    #[test]
+    fn test_all_rows_range_incl2() {
+        let b = BitFlag256::range_incl(32, 192);
+        assert_eq!(
+            b.bitset[0],
+            0b11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b00000000_00000000_00000000_00000000__00000000_00000000_00000000_000000001__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111
+        );
+        for i in 0..256 {
+            assert_eq!(i >= 32 && i <= 192, b.need(content_y(i)), "{}", i);
+        }
+    }
+
+    #[test]
+    fn test_all_rows_range_incl3() {
+        let b = BitFlag256::range_incl(32, 32);
+        assert_eq!(
+            b.bitset[0],
+            0b00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000001__00000000_00000000_00000000_00000000
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000__00000000_00000000_00000000_00000000
+        );
+        for i in 0..256 {
+            assert_eq!(i == 32, b.need(content_y(i)), "{}", i);
+        }
+    }
+
+    #[test]
+    fn test_all_rows_range_incl4() {
+        let b = BitFlag256::range_incl(0, 255);
+        assert_eq!(
+            b.bitset[0],
+            0b11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111
+        );
+        assert_eq!(
+            b.bitset[1],
+            0b11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111__11111111_11111111_11111111_11111111
+        );
+        for i in 0..256 {
+            assert_eq!(true, b.need(content_y(i)), "{}", i);
+        }
+    }
+}
+
+#[cfg(test)]
+mod main_tests {
     use super::*;
 
     const fn result_panel_w(client_width: usize) -> usize {
         client_width * (100 - DEFAULT_RESULT_PANEL_WIDTH_PERCENT) / 100
     }
 
-    fn pulsing_ref_rect<'a>(x: usize, y: usize, w: usize, h: usize) -> OutputMessage<'a> {
-        OutputMessage::PulsingRectangle {
+    fn pulsing_ref_rect(x: usize, y: usize, w: usize, h: usize) -> PulsingRectangle {
+        PulsingRectangle {
             x,
             y: canvas_y(y as isize),
             w,
             h,
-            start_color: REFERENCE_PULSE_PULSE_START_COLOR,
-            end_color: 0x00FF7F_00,
+            start_color: THEMES[0].reference_pulse_start,
+            end_color: THEMES[0].reference_pulse_end,
             animation_time: Duration::from_millis(1000),
+            repeat: true,
         }
     }
 
-    fn pulsing_result_rect<'a>(x: usize, y: usize, w: usize, h: usize) -> OutputMessage<'a> {
-        OutputMessage::PulsingRectangle {
+    fn pulsing_result_rect(x: usize, y: usize, w: usize, h: usize) -> PulsingRectangle {
+        PulsingRectangle {
             x,
             y: canvas_y(y as isize),
             w,
             h,
-            start_color: CHANGE_RESULT_PULSE_START_COLOR,
-            end_color: CHANGE_RESULT_PULSE_END_COLOR,
+            start_color: THEMES[0].change_result_pulse_start,
+            end_color: THEMES[0].change_result_pulse_end,
             animation_time: Duration::from_millis(1000),
+            repeat: false,
         }
     }
 
-    fn pulsing_changed_content_rect<'a>(
-        x: usize,
-        y: usize,
-        w: usize,
-        h: usize,
-    ) -> OutputMessage<'a> {
-        OutputMessage::PulsingRectangle {
+    fn pulsing_changed_content_rect(x: usize, y: usize, w: usize, h: usize) -> PulsingRectangle {
+        PulsingRectangle {
             x,
             y: canvas_y(y as isize),
             w,
             h,
-            start_color: CHANGE_RESULT_PULSE_START_COLOR,
-            end_color: CHANGE_RESULT_PULSE_END_COLOR,
+            start_color: THEMES[0].change_result_pulse_start,
+            end_color: THEMES[0].change_result_pulse_end,
             animation_time: Duration::from_millis(2000),
+            repeat: false,
         }
+    }
+
+    fn assert_contains_pulse(
+        render_bucket: &[PulsingRectangle],
+        expected_count: usize,
+        expected_command: PulsingRectangle,
+    ) {
+        let mut count = 0;
+        for command in render_bucket {
+            if *command == expected_command {
+                count += 1;
+            }
+        }
+        assert_eq!(
+            count, expected_count,
+            "Found {} times, expected {}.\n{:?}\nin\n{:?}",
+            count, expected_count, expected_command, render_bucket
+        );
     }
 
     fn assert_contains(
@@ -5894,7 +7007,7 @@ mod main_tests {
                     self.mut_results(),
                     self.mut_vars(),
                     self.mut_editor_objects(),
-                    BitFlag128::empty(),
+                    BitFlag256::empty(),
                 );
         }
 
@@ -5912,12 +7025,12 @@ mod main_tests {
         }
 
         fn assert_no_highlighting_rectangle(&self) {
-            let render_buckets = &self.render_bucket().custom_commands[Layer::AboveText as usize];
+            let render_buckets = &self.render_bucket().custom_commands[Layer::BehindText as usize];
             for i in 0..9 {
                 assert_contains(
                     render_buckets,
                     0,
-                    OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[i] << 8 | 0x33),
+                    OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[i]),
                 );
             }
         }
@@ -5970,6 +7083,28 @@ mod main_tests {
                 count, expected_count,
                 "Found {} times.\nExpected: {}\nin\n{:?}",
                 count, expected_count, operators
+            );
+        }
+
+        fn assert_contains_custom_command<F>(
+            &self,
+            layer: Layer,
+            expected_count: usize,
+            expected_command: F,
+        ) where
+            F: Fn(&OutputMessage) -> bool,
+        {
+            let mut count = 0;
+            let commands = &self.render_bucket().custom_commands[layer as usize];
+            for op in commands {
+                if expected_command(op) {
+                    count += 1;
+                }
+            }
+            assert_eq!(
+                count, expected_count,
+                "Found {} times.\nExpected: {}\nin\n{:?}",
+                count, expected_count, commands
             );
         }
 
@@ -6046,14 +7181,7 @@ mod main_tests {
         }
 
         fn assert_no_pulsing(&self) {
-            let render_bucket = &self.render_bucket().custom_commands[Layer::AboveText as usize];
-            for command in render_bucket {
-                assert!(
-                    !matches!(command, OutputMessage::PulsingRectangle {..}),
-                    "Pulsing was found but did not expected: {:?}",
-                    command
-                );
-            }
+            assert!(self.render_bucket().pulses.is_empty());
         }
 
         fn set_normalized_content(&self, str: &str) {
@@ -6175,7 +7303,11 @@ mod main_tests {
             );
         }
 
-        fn input(&self, event: EditorInputEvent, modif: InputModifiers) {
+        fn input(
+            &self,
+            event: EditorInputEvent,
+            modif: InputModifiers,
+        ) -> Option<RowModificationType> {
             self.mut_app().handle_input(
                 event,
                 modif,
@@ -6186,27 +7318,27 @@ mod main_tests {
                 self.mut_vars(),
                 self.mut_editor_objects(),
                 self.mut_render_bucket(),
-            );
+            )
         }
 
         fn handle_mouse_up(&self) {
             self.mut_app().handle_mouse_up();
         }
 
-        fn get_render_data(&self) -> GlobalRenderData {
-            return self.mut_app().render_data.clone();
+        fn get_render_data(&self) -> &GlobalRenderData {
+            return &self.app().render_data;
         }
 
         fn get_editor_content(&self) -> String {
-            return self.mut_app().editor_content.get_content();
+            return self.app().editor_content.get_content();
         }
 
         fn get_cursor_pos(&self) -> Pos {
-            return self.mut_app().editor.get_selection().get_cursor_pos();
+            return self.app().editor.get_selection().get_cursor_pos();
         }
 
         fn get_selection(&self) -> Selection {
-            return self.mut_app().editor.get_selection();
+            return self.app().editor.get_selection();
         }
 
         fn set_selection(&self, selection: Selection) {
@@ -6223,24 +7355,27 @@ mod main_tests {
         for b in unsafe { &mut RESULT_BUFFER } {
             *b = 0;
         }
-        let app = NoteCalcApp::new(client_width, client_height);
-        let editor_objects = EditorObjects::new();
-        let tokens = AppTokens::new();
-        let results = Results::new();
-        let vars = create_vars();
         fn to_box_ptr<T>(t: T) -> u64 {
             let ptr = Box::into_raw(Box::new(t)) as u64;
             ptr
         }
+        let app = to_box_ptr(NoteCalcApp::new(client_width, client_height));
+        let editor_objects = to_box_ptr(EditorObjects::new());
+        let tokens = to_box_ptr(AppTokens::new());
+        let results = to_box_ptr(Results::new());
+        let vars = to_box_ptr(create_vars());
+        let units = to_box_ptr(Units::new());
+        let render_buckets = to_box_ptr(RenderBuckets::new());
+        let bumper = to_box_ptr(Bump::with_capacity(MAX_LINE_COUNT * 120));
         return BorrowCheckerFighter {
-            app_ptr: to_box_ptr(app),
-            units_ptr: to_box_ptr(Units::new()),
-            render_bucket_ptr: to_box_ptr(RenderBuckets::new()),
-            tokens_ptr: to_box_ptr(tokens),
-            results_ptr: to_box_ptr(results),
-            vars_ptr: to_box_ptr(vars),
-            editor_objects_ptr: to_box_ptr(editor_objects),
-            allocator: to_box_ptr(Bump::with_capacity(MAX_LINE_COUNT * 120)),
+            app_ptr: app,
+            units_ptr: units,
+            render_bucket_ptr: render_buckets,
+            tokens_ptr: tokens,
+            results_ptr: results,
+            vars_ptr: vars,
+            editor_objects_ptr: editor_objects,
+            allocator: bumper,
         };
     }
 
@@ -6377,7 +7512,7 @@ mod main_tests {
         let test = create_app2(35);
         test.paste("abcd [1,2,3;4,5,6]");
         test.render();
-        test.input(EditorInputEvent::Backspace, InputModifiers::none());
+        test.input(EditorInputEvent::Backspace, InputModifiers::ctrl());
         assert_eq!("abcd ", test.get_editor_content());
     }
 
@@ -6459,7 +7594,7 @@ mod main_tests {
         test.paste("abcd [1,2,3;4,5,6]");
         test.set_cursor_row_col(0, 5);
         test.render();
-        test.input(EditorInputEvent::Del, InputModifiers::none());
+        test.input(EditorInputEvent::Del, InputModifiers::ctrl());
         assert_eq!("abcd ", test.get_editor_content());
     }
 
@@ -6535,8 +7670,8 @@ mod main_tests {
         let first_line_h = 5;
         let second_line_half = (5 / 2) + 1;
         let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
-        assert_contains(
-            &test.render_bucket().custom_commands[Layer::AboveText as usize],
+        assert_contains_pulse(
+            &test.render_bucket().pulses,
             1,
             pulsing_ref_rect(left_gutter_width + 5, first_line_h + second_line_half, 3, 1),
         )
@@ -6845,48 +7980,46 @@ mod main_tests {
 
             let result_gutter_x = test.get_render_data().result_gutter_x;
             assert_eq!(test.app().mouse_hover_type, MouseHoverType::Normal);
-            let commands = &test.render_bucket().custom_commands[Layer::Text as usize];
-            assert_contains(commands, 0, OutputMessage::SetColor(SCROLLBAR_HOVER_COLOR));
-            assert_contains(commands, 1, OutputMessage::SetColor(SCROLLBAR_NORMAL_COLOR));
-            assert_contains(
-                commands,
-                1,
-                OutputMessage::RenderRectangle {
-                    x: result_gutter_x - SCROLLBAR_WIDTH,
-                    y: canvas_y(0),
-                    w: SCROLLBAR_WIDTH,
-                    h: 1,
-                },
+            assert_eq!(
+                test.render_bucket().scroll_bar,
+                Some((
+                    THEMES[0].scrollbar_normal,
+                    Rect {
+                        x: (result_gutter_x - SCROLLBAR_WIDTH) as u16,
+                        y: 0,
+                        w: SCROLLBAR_WIDTH as u16,
+                        h: 1,
+                    }
+                ))
             );
 
             test.handle_mouse_move(result_gutter_x - SCROLLBAR_WIDTH, 0);
-            assert_eq!(test.app().mouse_hover_type, MouseHoverType::Scrollbar);
-            assert_contains(commands, 1, OutputMessage::SetColor(SCROLLBAR_HOVER_COLOR));
-            assert_contains(commands, 0, OutputMessage::SetColor(SCROLLBAR_NORMAL_COLOR));
-            assert_contains(
-                commands,
-                1,
-                OutputMessage::RenderRectangle {
-                    x: result_gutter_x - SCROLLBAR_WIDTH,
-                    y: canvas_y(0),
-                    w: SCROLLBAR_WIDTH,
-                    h: 1,
-                },
+            assert_eq!(
+                test.render_bucket().scroll_bar,
+                Some((
+                    THEMES[0].scrollbar_hovered,
+                    Rect {
+                        x: (result_gutter_x - SCROLLBAR_WIDTH) as u16,
+                        y: 0,
+                        w: SCROLLBAR_WIDTH as u16,
+                        h: 1,
+                    }
+                ))
             );
 
             test.handle_mouse_move(result_gutter_x, 0);
             assert_eq!(test.app().mouse_hover_type, MouseHoverType::RightGutter);
-            assert_contains(commands, 0, OutputMessage::SetColor(SCROLLBAR_HOVER_COLOR));
-            assert_contains(commands, 1, OutputMessage::SetColor(SCROLLBAR_NORMAL_COLOR));
-            assert_contains(
-                commands,
-                1,
-                OutputMessage::RenderRectangle {
-                    x: result_gutter_x - SCROLLBAR_WIDTH,
-                    y: canvas_y(0),
-                    w: SCROLLBAR_WIDTH,
-                    h: 1,
-                },
+            assert_eq!(
+                test.render_bucket().scroll_bar,
+                Some((
+                    THEMES[0].scrollbar_normal,
+                    Rect {
+                        x: (result_gutter_x - SCROLLBAR_WIDTH) as u16,
+                        y: 0,
+                        w: SCROLLBAR_WIDTH as u16,
+                        h: 1,
+                    }
+                ))
             );
         }
 
@@ -6968,7 +8101,6 @@ mod main_tests {
             }
             // This step moves the matrix out of vision, so 6 line will appear instead of it at the bottom
             test.input(EditorInputEvent::Down, InputModifiers::none());
-            test.render();
             assert_eq!(test.get_render_data().scroll_y, 4);
             assert_eq!(
                 test.get_render_data().get_render_y(content_y(33)),
@@ -7052,15 +8184,17 @@ mod main_tests {
             let test = create_app2(CANVAS_HEIGHT);
             test.repeated_paste("1\n2\n\n[1;2;3;4]", 5);
             test.render();
-            assert_contains(
-                &test.render_bucket().custom_commands[Layer::Text as usize],
-                1,
-                OutputMessage::RenderRectangle {
-                    x: result_panel_w(120) - SCROLLBAR_WIDTH,
-                    y: canvas_y(0),
-                    w: 1,
-                    h: 19,
-                },
+            assert_eq!(
+                test.render_bucket().scroll_bar,
+                Some((
+                    THEMES[0].scrollbar_normal,
+                    Rect {
+                        x: (result_panel_w(120) - SCROLLBAR_WIDTH) as u16,
+                        y: 0,
+                        w: 1,
+                        h: 19,
+                    }
+                ))
             );
         }
 
@@ -7164,41 +8298,47 @@ mod main_tests {
         fn test_resize_keeps_result_width() {
             let test = create_app3(60, 35);
             test.set_normalized_content("80kg\n190cm\n0.0016\n0.128 kg");
-            let longest_result_len = 11;
             let check_longest_line_did_not_change = || {
-                assert_eq!(
-                    test.get_render_data().longest_visible_result_len,
-                    longest_result_len
-                );
+                assert_eq!(test.get_render_data().longest_visible_result_len, 11);
             };
             let asset_result_x_pos = |expected: usize| {
                 assert_eq!(test.get_render_data().result_gutter_x, expected);
             };
 
+            let calc_result_gutter_x_wrt_client_width = |client_w: usize| {
+                // the result panel width will be 61% (60 - 23) * 100 / 60
+                let percent = 61f32;
+                (client_w as f32
+                    - ((client_w as f32 * percent / 100f32)
+                        .max((LEFT_GUTTER_MIN_WIDTH + SCROLLBAR_WIDTH) as f32)))
+                    as usize
+            };
+
             check_longest_line_did_not_change();
-            asset_result_x_pos(default_result_gutter_x(60));
+            // min editor w + left g + scroll
+            asset_result_x_pos(20 + 2 + 1);
 
             test.handle_resize(50);
-            asset_result_x_pos(default_result_gutter_x(50));
+            asset_result_x_pos(calc_result_gutter_x_wrt_client_width(50));
             check_longest_line_did_not_change();
 
             test.handle_resize(60);
             check_longest_line_did_not_change();
-            asset_result_x_pos(default_result_gutter_x(60));
+            asset_result_x_pos(calc_result_gutter_x_wrt_client_width(60));
 
             test.handle_resize(100);
             check_longest_line_did_not_change();
-            asset_result_x_pos(default_result_gutter_x(100));
+            asset_result_x_pos(calc_result_gutter_x_wrt_client_width(100));
 
             // there is no enough space for the panel,
             // so it becomes bigger than 30%
             test.handle_resize(40);
             check_longest_line_did_not_change();
-            asset_result_x_pos(27);
+            asset_result_x_pos(15);
 
             test.handle_resize(30);
             check_longest_line_did_not_change();
-            asset_result_x_pos(17);
+            asset_result_x_pos(12);
 
             test.handle_resize(20);
             asset_result_x_pos(7);
@@ -7206,7 +8346,7 @@ mod main_tests {
             // too small
             test.handle_resize(10);
             check_longest_line_did_not_change();
-            asset_result_x_pos(default_result_gutter_x(10));
+            asset_result_x_pos(7);
         }
 
         #[test]
@@ -7524,6 +8664,20 @@ sum",
     }
 
     #[test]
+    fn test_that_header_lengths_are_separate_and_not_add() {
+        let test = create_app3(79, 32);
+        test.set_normalized_content(
+            "# Header 0\n\
+                123\n\
+                # Header 1\n\
+                123\n\
+                # Header 2\n\
+                123",
+        );
+        assert_eq!(test.get_render_data().longest_visible_result_len, 3);
+    }
+
+    #[test]
     fn no_sum_value_in_case_of_error() {
         let test = create_app2(35);
         test.paste(
@@ -7648,13 +8802,20 @@ sum",
             let test = create_app2(35);
             test.paste("16892313\n");
             test.input(EditorInputEvent::Char(*ch), InputModifiers::none());
+            if *ch == '[' {
+                test.input(EditorInputEvent::Del, InputModifiers::none());
+            }
             test.input(EditorInputEvent::Up, InputModifiers::alt());
             test.alt_key_released();
 
             let mut expected: String = "16892313\n".to_owned();
             expected.push(*ch);
             expected.push_str("&[1]");
-            assert_eq!(test.get_editor_content(), expected);
+            let expected_len = "16892313\n(&[1]".len(); // it is needed since '(' inserts a ')' as well);
+            assert_eq!(
+                test.get_editor_content()[0..expected_len],
+                expected[0..expected_len]
+            );
         }
     }
 
@@ -7895,6 +9056,7 @@ sum",
     mod test_line_dependency_and_pulsing_on_change {
         use super::super::*;
         use super::*;
+
         #[test]
         fn test_modifying_a_lineref_recalcs_its_dependants() {
             let test = create_app2(35);
@@ -7914,9 +9076,9 @@ sum",
             test.input(EditorInputEvent::Home, InputModifiers::none());
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
+            let render_commands = &test.render_bucket().pulses;
 
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_result_rect(
@@ -7926,7 +9088,7 @@ sum",
                     1,
                 ),
             );
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_result_rect(
@@ -7957,8 +9119,8 @@ sum",
             test.input(EditorInputEvent::Home, InputModifiers::none());
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_changed_content_rect(LEFT_GUTTER_MIN_WIDTH, 1, 2, 1),
@@ -7987,27 +9149,27 @@ sum",
             test.input(EditorInputEvent::Home, InputModifiers::none());
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
+            let render_commands = &test.render_bucket().pulses;
 
             let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_changed_content_rect(left_gutter_width, 1, 2, 1),
             );
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_changed_content_rect(left_gutter_width + 3, 1, 2, 1),
             );
 
             // the last 2 command is for pulsing references for the active row
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(left_gutter_width, 1, 2, 1),
             );
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(left_gutter_width + 3, 1, 2, 1),
@@ -8040,27 +9202,27 @@ sum",
 
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
+            let render_commands = &test.render_bucket().pulses;
 
             let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_changed_content_rect(left_gutter_width, 1, 2, 1),
             );
 
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_changed_content_rect(left_gutter_width, 2, 2, 1),
             );
             // the last 2 command is for pulsing references for the active row
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(left_gutter_width, 1, 2, 1),
             );
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(left_gutter_width, 2, 2, 1),
@@ -8085,9 +9247,9 @@ sum",
             // step into the first row
             test.input(EditorInputEvent::Up, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
+            let render_commands = &test.render_bucket().pulses;
 
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(LEFT_GUTTER_MIN_WIDTH, 1, 1, 1),
@@ -8103,8 +9265,8 @@ aaaaaaaaaaaaaaaaaaaaaa b",
             );
             test.input(EditorInputEvent::Up, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(
@@ -8120,17 +9282,15 @@ aaaaaaaaaaaaaaaaaaaaaa b",
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
             assert_eq!(test.get_render_data().current_editor_width, 23);
             // if it is out of screen, it is rendered on the '...'
-            test.render(); // we currently need one render cycle to align widths
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(render_commands, 1, pulsing_ref_rect(25, 1, 1, 1));
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(render_commands, 1, pulsing_ref_rect(25, 1, 1, 1));
 
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
-            test.render(); // we currently need one render cycle to align widths
             assert_eq!(test.get_render_data().current_editor_width, 22);
 
             // if it is out of screen, it is rendered on the '...'
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(render_commands, 1, pulsing_ref_rect(24, 1, 1, 1));
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(render_commands, 1, pulsing_ref_rect(24, 1, 1, 1));
         }
 
         #[test]
@@ -8142,8 +9302,8 @@ aaaaaaaaaaaaaaaaaa bcdef",
             );
             test.input(EditorInputEvent::Up, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(
@@ -8159,36 +9319,32 @@ aaaaaaaaaaaaaaaaaa bcdef",
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
             assert_eq!(test.get_render_data().current_editor_width, 23);
             // if it is out of screen, it is rendered on the '...'
-            test.render(); // we currently need one render cycle to align widths
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(render_commands, 1, pulsing_ref_rect(21, 1, 5, 1));
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(render_commands, 1, pulsing_ref_rect(21, 1, 5, 1));
             test.assert_contains_variable(1, |cmd| {
                 cmd.text == &['b', 'c', 'd', 'e'] && cmd.row == canvas_y(1) && cmd.column == 21
             });
 
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
-            test.render(); // we currently need one render cycle to align widths
             assert_eq!(test.get_render_data().current_editor_width, 22);
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(render_commands, 1, pulsing_ref_rect(21, 1, 4, 1));
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(render_commands, 1, pulsing_ref_rect(21, 1, 4, 1));
             test.assert_contains_variable(1, |cmd| {
                 cmd.text == &['b', 'c', 'd'] && cmd.row == canvas_y(1) && cmd.column == 21
             });
 
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
-            test.render(); // we currently need one render cycle to align widths
             assert_eq!(test.get_render_data().current_editor_width, 20);
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(render_commands, 1, pulsing_ref_rect(21, 1, 2, 1));
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(render_commands, 1, pulsing_ref_rect(21, 1, 2, 1));
             test.assert_contains_variable(1, |cmd| {
                 cmd.text == &['b'] && cmd.row == canvas_y(1) && cmd.column == 21
             });
 
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
-            test.render(); // we currently need one render cycle to align widths
             assert_eq!(test.get_render_data().current_editor_width, 19);
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(render_commands, 1, pulsing_ref_rect(21, 1, 1, 1));
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(render_commands, 1, pulsing_ref_rect(21, 1, 1, 1));
             test.assert_contains_variable(0, |cmd| cmd.row == canvas_y(1) && !cmd.text.is_empty());
         }
 
@@ -8201,8 +9357,8 @@ aaaaaaaaaaaaaaaaaaaaaa &[1]",
             );
             test.input(EditorInputEvent::Up, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(
@@ -8219,22 +9375,31 @@ aaaaaaaaaaaaaaaaaaaaaa &[1]",
             assert_eq!(test.get_render_data().current_editor_width, 23);
             // should appear
             // if it is out of screen, it is rendered on the '...'
-            test.render(); // we currently need one render cycle to align widths
             let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
             assert_contains(
                 render_commands,
                 1,
-                OutputMessage::RenderChar(test.get_render_data().result_gutter_x - 1, 1, '…'),
+                OutputMessage::RenderChar(RenderChar {
+                    col: test.get_render_data().result_gutter_x - 1,
+                    row: canvas_y(1),
+                    char: '…',
+                }),
             );
-            assert_contains(render_commands, 1, pulsing_ref_rect(25, 1, 1, 1));
+            assert_contains_pulse(
+                &test.render_bucket().pulses,
+                1,
+                pulsing_ref_rect(25, 1, 1, 1),
+            );
 
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
-            test.render(); // we currently need one render cycle to align widths
             assert_eq!(test.get_render_data().current_editor_width, 22);
 
             // if it is out of screen, it is rendered on the '...'
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(render_commands, 1, pulsing_ref_rect(24, 1, 1, 1));
+            assert_contains_pulse(
+                &test.render_bucket().pulses,
+                1,
+                pulsing_ref_rect(24, 1, 1, 1),
+            );
         }
 
         #[test]
@@ -8246,8 +9411,8 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             );
             test.input(EditorInputEvent::Up, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(
@@ -8265,15 +9430,22 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
                 test.input(EditorInputEvent::Char('3'), InputModifiers::none());
                 assert_eq!(test.get_render_data().current_editor_width, 22);
                 // if it is out of screen, it is rendered on the '...'
-                test.render(); // we currently need one render cycle to align widths
                 let render_commands =
                     &test.render_bucket().custom_commands[Layer::AboveText as usize];
                 assert_contains(
                     render_commands,
                     1,
-                    OutputMessage::RenderChar(test.get_render_data().result_gutter_x - 1, 1, '…'),
+                    OutputMessage::RenderChar(RenderChar {
+                        col: test.get_render_data().result_gutter_x - 1,
+                        row: canvas_y(1),
+                        char: '…',
+                    }),
                 );
-                assert_contains(render_commands, 1, pulsing_ref_rect(23, 1, 2, 1));
+                assert_contains_pulse(
+                    &test.render_bucket().pulses,
+                    1,
+                    pulsing_ref_rect(23, 1, 2, 1),
+                );
                 test.assert_contains_line_ref_result(1, |cmd| {
                     cmd.text == "1".to_owned() && cmd.row == canvas_y(1) && cmd.column == 23
                 });
@@ -8281,18 +9453,25 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
             {
                 test.input(EditorInputEvent::Char('4'), InputModifiers::none());
-                test.render(); // we currently need one render cycle to align widths
                 assert_eq!(test.get_render_data().current_editor_width, 20);
                 let render_commands =
                     &test.render_bucket().custom_commands[Layer::AboveText as usize];
-                assert_contains(render_commands, 1, pulsing_ref_rect(22, 1, 1, 1));
+                assert_contains_pulse(
+                    &test.render_bucket().pulses,
+                    1,
+                    pulsing_ref_rect(22, 1, 1, 1),
+                );
                 test.assert_contains_line_ref_result(0, |cmd| {
                     !cmd.text.is_empty() && cmd.row == canvas_y(1)
                 });
                 assert_contains(
                     render_commands,
                     1,
-                    OutputMessage::RenderChar(test.get_render_data().result_gutter_x - 1, 1, '…'),
+                    OutputMessage::RenderChar(RenderChar {
+                        col: test.get_render_data().result_gutter_x - 1,
+                        row: canvas_y(1),
+                        char: '…',
+                    }),
                 );
             }
         }
@@ -8321,14 +9500,14 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             // step into the first row
             test.input(EditorInputEvent::Up, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
+            let render_commands = &test.render_bucket().pulses;
 
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(LEFT_GUTTER_MIN_WIDTH, 1, 1, 1),
             );
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(LEFT_GUTTER_MIN_WIDTH + 2, 1, 1, 1),
@@ -8349,13 +9528,13 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             // step into the first row
             test.input(EditorInputEvent::Up, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(LEFT_GUTTER_MIN_WIDTH, 1, 3, 1),
             );
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(LEFT_GUTTER_MIN_WIDTH + 5, 2, 3, 1),
@@ -8375,8 +9554,8 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             // step into the first row
             test.input(EditorInputEvent::Up, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_contains(
+            let render_commands = &test.render_bucket().pulses;
+            assert_contains_pulse(
                 render_commands,
                 1,
                 pulsing_ref_rect(LEFT_GUTTER_MIN_WIDTH, 1, 3, 1),
@@ -8422,7 +9601,6 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
     }
 
     mod dependent_lines_recalculation_tests {
-        use super::super::*;
         use super::*;
 
         #[test]
@@ -8446,14 +9624,14 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
             // inserting a '.' does not modify the result of the line
             test.input(EditorInputEvent::Char('.'), InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
+            let render_commands = &test.render_bucket().pulses;
             // expect no pulsing since there were no value change
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 0,
                 pulsing_changed_content_rect(90, 0, 2, 1),
             );
-            assert_contains(
+            assert_contains_pulse(
                 render_commands,
                 0,
                 pulsing_changed_content_rect(90, 1, 2, 1),
@@ -8598,14 +9776,8 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
         test.input(EditorInputEvent::Home, InputModifiers::none());
         test.input(EditorInputEvent::Char(' '), InputModifiers::none());
 
-        let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
         // expect no pulsing since there were no value change
-        for command in render_commands {
-            match command {
-                OutputMessage::PulsingRectangle { .. } => assert!(false, "{:?}", render_commands),
-                _ => {}
-            }
-        }
+        test.assert_no_pulsing();
     }
 
     #[test]
@@ -8694,8 +9866,25 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
         let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
         let expected_x = left_gutter_width + 4;
         let commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-        assert_contains(commands, 1, OutputMessage::RenderChar(expected_x, 1, '⎫'));
-        assert_contains(commands, 1, OutputMessage::RenderChar(expected_x, 2, '⎭'));
+        assert_contains(
+            commands,
+            1,
+            OutputMessage::RenderChar(RenderChar {
+                col: expected_x,
+                row: canvas_y(1),
+                char: '⎫',
+            }),
+        );
+
+        assert_contains(
+            commands,
+            1,
+            OutputMessage::RenderChar(RenderChar {
+                col: expected_x,
+                row: canvas_y(2),
+                char: '⎭',
+            }),
+        );
         assert_contains(
             commands,
             1,
@@ -8717,8 +9906,24 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
         let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
         let expected_x = left_gutter_width + 4;
         let commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-        assert_contains(commands, 1, OutputMessage::RenderChar(expected_x, 1, '⎫'));
-        assert_contains(commands, 1, OutputMessage::RenderChar(expected_x, 2, '⎭'));
+        assert_contains(
+            commands,
+            1,
+            OutputMessage::RenderChar(RenderChar {
+                col: expected_x,
+                row: canvas_y(1),
+                char: '⎫',
+            }),
+        );
+        assert_contains(
+            commands,
+            1,
+            OutputMessage::RenderChar(RenderChar {
+                col: expected_x,
+                row: canvas_y(2),
+                char: '⎭',
+            }),
+        );
         assert_contains(
             commands,
             1,
@@ -8860,6 +10065,33 @@ ddd",
     }
 
     #[test]
+    fn clicking_inside_matrix_while_selected_should_put_cursor_after_matrix2() {
+        let test = create_app2(35);
+        test.paste("firs 1t\nasdsad\n[1,2,3,4]\nfirs 1t\nasdsad\n[1;2;3;4]");
+        test.set_cursor_row_col(0, 0);
+        test.render();
+        // select all
+        test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
+        test.render();
+
+        // click inside the real matrix repr
+        // the problem is that this click is inside a SimpleToken (as the matrix is rendered as
+        // SimpleToken if it is selected), so the cursor is set accordingly,
+        // but as soon as the selection is cancelled by the click, we render a matrix,
+        // and the cursor is inside the matrix, which is not OK.
+        let left_gutter_width = 1;
+        test.click(left_gutter_width + 7, 2);
+
+        // typing should append after the matrix
+        test.input(EditorInputEvent::Char('X'), InputModifiers::none());
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        assert_eq!(
+            "firs 1t\nasdsad\n[X,2,3,4]\nfirs 1t\nasdsad\n[1;2;3;4]",
+            test.get_editor_content()
+        );
+    }
+
+    #[test]
     fn limiting_cursor_does_not_kill_selection() {
         let test = create_app2(35);
 
@@ -8869,7 +10101,7 @@ ddd",
         test.input(EditorInputEvent::PageDown, InputModifiers::shift());
         test.render();
         assert_eq!(
-            test.get_selection().is_range(),
+            test.get_selection().is_range_ordered(),
             Some((
                 Pos::from_row_column(0, 0),
                 Pos::from_row_column(MAX_LINE_COUNT - 1, 0)
@@ -8987,7 +10219,7 @@ ddd",
         test.click(left_gutter_width + 7, 0);
         test.handle_drag(0, 0);
         assert_eq!(
-            test.get_selection().is_range(),
+            test.get_selection().is_range_ordered(),
             Some((Pos::from_row_column(0, 0), Pos::from_row_column(0, 7)))
         );
     }
@@ -9047,7 +10279,7 @@ ddd",
                 x: left_gutter_width + 4,
                 y: canvas_y(0),
                 w: 3,
-                h: 1
+                h: 1,
             }
         );
         assert_eq!(
@@ -9056,7 +10288,7 @@ ddd",
                 x: left_gutter_width,
                 y: canvas_y(1),
                 w: 0,
-                h: 1
+                h: 1,
             }
         );
     }
@@ -9579,7 +10811,7 @@ ddd",
             46,
             NoteCalcApp::calc_full_content_height(
                 &test.get_render_data(),
-                test.app().editor_content.line_count()
+                test.app().editor_content.line_count(),
             )
         );
     }
@@ -9983,10 +11215,10 @@ ddd",
 
         test.render();
         let left_gutter_width = LEFT_GUTTER_MIN_WIDTH;
-        let render_bucket = &test.render_bucket().custom_commands[Layer::AboveText as usize];
+        let render_commands = &test.render_bucket().pulses;
         //  dependant row is not pulsed yet
-        assert_contains(
-            render_bucket,
+        assert_contains_pulse(
+            render_commands,
             0,
             pulsing_ref_rect(left_gutter_width, 1, 3, 1),
         );
@@ -9994,8 +11226,8 @@ ddd",
         // step into the first row
         test.input(EditorInputEvent::Char('b'), InputModifiers::ctrl());
 
-        assert_contains(
-            render_bucket,
+        assert_contains_pulse(
+            render_commands,
             1,
             pulsing_ref_rect(left_gutter_width, 1, 3, 1),
         );
@@ -10013,44 +11245,46 @@ ddd",
 
             test.render();
             let render_command_count_before =
-                &test.render_bucket().custom_commands[Layer::AboveText as usize].len();
+                &test.render_bucket().custom_commands[Layer::BehindText as usize].len();
 
             test.input(EditorInputEvent::Down, InputModifiers::none());
 
             let left_gutter_w = LEFT_GUTTER_MIN_WIDTH;
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_eq!(render_commands.len(), render_command_count_before + 1);
+            let render_commands = &test.render_bucket().custom_commands[Layer::BehindText as usize];
+            // (setcolor + underline) + (setcolor + 2*rect)
+            assert_eq!(render_commands.len(), render_command_count_before + 5);
             assert_contains(
                 render_commands,
-                1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x33),
+                2,
+                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0]),
             );
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w,
+                    x: 0,
                     y: canvas_y(0),
-                    w: "223456".len(),
+                    w: left_gutter_w,
                     h: 1,
                 },
             );
-
-            // the line_refs itself have different bacground color
-            let render_commands = &test.render_bucket().custom_commands[Layer::BehindText as usize];
-            assert_contains(
-                render_commands,
-                1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x55),
-            );
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w + 4,
+                    x: test.get_render_data().result_gutter_x,
+                    y: canvas_y(0),
+                    w: RIGHT_GUTTER_WIDTH,
+                    h: 1,
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd ".len(),
                     y: canvas_y(1),
                     w: "223 456".len(),
-                    h: 1,
                 },
             );
         }
@@ -10064,75 +11298,259 @@ ddd",
 
             test.assert_no_highlighting_rectangle();
             let render_command_count_before =
-                &test.render_bucket().custom_commands[Layer::AboveText as usize].len();
+                &test.render_bucket().custom_commands[Layer::BehindText as usize].len();
             test.input(EditorInputEvent::Down, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_eq!(render_commands.len(), render_command_count_before + 3);
+            let render_commands = &test.render_bucket().custom_commands[Layer::BehindText as usize];
+            // 2 underlines + 2 setcolors
+            // 2*2 rectangles on the gutters + 1 setcolor for each (2)
+            //
+            assert_eq!(render_commands.len(), render_command_count_before + 10);
 
             assert_contains(
                 render_commands,
-                1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x33),
+                2,
+                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0]),
             );
             let left_gutter_w = LEFT_GUTTER_MIN_WIDTH;
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w,
+                    x: 0,
                     y: canvas_y(0),
-                    w: "234".len(),
+                    w: left_gutter_w,
                     h: 1,
                 },
             );
             assert_contains(
                 render_commands,
                 1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[1] << 8 | 0x33),
+                OutputMessage::RenderRectangle {
+                    x: test.get_render_data().result_gutter_x,
+                    y: canvas_y(0),
+                    w: RIGHT_GUTTER_WIDTH,
+                    h: 1,
+                },
+            );
+            assert_contains(
+                render_commands,
+                2,
+                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[1]),
             );
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w,
+                    x: 0,
                     y: canvas_y(1),
-                    w: "356789".len(),
+                    w: left_gutter_w,
+                    h: 1,
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderRectangle {
+                    x: test.get_render_data().result_gutter_x,
+                    y: canvas_y(1),
+                    w: RIGHT_GUTTER_WIDTH,
                     h: 1,
                 },
             );
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::BehindText as usize];
-            // the line_refs itself have different bacground color
             assert_contains(
                 render_commands,
                 1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x55),
-            );
-            assert_contains(
-                render_commands,
-                1,
-                OutputMessage::RenderRectangle {
-                    x: left_gutter_w + 4,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd ".len(),
                     y: canvas_y(2),
                     w: "234".len(),
-                    h: 1,
                 },
             );
             assert_contains(
                 render_commands,
                 1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[1] << 8 | 0x55),
-            );
-            assert_contains(
-                render_commands,
-                1,
-                OutputMessage::RenderRectangle {
-                    x: left_gutter_w + 10,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd 234 * ".len(),
                     y: canvas_y(2),
                     w: "356 789".len(),
-                    h: 1,
                 },
+            );
+        }
+
+        #[test]
+        fn test_that_out_of_editor_line_ref_backgrounds_are_not_rendered() {
+            let test = create_app3(51, 35);
+            test.paste("234\n356789\nasd &[1] * &[2] * 2");
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+
+            // line_ref rect would start on the result gutter
+            for _i in 0..10 {
+                test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            }
+
+            test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+                OutputMessage::RenderRectangle { y, .. } => *y == canvas_y(2),
+                _ => false,
+            });
+            test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+                OutputMessage::SetColor(c) => *c == THEMES[0].line_ref_bg,
+                _ => false,
+            });
+        }
+
+        #[test]
+        fn test_that_partial_out_of_editor_line_ref_backgrounds_are_rendered_partially() {
+            let test = create_app3(51, 35);
+            test.paste("234\n356789\nasd &[1] * &[2] * 2");
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+
+            // line_ref rect would start on the result gutter
+            for _i in 0..7 {
+                test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            }
+
+            // everything visible yet
+            test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+                OutputMessage::RenderRectangle { x, y, w, h } => {
+                    *y == canvas_y(2) && *x == 22 && *w == 7 && *h == 1
+                }
+                _ => false,
+            });
+
+            test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+                OutputMessage::RenderRectangle { x, y, w, h } => {
+                    *y == canvas_y(2) && *x == 23 && *w == 4 && *h == 1
+                }
+                _ => false,
+            });
+
+            test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+                OutputMessage::RenderRectangle { x, y, w, h } => {
+                    *y == canvas_y(2) && *x == 24 && *w == 2 && *h == 1
+                }
+                _ => false,
+            });
+        }
+
+        #[test]
+        fn test_that_out_of_editor_line_ref_underlines_are_not_rendered() {
+            let test = create_app3(51, 35);
+            test.paste("234\n356789\nasd &[1] * &[2] * 2");
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+
+            for _i in 0..10 {
+                test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            }
+
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+
+            // there is only 1 line ref background since the 2nd one is out of editor
+            // the one setcolor is for the rectangle, but there is no for the underline
+            test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+                OutputMessage::SetColor(color) => *color == ACTIVE_LINE_REF_HIGHLIGHT_COLORS[1],
+                _ => false,
+            });
+            // just to be suire that there are 2 setcolor for normal cases
+            test.assert_contains_custom_command(Layer::BehindText, 2, |cmd| match cmd {
+                OutputMessage::SetColor(color) => *color == ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0],
+                _ => false,
+            });
+            test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+                OutputMessage::RenderUnderline { y, .. } => *y == canvas_y(2),
+                _ => false,
+            });
+            // no other colors
+            for expected_color in ACTIVE_LINE_REF_HIGHLIGHT_COLORS.iter().skip(2) {
+                test.assert_contains_custom_command(Layer::BehindText, 0, |cmd| match cmd {
+                    OutputMessage::SetColor(color) => *color == *expected_color,
+                    _ => false,
+                })
+            }
+        }
+
+        #[test]
+        fn test_that_partial_out_of_editor_line_ref_underlines_are_rendered_partially() {
+            let test = create_app3(51, 35);
+            test.paste("234\n356789\nasd &[1] * &[2] * 2");
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+
+            // line_ref rect would start on the result gutter
+            for _i in 0..7 {
+                test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            }
+
+            // everything visible yet
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+                OutputMessage::RenderUnderline { x, y, w } => {
+                    *y == canvas_y(2) && *x == 22 && *w == 7
+                }
+                _ => false,
+            });
+
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+            test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+                OutputMessage::RenderUnderline { x, y, w } => {
+                    *y == canvas_y(2) && *x == 23 && *w == 4
+                }
+                _ => false,
+            });
+
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+            test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+                OutputMessage::RenderUnderline { x, y, w } => {
+                    *y == canvas_y(2) && *x == 24 && *w == 2
+                }
+                _ => false,
+            });
+        }
+
+        #[test]
+        fn test_that_partial_out_of_editor_line_ref_pulses_are_rendered_partially() {
+            let test = create_app3(51, 35);
+            test.paste("234\n356789\nasd &[1] * &[2] * 2");
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+
+            for _i in 0..7 {
+                test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            }
+
+            // everything visible yet
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            assert_contains_pulse(
+                &test.render_bucket().pulses,
+                1,
+                pulsing_ref_rect(22, 2, 7, 1),
+            );
+
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+            test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            assert_contains_pulse(
+                &test.render_bucket().pulses,
+                1,
+                pulsing_ref_rect(23, 2, 5, 1),
+            );
+
+            test.input(EditorInputEvent::PageUp, InputModifiers::none());
+            test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            test.input(EditorInputEvent::Down, InputModifiers::none());
+            assert_contains_pulse(
+                &test.render_bucket().pulses,
+                1,
+                pulsing_ref_rect(24, 2, 3, 1),
             );
         }
 
@@ -10144,43 +11562,26 @@ ddd",
             test.render();
 
             let render_command_count_before =
-                test.render_bucket().custom_commands[Layer::AboveText as usize].len();
+                test.render_bucket().custom_commands[Layer::BehindText as usize].len();
 
             test.input(EditorInputEvent::Down, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_eq!(render_commands.len(), render_command_count_before);
+            let render_commands = &test.render_bucket().custom_commands[Layer::BehindText as usize];
+            // 2*(setcolor + underline) + setcolor + 2*rect
+            assert_eq!(render_commands.len(), render_command_count_before + 7);
             assert_contains(
                 render_commands,
-                1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x33),
+                3,
+                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0]),
             );
             let left_gutter_w = LEFT_GUTTER_MIN_WIDTH;
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w,
+                    x: 0,
                     y: canvas_y(0),
-                    w: "2345".len(),
-                    h: 1,
-                },
-            );
-
-            // the line_refs have to have same background colors
-            let render_commands = &test.render_bucket().custom_commands[Layer::BehindText as usize];
-            assert_contains(
-                render_commands,
-                2,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x55),
-            );
-            assert_contains(
-                render_commands,
-                1,
-                OutputMessage::RenderRectangle {
-                    x: left_gutter_w + 4,
-                    y: canvas_y(1),
-                    w: 5,
+                    w: left_gutter_w,
                     h: 1,
                 },
             );
@@ -10188,10 +11589,28 @@ ddd",
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w + 12,
-                    y: canvas_y(1),
-                    w: 5,
+                    x: test.get_render_data().result_gutter_x,
+                    y: canvas_y(0),
+                    w: RIGHT_GUTTER_WIDTH,
                     h: 1,
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd ".len(),
+                    y: canvas_y(1),
+                    w: "2 345".len(),
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd 2 345 * ".len(),
+                    y: canvas_y(1),
+                    w: "2 345".len(),
                 },
             );
         }
@@ -10205,59 +11624,75 @@ ddd",
             test.render();
 
             let render_command_count_before =
-                &test.render_bucket().custom_commands[Layer::AboveText as usize].len();
+                &test.render_bucket().custom_commands[Layer::BehindText as usize].len();
 
             test.input(EditorInputEvent::Down, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_eq!(render_commands.len(), render_command_count_before + 3);
+            let render_commands = &test.render_bucket().custom_commands[Layer::BehindText as usize];
+            // 2*(setcolor + underline) + (setcolor + underline) +
+            // 2*(setcolor + 2*rect)
+            assert_eq!(render_commands.len(), render_command_count_before + 12);
 
             assert_contains(
                 render_commands,
-                1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x33),
+                3,
+                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0]),
             );
             let left_gutter_w = LEFT_GUTTER_MIN_WIDTH;
+            // "2 345"
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w,
+                    x: 0,
                     y: canvas_y(0),
-                    w: "2345".len(),
+                    w: left_gutter_w,
                     h: 1,
                 },
             );
             assert_contains(
                 render_commands,
                 1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[1] << 8 | 0x33),
-            );
-            assert_contains(
-                render_commands,
-                1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w,
-                    y: canvas_y(1),
-                    w: "123".len(),
+                    x: test.get_render_data().result_gutter_x,
+                    y: canvas_y(0),
+                    w: RIGHT_GUTTER_WIDTH,
                     h: 1,
                 },
             );
 
-            // the line_refs have to have same background colors
-            let render_commands = &test.render_bucket().custom_commands[Layer::BehindText as usize];
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd ".len(),
+                    y: canvas_y(2),
+                    w: "2 345".len(),
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd 2 345 * ".len(),
+                    y: canvas_y(2),
+                    w: "2 345".len(),
+                },
+            );
+
+            // "123"
             assert_contains(
                 render_commands,
                 2,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x55),
+                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[1]),
             );
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w + 4,
-                    y: canvas_y(2),
-                    w: 5,
+                    x: 0,
+                    y: canvas_y(1),
+                    w: left_gutter_w,
                     h: 1,
                 },
             );
@@ -10265,25 +11700,20 @@ ddd",
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w + 12,
-                    y: canvas_y(2),
-                    w: 5,
+                    x: test.get_render_data().result_gutter_x,
+                    y: canvas_y(1),
+                    w: RIGHT_GUTTER_WIDTH,
                     h: 1,
                 },
             );
+
             assert_contains(
                 render_commands,
                 1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[1] << 8 | 0x55),
-            );
-            assert_contains(
-                render_commands,
-                1,
-                OutputMessage::RenderRectangle {
-                    x: left_gutter_w + 20,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd 2 345 * 2 345 * ".len(),
                     y: canvas_y(2),
-                    w: 3,
-                    h: 1,
+                    w: "123".len(),
                 },
             );
         }
@@ -10310,56 +11740,119 @@ ddd",
 
             test.render();
             let render_command_count_before =
-                &test.render_bucket().custom_commands[Layer::AboveText as usize].len();
+                &test.render_bucket().custom_commands[Layer::BehindText as usize].len();
 
             test.input(EditorInputEvent::Down, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
-            assert_eq!(render_commands.len(), render_command_count_before + 5);
+            let render_commands = &test.render_bucket().custom_commands[Layer::BehindText as usize];
+            // 3*(setcolor + underline) + 3(setcolor + 2*rect)
+            assert_eq!(render_commands.len(), render_command_count_before + 15);
             let left_gutter_w = LEFT_GUTTER_MIN_WIDTH;
+            // 1st
             assert_contains(
                 render_commands,
-                1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x33),
+                2,
+                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0]),
             );
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w,
+                    x: 0,
                     y: canvas_y(0),
+                    w: left_gutter_w,
+                    h: 1,
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderRectangle {
+                    x: test.get_render_data().result_gutter_x,
+                    y: canvas_y(0),
+                    w: RIGHT_GUTTER_WIDTH,
+                    h: 1,
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd ".len(),
+                    y: canvas_y(3),
                     w: "2".len(),
-                    h: 1,
                 },
             );
+
+            // 2nd
             assert_contains(
                 render_commands,
-                1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[1] << 8 | 0x33),
+                2,
+                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[1]),
             );
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w,
+                    x: 0,
                     y: canvas_y(1),
-                    w: "3".len(),
+                    w: left_gutter_w,
                     h: 1,
                 },
             );
             assert_contains(
                 render_commands,
                 1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[2] << 8 | 0x33),
+                OutputMessage::RenderRectangle {
+                    x: test.get_render_data().result_gutter_x,
+                    y: canvas_y(1),
+                    w: RIGHT_GUTTER_WIDTH,
+                    h: 1,
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd 2 * ".len(),
+                    y: canvas_y(3),
+                    w: "3".len(),
+                },
+            );
+
+            // 3rd
+            assert_contains(
+                render_commands,
+                2,
+                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[2]),
             );
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w,
+                    x: 0,
                     y: canvas_y(2),
-                    w: "var = 4".len(),
+                    w: left_gutter_w,
                     h: 1,
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderRectangle {
+                    x: test.get_render_data().result_gutter_x,
+                    y: canvas_y(2),
+                    w: RIGHT_GUTTER_WIDTH,
+                    h: 1,
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "asd 2 * 3 * ".len(),
+                    y: canvas_y(3),
+                    w: "var".len(),
                 },
             );
         }
@@ -10397,21 +11890,41 @@ monthly payment = r/(1 - (1 + r)^(-n)) *finance amount",
             test.input(EditorInputEvent::Backspace, InputModifiers::none());
             test.input(EditorInputEvent::Down, InputModifiers::none());
 
-            let render_commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
+            let render_commands = &test.render_bucket().custom_commands[Layer::BehindText as usize];
             assert_contains(
                 render_commands,
-                1,
-                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0] << 8 | 0x33),
+                2, /*one for the underline and 1 for the gutter rectangles*/
+                OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0]),
             );
             let left_gutter_w = LEFT_GUTTER_MIN_WIDTH + 1;
             assert_contains(
                 render_commands,
                 1,
                 OutputMessage::RenderRectangle {
-                    x: left_gutter_w,
+                    x: 0,
                     y: canvas_y(10),
-                    w: "price = 350k$".len(),
+                    w: left_gutter_w,
                     h: 1,
+                },
+            );
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderRectangle {
+                    x: test.get_render_data().result_gutter_x,
+                    y: canvas_y(10),
+                    w: RIGHT_GUTTER_WIDTH,
+                    h: 1,
+                },
+            );
+
+            assert_contains(
+                render_commands,
+                1,
+                OutputMessage::RenderUnderline {
+                    x: left_gutter_w + "down payment = 20% * ".len(),
+                    y: canvas_y(11),
+                    w: "price".len(),
                 },
             );
         }
@@ -10442,20 +11955,33 @@ b = a * 20",
     #[test]
     fn converting_unit_of_line_ref() {
         let test = create_app2(35);
-        test.paste("573 390 s");
-        test.set_cursor_row_col(0, 9);
-        test.render();
-
-        test.input(EditorInputEvent::Enter, InputModifiers::none());
-        test.input(EditorInputEvent::Up, InputModifiers::alt());
-        test.alt_key_released();
-        test.input(EditorInputEvent::Char(' '), InputModifiers::none());
-        test.input(EditorInputEvent::Char('i'), InputModifiers::none());
-        test.input(EditorInputEvent::Char('n'), InputModifiers::none());
-        test.input(EditorInputEvent::Char(' '), InputModifiers::none());
-        test.input(EditorInputEvent::Char('h'), InputModifiers::none());
+        test.paste("573 390 s\n&[1] in h");
 
         test.assert_results(&["573 390 s", "159.275 h"][..]);
+    }
+
+    #[test]
+    fn test_unit_conversion_for_variable() {
+        let test = create_app2(35);
+        test.paste("input = 573 390 s\ninput in h");
+
+        test.assert_results(&["573 390 s", "159.275 h"][..]);
+    }
+
+    #[test]
+    fn test_unit_conversion_for_variable2() {
+        let test = create_app2(35);
+        test.paste("input = 1 s\ninput h");
+
+        test.assert_results(&["1 s", "Err"][..]);
+    }
+
+    #[test]
+    fn test_ininin() {
+        let test = create_app2(35);
+        test.paste("12 in in in");
+
+        test.assert_results(&["12 in"][..]);
     }
 
     #[test]
@@ -10557,7 +12083,7 @@ monthly payment = r/(1 - (1 + r)^(-n)) *finance amount",
         let test = create_app2(35);
         test.paste("a = 2/year");
 
-        test.assert_results(&["2 year^-1"][..]);
+        test.assert_results(&["2 / year"][..]);
     }
 
     #[test]
@@ -10612,13 +12138,13 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
                 "70 000 $",
                 "280 000 $",
                 "",
-                "0.037 year^-1",
+                "0.0369999999999999999978225256 / year",
                 "30 year",
                 "",
                 "360",
-                "0.003083",
+                "0.0030833333333333333331518771",
                 "",
-                "1 288.792357188724336511790584 $",
+                "1 288.792357188724336477306092 $",
             ][..],
         );
     }
@@ -10643,6 +12169,46 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
         test.input(EditorInputEvent::Left, InputModifiers::alt());
 
         test.assert_results(&["Err"][..]);
+    }
+
+    #[test]
+    fn test_u64_hex_form() {
+        let test = create_app2(35);
+        test.paste("0xFFFFFFFFFFFFFFFF");
+        test.input(EditorInputEvent::Right, InputModifiers::alt());
+
+        test.assert_results(&["FF FF FF FF FF FF FF FF"][..]);
+    }
+
+    #[test]
+    fn test_u64_bin_form() {
+        let test = create_app2(35);
+        test.paste("0xFFFFFFFFFFFFFFFF");
+        test.input(EditorInputEvent::Left, InputModifiers::alt());
+
+        test.assert_results(
+            &["11111111 11111111 11111111 11111111 11111111 11111111 11111111 11111111"][..],
+        );
+    }
+
+    #[test]
+    fn test_negative_num_bin_form() {
+        let test = create_app2(35);
+        test.paste("-256");
+        test.input(EditorInputEvent::Left, InputModifiers::alt());
+
+        test.assert_results(
+            &["11111111 11111111 11111111 11111111 11111111 11111111 11111111 00000000"][..],
+        );
+    }
+
+    #[test]
+    fn test_negative_num_hex_form() {
+        let test = create_app2(35);
+        test.paste("-256");
+        test.input(EditorInputEvent::Right, InputModifiers::alt());
+
+        test.assert_results(&["FF FF FF FF FF FF FF 00"][..]);
     }
 
     #[test]
@@ -10726,7 +12292,11 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
     #[test]
     fn test_matrix_renders_dots_on_gutter_on_every_line_it_takes() {
         let expected_char_at = |test: &BorrowCheckerFighter, at: usize| {
-            OutputMessage::RenderChar(test.get_render_data().result_gutter_x - 1, at, '…')
+            OutputMessage::RenderChar(RenderChar {
+                col: test.get_render_data().result_gutter_x - 1,
+                row: canvas_y(at as isize),
+                char: '…',
+            })
         };
 
         let test = create_app3(25, 35);
@@ -10752,9 +12322,55 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
     }
 
     #[test]
+    fn test_line_number_rendering_for_tall_rows() {
+        let test = create_app3(25, 35);
+        test.paste(
+            "1
+2
+3
+[0,0,0,0;0,0,0,0;0,0,0,0]
+
+asd",
+        );
+        let commands = &test.render_bucket().custom_commands[Layer::Text as usize];
+        let mut expected_text_buf: [char; 2] = ['0', '0'];
+        for i in 0..35 {
+            let rendered_num: u8 = i + 1;
+            let expected_text = if rendered_num < 10 {
+                expected_text_buf[0] = (b'0' + rendered_num) as char;
+                &expected_text_buf[0..1]
+            } else {
+                expected_text_buf[0] = (b'0' + (rendered_num / 10)) as char;
+                expected_text_buf[1] = (b'0' + (rendered_num % 10)) as char;
+                &expected_text_buf[..]
+            };
+            let expected_y_coord = if rendered_num < 4 {
+                rendered_num - 1
+            } else if rendered_num == 4 {
+                5 // this is sthe matrix row, it is vertically aligned
+            } else {
+                rendered_num + 3
+            };
+            assert_contains(
+                commands,
+                1,
+                OutputMessage::RenderUtf8Text(RenderUtf8TextMsg {
+                    text: expected_text,
+                    row: canvas_y(expected_y_coord as isize),
+                    column: 0,
+                }),
+            );
+        }
+    }
+
+    #[test]
     fn test_matrix_dots_are_not_rendered_sometimes() {
         let expected_char_at = |test: &BorrowCheckerFighter, at: usize| {
-            OutputMessage::RenderChar(test.get_render_data().result_gutter_x - 1, at, '…')
+            OutputMessage::RenderChar(RenderChar {
+                col: test.get_render_data().result_gutter_x - 1,
+                row: canvas_y(at as isize),
+                char: '…',
+            })
         };
 
         let test = create_app3(30, 35);
@@ -10896,14 +12512,22 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
         assert_contains(
             &test.render_bucket().custom_commands[Layer::AboveText as usize],
             1,
-            OutputMessage::RenderChar(18, 0, '▏'),
+            OutputMessage::RenderChar(RenderChar {
+                col: 18,
+                row: canvas_y(0),
+                char: '▏',
+            }),
         );
 
         test.input(EditorInputEvent::Char('7'), InputModifiers::none());
         assert_contains(
             &test.render_bucket().custom_commands[Layer::AboveText as usize],
             1,
-            OutputMessage::RenderChar(19, 0, '▏'),
+            OutputMessage::RenderChar(RenderChar {
+                col: 19,
+                row: canvas_y(0),
+                char: '▏',
+            }),
         );
     }
 
@@ -10935,5 +12559,714 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
         test.paste("    =5$2*x-2044923+/I2(397-293496(6[/7k9]/^*6490^)(5/j=");
         test.input(EditorInputEvent::Char('9'), InputModifiers::none());
         assert!(test.mut_vars()[0].is_none());
+    }
+
+    #[test]
+    fn test_modification_happens_on_selection() {
+        let test = create_app3(84, 36);
+        test.paste("asd");
+        assert!(test
+            .input(EditorInputEvent::Home, InputModifiers::shift())
+            .is_some())
+    }
+
+    #[test]
+    fn test_insert_closing_parenthesis_when_opening_paren_inserted() {
+        for (tested_opening_char, expected_closing_char) in
+            &[('(', ')'), ('[', ']'), ('{', '}'), ('\"', '\"')]
+        {
+            let tested_opening_char = *tested_opening_char;
+            let expected_closing_char = *expected_closing_char;
+            {
+                let test = create_app3(84, 36);
+                test.paste("");
+                test.input(
+                    EditorInputEvent::Char(tested_opening_char),
+                    InputModifiers::none(),
+                );
+                let mut expected_str = String::with_capacity(2);
+                expected_str.push(tested_opening_char);
+                expected_str.push(expected_closing_char);
+                assert_eq!(expected_str, test.get_editor_content());
+                assert_eq!(Pos::from_row_column(0, 1), test.get_cursor_pos());
+            }
+            {
+                if tested_opening_char == '[' || tested_opening_char == '\"' {
+                    continue; // because of matrix, it does not work as for the other chars
+                }
+                let test = create_app3(84, 36);
+                test.paste("");
+                let mut expected_str = String::with_capacity(20);
+                for i in 0..10 {
+                    test.input(
+                        EditorInputEvent::Char(tested_opening_char),
+                        InputModifiers::none(),
+                    );
+                    expected_str.clear();
+                    for _ in 0..i + 1 {
+                        expected_str.push(tested_opening_char);
+                    }
+                    for _ in 0..i + 1 {
+                        expected_str.push(expected_closing_char);
+                    }
+
+                    assert_eq!(expected_str, test.get_editor_content());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_removing_opening_parenthesis_removes_closing_as_well_if_they_are_neighbours() {
+        for (tested_opening_char, expected_closing_char) in
+            &[('(', ')'), ('[', ']'), ('{', '}'), ('\"', '\"')]
+        {
+            let tested_opening_char = *tested_opening_char;
+            let expected_closing_char = *expected_closing_char;
+            {
+                let test = create_app3(84, 36);
+
+                let mut pasted_str = String::with_capacity(2);
+                pasted_str.push(tested_opening_char);
+                pasted_str.push(expected_closing_char);
+
+                test.paste(&pasted_str);
+                test.input(EditorInputEvent::Left, InputModifiers::none());
+                test.input(EditorInputEvent::Backspace, InputModifiers::none());
+                assert_eq!("", &test.get_editor_content());
+                assert_eq!(Pos::from_row_column(0, 0), test.get_cursor_pos());
+            }
+            {
+                let test = create_app3(84, 36);
+
+                let mut pasted_str = String::with_capacity(2);
+                pasted_str.push(tested_opening_char);
+                pasted_str.push(expected_closing_char);
+
+                test.paste(&pasted_str);
+                test.input(EditorInputEvent::Backspace, InputModifiers::none());
+                assert_eq!(tested_opening_char.to_string(), test.get_editor_content());
+                assert_eq!(Pos::from_row_column(0, 1), test.get_cursor_pos());
+            }
+            {
+                let test = create_app3(84, 36);
+
+                let mut pasted_str = String::with_capacity(2);
+                pasted_str.push(tested_opening_char);
+                pasted_str.push(expected_closing_char);
+
+                test.paste(&pasted_str);
+                test.input(EditorInputEvent::Left, InputModifiers::none());
+                test.input(EditorInputEvent::Del, InputModifiers::none());
+                assert_eq!(tested_opening_char.to_string(), test.get_editor_content());
+                assert_eq!(Pos::from_row_column(0, 1), test.get_cursor_pos());
+            }
+            {
+                let test = create_app3(84, 36);
+
+                let mut pasted_str = String::with_capacity(2);
+                pasted_str.push(tested_opening_char);
+                pasted_str.push(expected_closing_char);
+
+                test.paste(&pasted_str);
+                test.input(EditorInputEvent::Left, InputModifiers::none());
+                test.input(EditorInputEvent::Left, InputModifiers::none());
+                test.input(EditorInputEvent::Del, InputModifiers::none());
+                assert_eq!(expected_closing_char.to_string(), test.get_editor_content());
+                assert_eq!(Pos::from_row_column(0, 0), test.get_cursor_pos());
+            }
+        }
+    }
+
+    #[test]
+    fn test_removing_opening_parenthesis_multiple_times() {
+        for (tested_opening_char, expected_closing_char) in &[('(', ')'), ('{', '}')] {
+            let tested_opening_char = *tested_opening_char;
+            let expected_closing_char = *expected_closing_char;
+            let test = create_app3(84, 36);
+            let mut expected_str = String::with_capacity(20);
+            test.paste("");
+            for i in 0..10 {
+                for _ in 0..i + 1 {
+                    test.input(
+                        EditorInputEvent::Char(tested_opening_char),
+                        InputModifiers::none(),
+                    );
+                }
+                {
+                    expected_str.clear();
+                    for _ in 0..i + 1 {
+                        expected_str.push(tested_opening_char);
+                    }
+                    for _ in 0..i + 1 {
+                        expected_str.push(expected_closing_char);
+                    }
+                    assert_eq!(test.get_editor_content(), expected_str);
+                }
+                for _ in 0..i + 1 {
+                    test.input(EditorInputEvent::Backspace, InputModifiers::none());
+                }
+                assert_eq!(&test.get_editor_content(), "");
+                assert_eq!(Pos::from_row_column(0, 0), test.get_cursor_pos());
+            }
+        }
+    }
+
+    #[test]
+    fn test_removing_opening_parenthesis_removes_only_inside_content() {
+        let mut expected_str = String::with_capacity(2);
+        for (tested_opening_char, expected_closing_char) in
+            &[('(', ')'), ('[', ']'), ('{', '}'), ('\"', '\"')]
+        {
+            let tested_opening_char = *tested_opening_char;
+            let expected_closing_char = *expected_closing_char;
+            let test = create_app3(84, 36);
+            test.paste("");
+            test.input(
+                EditorInputEvent::Char(tested_opening_char),
+                InputModifiers::none(),
+            );
+            test.input(EditorInputEvent::Char('a'), InputModifiers::none());
+            test.input(EditorInputEvent::Char('s'), InputModifiers::none());
+            test.input(EditorInputEvent::Char('d'), InputModifiers::none());
+
+            test.input(EditorInputEvent::Left, InputModifiers::shift());
+            test.input(EditorInputEvent::Left, InputModifiers::shift());
+            test.input(EditorInputEvent::Left, InputModifiers::shift());
+
+            test.input(EditorInputEvent::Backspace, InputModifiers::none());
+
+            expected_str.clear();
+            expected_str.push(tested_opening_char);
+            expected_str.push(expected_closing_char);
+            assert_eq!(expected_str, test.get_editor_content());
+            assert_eq!(Pos::from_row_column(0, 1), test.get_cursor_pos());
+        }
+    }
+
+    #[test]
+    fn test_parenthesis_completion_1() {
+        let test = create_app3(84, 36);
+        test.paste("");
+        test.input(EditorInputEvent::Char('{'), InputModifiers::none());
+        test.input(EditorInputEvent::Char('{'), InputModifiers::none());
+        test.input(EditorInputEvent::Char('('), InputModifiers::none());
+        test.input(EditorInputEvent::Char('('), InputModifiers::none());
+        assert_eq!("{{(())}}", &test.get_editor_content());
+        assert_eq!(Pos::from_row_column(0, 4), test.get_cursor_pos());
+    }
+
+    #[test]
+    fn test_parens_are_inserted_only_if_next_char_is_whitspace() {
+        let mut expected_str = String::with_capacity(2);
+        for (tested_opening_char, _expected_closing_char) in
+            &[('(', ')'), ('[', ']'), ('{', '}'), ('\"', '\"')]
+        {
+            let test = create_app3(84, 36);
+            test.paste("asd");
+            test.input(EditorInputEvent::Home, InputModifiers::none());
+            test.input(
+                EditorInputEvent::Char(*tested_opening_char),
+                InputModifiers::none(),
+            );
+
+            expected_str.clear();
+            expected_str.push(*tested_opening_char);
+            expected_str.push_str("asd");
+            assert_eq!(expected_str, test.get_editor_content());
+        }
+    }
+
+    #[test]
+    fn test_insert_closing_parenthesis_around_selected_text() {
+        for (tested_opening_char, expected_closing_char) in
+            &[('(', ')'), ('[', ']'), ('{', '}'), ('\"', '\"')]
+        {
+            let tested_opening_char = *tested_opening_char;
+            let expected_closing_char = *expected_closing_char;
+            {
+                let test = create_app3(84, 36);
+                test.paste("asd");
+                test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
+                test.input(
+                    EditorInputEvent::Char(tested_opening_char),
+                    InputModifiers::none(),
+                );
+
+                let mut expected_str = String::with_capacity(2);
+                expected_str.push(tested_opening_char);
+                expected_str.push_str("asd");
+                expected_str.push(expected_closing_char);
+                assert_eq!(expected_str, test.get_editor_content());
+                assert_eq!(
+                    test.get_selection(),
+                    Selection::range(Pos::from_row_column(0, 1), Pos::from_row_column(0, 4)),
+                );
+            }
+            {
+                let test = create_app3(84, 36);
+                test.paste("asd");
+                test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
+                let mut expected_str = String::with_capacity(20);
+                for i in 0..10 {
+                    test.input(
+                        EditorInputEvent::Char(tested_opening_char),
+                        InputModifiers::none(),
+                    );
+                    expected_str.clear();
+                    for _ in 0..i + 1 {
+                        expected_str.push(tested_opening_char);
+                    }
+                    expected_str.push_str("asd");
+                    for _ in 0..i + 1 {
+                        expected_str.push(expected_closing_char);
+                    }
+
+                    assert_eq!(expected_str, test.get_editor_content());
+                    assert_eq!(
+                        test.get_selection(),
+                        Selection::range(
+                            Pos::from_row_column(0, i + 1),
+                            Pos::from_row_column(0, 3 + (i + 1))
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_insert_closing_parenthesis_around_multiline_selected_text() {
+        for (tested_opening_char, expected_closing_char) in
+            &[('(', ')'), ('[', ']'), ('{', '}'), ('\"', '\"')]
+        {
+            let tested_opening_char = *tested_opening_char;
+            let expected_closing_char = *expected_closing_char;
+            {
+                let test = create_app3(84, 36);
+                test.paste("asd\nbsd");
+                test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
+                test.input(
+                    EditorInputEvent::Char(tested_opening_char),
+                    InputModifiers::none(),
+                );
+
+                let mut expected_str = String::with_capacity(2);
+                expected_str.push(tested_opening_char);
+                expected_str.push_str("asd\nbsd");
+                expected_str.push(expected_closing_char);
+                assert_eq!(expected_str, test.get_editor_content());
+                assert_eq!(
+                    test.get_selection(),
+                    Selection::range(Pos::from_row_column(0, 1), Pos::from_row_column(1, 3)),
+                );
+            }
+            {
+                let test = create_app3(84, 36);
+                test.paste("asd\nbsd");
+                test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
+                let mut expected_str = String::with_capacity(20);
+                for i in 0..10 {
+                    test.input(
+                        EditorInputEvent::Char(tested_opening_char),
+                        InputModifiers::none(),
+                    );
+                    expected_str.clear();
+                    for _ in 0..i + 1 {
+                        expected_str.push(tested_opening_char);
+                    }
+                    expected_str.push_str("asd\nbsd");
+                    for _ in 0..i + 1 {
+                        expected_str.push(expected_closing_char);
+                    }
+
+                    assert_eq!(expected_str, test.get_editor_content());
+                    assert_eq!(
+                        test.get_selection(),
+                        Selection::range(
+                            Pos::from_row_column(0, i + 1),
+                            Pos::from_row_column(1, 3)
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_insert_closing_parenthesis_around_multiline_selected_text_backward_selection() {
+        for (tested_opening_char, expected_closing_char) in
+            &[('(', ')'), ('[', ']'), ('{', '}'), ('\"', '\"')]
+        {
+            let tested_opening_char = *tested_opening_char;
+            let expected_closing_char = *expected_closing_char;
+            {
+                let test = create_app3(84, 36);
+                test.paste("asd\nbsd");
+                test.input(EditorInputEvent::Home, InputModifiers::shift());
+                test.input(EditorInputEvent::Up, InputModifiers::shift());
+                test.input(
+                    EditorInputEvent::Char(tested_opening_char),
+                    InputModifiers::none(),
+                );
+
+                let mut expected_str = String::with_capacity(2);
+                expected_str.push(tested_opening_char);
+                expected_str.push_str("asd\nbsd");
+                expected_str.push(expected_closing_char);
+                assert_eq!(expected_str, test.get_editor_content());
+                assert_eq!(
+                    test.get_selection(),
+                    Selection::range(Pos::from_row_column(1, 3), Pos::from_row_column(0, 1)),
+                );
+            }
+            {
+                let test = create_app3(84, 36);
+                test.paste("asd\nbsd");
+                test.input(EditorInputEvent::Home, InputModifiers::shift());
+                test.input(EditorInputEvent::Up, InputModifiers::shift());
+
+                let mut expected_str = String::with_capacity(20);
+                for i in 0..10 {
+                    test.input(
+                        EditorInputEvent::Char(tested_opening_char),
+                        InputModifiers::none(),
+                    );
+                    expected_str.clear();
+                    for _ in 0..i + 1 {
+                        expected_str.push(tested_opening_char);
+                    }
+                    expected_str.push_str("asd\nbsd");
+                    for _ in 0..i + 1 {
+                        expected_str.push(expected_closing_char);
+                    }
+
+                    assert_eq!(expected_str, test.get_editor_content());
+                    assert_eq!(
+                        test.get_selection(),
+                        Selection::range(
+                            Pos::from_row_column(1, 3),
+                            Pos::from_row_column(0, i + 1),
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_paren_competion_and_mat_editing_combo() {
+        let test = create_app3(84, 36);
+        test.paste("");
+        test.input(EditorInputEvent::Char('['), InputModifiers::none());
+        test.input(EditorInputEvent::Char('('), InputModifiers::none());
+        test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        // TODO it should support closing paren insertion "[(1)]"
+        assert_eq!(&test.get_editor_content(), "[(1]");
+    }
+
+    #[test]
+    fn test_paren_removal_bug_when_cursor_eol() {
+        let test = create_app3(84, 36);
+        test.paste("\n\na");
+        test.input(EditorInputEvent::PageUp, InputModifiers::none());
+        test.input(EditorInputEvent::Char('['), InputModifiers::none());
+        test.input(EditorInputEvent::Del, InputModifiers::none());
+        test.input(EditorInputEvent::Backspace, InputModifiers::none());
+        assert_eq!(&test.get_editor_content(), "\n\na");
+    }
+
+    #[test]
+    fn test_paren_competion_and_mat_editing_combo2() {
+        let test = create_app3(84, 36);
+        test.paste("");
+        test.input(EditorInputEvent::Char('['), InputModifiers::none());
+        test.input(EditorInputEvent::Backspace, InputModifiers::none());
+        assert_eq!(&test.get_editor_content(), "");
+
+        test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+        assert_eq!(&test.get_editor_content(), "1");
+    }
+
+    #[test]
+    fn test_paren_competion_and_mat_editing_combo3() {
+        let test = create_app3(84, 36);
+        test.paste("");
+        test.input(EditorInputEvent::Char('['), InputModifiers::none());
+        test.input(EditorInputEvent::Char('a'), InputModifiers::none());
+        test.input(EditorInputEvent::Left, InputModifiers::shift());
+        test.input(EditorInputEvent::Backspace, InputModifiers::none());
+        assert_eq!(&test.get_editor_content(), "[]");
+    }
+
+    #[test]
+    fn test_paren_competion_and_mat_editing_combo4() {
+        let test = create_app3(84, 36);
+        test.paste("");
+        test.input(EditorInputEvent::Char('['), InputModifiers::none());
+        test.input(EditorInputEvent::Char('a'), InputModifiers::none());
+        test.input(EditorInputEvent::Left, InputModifiers::shift());
+        test.input(EditorInputEvent::Del, InputModifiers::none());
+        assert_eq!(&test.get_editor_content(), "[]");
+    }
+
+    #[test]
+    fn test_single_unit_in_denom_output_format() {
+        let test = create_app3(84, 36);
+        test.paste("50 000 / year");
+        test.assert_results(&["50 000 / year"][..]);
+    }
+
+    #[test]
+    fn test_units_can_be_applied_on_linerefs() {
+        let test = create_app3(84, 36);
+        test.paste("12\n&[1] m");
+        test.assert_results(&["12", "12 m"][..]);
+    }
+
+    #[test]
+    fn test_units_right_after_each_other() {
+        {
+            let test = create_app3(84, 36);
+            test.paste("var = 12 byte\nvar kilobyte");
+            test.assert_results(&["12 bytes", "Err"][..]);
+        }
+        {
+            let test = create_app3(84, 36);
+            test.paste("var = 12 byte\nvar ok kilobyte");
+            test.assert_results(&["12 bytes", "12 bytes"][..]);
+        }
+    }
+
+    #[test]
+    fn test_paren_highlighting() {
+        let test = create_app3(84, 36);
+        test.paste("asdasd hehe(12)");
+        test.input(EditorInputEvent::Left, InputModifiers::none());
+        let render_bucket = &test.render_bucket().custom_commands[Layer::Text as usize];
+        assert_contains(
+            render_bucket,
+            2,
+            OutputMessage::SetColor(THEMES[0].parenthesis),
+        );
+        assert_contains(
+            render_bucket,
+            2,
+            OutputMessage::FollowingTextCommandsAreHeaders(true),
+        );
+        assert_contains(
+            render_bucket,
+            2,
+            OutputMessage::FollowingTextCommandsAreHeaders(false),
+        );
+        assert_contains(
+            render_bucket,
+            1,
+            OutputMessage::RenderChar(RenderChar {
+                col: 11 + test.get_render_data().left_gutter_width,
+                row: canvas_y(0),
+                char: '(',
+            }),
+        );
+
+        assert_contains(
+            render_bucket,
+            1,
+            OutputMessage::RenderChar(RenderChar {
+                col: 14 + test.get_render_data().left_gutter_width,
+                row: canvas_y(0),
+                char: ')',
+            }),
+        );
+    }
+
+    #[test]
+    fn test_paren_highlighting2() {
+        let test = create_app3(84, 36);
+        test.paste("asdasd hehe((12))");
+        test.input(EditorInputEvent::Left, InputModifiers::none());
+        test.input(EditorInputEvent::Left, InputModifiers::none());
+        let render_bucket = &test.render_bucket().custom_commands[Layer::Text as usize];
+        assert_contains(
+            render_bucket,
+            1,
+            OutputMessage::RenderChar(RenderChar {
+                col: 12 + test.get_render_data().left_gutter_width,
+                row: canvas_y(0),
+                char: '(',
+            }),
+        );
+
+        assert_contains(
+            render_bucket,
+            1,
+            OutputMessage::RenderChar(RenderChar {
+                col: 15 + test.get_render_data().left_gutter_width,
+                row: canvas_y(0),
+                char: ')',
+            }),
+        );
+    }
+
+    #[test]
+    fn test_parenthesis_must_not_rendered_outside_of_editor() {
+        let test = create_app3(51, 36);
+        test.paste("1000 (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)");
+        // there is enough space, everything is rendered
+        let render_bucket = &test.render_bucket().parenthesis;
+        assert_eq!(render_bucket.iter().filter(|it| it.char == '(').count(), 1);
+        assert_eq!(render_bucket.iter().filter(|it| it.char == ')').count(), 1);
+
+        // put the cursor right after '1000'
+        test.input(EditorInputEvent::Home, InputModifiers::none());
+        test.input(EditorInputEvent::Right, InputModifiers::ctrl());
+
+        // the right parenth is on the scrollbar column, no render
+        test.input(EditorInputEvent::Char('0'), InputModifiers::none());
+        let render_bucket = &test.render_bucket().parenthesis;
+        assert_eq!(render_bucket.iter().filter(|it| it.char == '(').count(), 1);
+        assert_eq!(render_bucket.iter().filter(|it| it.char == ')').count(), 0);
+
+        // the right parenth is on the right gutter, no render
+        test.input(EditorInputEvent::Char('0'), InputModifiers::none());
+        let render_bucket = &test.render_bucket().parenthesis;
+        assert_eq!(render_bucket.iter().filter(|it| it.char == '(').count(), 1);
+        assert_eq!(render_bucket.iter().filter(|it| it.char == ')').count(), 0);
+
+        // the right parenth is on the result panel, no render
+        test.input(EditorInputEvent::Char('0'), InputModifiers::none());
+        let render_bucket = &test.render_bucket().parenthesis;
+        assert_eq!(render_bucket.iter().filter(|it| it.char == '(').count(), 1);
+        assert_eq!(render_bucket.iter().filter(|it| it.char == ')').count(), 0);
+
+        // the left parenth is on the right gutter, no render
+        for _ in 0..13 {
+            test.input(EditorInputEvent::Char('0'), InputModifiers::none());
+        }
+        let render_bucket = &test.render_bucket().parenthesis;
+        assert_eq!(render_bucket.iter().filter(|it| it.char == '(').count(), 0);
+        assert_eq!(render_bucket.iter().filter(|it| it.char == ')').count(), 0);
+
+        // the left parenth is on the result panel gutter, no render
+        test.input(EditorInputEvent::Char('0'), InputModifiers::none());
+        let render_bucket = &test.render_bucket().parenthesis;
+        assert_eq!(render_bucket.iter().filter(|it| it.char == '(').count(), 0);
+        assert_eq!(render_bucket.iter().filter(|it| it.char == ')').count(), 0);
+    }
+
+    #[test]
+    fn test_leave_matrix_text_insertion_overflow() {
+        let test = create_app3(51, 36);
+        test.paste(&("0".repeat(MAX_EDITOR_WIDTH - 10)));
+
+        test.input(EditorInputEvent::Char('['), InputModifiers::none());
+        for _ in 0..20 {
+            test.input(EditorInputEvent::Char('a'), InputModifiers::none());
+        }
+        // it commits the matrix editing and tries to write its content back
+        // which overflows
+        assert!(test.app().matrix_editing.is_some());
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        assert!(test.app().matrix_editing.is_none());
+        // first, it should not panic
+        assert_eq!(test.get_render_data().get_rendered_height(content_y(0)), 1);
+        assert_eq!(test.get_render_data().get_rendered_height(content_y(1)), 0);
+    }
+
+    #[test]
+    fn test_leave_matrix_text_insertion_overflow2() {
+        let test = create_app3(51, 36);
+        test.paste(&("0".repeat(MAX_EDITOR_WIDTH - 10)));
+
+        test.input(EditorInputEvent::Char('['), InputModifiers::none());
+        for _ in 0..20 {
+            test.input(EditorInputEvent::Char('a'), InputModifiers::none());
+        }
+        assert!(test.app().matrix_editing.is_some());
+        // it commits the matrix editing and tries to write its content back
+        // which overflows
+        test.input(EditorInputEvent::Del, InputModifiers::none());
+        assert!(test.app().matrix_editing.is_none());
+        // first, it should not panic
+        assert_eq!(test.get_render_data().get_rendered_height(content_y(0)), 1);
+        assert_eq!(test.get_render_data().get_rendered_height(content_y(1)), 0);
+    }
+
+    #[test]
+    fn test_leave_matrix_text_insertion_overflow3() {
+        let test = create_app3(51, 36);
+        test.paste(&("0".repeat(MAX_EDITOR_WIDTH - 10)));
+
+        test.input(EditorInputEvent::Char('['), InputModifiers::none());
+        for _ in 0..20 {
+            test.input(EditorInputEvent::Char('a'), InputModifiers::none());
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+        }
+        assert!(test.app().matrix_editing.is_some());
+        // it commits the matrix editing and tries to write its content back
+        // which overflows
+        test.input(EditorInputEvent::Backspace, InputModifiers::none());
+        assert!(test.app().matrix_editing.is_none());
+        // first, it should not panic
+        assert_eq!(test.get_render_data().get_rendered_height(content_y(0)), 1);
+        assert_eq!(test.get_render_data().get_rendered_height(content_y(1)), 0);
+    }
+
+    #[test]
+    fn test_leave_matrix_text_insertion_overflow4() {
+        let test = create_app3(51, 36);
+        test.paste(&("0".repeat(MAX_EDITOR_WIDTH - 10)));
+        test.input(EditorInputEvent::Home, InputModifiers::none());
+        test.input(EditorInputEvent::Char(' '), InputModifiers::none());
+        test.input(EditorInputEvent::Left, InputModifiers::none());
+        // inserting a matrix before a long text,
+        test.input(EditorInputEvent::Char('['), InputModifiers::none());
+        for _ in 0..20 {
+            test.input(EditorInputEvent::Char('a'), InputModifiers::none());
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+        }
+        // it commits the matrix editing and tries to write its content back
+        // which overflows
+        test.input(EditorInputEvent::Backspace, InputModifiers::none());
+        assert!(test.app().matrix_editing.is_none());
+        // first, it should not panic
+        assert_eq!(test.get_render_data().get_rendered_height(content_y(0)), 1);
+        assert_eq!(test.get_render_data().get_rendered_height(content_y(1)), 0);
+    }
+
+    #[test]
+    fn test_leave_matrix_shorter_than_it_was_with_del() {
+        let test = create_app3(51, 36);
+        test.paste("[1+2+3]");
+        test.input(EditorInputEvent::Left, InputModifiers::none());
+        assert!(test.app().matrix_editing.is_some());
+
+        test.input(EditorInputEvent::Del, InputModifiers::none());
+        test.input(EditorInputEvent::Del, InputModifiers::none());
+        assert!(test.app().matrix_editing.is_none());
+    }
+
+    #[test]
+    fn test_removing_matrix_closing_bracket() {
+        let test = create_app3(51, 36);
+        test.paste("");
+        test.input(EditorInputEvent::Char('['), InputModifiers::none());
+        test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+        test.input(EditorInputEvent::Char('2'), InputModifiers::none());
+        test.input(EditorInputEvent::Char('3'), InputModifiers::none());
+        test.input(EditorInputEvent::Del, InputModifiers::none());
+        assert_eq!(test.get_editor_content(), "[123");
+    }
+
+    #[test]
+    fn asd() {
+        let test = create_app3(51, 36);
+        test.paste("[1,2,3,4]");
+        test.input(EditorInputEvent::Left, InputModifiers::none());
+        test.input(EditorInputEvent::Backspace, InputModifiers::none());
+        test.input(EditorInputEvent::Backspace, InputModifiers::none());
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        assert_eq!(test.get_editor_content(), "[1,2,3,]");
     }
 }

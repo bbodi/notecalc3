@@ -24,6 +24,7 @@ let chance_tab = 0;
 let chance_insert_lineref = 0;
 
 let event_history = [];
+let sim_time = 0;
 
 function random_float(min, max) {
     return Math.random() * (max - min) + min;
@@ -54,7 +55,6 @@ function init() {
     chance_undo = rnd_eql();
     chance_tab = rnd_eql();
     chance_insert_lineref = rnd_eql();
-
 }
 
 function toggle_fuzzing() {
@@ -217,6 +217,9 @@ function simulate_input() {
             return false;
         }
         content_before_event = null;
+
+        sim_time += 100;
+        wasm_bindgen.handle_time(app_ptr, sim_time);
         if (event_history.length > 1000) {
             console.log("FUZZING RESTART");
             // remove the tab

@@ -71,6 +71,14 @@ __exports.handle_resize = function(app_ptr, new_client_width) {
     wasm.handle_resize(app_ptr, new_client_width);
 };
 
+/**
+* @param {number} app_ptr
+* @param {number} theme_index
+*/
+__exports.set_theme = function(app_ptr, theme_index) {
+    wasm.set_theme(app_ptr, theme_index);
+};
+
 let cachegetInt32Memory0 = null;
 function getInt32Memory0() {
     if (cachegetInt32Memory0 === null || cachegetInt32Memory0.buffer !== wasm.memory.buffer) {
@@ -270,13 +278,6 @@ __exports.handle_paste = function(app_ptr, input) {
 */
 __exports.reparse_everything = function(app_ptr) {
     wasm.reparse_everything(app_ptr);
-};
-
-/**
-* @param {number} app_ptr
-*/
-__exports.rerender = function(app_ptr) {
-    wasm.rerender(app_ptr);
 };
 
 /**
