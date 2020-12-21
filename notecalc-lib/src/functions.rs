@@ -110,7 +110,7 @@ fn fn_const<'text_ptr>(
     const_value: Decimal,
 ) -> bool {
     if arg_count != 0 {
-        for i in 0..arg_count {
+        for i in 0..arg_count.min(stack.len()) {
             stack[stack.len() - 1 - i].set_token_error_flag(tokens);
         }
         return false;
@@ -134,6 +134,7 @@ fn fn_single_param_f64<'text_ptr, F>(
 where
     F: Fn(f64) -> f64,
 {
+    let arg_count = arg_count.min(stack.len());
     if arg_count == 0 {
         Token::set_token_error_flag_by_index(fn_token_index, tokens);
         false
@@ -178,6 +179,7 @@ fn fn_double_param_f64<'text_ptr, F>(
 where
     F: Fn(f64, f64) -> f64,
 {
+    let arg_count = arg_count.min(stack.len());
     if arg_count < 2 {
         Token::set_token_error_flag_by_index(fn_token_index, tokens);
         false
@@ -235,6 +237,7 @@ fn fn_f64_rad_to_num<'text_ptr, F>(
 where
     F: Fn(f64) -> f64,
 {
+    let arg_count = arg_count.min(stack.len());
     if arg_count < 1 {
         Token::set_token_error_flag_by_index(fn_token_index, tokens);
         false

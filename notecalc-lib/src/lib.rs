@@ -442,7 +442,7 @@ pub mod helper {
         }
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     pub struct GlobalRenderData {
         pub client_height: usize,
         pub scroll_y: usize,
@@ -566,6 +566,7 @@ pub mod helper {
         }
     }
 
+    #[derive(Debug)]
     pub struct PerLineRenderData {
         pub editor_x: usize,
         pub editor_y: ContentIndex,
@@ -1044,8 +1045,8 @@ impl Default for LineData {
 }
 
 pub struct MatrixEditing {
-    editor_content: EditorContent<usize>,
-    editor: Editor,
+    pub editor_content: EditorContent<usize>,
+    pub editor: Editor,
     row_count: usize,
     col_count: usize,
     current_cell: Pos,
@@ -1477,6 +1478,13 @@ impl NoteCalcApp {
             data.line_id = i + 1;
         }
         self.line_id_generator = self.editor_content.line_count() + 1;
+
+        self.matrix_editing = None;
+        self.line_reference_chooser = None;
+        self.mouse_state = None;
+        self.mouse_hover_type = MouseHoverType::Normal;
+        self.updated_line_ref_obj_indices.clear();
+        self.clipboard = None;
 
         for r in results.as_mut_slice() {
             *r = Ok(None)
@@ -2816,13 +2824,22 @@ impl NoteCalcApp {
         //
         let prev_selection = self.editor.get_selection();
         let prev_row = self.editor.get_selection().get_cursor_pos().row;
+        let mut refactor_me = false;
         let modif = if self.matrix_editing.is_none() && modifiers.alt {
             handle_input_with_alt(&mut *self, input)
-        } else if self.is_matrix_editing_or_need_to_create_one(input, _readonly_(editor_objs)) {
+        } else if self.is_matrix_editing_or_need_to_create_one(
+            input,
+            _readonly_(editor_objs),
+            &mut refactor_me,
+        ) {
             self.handle_matrix_editor_input(input, modifiers);
             if self.matrix_editing.is_none() {
                 // user left a matrix
-                Some(RowModificationType::SingleLine(prev_row))
+                // TODO sometimes leaving a matrix inserts too many chars in a row
+                // so it overflows, so we have to reparse the consecutive lines as well.
+                // The real solution for it is to allow "unlimited" line width
+                //Some(RowModificationType::SingleLine(prev_row))
+                Some(RowModificationType::AllLinesFrom(prev_row))
             } else {
                 if modifiers.alt {
                     let y = content_y(prev_row);
@@ -2887,6 +2904,12 @@ impl NoteCalcApp {
                         .set_selection_save_col(Selection::single_r_c(MAX_LINE_COUNT - 1, 0));
                 }
             }
+
+            let modif_type = if refactor_me {
+                Some(RowModificationType::AllLinesFrom(0))
+            } else {
+                modif_type
+            };
 
             if modif_type.is_none() {
                 // it is possible to step into a matrix only through navigation
@@ -3567,6 +3590,7 @@ impl NoteCalcApp {
         &mut self,
         input: EditorInputEvent,
         editor_objs: &EditorObjects,
+        refactor_me: &mut bool,
     ) -> bool {
         // either there is an active matrix editing, or the cursor is inside a matrix and
         // we have to create the active matrix editing then
@@ -3576,9 +3600,9 @@ impl NoteCalcApp {
             if matrix_edit.row_count == 1
                 && !matrix_edit.editor.get_selection().is_range()
                 && matrix_edit.editor.is_cursor_at_beginning()
+                && matrix_edit.current_cell.column == 0
                 && input == EditorInputEvent::Backspace
             {
-                // let the outer code remove the '['
                 let row = matrix_edit.row_index.as_usize();
                 let col = matrix_edit.start_text_index;
                 end_matrix_editing(
@@ -3587,6 +3611,8 @@ impl NoteCalcApp {
                     &mut self.editor_content,
                     Some(Pos::from_row_column(row, col + 1)),
                 );
+                // let the outer code remove the '['
+                *refactor_me = true;
                 return false;
             } else if matrix_edit.row_count == 1
                 && !matrix_edit.editor.get_selection().is_range()
@@ -3595,15 +3621,17 @@ impl NoteCalcApp {
                     .is_cursor_at_eol(&matrix_edit.editor_content)
                 && input == EditorInputEvent::Del
             {
-                // let the outer code remove the '['
-                let row = matrix_edit.row_index.as_usize();
-                let col = matrix_edit.end_text_index;
                 end_matrix_editing(
                     &mut self.matrix_editing,
                     &mut self.editor,
                     &mut self.editor_content,
-                    Some(Pos::from_row_column(row, col - 1)),
+                    None,
                 );
+                self.editor.set_selection_save_col(Selection::single(
+                    self.editor.get_selection().get_cursor_pos().with_prev_col(),
+                ));
+                // let the outer code remove the ']'
+                *refactor_me = true;
                 return false;
             }
             return true;
@@ -4743,7 +4771,7 @@ fn render_tokens<'text_ptr>(
                 | TokenType::Header
                 | TokenType::NumberLiteral(_)
                 | TokenType::Operator(_)
-                | TokenType::Unit(_)
+                | TokenType::Unit(_, _)
                 | TokenType::NumberErr => {
                     simple_draw_normal(r, gr, render_buckets, editor_objects, token, theme);
                     token_index += 1;
@@ -6060,8 +6088,7 @@ fn draw_token<'text_ptr>(
             TokenType::LineReference { .. } => &mut render_buckets.variable,
             TokenType::NumberLiteral(_) => &mut render_buckets.numbers,
             TokenType::NumberErr => &mut render_buckets.number_errors,
-            TokenType::Operator(OperatorTokenType::ApplyUnit) => &mut render_buckets.units,
-            TokenType::Unit(_) => &mut render_buckets.units,
+            TokenType::Unit(_, _) => &mut render_buckets.units,
             TokenType::Operator(OperatorTokenType::ParenClose) => {
                 if current_editor_width <= render_x {
                     return;
@@ -6474,23 +6501,38 @@ pub fn end_matrix_editing(
         }
     }
     concat.push(']');
-    let selection = Selection::range(
-        Pos::from_row_column(mat_editor.row_index.as_usize(), mat_editor.start_text_index),
-        Pos::from_row_column(mat_editor.row_index.as_usize(), mat_editor.end_text_index),
-    );
-    editor.set_selection_save_col(selection);
     // TODO: máshogy oldd meg, mert ez modositja az undo stacket is
     // és az miért baj, legalább tudom ctrl z-zni a mátrix edition-t
-    editor.handle_input_undoable(
-        EditorInputEvent::Del,
-        InputModifiers::none(),
-        editor_content,
-    );
-    editor.insert_text_undoable(&concat, editor_content);
+
+    // TODO: remove width limitation and allow it
+
+    if editor_content.line_len(mat_editor.row_index.as_usize()) + concat.len()
+        - (mat_editor.end_text_index - mat_editor.start_text_index)
+        < MAX_EDITOR_WIDTH
+    {
+        let selection = Selection::range(
+            Pos::from_row_column(mat_editor.row_index.as_usize(), mat_editor.start_text_index),
+            Pos::from_row_column(mat_editor.row_index.as_usize(), mat_editor.end_text_index),
+        );
+        editor.set_selection_save_col(selection);
+        editor.handle_input_undoable(
+            EditorInputEvent::Del,
+            InputModifiers::none(),
+            editor_content,
+        );
+        // TODO: it can overflow, reasuling in AllLinesFrom..
+        editor.insert_text_undoable(&concat, editor_content);
+    }
     *matrix_editing = None;
 
     if let Some(new_cursor_pos) = new_cursor_pos {
-        editor.set_selection_save_col(Selection::single(new_cursor_pos));
+        editor.set_selection_save_col(Selection::single(
+            new_cursor_pos.with_column(
+                new_cursor_pos
+                    .column
+                    .min(editor_content.line_len(new_cursor_pos.row) - 1),
+            ),
+        ));
     }
     editor.blink_cursor();
 }
@@ -13068,18 +13110,6 @@ asd",
     }
 
     #[test]
-    fn asd() {
-        let test = create_app3(51, 36);
-        test.paste("1+e()^100");
-        // test.paste(
-        //     "halflife = 1.5 years
-        // decayconst = ln(2)/halflife
-        // n0 = 1 mol
-        // n0*e()^(decayconst*100 years)",
-        // );
-    }
-
-    #[test]
     fn test_parenthesis_must_not_rendered_outside_of_editor() {
         let test = create_app3(51, 36);
         test.paste("1000 (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)");
@@ -13123,5 +13153,120 @@ asd",
         let render_bucket = &test.render_bucket().parenthesis;
         assert_eq!(render_bucket.iter().filter(|it| it.char == '(').count(), 0);
         assert_eq!(render_bucket.iter().filter(|it| it.char == ')').count(), 0);
+    }
+
+    #[test]
+    fn test_leave_matrix_text_insertion_overflow() {
+        let test = create_app3(51, 36);
+        test.paste(&("0".repeat(MAX_EDITOR_WIDTH - 10)));
+
+        test.input(EditorInputEvent::Char('['), InputModifiers::none());
+        for _ in 0..20 {
+            test.input(EditorInputEvent::Char('a'), InputModifiers::none());
+        }
+        // it commits the matrix editing and tries to write its content back
+        // which overflows
+        assert!(test.app().matrix_editing.is_some());
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        assert!(test.app().matrix_editing.is_none());
+        // first, it should not panic
+        assert_eq!(test.get_render_data().get_rendered_height(content_y(0)), 1);
+        assert_eq!(test.get_render_data().get_rendered_height(content_y(1)), 0);
+    }
+
+    #[test]
+    fn test_leave_matrix_text_insertion_overflow2() {
+        let test = create_app3(51, 36);
+        test.paste(&("0".repeat(MAX_EDITOR_WIDTH - 10)));
+
+        test.input(EditorInputEvent::Char('['), InputModifiers::none());
+        for _ in 0..20 {
+            test.input(EditorInputEvent::Char('a'), InputModifiers::none());
+        }
+        assert!(test.app().matrix_editing.is_some());
+        // it commits the matrix editing and tries to write its content back
+        // which overflows
+        test.input(EditorInputEvent::Del, InputModifiers::none());
+        assert!(test.app().matrix_editing.is_none());
+        // first, it should not panic
+        assert_eq!(test.get_render_data().get_rendered_height(content_y(0)), 1);
+        assert_eq!(test.get_render_data().get_rendered_height(content_y(1)), 0);
+    }
+
+    #[test]
+    fn test_leave_matrix_text_insertion_overflow3() {
+        let test = create_app3(51, 36);
+        test.paste(&("0".repeat(MAX_EDITOR_WIDTH - 10)));
+
+        test.input(EditorInputEvent::Char('['), InputModifiers::none());
+        for _ in 0..20 {
+            test.input(EditorInputEvent::Char('a'), InputModifiers::none());
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+        }
+        assert!(test.app().matrix_editing.is_some());
+        // it commits the matrix editing and tries to write its content back
+        // which overflows
+        test.input(EditorInputEvent::Backspace, InputModifiers::none());
+        assert!(test.app().matrix_editing.is_none());
+        // first, it should not panic
+        assert_eq!(test.get_render_data().get_rendered_height(content_y(0)), 1);
+        assert_eq!(test.get_render_data().get_rendered_height(content_y(1)), 0);
+    }
+
+    #[test]
+    fn test_leave_matrix_text_insertion_overflow4() {
+        let test = create_app3(51, 36);
+        test.paste(&("0".repeat(MAX_EDITOR_WIDTH - 10)));
+        test.input(EditorInputEvent::Home, InputModifiers::none());
+        test.input(EditorInputEvent::Char(' '), InputModifiers::none());
+        test.input(EditorInputEvent::Left, InputModifiers::none());
+        // inserting a matrix before a long text,
+        test.input(EditorInputEvent::Char('['), InputModifiers::none());
+        for _ in 0..20 {
+            test.input(EditorInputEvent::Char('a'), InputModifiers::none());
+            test.input(EditorInputEvent::Left, InputModifiers::none());
+        }
+        // it commits the matrix editing and tries to write its content back
+        // which overflows
+        test.input(EditorInputEvent::Backspace, InputModifiers::none());
+        assert!(test.app().matrix_editing.is_none());
+        // first, it should not panic
+        assert_eq!(test.get_render_data().get_rendered_height(content_y(0)), 1);
+        assert_eq!(test.get_render_data().get_rendered_height(content_y(1)), 0);
+    }
+
+    #[test]
+    fn test_leave_matrix_shorter_than_it_was_with_del() {
+        let test = create_app3(51, 36);
+        test.paste("[1+2+3]");
+        test.input(EditorInputEvent::Left, InputModifiers::none());
+        assert!(test.app().matrix_editing.is_some());
+
+        test.input(EditorInputEvent::Del, InputModifiers::none());
+        test.input(EditorInputEvent::Del, InputModifiers::none());
+        assert!(test.app().matrix_editing.is_none());
+    }
+
+    #[test]
+    fn test_removing_matrix_closing_bracket() {
+        let test = create_app3(51, 36);
+        test.paste("");
+        test.input(EditorInputEvent::Char('['), InputModifiers::none());
+        test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+        test.input(EditorInputEvent::Char('2'), InputModifiers::none());
+        test.input(EditorInputEvent::Char('3'), InputModifiers::none());
+        test.input(EditorInputEvent::Del, InputModifiers::none());
+        assert_eq!(test.get_editor_content(), "[123");
+    }
+
+    #[test]
+    fn asd() {
+        let test = create_app3(51, 36);
+        test.paste("[1,2,3,4]");
+        test.input(EditorInputEvent::Left, InputModifiers::none());
+        test.input(EditorInputEvent::Backspace, InputModifiers::none());
+        test.input(EditorInputEvent::Backspace, InputModifiers::none());
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        assert_eq!(test.get_editor_content(), "[1,2,3,]");
     }
 }

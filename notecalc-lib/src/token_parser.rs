@@ -16,7 +16,7 @@ pub enum TokenType {
     LineReference { var_index: usize },
     NumberLiteral(Decimal),
     Operator(OperatorTokenType),
-    Unit(UnitOutput),
+    Unit(UnitTokenType, UnitOutput),
     NumberErr,
 }
 
@@ -85,7 +85,6 @@ pub enum OperatorTokenType {
     ShiftRight,
     Assign,
     UnitConverter,
-    ApplyUnit,
     Matrix { row_count: usize, col_count: usize },
     Fn { arg_count: usize, typ: FnType },
     PercentageIs,
@@ -118,6 +117,8 @@ pub enum Assoc {
     Right,
 }
 
+pub const APPLY_UNIT_OP_PREC: usize = 5;
+
 impl OperatorTokenType {
     pub fn precedence(&self) -> usize {
         match self {
@@ -132,7 +133,7 @@ impl OperatorTokenType {
             OperatorTokenType::BinOr => 0,
             OperatorTokenType::BinXor => 0,
             OperatorTokenType::BinNot => 4,
-            OperatorTokenType::Pow => 6,
+            OperatorTokenType::Pow => APPLY_UNIT_OP_PREC + 1,
             OperatorTokenType::ParenOpen => 0,
             OperatorTokenType::ParenClose => 0,
             OperatorTokenType::ShiftLeft => 0,
@@ -144,7 +145,6 @@ impl OperatorTokenType {
             OperatorTokenType::BracketClose => 0,
             OperatorTokenType::Matrix { .. } => 0,
             OperatorTokenType::Fn { .. } => 0,
-            OperatorTokenType::ApplyUnit => 5,
             OperatorTokenType::PercentageIs => 20,
             OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X => 10,
             OperatorTokenType::Percentage_Find_Base_From_X_Icrease_Result => 10,
@@ -185,7 +185,6 @@ impl OperatorTokenType {
             OperatorTokenType::BracketClose => Assoc::Left,
             OperatorTokenType::Matrix { .. } => Assoc::Left,
             OperatorTokenType::Fn { .. } => Assoc::Left,
-            OperatorTokenType::ApplyUnit => Assoc::Left,
             OperatorTokenType::PercentageIs => Assoc::Left,
             OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X => Assoc::Left,
             OperatorTokenType::Percentage_Find_Base_From_X_Icrease_Result => Assoc::Left,
@@ -203,9 +202,8 @@ impl OperatorTokenType {
 
 pub struct TokenParser {}
 
-#[derive(Clone, Copy)]
-enum CanBeUnit {
-    Not,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UnitTokenType {
     ApplyToPrevToken,
     StandInItself,
 }
@@ -220,7 +218,7 @@ impl TokenParser {
         allocator: &'text_ptr Bump,
     ) {
         let mut index = 0;
-        let mut can_be_unit = CanBeUnit::Not;
+        let mut can_be_unit = None;
         let mut can_be_unit_converter = false;
         if line.starts_with(&['#']) {
             dst.push(Token {
@@ -272,7 +270,6 @@ impl TokenParser {
                 });
 
             if let Some(token) = parse_result {
-                let mut put_apply_unit = false;
                 match &token.typ {
                     TokenType::Header => {
                         // the functions already returned in this case
@@ -282,17 +279,16 @@ impl TokenParser {
                         if token.ptr[0].is_ascii_whitespace() {
                             // keep can_be_unit as it was
                         } else {
-                            can_be_unit = CanBeUnit::Not;
+                            can_be_unit = None;
                             can_be_unit_converter = false;
                         }
                     }
                     TokenType::NumberLiteral(..) | TokenType::NumberErr => {
-                        can_be_unit = CanBeUnit::ApplyToPrevToken;
+                        can_be_unit = Some(UnitTokenType::ApplyToPrevToken);
                         can_be_unit_converter = false;
                     }
                     TokenType::Unit(..) => {
-                        put_apply_unit = matches!(can_be_unit, CanBeUnit::ApplyToPrevToken);
-                        can_be_unit = CanBeUnit::StandInItself;
+                        can_be_unit = Some(UnitTokenType::StandInItself);
                         can_be_unit_converter = true;
                     }
                     TokenType::Operator(typ) => {
@@ -304,33 +300,25 @@ impl TokenParser {
                                 // keep can_be_unit as it was
                             }
                             OperatorTokenType::UnitConverter => {
-                                can_be_unit = CanBeUnit::StandInItself;
+                                can_be_unit = Some(UnitTokenType::StandInItself);
                                 can_be_unit_converter = false;
                             }
-                            OperatorTokenType::Div => can_be_unit = CanBeUnit::StandInItself,
-                            OperatorTokenType::ApplyUnit => {
-                                panic!("ApplyUnit is put manually to the stack, the parser can't extrac it ");
+                            OperatorTokenType::Div => {
+                                can_be_unit = Some(UnitTokenType::StandInItself)
                             }
                             _ => {
-                                can_be_unit = CanBeUnit::Not;
+                                can_be_unit = None;
                                 can_be_unit_converter = false;
                             }
                         }
                     }
                     TokenType::Variable { .. } | TokenType::LineReference { .. } => {
-                        can_be_unit = CanBeUnit::ApplyToPrevToken;
+                        can_be_unit = Some(UnitTokenType::ApplyToPrevToken);
                         can_be_unit_converter = true;
                     }
                 }
                 index += token.ptr.len();
                 dst.push(token);
-                if put_apply_unit {
-                    dst.push(Token {
-                        typ: TokenType::Operator(OperatorTokenType::ApplyUnit),
-                        ptr: &[],
-                        has_error: false,
-                    })
-                }
             } else {
                 break;
             }
@@ -558,11 +546,11 @@ impl TokenParser {
     fn try_extract_unit<'text_ptr>(
         str: &[char],
         unit: &Units,
-        can_be_unit: CanBeUnit,
+        can_be_unit: Option<UnitTokenType>,
         can_be_unit_converter: bool,
         allocator: &'text_ptr Bump,
     ) -> Option<Token<'text_ptr>> {
-        if matches!(can_be_unit, CanBeUnit::Not) || str[0].is_ascii_whitespace() {
+        if can_be_unit.is_none() || str[0].is_ascii_whitespace() {
             return None;
         }
         let (unit, parsed_len) = unit.parse(str);
@@ -588,13 +576,14 @@ impl TokenParser {
                     has_error: false,
                 })
             } else {
-                match can_be_unit {
-                    CanBeUnit::Not => panic!("impossible"),
-                    CanBeUnit::ApplyToPrevToken | CanBeUnit::StandInItself => Some(Token {
-                        typ: TokenType::Unit(unit),
+                if let Some(can_be_unit) = can_be_unit {
+                    Some(Token {
+                        typ: TokenType::Unit(can_be_unit, unit),
                         ptr,
                         has_error: false,
-                    }),
+                    })
+                } else {
+                    panic!("impossible")
                 }
             }
         };
@@ -887,7 +876,7 @@ impl TokenParser {
 #[allow(dead_code)]
 #[allow(unused_variables)]
 pub fn debug_print(str: &str) {
-    if false {
+    if true {
         return;
     }
     #[cfg(debug_assertions)]
@@ -980,25 +969,7 @@ pub mod tests {
         test_parse_f("123.456.3", "123.456");
     }
 
-    fn test_vars(var_names: &[&'static [char]], text: &str, expected_tokens_: &[Token]) {
-        let mut expected_tokens = Vec::with_capacity(expected_tokens_.len());
-        for t in expected_tokens_ {
-            if matches!(t.typ, TokenType::Operator(OperatorTokenType::ApplyUnit)) {
-                if t.has_error {
-                    expected_tokens.push(unit_with_err(unsafe { std::mem::transmute(t.ptr) }));
-                    let mut token = t.clone();
-                    token.has_error = false;
-                    expected_tokens.push(token);
-                } else {
-                    expected_tokens.push(unit(unsafe { std::mem::transmute(t.ptr) }));
-                    let mut token = t.clone();
-                    token.has_error = false;
-                    expected_tokens.push(t.clone());
-                }
-            } else {
-                expected_tokens.push(t.clone());
-            }
-        }
+    fn test_vars(var_names: &[&'static [char]], text: &str, expected_tokens: &[Token]) {
         let var_names: Vec<Option<Variable>> = (0..MAX_LINE_COUNT + 1)
             .into_iter()
             .map(|index| {
@@ -1019,52 +990,52 @@ pub mod tests {
         let arena = Bump::new();
         // line index is 10 so the search for the variable does not stop at 0
         TokenParser::parse_line(&temp, &var_names, &mut vec, &units, 10, &arena);
-        if expected_tokens.len() != vec.len() {
-            print_tokens_compare_error_and_panic(
-                &format!("Text: {}\nActual Tokens", text),
-                &vec,
-                &expected_tokens,
-                None,
-            );
-        }
+
+        let mut differences = Vec::with_capacity(vec.len().max(expected_tokens.len()));
         for (error_index, (actual_token, expected_token)) in
             vec.iter().zip(expected_tokens.iter()).enumerate()
         {
             match (&expected_token.typ, &actual_token.typ) {
                 (TokenType::NumberLiteral(expected_num), TokenType::NumberLiteral(actual_num)) => {
-                    assert_eq!(expected_num, actual_num)
-                }
-                (TokenType::Unit(_), TokenType::Unit(_)) => {
-                    //     expected_op is an &str
-                    let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
-                    let expected_chars = str_slice.chars().collect::<Vec<char>>();
-                    assert_eq!(actual_token.ptr, expected_chars.as_slice())
+                    if expected_num != actual_num {
+                        differences.push(error_index);
+                    }
                 }
                 (TokenType::NumberErr, _) => {
-                    assert_eq!(actual_token.typ, expected_token.typ);
+                    if actual_token.typ != expected_token.typ {
+                        differences.push(error_index);
+                    }
                 }
                 (TokenType::Operator(etyp), TokenType::Operator(atyp)) => assert_eq!(atyp, etyp),
-                (TokenType::StringLiteral, TokenType::StringLiteral)
-                | (TokenType::Header, TokenType::Header) => {
-                    // expected_op is an &str
-                    let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
-                    let expected_chars = str_slice.chars().collect::<Vec<char>>();
-                    assert_eq!(actual_token.ptr, expected_chars.as_slice())
-                }
-                (TokenType::Variable { .. }, TokenType::Variable { .. })
+                (
+                    TokenType::Unit(UnitTokenType::StandInItself, _),
+                    TokenType::Unit(UnitTokenType::StandInItself, _),
+                )
+                | (
+                    TokenType::Unit(UnitTokenType::ApplyToPrevToken, _),
+                    TokenType::Unit(UnitTokenType::ApplyToPrevToken, _),
+                )
+                | (TokenType::StringLiteral, TokenType::StringLiteral)
+                | (TokenType::Header, TokenType::Header)
+                | (TokenType::Variable { .. }, TokenType::Variable { .. })
+                | (TokenType::Unit(_, _), TokenType::Unit(_, _))
                 | (TokenType::LineReference { .. }, TokenType::LineReference { .. }) => {
-                    // expected_op is an &str
-                    let str_slice = unsafe { std::mem::transmute::<_, &str>(expected_token.ptr) };
-                    let expected_chars = str_slice.chars().collect::<Vec<char>>();
-                    assert_eq!(actual_token.ptr, expected_chars.as_slice())
+                    if actual_token.ptr != expected_token.ptr {
+                        differences.push(error_index);
+                    }
                 }
-                _ => print_tokens_compare_error_and_panic(
-                    &format!("Text: {}\nActual Tokens", text),
-                    &vec,
-                    &expected_tokens,
-                    Some((error_index, &expected_token)),
-                ),
+                _ => {
+                    differences.push(error_index);
+                }
             }
+        }
+        if !differences.is_empty() || expected_tokens.len() != vec.len() {
+            print_tokens_compare_error_and_panic(
+                &format!("Text: {}\nActual Tokens", text),
+                &vec,
+                &expected_tokens,
+                &differences,
+            );
         }
     }
 
@@ -1072,7 +1043,7 @@ pub mod tests {
         name: &str,
         actual_tokens: &[Token],
         expected_tokens: &[Token],
-        single_token_error: Option<(usize, &Token)>,
+        error_indices: &[usize],
     ) -> ! {
         fn println_token(error: &mut String, token: &Token) {
             pad_rust_is_shit(error, &format!("{:?}", token.typ), 35);
@@ -1085,30 +1056,20 @@ pub mod tests {
         error.push_str(name);
         error.push('\n');
 
-        if let Some((error_index, _expected_token)) = single_token_error {
-            error.push_str("\nerror at index ");
-            error.push_str(&error_index.to_string());
-            error.push('\n');
-        }
         for (i, actual_token) in actual_tokens.iter().enumerate() {
-            let mut shit_rust_no_let_if_and = false;
-            if let Some((error_index, expected_token)) = single_token_error {
-                if i == error_index {
-                    shit_rust_no_let_if_and = true;
-                    error.push_str(&format!(
-                        "{}. ERR --------------------------------------------------------------------------------------------------------------",
-                        i
-                    ));
-                    error.push_str("\nactual:   ");
-                    println_token(&mut error, actual_token);
-                    error.push_str("expected: ");
-                    println_token(&mut error, expected_token);
-                    error.push_str(
-                        "---------------------------------------------------------------------------------------------------------------------\n",
-                    );
-                }
-            }
-            if shit_rust_no_let_if_and == false {
+            if error_indices.contains(&i) {
+                error.push_str(&format!(
+                    "{}. ERR --------------------------------------------------------------------------------------------------------------",
+                    i
+                ));
+                error.push_str("\nactual:   ");
+                println_token(&mut error, actual_token);
+                error.push_str("expected: ");
+                println_token(&mut error, &expected_tokens[i]);
+                error.push_str(
+                    "---------------------------------------------------------------------------------------------------------------------\n",
+                );
+            } else {
                 error.push_str(&format!("{}. ok           ", i));
                 println_token(&mut error, actual_token);
                 if let Some(expected_token) = expected_tokens.get(i) {
@@ -2386,6 +2347,23 @@ pub mod tests {
                 apply_to_prev_token_unit("in"),
                 str(" "),
                 unit("MiB"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_fuzz_bug_201220() {
+        test(
+            ")5)t[Mr/(K)",
+            &[
+                op(OperatorTokenType::ParenClose),
+                num(5),
+                op(OperatorTokenType::ParenClose),
+                apply_to_prev_token_unit("t"),
+                op(OperatorTokenType::BracketOpen),
+                str("Mr"),
+                op(OperatorTokenType::Div),
+                unit("(K)"),
             ],
         );
     }

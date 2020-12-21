@@ -3,7 +3,7 @@ use std::ops::{BitXor, Shl};
 use std::ops::{Neg, Shr};
 
 use crate::matrix::MatrixData;
-use crate::token_parser::{debug_print, OperatorTokenType, Token, TokenType};
+use crate::token_parser::{debug_print, OperatorTokenType, Token, TokenType, UnitTokenType};
 use crate::units::consts::EMPTY_UNIT_DIMENSIONS;
 use crate::units::units::{UnitOutput, Units, MAX_UNIT_COUNT};
 use crate::Variables;
@@ -117,27 +117,60 @@ pub fn evaluate_tokens<'text_ptr>(
             TokenType::NumberErr => {
                 return Err(());
             }
-            TokenType::Unit(target_unit) => {
-                // next token must be an ApplyToken or UnitConverter
-                if shunting_tokens
-                    .get(i + 1)
-                    .map(|it| {
-                        matches!(
-                            dbg!(&it.typ),
-                            TokenType::Operator(OperatorTokenType::UnitConverter)
-                                | TokenType::Operator(OperatorTokenType::Div)
-                                | TokenType::Operator(OperatorTokenType::ApplyUnit)
-                        )
-                    })
-                    .unwrap_or(false)
-                {
-                    // TODO clone
-                    stack.push(CalcResult::new(
-                        CalcResultType::Unit(target_unit.clone()),
-                        token.index_into_tokens,
-                    ));
-                } else {
-                    tokens[token.index_into_tokens].typ = TokenType::StringLiteral;
+            TokenType::Unit(unit_typ, target_unit) => {
+                // next token must be a UnitConverter or Div
+                match unit_typ {
+                    UnitTokenType::ApplyToPrevToken => {
+                        let operand = stack.last();
+                        if let Some(CalcResult {
+                            typ: CalcResultType::Number(operand_num),
+                            index_into_tokens,
+                            index2_into_tokens: _index2_into_tokens,
+                        }) = operand
+                        {
+                            if let Some(result) = unit_conversion(
+                                operand_num,
+                                target_unit,
+                                *index_into_tokens,
+                                token.index_into_tokens,
+                            ) {
+                                stack.pop();
+                                stack.push(result);
+                                last_success_operation_result_index = Some(stack.len() - 1);
+                            } else {
+                                Token::set_token_error_flag_by_index(
+                                    token.index_into_tokens,
+                                    tokens,
+                                );
+                                return Err(());
+                            }
+                        } else {
+                            Token::set_token_error_flag_by_index(token.index_into_tokens, tokens);
+                            return Err(());
+                        }
+                    }
+                    UnitTokenType::StandInItself => {
+                        if shunting_tokens
+                            .get(i + 1)
+                            .map(|it| {
+                                matches!(
+                                    it.typ,
+                                    TokenType::Operator(OperatorTokenType::UnitConverter)
+                                        | TokenType::Operator(OperatorTokenType::Div)
+                                )
+                            })
+                            .unwrap_or(false)
+                        {
+                            // TODO clone
+                            stack.push(CalcResult::new(
+                                CalcResultType::Unit(target_unit.clone()),
+                                token.index_into_tokens,
+                            ));
+                        } else {
+                            dbg!(&tokens);
+                            tokens[token.index_into_tokens].typ = TokenType::StringLiteral;
+                        }
+                    }
                 }
             }
             TokenType::Operator(typ) => {
@@ -179,9 +212,14 @@ pub fn evaluate_tokens<'text_ptr>(
         Some(last_success_operation_index) => {
             // e.g. "1+2 some text 3"
             // in this case prefer the result of 1+2 and convert 3 to String
-
-            for stack_elem in stack.iter().skip(last_success_operation_index + 1) {
-                tokens[stack_elem.index_into_tokens].typ = TokenType::StringLiteral;
+            for (i, stack_elem) in stack.iter().enumerate() {
+                if last_success_operation_index != i {
+                    debug_print(&format!(
+                        " calc> {:?} --> String",
+                        &tokens[stack_elem.index_into_tokens]
+                    ));
+                    tokens[stack_elem.index_into_tokens].typ = TokenType::StringLiteral;
+                }
             }
             Ok(Some(EvaluationResult {
                 there_was_unit_conversion,
@@ -227,7 +265,6 @@ fn apply_operation<'text_ptr>(
         | OperatorTokenType::Percentage_Find_Decr_Rate_From_Result_X_Base
         | OperatorTokenType::Percentage_Find_Rate_From_Result_Base
         | OperatorTokenType::Percentage_Find_Base_From_Result_Rate
-        | OperatorTokenType::ApplyUnit
         | OperatorTokenType::UnitConverter => {
             if stack.len() > 1 {
                 let (lhs, rhs) = (&stack[stack.len() - 2], &stack[stack.len() - 1]);
@@ -250,9 +287,14 @@ fn apply_operation<'text_ptr>(
         | OperatorTokenType::Perc
         | OperatorTokenType::BinNot => {
             let maybe_top = stack.last();
-            if let Some(result) =
-                maybe_top.and_then(|top| unary_operation(&op, top, op_token_index))
-            {
+            let result = maybe_top.and_then(|top| unary_operation(&op, top, op_token_index));
+            debug_print(&format!(
+                "calc> {:?} {:?} = {:?}",
+                &op,
+                &maybe_top.as_ref().map(|it| &it.typ),
+                &result
+            ));
+            if let Some(result) = result {
                 stack.pop();
                 stack.push(result);
                 true
@@ -271,12 +313,15 @@ fn apply_operation<'text_ptr>(
                     CalcResultType::Matrix(MatrixData::new(matrix_args, *row_count, *col_count)),
                     op_token_index,
                 ));
+                debug_print("calc> Matrix");
                 true
             } else {
+                debug_print("calc> Matrix");
                 false
             }
         }
         OperatorTokenType::Fn { arg_count, typ } => {
+            debug_print(&format!("calc> Fn {:?}", typ));
             typ.execute(*arg_count, stack, op_token_index, tokens, units)
         }
         OperatorTokenType::Semicolon | OperatorTokenType::Comma => {
@@ -351,21 +396,6 @@ fn binary_operation(
         OperatorTokenType::Pow => pow_op(lhs, rhs),
         OperatorTokenType::ShiftLeft => bitwise_shift_left(lhs, rhs),
         OperatorTokenType::ShiftRight => bitwise_shift_right(lhs, rhs),
-        OperatorTokenType::ApplyUnit => {
-            let target_unit = rhs;
-            let operand = lhs;
-            match (&operand.typ, &target_unit.typ) {
-                (CalcResultType::Number(operand), CalcResultType::Unit(target_unit)) => {
-                    unit_conversion(
-                        operand,
-                        target_unit,
-                        lhs.get_index_into_tokens(),
-                        rhs.get_index_into_tokens(),
-                    )
-                }
-                _ => None,
-            }
-        }
         OperatorTokenType::Percentage_Find_Base_From_Result_Increase_X => {
             perc_num_is_xperc_on_what(lhs, rhs)
         }
@@ -436,7 +466,10 @@ fn binary_operation(
         // , csinálj egy TokenType::BinaryOp::Add
         _ => panic!(),
     };
-    debug_print(&format!("{:?} {:?} {:?} = {:?}", lhs, op, rhs, &result));
+    debug_print(&format!(
+        "calc> {:?} {:?} {:?} = {:?}",
+        &lhs.typ, op, &rhs.typ, &result
+    ));
     result
 }
 
@@ -664,8 +697,6 @@ fn unary_minus_op(lhs: &CalcResult) -> Option<CalcResult> {
 }
 
 fn pow_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
-    dbg!(lhs);
-    dbg!(rhs);
     match (&lhs.typ, &rhs.typ) {
         //////////////
         // 1^x
@@ -1249,7 +1280,7 @@ fn percentage_of(this: &Decimal, base: &Decimal) -> Option<Decimal> {
 mod tests {
     use crate::shunting_yard::tests::{
         apply_to_prev_token_unit, apply_to_prev_token_unit_with_err, num, num_with_err, op, op_err,
-        str, unit, unit_with_err,
+        str, unit,
     };
     use crate::units::units::Units;
     use crate::{ResultFormat, Variable, Variables};
@@ -1259,31 +1290,13 @@ mod tests {
     use crate::functions::FnType;
     use crate::helper::create_vars;
     use crate::renderer::render_result;
-    use crate::token_parser::{OperatorTokenType, Token, TokenType};
+    use crate::token_parser::{OperatorTokenType, Token};
     use bumpalo::Bump;
     use rust_decimal::prelude::*;
 
     const DECIMAL_COUNT: usize = 4;
 
-    fn test_tokens(text: &str, expected_tokens_: &[Token]) {
-        let mut expected_tokens = Vec::with_capacity(expected_tokens_.len());
-        for t in expected_tokens_ {
-            if matches!(t.typ, TokenType::Operator(OperatorTokenType::ApplyUnit)) {
-                if t.has_error {
-                    expected_tokens.push(unit_with_err(unsafe { std::mem::transmute(t.ptr) }));
-                    let mut token = t.clone();
-                    token.has_error = false;
-                    expected_tokens.push(token);
-                } else {
-                    expected_tokens.push(unit(unsafe { std::mem::transmute(t.ptr) }));
-                    let mut token = t.clone();
-                    token.has_error = false;
-                    expected_tokens.push(t.clone());
-                }
-            } else {
-                expected_tokens.push(t.clone());
-            }
-        }
+    fn test_tokens(text: &str, expected_tokens: &[Token]) {
         println!("===================================================");
         println!("{}", text);
         let units = Units::new();
@@ -1977,7 +1990,6 @@ mod tests {
                     row_count: 1,
                     col_count: 1,
                 }),
-                op(OperatorTokenType::BracketOpen),
                 num(1),
                 op(OperatorTokenType::BracketClose),
                 op(OperatorTokenType::ParenClose),
@@ -1999,7 +2011,6 @@ mod tests {
                     row_count: 1,
                     col_count: 1,
                 }),
-                op(OperatorTokenType::BracketOpen),
                 num(1),
                 op(OperatorTokenType::BracketClose),
                 op(OperatorTokenType::Comma),
@@ -2770,4 +2781,94 @@ mod tests {
             ],
         );
     }
+
+    #[test]
+    fn test_fuzz_bug_201220() {
+        test(")5)t[Mr/(K)", "5 t");
+    }
+
+    #[test]
+    fn test_fuzz_bug_201221_2_no_panic_if_arg_is_not_valid_token() {
+        test("e(R())", "Err");
+    }
+
+    #[test]
+    fn test_fuzz_bug_201221_3_no_panic_if_arg_is_not_valid_token() {
+        test("sin(R())", "Err");
+    }
+
+    #[test]
+    fn test_fuzz_bug_201221_4_no_panic_if_arg_is_not_valid_token() {
+        test("ln(R())", "Err");
+        test("ln(R(), R())", "Err");
+        test("ln()", "Err");
+    }
+
+    #[test]
+    fn test_fuzz_bug_201221_5_no_panic_if_arg_is_not_valid_token() {
+        test("log(R(), R())", "Err");
+    }
+
+    #[test]
+    fn test_fuzz_bug_201221_6_no_panic_if_arg_is_not_valid_token() {
+        test("ceil(R())", "Err");
+    }
+
+    #[test]
+    fn test_fuzz_bug_201220_2() {
+        test("[]8F(*^5+[2)]/)=^]0/", "[2]");
+        test_tokens(
+            "[]8F(*^5+[2)]/)=^]0/",
+            &[
+                str("["),
+                str("]"),
+                str("8"),
+                str("F"),
+                str("("),
+                str("*"),
+                str("^"),
+                str("5"),
+                str("+"),
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 1,
+                }),
+                num(2),
+                str(")"),
+                op(OperatorTokenType::BracketClose),
+                str("/"),
+                str(")"),
+                str("="),
+                str("^"),
+                str("]"),
+                str("0"),
+                str("/"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_illegal_unary_minus_is_not_added_to_the_output() {
+        test_tokens(
+            "[7*7]*9#8=-+",
+            &[
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 1,
+                }),
+                num(7),
+                op(OperatorTokenType::Mult),
+                num(7),
+                op(OperatorTokenType::BracketClose),
+                str("*"),
+                str("9"),
+                str("#8"),
+                str("="),
+                str("-"),
+                str("+"),
+            ],
+        );
+    }
+
+    // "str".split('').map(function(it){return 'str("'+it+'")';}).join(',')
 }

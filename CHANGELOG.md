@@ -8,23 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Breaking Changes
-- Spaces is not allowed in hex numbers anymore but undorscores are.
-  It caused problems since 0xAA B could not be unambiguously parsed (e.g. it can be 0xAAB or 0xAA bytes, so make it explicit by writing 0xAA_B).
+- Spaces are not allowed in hex numbers anymore but undorscores are.
+  It caused problems since 0xAA B could not be unambiguously parsed (e.g. it can be 0xAAB or 0xAA B, where 'B' is a unit for 'bytes', so make it explicit by writing 0xAA_B).
 ### Features
-- Dark Theme
+- Dark Theme ![img](https://trello-attachments.s3.amazonaws.com/558a94779b3b3c5d89efeaa6/5fe0ae9f0b9791732fdf6901/1e4fbe68e3e3e0f2b369b29d853881df/D10nAPmBHz.gif)
 - Render command optimizations, reducing render command count by around 40%
-  (gutters, line number- and result abckround now
-  are rendered only once as a big rectangle and not line by line).
+  (gutters, line number- and result backround 
+  are now rendered only once as a big rectangle and not line by line).
 - Active references (variables and line refs in the cursor's row) are now just underlined
   and the referenced lines are not highlighted fully only their left and right gutter.
-  [gif](https://twitter.com/bodidev/status/1337363000261554182)
+  (Look at the image below)
+- Results where a denominator is a unit (e.g. 5 / year) are now rendered in a more user-friendly way (e.g. instead of `5 year^-1` it is `5 / year`)
+  ![img](https://trello-attachments.s3.amazonaws.com/558a94779b3b3c5d89efeaa6/5fe0ae9f0b9791732fdf6901/b22cf68c1bb85d890bf1363e55e94435/0.0.3_unit_denom.png)
 - Automatic closing parenthesis/braces insertion when the opening one is typed
 - Automatic closing parenthesis/braces deletion when the opening one is deleted
+  ![img](https://trello-attachments.s3.amazonaws.com/558a94779b3b3c5d89efeaa6/5fe0ae9f0b9791732fdf6901/a2b3699e56eb91dd74909091aa903098/0.0.3_parens.gif)
 - Automatic parenthesis/braces wrapping around selected text if opening one is typed while
 a text is selected
-  [gif](https://twitter.com/bodidev/status/1338427762831470592)
+  ![img](https://trello-attachments.s3.amazonaws.com/558a94779b3b3c5d89efeaa6/5fe0ae9f0b9791732fdf6901/a4f947f869a4d4537043cc962551da8f/0.0.3_wrap.gif)
+- Matching parenthesis are highlighted if the cursor is inside them
+  ![img](https://trello-attachments.s3.amazonaws.com/558a94779b3b3c5d89efeaa6/5fe0ae9f0b9791732fdf6901/9efb7959ddc5fde61f395f79f2027d9c/0.0.3_paren_hilight.gif)
 - The note can be saved with ``ctrl-s`` (Though it is still saved automatically when there is no user interaction)
-- Results where a denominator is a unit (e.g. 5 / year) are now rendered in a moe user-friendly way (e.g. instead of `5 year^-1` it is `5 / year`)
 - It is possible to apply units directly on Line References or Variables, e.g.
   ```
   var = 12
@@ -32,37 +36,16 @@ a text is selected
   ```
   The result of the second line will be ``12 km``
 - Parsing improvement: Now the parser are smarter in deciding what is an operator (e.g. 'in' in `12 m in cm`),
-  a unit (`12 in` which is 12 inch), or a simple string (`12 GB in 3 seconds`).
+  a unit (`12 in` which is 12 inch), or a simple string (`I downloaded 12 GB in 3 seconds`).
   Now it is even possible to evaluate this string `12 in in in`, which is equivalent of `12 inch in inch`
+  ![img](https://trello-attachments.s3.amazonaws.com/558a94779b3b3c5d89efeaa6/5fe0ae9f0b9791732fdf6901/1f851d6b80e265dec9b6d055e2ae90b0/0.0.3_smar_parsing.png)
 - Percentage calculations
-  ```
-    ## Find the rate when the base and result are known                  █
-    20 is what percent of 60                                             █  33.3333 %
-    220 is what percent of 200                                           █ 110      %
-                                                                         █
-    ## Find the base when the result and rate are known                  █
-    5 is 25% of what                                                     █  20
-    12 is 12% of what                                                    █ 100
-                                                                         █
-    ## Find the base when the result and increase/decrease are known     █
-    5 is 25% on what                                                     █   4
-    or in other forms:                                                   █
-    25% on what is 5                                                     █   4
-    what plus 25% is 5                                                   █   4
-                                                                         █
-    5 is 25% off what                                                    █   6.6667
-    or in other forms:                                                   █
-    what minus 25% is 5                                                  █   6.6667
-    25% off what is 5                                                    █   6.6667
-                                                                         █
-    ## Find the increase/decrease when the base and he result are known  █
-    44 is what % on 40                                                   █  10      %
-    24  0 is what % off 300                                              █  20      %
-  ```
+  ![img](https://trello-attachments.s3.amazonaws.com/558a94779b3b3c5d89efeaa6/5fe0ae9f0b9791732fdf6901/7941d87348496a4c9d3841a18a03431f/0.0.3_percentages.png)
 - Max row count was increased from 128 to 256
-- Matching parenthesis are highlighted if the cursor is inside them
 - e (Euler's Number) was added, currently as a function (`e()`)
-- new functions:
+- Invalid argument types for functions are highlighted as errors (See image below)
+- new functions:  
+![img](https://trello-attachments.s3.amazonaws.com/558a94779b3b3c5d89efeaa6/5fe0ae9f0b9791732fdf6901/e36e81db4efafb92695d8eb7f833a526/0.0.3_functions.png)
   - abs(num)
   - ln(num)
   - lg(num)
@@ -73,7 +56,6 @@ a text is selected
   - asin(num) -> angle
   - acos(num) -> angle
   - atan(num) -> angle
-- Invalid argument types for functions are highlighted as errors
 
 ### Changed
 - When opening a not empty note, the result panel now tries
@@ -91,6 +73,7 @@ to be able to place the cursor at the right place, since the text rendering
 - Parenthesis have different color than operators.
 - Remove `Vec` and dynamic allocation from unit parsing and operations.
 - Replaced all unit `RefCells` to `Rc`, it was a mistake to use `RefCells` in the first place.
+- Matrices cannot be deleted anymore by `DEL` or `BACKSPACE`, ctrl is needed
 
 ### Fixed
 - Dead characters (e.g. '^' on a hungarian keyboard) were not possible to type
@@ -109,7 +92,6 @@ were outside of the editor area
   tax B = 50 000/year
   (tax A + tax B) * (1 year)
   ```
-- Matrices cannot be deleted anymore by `DEL` or `BACKSPACE`, ctrl is needed
 - u64 values can be parsed correctly (e.g. 0xFFFFFFFFFFFFFFFF)
 - Bitwise operations now work on u64 values
 - Negative numbers can be presented in binary and hex form
