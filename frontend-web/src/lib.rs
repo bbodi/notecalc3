@@ -15,13 +15,12 @@
 use wasm_bindgen::prelude::*;
 
 use crate::utils::set_panic_hook;
-use bumpalo::Bump;
+use notecalc_lib::borrow_checker_fighter::{to_box_ptr, BorrowCheckerFighter};
 use notecalc_lib::editor::editor::{EditorInputEvent, InputModifiers};
 use notecalc_lib::helper::*;
-use notecalc_lib::units::units::Units;
 use notecalc_lib::{
-    Layer, NoteCalcApp, OutputMessage, OutputMessageCommandId, RenderAsciiTextMsg, RenderBuckets,
-    RenderStringMsg, RenderUtf8TextMsg, Variable, MAX_LINE_COUNT,
+    Layer, OutputMessage, OutputMessageCommandId, RenderAsciiTextMsg, RenderBuckets,
+    RenderStringMsg, RenderUtf8TextMsg,
 };
 
 mod utils;
@@ -41,111 +40,12 @@ extern "C" {
     pub fn js_log(s: &str);
 }
 
-struct AppPointers {
-    app_ptr: u32,
-    units_ptr: u32,
-    render_bucket_ptr: u32,
-    tokens_ptr: u32,
-    results_ptr: u32,
-    vars_ptr: u32,
-    editor_objects_ptr: u32,
-    allocator: u32,
-}
-
-impl AppPointers {
-    fn mut_app<'a>(ptr: u32) -> &'a mut NoteCalcApp {
-        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
-        unsafe { &mut *(ptr_holder.app_ptr as *mut NoteCalcApp) }
-    }
-
-    fn app<'a>(ptr: u32) -> &'a NoteCalcApp {
-        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
-        unsafe { &*(ptr_holder.app_ptr as *const NoteCalcApp) }
-    }
-
-    fn units<'a>(ptr: u32) -> &'a mut Units {
-        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
-        unsafe { &mut *(ptr_holder.units_ptr as *mut Units) }
-    }
-
-    fn mut_render_bucket<'a>(ptr: u32) -> &'a mut RenderBuckets<'a> {
-        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
-        unsafe { &mut *(ptr_holder.render_bucket_ptr as *mut RenderBuckets) }
-    }
-
-    fn mut_tokens<'a>(ptr: u32) -> &'a mut AppTokens<'a> {
-        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
-        unsafe { &mut *(ptr_holder.tokens_ptr as *mut AppTokens) }
-    }
-
-    fn tokens<'a>(ptr: u32) -> &'a AppTokens<'a> {
-        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
-        unsafe { &*(ptr_holder.tokens_ptr as *const AppTokens) }
-    }
-
-    fn mut_results<'a>(ptr: u32) -> &'a mut Results {
-        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
-        unsafe { &mut *(ptr_holder.results_ptr as *mut Results) }
-    }
-
-    fn results<'a>(ptr: u32) -> &'a Results {
-        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
-        unsafe { &*(ptr_holder.results_ptr as *const Results) }
-    }
-
-    fn mut_editor_objects<'a>(ptr: u32) -> &'a mut EditorObjects {
-        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
-        unsafe { &mut *(ptr_holder.editor_objects_ptr as *mut EditorObjects) }
-    }
-
-    fn mut_vars<'a>(ptr: u32) -> &'a mut [Option<Variable>] {
-        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
-        unsafe {
-            &mut (&mut *(ptr_holder.vars_ptr as *mut [Option<Variable>; MAX_LINE_COUNT + 1]))[..]
-        }
-    }
-
-    fn vars<'a>(ptr: u32) -> &'a [Option<Variable>] {
-        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
-        unsafe { &(&*(ptr_holder.vars_ptr as *const [Option<Variable>; MAX_LINE_COUNT + 1]))[..] }
-    }
-
-    fn allocator<'a>(ptr: u32) -> &'a Bump {
-        let ptr_holder = unsafe { &*(ptr as *const AppPointers) };
-        unsafe { &*(ptr_holder.allocator as *const Bump) }
-    }
-
-    fn mut_allocator<'a>(ptr: u32) -> &'a mut Bump {
-        let ptr_holder = unsafe { &*(ptr as *mut AppPointers) };
-        unsafe { &mut *(ptr_holder.allocator as *mut Bump) }
-    }
-}
-
 #[wasm_bindgen]
-pub fn create_app(client_width: usize, client_height: usize) -> u32 {
+pub fn create_app(client_width: usize, client_height: usize) -> usize {
     set_panic_hook();
     js_log(&format!("client_width: {}", client_width));
     js_log(&format!("client_height: {}", client_height));
-    // put them immediately on the heap
-    let editor_objects = to_box_ptr(EditorObjects::new());
-    let tokens = to_box_ptr(AppTokens::new());
-    let results = to_box_ptr(Results::new());
-    let vars = to_box_ptr(create_vars());
-    let app = to_box_ptr(NoteCalcApp::new(client_width, client_height));
-    let units = to_box_ptr(Units::new());
-    let render_buckets = to_box_ptr(RenderBuckets::new());
-    let bumper = to_box_ptr(Bump::with_capacity(MAX_LINE_COUNT * 120));
-    let ret = to_box_ptr(AppPointers {
-        app_ptr: app,
-        units_ptr: units,
-        render_bucket_ptr: render_buckets,
-        tokens_ptr: tokens,
-        results_ptr: results,
-        vars_ptr: vars,
-        editor_objects_ptr: editor_objects,
-        allocator: bumper,
-    });
-    return ret;
+    return to_box_ptr(BorrowCheckerFighter::new(client_width, client_height));
 }
 
 #[wasm_bindgen]
@@ -155,58 +55,57 @@ pub fn get_command_buffer_ptr() -> *const u8 {
     }
 }
 
-fn to_box_ptr<T>(t: T) -> u32 {
-    let ptr = Box::into_raw(Box::new(t)) as u32;
-    ptr
-}
-
 #[wasm_bindgen]
-pub fn alt_key_released(app_ptr: u32) {
-    let rb = AppPointers::mut_render_bucket(app_ptr);
+pub fn alt_key_released(app_ptr: usize) {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
+    let rb = bcf.mut_render_bucket();
 
-    AppPointers::mut_app(app_ptr).alt_key_released(
-        AppPointers::units(app_ptr),
-        AppPointers::allocator(app_ptr),
-        AppPointers::mut_tokens(app_ptr),
-        AppPointers::mut_results(app_ptr),
-        AppPointers::mut_vars(app_ptr),
-        AppPointers::mut_editor_objects(app_ptr),
+    bcf.mut_app().alt_key_released(
+        bcf.units(),
+        bcf.allocator(),
+        bcf.mut_tokens(),
+        bcf.mut_results(),
+        bcf.mut_vars(),
+        bcf.mut_editor_objects(),
         rb,
     );
 }
 
 #[wasm_bindgen]
-pub fn handle_resize(app_ptr: u32, new_client_width: usize) {
-    AppPointers::mut_app(app_ptr).handle_resize(
+pub fn handle_resize(app_ptr: usize, new_client_width: usize) {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
+    bcf.mut_app().handle_resize(
         new_client_width,
-        AppPointers::mut_editor_objects(app_ptr),
-        AppPointers::units(app_ptr),
-        AppPointers::allocator(app_ptr),
-        AppPointers::mut_tokens(app_ptr),
-        AppPointers::mut_results(app_ptr),
-        AppPointers::mut_vars(app_ptr),
-        AppPointers::mut_render_bucket(app_ptr),
+        bcf.mut_editor_objects(),
+        bcf.units(),
+        bcf.allocator(),
+        bcf.mut_tokens(),
+        bcf.mut_results(),
+        bcf.mut_vars(),
+        bcf.mut_render_bucket(),
     );
 }
 
 #[wasm_bindgen]
-pub fn set_theme(app_ptr: u32, theme_index: usize) {
-    let app = AppPointers::mut_app(app_ptr);
+pub fn set_theme(app_ptr: usize, theme_index: usize) {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
+    let app = bcf.mut_app();
     app.set_theme(
         theme_index,
-        AppPointers::mut_editor_objects(app_ptr),
-        AppPointers::units(app_ptr),
-        AppPointers::allocator(app_ptr),
-        AppPointers::mut_tokens(app_ptr),
-        AppPointers::mut_results(app_ptr),
-        AppPointers::mut_vars(app_ptr),
-        AppPointers::mut_render_bucket(app_ptr),
+        bcf.mut_editor_objects(),
+        bcf.units(),
+        bcf.allocator(),
+        bcf.mut_tokens(),
+        bcf.mut_results(),
+        bcf.mut_vars(),
+        bcf.mut_render_bucket(),
     );
 }
 
 #[wasm_bindgen]
-pub fn get_compressed_encoded_content(app_ptr: u32) -> String {
-    let app = AppPointers::mut_app(app_ptr);
+pub fn get_compressed_encoded_content(app_ptr: usize) -> String {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
+    let app = bcf.mut_app();
     let content = app.get_line_ref_normalized_content();
     {
         use flate2::write::ZlibEncoder;
@@ -222,7 +121,8 @@ pub fn get_compressed_encoded_content(app_ptr: u32) -> String {
 }
 
 #[wasm_bindgen]
-pub fn set_compressed_encoded_content(app_ptr: u32, compressed_encoded: String) {
+pub fn set_compressed_encoded_content(app_ptr: usize, compressed_encoded: String) {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
     let content = {
         use flate2::write::ZlibDecoder;
         use std::io::prelude::*;
@@ -237,128 +137,138 @@ pub fn set_compressed_encoded_content(app_ptr: u32, compressed_encoded: String) 
         })
     };
     if let Some(content) = content {
-        let app = AppPointers::mut_app(app_ptr);
+        let app = bcf.mut_app();
 
         app.set_normalized_content(
             &content.trim_end(),
-            AppPointers::units(app_ptr),
-            AppPointers::allocator(app_ptr),
-            AppPointers::mut_tokens(app_ptr),
-            AppPointers::mut_results(app_ptr),
-            AppPointers::mut_vars(app_ptr),
-            AppPointers::mut_editor_objects(app_ptr),
-            AppPointers::mut_render_bucket(app_ptr),
+            bcf.units(),
+            bcf.allocator(),
+            bcf.mut_tokens(),
+            bcf.mut_results(),
+            bcf.mut_vars(),
+            bcf.mut_editor_objects(),
+            bcf.mut_render_bucket(),
         );
     }
 }
 
 #[wasm_bindgen]
-pub fn handle_time(app_ptr: u32, now: u32) -> bool {
-    let rerender_needed = AppPointers::mut_app(app_ptr).handle_time(
+pub fn handle_time(app_ptr: usize, now: u32) -> bool {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
+    let rerender_needed = bcf.mut_app().handle_time(
         now,
-        AppPointers::units(app_ptr),
-        AppPointers::allocator(app_ptr),
-        AppPointers::mut_tokens(app_ptr),
-        AppPointers::mut_results(app_ptr),
-        AppPointers::mut_vars(app_ptr),
-        AppPointers::mut_editor_objects(app_ptr),
-        AppPointers::mut_render_bucket(app_ptr),
+        bcf.units(),
+        bcf.allocator(),
+        bcf.mut_tokens(),
+        bcf.mut_results(),
+        bcf.mut_vars(),
+        bcf.mut_editor_objects(),
+        bcf.mut_render_bucket(),
     );
 
     return rerender_needed;
 }
 
 #[wasm_bindgen]
-pub fn handle_mouse_move(app_ptr: u32, x: usize, y: usize) -> usize {
-    return AppPointers::mut_app(app_ptr).handle_mouse_move(
+pub fn handle_mouse_move(app_ptr: usize, x: usize, y: usize) -> usize {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
+    return bcf.mut_app().handle_mouse_move(
         x,
         CanvasY::new(y as isize),
-        AppPointers::mut_editor_objects(app_ptr),
-        AppPointers::units(app_ptr),
-        AppPointers::allocator(app_ptr),
-        AppPointers::tokens(app_ptr),
-        AppPointers::results(app_ptr),
-        AppPointers::vars(app_ptr),
-        AppPointers::mut_render_bucket(app_ptr),
+        bcf.mut_editor_objects(),
+        bcf.units(),
+        bcf.allocator(),
+        bcf.tokens(),
+        bcf.results(),
+        bcf.vars(),
+        bcf.mut_render_bucket(),
     );
 }
 
 #[wasm_bindgen]
-pub fn handle_drag(app_ptr: u32, x: usize, y: usize) -> bool {
-    return AppPointers::mut_app(app_ptr).handle_drag(
+pub fn handle_drag(app_ptr: usize, x: usize, y: usize) -> bool {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
+    return bcf.mut_app().handle_drag(
         x,
         CanvasY::new(y as isize),
-        AppPointers::mut_editor_objects(app_ptr),
-        AppPointers::units(app_ptr),
-        AppPointers::allocator(app_ptr),
-        AppPointers::tokens(app_ptr),
-        AppPointers::results(app_ptr),
-        AppPointers::vars(app_ptr),
-        AppPointers::mut_render_bucket(app_ptr),
+        bcf.mut_editor_objects(),
+        bcf.units(),
+        bcf.allocator(),
+        bcf.tokens(),
+        bcf.results(),
+        bcf.vars(),
+        bcf.mut_render_bucket(),
     );
 }
 
 #[wasm_bindgen]
-pub fn get_allocated_bytes_count(app_ptr: u32) -> usize {
-    return AppPointers::allocator(app_ptr).allocated_bytes();
+pub fn get_allocated_bytes_count(app_ptr: usize) -> usize {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
+    return bcf.allocator().allocated_bytes();
 }
 
 #[wasm_bindgen]
-pub fn handle_click(app_ptr: u32, x: usize, y: usize) {
-    AppPointers::mut_app(app_ptr).handle_click(
+pub fn handle_click(app_ptr: usize, x: usize, y: usize) {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
+    bcf.mut_app().handle_click(
         x,
         CanvasY::new(y as isize),
-        AppPointers::mut_editor_objects(app_ptr),
-        AppPointers::units(app_ptr),
-        AppPointers::allocator(app_ptr),
-        AppPointers::mut_tokens(app_ptr),
-        AppPointers::mut_results(app_ptr),
-        AppPointers::mut_vars(app_ptr),
-        AppPointers::mut_render_bucket(app_ptr),
+        bcf.mut_editor_objects(),
+        bcf.units(),
+        bcf.allocator(),
+        bcf.mut_tokens(),
+        bcf.mut_results(),
+        bcf.mut_vars(),
+        bcf.mut_render_bucket(),
     );
 }
 
 #[wasm_bindgen]
-pub fn handle_wheel(app_ptr: u32, dir: usize) -> bool {
-    return AppPointers::mut_app(app_ptr).handle_wheel(
+pub fn handle_wheel(app_ptr: usize, dir: usize) -> bool {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
+    return bcf.mut_app().handle_wheel(
         dir,
-        AppPointers::mut_editor_objects(app_ptr),
-        AppPointers::units(app_ptr),
-        AppPointers::allocator(app_ptr),
-        AppPointers::mut_tokens(app_ptr),
-        AppPointers::mut_results(app_ptr),
-        AppPointers::mut_vars(app_ptr),
-        AppPointers::mut_render_bucket(app_ptr),
+        bcf.mut_editor_objects(),
+        bcf.units(),
+        bcf.allocator(),
+        bcf.mut_tokens(),
+        bcf.mut_results(),
+        bcf.mut_vars(),
+        bcf.mut_render_bucket(),
     );
 }
 
 #[wasm_bindgen]
-pub fn handle_mouse_up(app_ptr: u32) {
-    AppPointers::mut_app(app_ptr).handle_mouse_up();
+pub fn handle_mouse_up(app_ptr: usize) {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
+    bcf.mut_app().handle_mouse_up();
 }
 
 #[wasm_bindgen]
-pub fn get_clipboard_text(app_ptr: u32) -> String {
-    let app = AppPointers::app(app_ptr);
+pub fn get_clipboard_text(app_ptr: usize) -> String {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
+    let app = bcf.app();
     return app.editor.clipboard.clone();
 }
 
 #[wasm_bindgen]
-pub fn get_selected_text_and_clear_app_clipboard(app_ptr: u32) -> Option<String> {
-    return AppPointers::mut_app(app_ptr).get_selected_text_and_clear_app_clipboard();
+pub fn get_selected_text_and_clear_app_clipboard(app_ptr: usize) -> Option<String> {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
+    return bcf.mut_app().get_selected_text_and_clear_app_clipboard();
 }
 
 #[wasm_bindgen]
-pub fn handle_paste(app_ptr: u32, input: String) {
-    AppPointers::mut_app(app_ptr).handle_paste(
+pub fn handle_paste(app_ptr: usize, input: String) {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
+    bcf.mut_app().handle_paste(
         input,
-        AppPointers::units(app_ptr),
-        AppPointers::allocator(app_ptr),
-        AppPointers::mut_tokens(app_ptr),
-        AppPointers::mut_results(app_ptr),
-        AppPointers::mut_vars(app_ptr),
-        AppPointers::mut_editor_objects(app_ptr),
-        AppPointers::mut_render_bucket(app_ptr),
+        bcf.units(),
+        bcf.allocator(),
+        bcf.mut_tokens(),
+        bcf.mut_results(),
+        bcf.mut_vars(),
+        bcf.mut_editor_objects(),
+        bcf.mut_render_bucket(),
     );
 }
 
@@ -373,62 +283,69 @@ pub fn handle_paste(app_ptr: u32, input: String) {
 // It would be possible to free it up in the lib, but for that we would need a mut allocator,
 // and again, Rust's borrow checker does not like it.
 #[wasm_bindgen]
-pub fn reparse_everything(app_ptr: u32) {
-    AppPointers::mut_allocator(app_ptr).reset();
-    let app = AppPointers::mut_app(app_ptr);
+pub fn reparse_everything(app_ptr: usize) {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
+    bcf.mut_allocator().reset();
+    let app = bcf.mut_app();
 
     app.reparse_everything(
-        AppPointers::allocator(app_ptr),
-        AppPointers::units(app_ptr),
-        AppPointers::mut_tokens(app_ptr),
-        AppPointers::mut_results(app_ptr),
-        AppPointers::mut_vars(app_ptr),
-        AppPointers::mut_editor_objects(app_ptr),
-        AppPointers::mut_render_bucket(app_ptr),
+        bcf.allocator(),
+        bcf.units(),
+        bcf.mut_tokens(),
+        bcf.mut_results(),
+        bcf.mut_vars(),
+        bcf.mut_editor_objects(),
+        bcf.mut_render_bucket(),
     );
 }
 
 #[wasm_bindgen]
-pub fn render(app_ptr: u32) {
-    let app = AppPointers::app(app_ptr);
-    let bucket = AppPointers::mut_render_bucket(app_ptr);
+pub fn render(app_ptr: usize) {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
+    let app = bcf.app();
+    let bucket = bcf.mut_render_bucket();
     send_render_commands_to_js(bucket, &THEMES[app.render_data.theme_index]);
 }
 
 #[wasm_bindgen]
-pub fn get_selected_rows_with_results(app_ptr: u32) -> String {
-    let app = AppPointers::mut_app(app_ptr);
-    let units = AppPointers::units(app_ptr);
+pub fn get_selected_rows_with_results(app_ptr: usize) -> String {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
+    let app = bcf.mut_app();
+    let units = bcf.units();
     return app.copy_selected_rows_with_result_to_clipboard(
         units,
-        AppPointers::mut_render_bucket(app_ptr),
-        AppPointers::mut_tokens(app_ptr),
-        AppPointers::mut_vars(app_ptr),
-        AppPointers::mut_results(app_ptr),
+        bcf.mut_render_bucket(),
+        bcf.mut_tokens(),
+        bcf.mut_vars(),
+        bcf.mut_results(),
     );
 }
 
 #[wasm_bindgen]
-pub fn get_plain_content(app_ptr: u32) -> String {
-    let app = AppPointers::app(app_ptr);
+pub fn get_plain_content(app_ptr: usize) -> String {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
+    let app = bcf.app();
     app.editor_content.get_content()
 }
 
 #[wasm_bindgen]
-pub fn get_cursor(app_ptr: u32) -> String {
-    let app = AppPointers::app(app_ptr);
+pub fn get_cursor(app_ptr: usize) -> String {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
+    let app = bcf.app();
     let sel = app.editor.get_selection();
     format!("{:?}", sel)
 }
 
 #[wasm_bindgen]
-pub fn get_top_of_undo_stack(app_ptr: u32) -> String {
-    let app = AppPointers::app(app_ptr);
+pub fn get_top_of_undo_stack(app_ptr: usize) -> String {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
+    let app = bcf.app();
     format!("{:?}", app.editor_content.undo_stack.last())
 }
 
 #[wasm_bindgen]
-pub fn handle_input(app_ptr: u32, input: u32, modifiers: u8) -> bool {
+pub fn handle_input(app_ptr: usize, input: u32, modifiers: u8) -> bool {
+    let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
     let modifiers = InputModifiers {
         shift: modifiers & 1 != 0,
         ctrl: modifiers & 2 != 0,
@@ -457,17 +374,17 @@ pub fn handle_input(app_ptr: u32, input: u32, modifiers: u8) -> bool {
             }
         }
     };
-    let app = AppPointers::mut_app(app_ptr);
+    let app = bcf.mut_app();
     let modif = app.handle_input(
         input,
         modifiers,
-        AppPointers::allocator(app_ptr),
-        AppPointers::units(app_ptr),
-        AppPointers::mut_tokens(app_ptr),
-        AppPointers::mut_results(app_ptr),
-        AppPointers::mut_vars(app_ptr),
-        AppPointers::mut_editor_objects(app_ptr),
-        AppPointers::mut_render_bucket(app_ptr),
+        bcf.allocator(),
+        bcf.units(),
+        bcf.mut_tokens(),
+        bcf.mut_results(),
+        bcf.mut_vars(),
+        bcf.mut_editor_objects(),
+        bcf.mut_render_bucket(),
     );
 
     return modif.is_some();

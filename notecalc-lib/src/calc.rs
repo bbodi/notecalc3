@@ -8,6 +8,7 @@ use crate::units::consts::EMPTY_UNIT_DIMENSIONS;
 use crate::units::units::{UnitOutput, Units, MAX_UNIT_COUNT};
 use crate::Variables;
 use rust_decimal::prelude::*;
+use tracy_client::Span;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct CalcResult {
@@ -102,6 +103,7 @@ pub fn evaluate_tokens<'text_ptr>(
     variables: &Variables,
     units: &Units,
 ) -> Result<Option<EvaluationResult>, ()> {
+    let _span = Span::new("calc", "calc", file!(), line!(), 100);
     let mut stack: Vec<CalcResult> = vec![];
     let mut there_was_unit_conversion = false;
     let mut assignment = false;
@@ -1286,9 +1288,9 @@ mod tests {
     use crate::{ResultFormat, Variable, Variables};
     use std::str::FromStr;
 
+    use crate::borrow_checker_fighter::create_vars;
     use crate::calc::{CalcResult, CalcResultType, EvaluationResult};
     use crate::functions::FnType;
-    use crate::helper::create_vars;
     use crate::renderer::render_result;
     use crate::token_parser::{OperatorTokenType, Token};
     use bumpalo::Bump;
@@ -1304,7 +1306,7 @@ mod tests {
         let mut tokens = vec![];
         let vars = create_vars();
         let arena = Bump::new();
-        let mut shunting_output = crate::shunting_yard::tests::do_shunting_yard(
+        let mut shunting_output = crate::shunting_yard::tests::do_shunting_yard_for_tests(
             &temp,
             &units,
             &mut tokens,
@@ -1326,8 +1328,13 @@ mod tests {
 
         let mut tokens = vec![];
         let arena = Bump::new();
-        let mut shunting_output =
-            crate::shunting_yard::tests::do_shunting_yard(&temp, &units, &mut tokens, vars, &arena);
+        let mut shunting_output = crate::shunting_yard::tests::do_shunting_yard_for_tests(
+            &temp,
+            &units,
+            &mut tokens,
+            vars,
+            &arena,
+        );
 
         let result = crate::calc::evaluate_tokens(&mut tokens, &mut shunting_output, vars, &units);
 

@@ -1,2 +1,3 @@
 /target
 frontend-web/pkg
+*.exe

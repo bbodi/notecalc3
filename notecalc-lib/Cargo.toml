@@ -13,6 +13,7 @@ strum_macros = "0.18.0"
 bumpalo = "3.4.0"
 #rust_decimal = {path = "../../rust-decimal"}
 rust_decimal = {git = "https://github.com/bbodi/rust-decimal.git"}
+tracy-client = { version = "0.10.0", features = ["enable"] }
 
 [dev-dependencies]
 rand = "0.7.3"

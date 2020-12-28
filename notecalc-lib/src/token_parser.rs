@@ -4,6 +4,7 @@ use crate::{Variables, SUM_VARIABLE_INDEX};
 use bumpalo::Bump;
 use rust_decimal::prelude::*;
 use std::str::FromStr;
+use tracy_client::*;
 
 // TODO
 #[allow(variant_size_differences)]
@@ -217,6 +218,7 @@ impl TokenParser {
         line_index: usize,
         allocator: &'text_ptr Bump,
     ) {
+        let _span = Span::new("parse_line", "parse_line", file!(), line!(), 100);
         let mut index = 0;
         let mut can_be_unit = None;
         let mut can_be_unit_converter = false;
@@ -329,6 +331,13 @@ impl TokenParser {
         str: &[char],
         allocator: &'text_ptr Bump,
     ) -> Option<Token<'text_ptr>> {
+        let _span = Span::new(
+            "try_extract_number_literal",
+            "try_extract_number_literal",
+            file!(),
+            line!(),
+            100,
+        );
         let mut number_str = [b'0'; 256];
         let mut number_str_index = 0;
         let mut i = 0;
@@ -355,7 +364,7 @@ impl TokenParser {
             });
         }
 
-        if str[i..].starts_with(&['0', 'b']) {
+        let result = if str[i..].starts_with(&['0', 'b']) {
             i += 2;
             let mut end_index_before_last_whitespace = i;
             while i < str.len() {
@@ -540,7 +549,8 @@ impl TokenParser {
             }
         } else {
             None
-        }
+        };
+        return result;
     }
 
     fn try_extract_unit<'text_ptr>(
@@ -550,11 +560,18 @@ impl TokenParser {
         can_be_unit_converter: bool,
         allocator: &'text_ptr Bump,
     ) -> Option<Token<'text_ptr>> {
+        let _span = Span::new(
+            "try_extract_unit",
+            "try_extract_unit",
+            file!(),
+            line!(),
+            100,
+        );
         if can_be_unit.is_none() || str[0].is_ascii_whitespace() {
             return None;
         }
         let (unit, parsed_len) = unit.parse(str);
-        return if parsed_len == 0 {
+        let result = if parsed_len == 0 {
             None
         } else {
             // remove trailing spaces
@@ -587,6 +604,7 @@ impl TokenParser {
                 }
             }
         };
+        return result;
     }
 
     fn try_extract_comment<'text_ptr>(
@@ -611,6 +629,13 @@ impl TokenParser {
         allocator: &'text_ptr Bump,
         prev_was_lineref: bool,
     ) -> Option<Token<'text_ptr>> {
+        let _span = Span::new(
+            "try_extract_variable_name",
+            "try_extract_variable_name",
+            file!(),
+            line!(),
+            100,
+        );
         if line.starts_with(&['s', 'u', 'm']) && line.get(3).map(|it| *it == ' ').unwrap_or(true) {
             return Some(Token {
                 typ: TokenType::Variable {
@@ -653,7 +678,7 @@ impl TokenParser {
                 longest_match_index = var_index;
             }
         }
-        if longest_match > 0 {
+        let result = if longest_match > 0 {
             let is_line_ref = longest_match > 2 && line[0] == '&' && line[1] == '[';
             let typ = if is_line_ref {
                 if prev_was_lineref {
@@ -668,20 +693,28 @@ impl TokenParser {
                     var_index: longest_match_index,
                 }
             };
-            return Some(Token {
+            Some(Token {
                 typ,
                 ptr: allocator.alloc_slice_fill_iter(line.iter().map(|it| *it).take(longest_match)),
                 has_error: false,
-            });
+            })
         } else {
-            return None;
+            None
         };
+        return result;
     }
 
     fn try_extract_string_literal<'text_ptr>(
         str: &[char],
         allocator: &'text_ptr Bump,
     ) -> Option<Token<'text_ptr>> {
+        let _span = Span::new(
+            "try_extract_string_literal",
+            "try_extract_string_literal",
+            file!(),
+            line!(),
+            100,
+        );
         let mut i = 0;
         for ch in str {
             if "=%/+-*^()[]".chars().any(|it| it == *ch) || ch.is_ascii_whitespace() {
@@ -691,14 +724,14 @@ impl TokenParser {
             debug_assert!(*ch as u8 != 0);
             i += 1;
         }
-        if i > 0 {
+        let result = if i > 0 {
             // alphabetical literal
-            return Some(Token {
+            Some(Token {
                 typ: TokenType::StringLiteral,
                 ptr: allocator.alloc_slice_fill_iter(str.iter().map(|it| *it).take(i)),
                 // ptr: &str[0..i],
                 has_error: false,
-            });
+            })
         } else {
             for ch in &str[0..] {
                 if !ch.is_ascii_whitespace() {
@@ -706,7 +739,7 @@ impl TokenParser {
                 }
                 i += 1;
             }
-            return if i > 0 {
+            if i > 0 {
                 // whitespace
                 Some(Token {
                     typ: TokenType::StringLiteral,
@@ -716,8 +749,9 @@ impl TokenParser {
                 })
             } else {
                 None
-            };
-        }
+            }
+        };
+        return result;
     }
 
     fn try_extract_operator<'text_ptr>(
@@ -725,6 +759,13 @@ impl TokenParser {
         allocator: &'text_ptr Bump,
         can_be_unit_converter: bool,
     ) -> Option<Token<'text_ptr>> {
+        let _span = Span::new(
+            "try_extract_operator",
+            "try_extract_operator",
+            file!(),
+            line!(),
+            100,
+        );
         fn op<'text_ptr>(
             typ: OperatorTokenType,
             str: &[char],
@@ -745,7 +786,7 @@ impl TokenParser {
                     .map(|it| !it.is_alphabetic())
                     .unwrap_or(true);
         }
-        match str[0] {
+        let result = match str[0] {
             '=' => op(OperatorTokenType::Assign, str, 1, allocator),
             '+' => op(OperatorTokenType::Add, str, 1, allocator),
             '-' => op(OperatorTokenType::Sub, str, 1, allocator),
@@ -869,7 +910,8 @@ impl TokenParser {
                     None
                 }
             }
-        }
+        };
+        return result;
     }
 }
 
@@ -902,8 +944,8 @@ pub fn pad_rust_is_shit(error: &mut String, str: &str, len: usize) {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::borrow_checker_fighter::create_vars;
     use crate::calc::{CalcResult, CalcResultType};
-    use crate::helper::create_vars;
     use crate::shunting_yard::tests::*;
     use crate::units::units::Units;
     use crate::{Variable, MAX_LINE_COUNT};

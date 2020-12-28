@@ -1,358 +1,359 @@
-mod common;
+#[cfg(test)]
+mod asd {
+    use notecalc_lib::editor::editor::{EditorInputEvent, InputModifiers, Pos, Selection};
+    use notecalc_lib::test_common::test_common::create_test_app;
 
-use crate::common::create_app2;
-use notecalc_lib::editor::editor::{EditorInputEvent, InputModifiers, Pos, Selection};
+    #[test]
+    fn test_line_ref_normalization() {
+        let test = create_test_app(35);
+        test.paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n");
+        test.set_cursor_row_col(12, 2);
+        test.render();
+        // remove a line
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
 
-#[test]
-fn test_line_ref_normalization() {
-    let test = create_app2(35);
-    test.paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n");
-    test.set_cursor_row_col(12, 2);
-    test.render();
-    // remove a line
-    test.input(EditorInputEvent::Up, InputModifiers::none());
-    test.input(EditorInputEvent::Up, InputModifiers::none());
-    test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
-
-    // Move to end
-    test.input(EditorInputEvent::PageDown, InputModifiers::none());
-    test.input(EditorInputEvent::End, InputModifiers::none());
-    // ALT
-    test.input(EditorInputEvent::Up, InputModifiers::alt());
-    test.alt_key_released();
-    test.input(EditorInputEvent::Up, InputModifiers::alt());
-    test.alt_key_released();
-    test.input(EditorInputEvent::Up, InputModifiers::alt());
-    test.alt_key_released();
-    assert_eq!(
-        "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n12\n13\n&[13] &[13] &[13]",
-        &test.get_editor_content()
-    );
-    assert_eq!(
-        "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n12\n13\n&[12] &[12] &[12]\n",
-        &test.app().get_line_ref_normalized_content()
-    );
-}
-
-#[test]
-fn test_line_ref_normalization2() {
-    let test = create_app2(35);
-    test.paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n");
-    test.set_cursor_row_col(4, 0);
-
-    // mess up the line_id-s
-    test.input(EditorInputEvent::Enter, InputModifiers::none());
-    test.input(EditorInputEvent::Enter, InputModifiers::none());
-    test.input(EditorInputEvent::Enter, InputModifiers::none());
-    test.input(EditorInputEvent::Up, InputModifiers::none());
-    test.input(EditorInputEvent::Char('3'), InputModifiers::none());
-    test.input(EditorInputEvent::Down, InputModifiers::none());
-    test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
-    test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
-
-    // Move to end
-    test.input(EditorInputEvent::PageDown, InputModifiers::none());
-    // ALT
-    for _ in 0..8 {
+        // Move to end
+        test.input(EditorInputEvent::PageDown, InputModifiers::none());
+        test.input(EditorInputEvent::End, InputModifiers::none());
+        // ALT
         test.input(EditorInputEvent::Up, InputModifiers::alt());
-    }
-    test.alt_key_released();
-    for _ in 0..11 {
+        test.alt_key_released();
         test.input(EditorInputEvent::Up, InputModifiers::alt());
-    }
-    test.alt_key_released();
-    for _ in 0..4 {
+        test.alt_key_released();
         test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        assert_eq!(
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n12\n13\n&[13] &[13] &[13]",
+            &test.get_editor_content()
+        );
+        assert_eq!(
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n12\n13\n&[12] &[12] &[12]\n",
+            &test.app().get_line_ref_normalized_content()
+        );
     }
-    test.alt_key_released();
 
-    assert_eq!(
-        "1\n2\n3\n4\n\n\n3\n7\n8\n9\n10\n11\n12\n13\n&[17] &[4] &[10]",
-        &test.get_editor_content()
-    );
-    assert_eq!(
-        "1\n2\n3\n4\n\n\n3\n7\n8\n9\n10\n11\n12\n13\n&[7] &[4] &[11]\n",
-        &test.app().get_line_ref_normalized_content()
-    );
-}
+    #[test]
+    fn test_line_ref_normalization2() {
+        let test = create_test_app(35);
+        test.paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n");
+        test.set_cursor_row_col(4, 0);
 
-// asd
-#[test]
-fn test_inplace_line_ref_normalization() {
-    let test = create_app2(35);
-    test.paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n");
-    test.set_cursor_row_col(12, 2);
-    test.render();
-    // remove a line
-    test.input(EditorInputEvent::Up, InputModifiers::none());
-    test.input(EditorInputEvent::Up, InputModifiers::none());
-    test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
+        // mess up the line_id-s
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.input(EditorInputEvent::Char('3'), InputModifiers::none());
+        test.input(EditorInputEvent::Down, InputModifiers::none());
+        test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
+        test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
 
-    // Move to end
-    test.input(EditorInputEvent::PageDown, InputModifiers::none());
-    test.input(EditorInputEvent::End, InputModifiers::none());
-    // ALT
-    test.input(EditorInputEvent::Up, InputModifiers::alt());
-    test.alt_key_released();
-    test.input(EditorInputEvent::Up, InputModifiers::alt());
-    test.alt_key_released();
-    test.input(EditorInputEvent::Up, InputModifiers::alt());
-    test.alt_key_released();
-    assert_eq!(
-        "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n12\n13\n&[13] &[13] &[13]",
-        &test.get_editor_content()
-    );
-    test.mut_app().normalize_line_refs_in_place();
-    assert_eq!(
-        "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n12\n13\n&[12] &[12] &[12]",
-        &test.get_editor_content()
-    );
-    for i in 0..test.app().editor_content.line_count() {
-        assert_eq!(test.app().editor_content.get_data(i).line_id, i + 1);
+        // Move to end
+        test.input(EditorInputEvent::PageDown, InputModifiers::none());
+        // ALT
+        for _ in 0..8 {
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+        }
+        test.alt_key_released();
+        for _ in 0..11 {
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+        }
+        test.alt_key_released();
+        for _ in 0..4 {
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+        }
+        test.alt_key_released();
+
+        assert_eq!(
+            "1\n2\n3\n4\n\n\n3\n7\n8\n9\n10\n11\n12\n13\n&[17] &[4] &[10]",
+            &test.get_editor_content()
+        );
+        assert_eq!(
+            "1\n2\n3\n4\n\n\n3\n7\n8\n9\n10\n11\n12\n13\n&[7] &[4] &[11]\n",
+            &test.app().get_line_ref_normalized_content()
+        );
     }
-    assert_eq!(
-        test.app().line_id_generator,
-        test.app().editor_content.line_count() + 1
-    );
-}
 
-#[test]
-fn test_inplace_line_ref_normalization2() {
-    let test = create_app2(35);
-    test.paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n");
-    test.set_cursor_row_col(4, 0);
+    // asd
+    #[test]
+    fn test_inplace_line_ref_normalization() {
+        let test = create_test_app(35);
+        test.paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n");
+        test.set_cursor_row_col(12, 2);
+        test.render();
+        // remove a line
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
 
-    // mess up the line_id-s
-    test.input(EditorInputEvent::Enter, InputModifiers::none());
-    test.input(EditorInputEvent::Enter, InputModifiers::none());
-    test.input(EditorInputEvent::Enter, InputModifiers::none());
-    test.input(EditorInputEvent::Up, InputModifiers::none());
-    test.input(EditorInputEvent::Char('3'), InputModifiers::none());
-    test.input(EditorInputEvent::Down, InputModifiers::none());
-    test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
-    test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
-
-    // Move to end
-    test.input(EditorInputEvent::PageDown, InputModifiers::none());
-    // ALT
-    for _ in 0..8 {
+        // Move to end
+        test.input(EditorInputEvent::PageDown, InputModifiers::none());
+        test.input(EditorInputEvent::End, InputModifiers::none());
+        // ALT
         test.input(EditorInputEvent::Up, InputModifiers::alt());
-    }
-    test.alt_key_released();
-    for _ in 0..11 {
+        test.alt_key_released();
         test.input(EditorInputEvent::Up, InputModifiers::alt());
-    }
-    test.alt_key_released();
-    for _ in 0..4 {
+        test.alt_key_released();
         test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.alt_key_released();
+        assert_eq!(
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n12\n13\n&[13] &[13] &[13]",
+            &test.get_editor_content()
+        );
+        test.mut_app().normalize_line_refs_in_place();
+        assert_eq!(
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n12\n13\n&[12] &[12] &[12]",
+            &test.get_editor_content()
+        );
+        for i in 0..test.app().editor_content.line_count() {
+            assert_eq!(test.app().editor_content.get_data(i).line_id, i + 1);
+        }
+        assert_eq!(
+            test.app().line_id_generator,
+            test.app().editor_content.line_count() + 1
+        );
     }
-    test.alt_key_released();
 
-    assert_eq!(
-        "1\n2\n3\n4\n\n\n3\n7\n8\n9\n10\n11\n12\n13\n&[17] &[4] &[10]",
-        &test.get_editor_content()
-    );
-    test.mut_app().normalize_line_refs_in_place();
-    assert_eq!(
-        &test.get_editor_content(),
-        "1\n2\n3\n4\n\n\n3\n7\n8\n9\n10\n11\n12\n13\n&[7] &[4] &[11]"
-    );
-    for i in 0..test.app().editor_content.line_count() {
-        assert_eq!(test.app().editor_content.get_data(i).line_id, i + 1);
+    #[test]
+    fn test_inplace_line_ref_normalization2() {
+        let test = create_test_app(35);
+        test.paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n");
+        test.set_cursor_row_col(4, 0);
+
+        // mess up the line_id-s
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.input(EditorInputEvent::Char('3'), InputModifiers::none());
+        test.input(EditorInputEvent::Down, InputModifiers::none());
+        test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
+        test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
+
+        // Move to end
+        test.input(EditorInputEvent::PageDown, InputModifiers::none());
+        // ALT
+        for _ in 0..8 {
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+        }
+        test.alt_key_released();
+        for _ in 0..11 {
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+        }
+        test.alt_key_released();
+        for _ in 0..4 {
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+        }
+        test.alt_key_released();
+
+        assert_eq!(
+            "1\n2\n3\n4\n\n\n3\n7\n8\n9\n10\n11\n12\n13\n&[17] &[4] &[10]",
+            &test.get_editor_content()
+        );
+        test.mut_app().normalize_line_refs_in_place();
+        assert_eq!(
+            &test.get_editor_content(),
+            "1\n2\n3\n4\n\n\n3\n7\n8\n9\n10\n11\n12\n13\n&[7] &[4] &[11]"
+        );
+        for i in 0..test.app().editor_content.line_count() {
+            assert_eq!(test.app().editor_content.get_data(i).line_id, i + 1);
+        }
+        assert_eq!(
+            test.app().line_id_generator,
+            test.app().editor_content.line_count() + 1
+        );
     }
-    assert_eq!(
-        test.app().line_id_generator,
-        test.app().editor_content.line_count() + 1
-    );
-}
 
-#[test]
-fn test_that_inplace_normalization_happens_on_select_all() {
-    let test = create_app2(35);
-    test.paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n");
-    test.set_cursor_row_col(4, 0);
+    #[test]
+    fn test_that_inplace_normalization_happens_on_select_all() {
+        let test = create_test_app(35);
+        test.paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n");
+        test.set_cursor_row_col(4, 0);
 
-    // mess up the line_id-s
-    test.input(EditorInputEvent::Enter, InputModifiers::none());
-    test.input(EditorInputEvent::Enter, InputModifiers::none());
-    test.input(EditorInputEvent::Enter, InputModifiers::none());
-    test.input(EditorInputEvent::Up, InputModifiers::none());
-    test.input(EditorInputEvent::Char('3'), InputModifiers::none());
-    test.input(EditorInputEvent::Down, InputModifiers::none());
-    test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
-    test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
+        // mess up the line_id-s
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.input(EditorInputEvent::Char('3'), InputModifiers::none());
+        test.input(EditorInputEvent::Down, InputModifiers::none());
+        test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
+        test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
 
-    // Move to end
-    test.input(EditorInputEvent::PageDown, InputModifiers::none());
-    // ALT
-    for _ in 0..8 {
-        test.input(EditorInputEvent::Up, InputModifiers::alt());
-    }
-    test.alt_key_released();
-    for _ in 0..11 {
-        test.input(EditorInputEvent::Up, InputModifiers::alt());
-    }
-    test.alt_key_released();
-    for _ in 0..4 {
-        test.input(EditorInputEvent::Up, InputModifiers::alt());
-    }
-    test.alt_key_released();
+        // Move to end
+        test.input(EditorInputEvent::PageDown, InputModifiers::none());
+        // ALT
+        for _ in 0..8 {
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+        }
+        test.alt_key_released();
+        for _ in 0..11 {
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+        }
+        test.alt_key_released();
+        for _ in 0..4 {
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+        }
+        test.alt_key_released();
 
-    test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
+        test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
 
-    let editor_content_str = test.get_editor_content();
-    assert_eq!(
-        &editor_content_str,
-        "1\n2\n3\n4\n\n\n3\n7\n8\n9\n10\n11\n12\n13\n&[7] &[4] &[11]"
-    );
-    for i in 0..test.app().editor_content.line_count() {
-        assert_eq!(test.app().editor_content.get_data(i).line_id, i + 1);
-    }
-    assert_eq!(
-        test.app().line_id_generator,
-        test.app().editor_content.line_count() + 1
-    );
-    // selection is kept
-    assert_eq!(
-        test.app().editor.get_selection(),
-        Selection::range(
-            Pos::from_row_column(0, 0),
-            Pos::from_row_column(
-                test.app().editor_content.line_count() - 1,
-                test.app()
-                    .editor_content
-                    .line_len(test.app().editor_content.line_count() - 1)
+        let editor_content_str = test.get_editor_content();
+        assert_eq!(
+            &editor_content_str,
+            "1\n2\n3\n4\n\n\n3\n7\n8\n9\n10\n11\n12\n13\n&[7] &[4] &[11]"
+        );
+        for i in 0..test.app().editor_content.line_count() {
+            assert_eq!(test.app().editor_content.get_data(i).line_id, i + 1);
+        }
+        assert_eq!(
+            test.app().line_id_generator,
+            test.app().editor_content.line_count() + 1
+        );
+        // selection is kept
+        assert_eq!(
+            test.app().editor.get_selection(),
+            Selection::range(
+                Pos::from_row_column(0, 0),
+                Pos::from_row_column(
+                    test.app().editor_content.line_count() - 1,
+                    test.app()
+                        .editor_content
+                        .line_len(test.app().editor_content.line_count() - 1)
+                )
             )
-        )
-    );
-}
-
-#[test]
-fn test_that_inplace_normalization_happens_on_any_kind_of_select() {
-    let test = create_app2(35);
-    test.paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n");
-    test.set_cursor_row_col(4, 0);
-
-    // mess up the line_id-s
-    test.input(EditorInputEvent::Enter, InputModifiers::none());
-    test.input(EditorInputEvent::Enter, InputModifiers::none());
-    test.input(EditorInputEvent::Enter, InputModifiers::none());
-    test.input(EditorInputEvent::Up, InputModifiers::none());
-    test.input(EditorInputEvent::Char('3'), InputModifiers::none());
-    test.input(EditorInputEvent::Down, InputModifiers::none());
-    test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
-    test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
-
-    // Move to end
-    test.input(EditorInputEvent::PageDown, InputModifiers::none());
-    // ALT
-    for _ in 0..8 {
-        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        );
     }
-    test.alt_key_released();
-    for _ in 0..11 {
-        test.input(EditorInputEvent::Up, InputModifiers::alt());
+
+    #[test]
+    fn test_that_inplace_normalization_happens_on_any_kind_of_select() {
+        let test = create_test_app(35);
+        test.paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n");
+        test.set_cursor_row_col(4, 0);
+
+        // mess up the line_id-s
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.input(EditorInputEvent::Char('3'), InputModifiers::none());
+        test.input(EditorInputEvent::Down, InputModifiers::none());
+        test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
+        test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
+
+        // Move to end
+        test.input(EditorInputEvent::PageDown, InputModifiers::none());
+        // ALT
+        for _ in 0..8 {
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+        }
+        test.alt_key_released();
+        for _ in 0..11 {
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+        }
+        test.alt_key_released();
+        for _ in 0..4 {
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+        }
+        test.alt_key_released();
+
+        test.input(EditorInputEvent::Left, InputModifiers::shift());
+        assert_eq!(
+            &test.get_editor_content(),
+            "1\n2\n3\n4\n\n\n3\n7\n8\n9\n10\n11\n12\n13\n&[7] &[4] &[11]"
+        );
+        for i in 0..test.app().editor_content.line_count() {
+            assert_eq!(test.app().editor_content.get_data(i).line_id, i + 1);
+        }
+        assert_eq!(
+            test.app().line_id_generator,
+            test.app().editor_content.line_count() + 1
+        );
+        // selection is kept
+        assert_eq!(
+            test.app().editor.get_selection(),
+            Selection::range(Pos::from_row_column(14, 15), Pos::from_row_column(14, 14),)
+        );
     }
-    test.alt_key_released();
-    for _ in 0..4 {
-        test.input(EditorInputEvent::Up, InputModifiers::alt());
+
+    #[test]
+    fn test_that_editor_objects_are_recreated() {
+        let test = create_test_app(35);
+        test.paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n");
+        test.set_cursor_row_col(4, 0);
+
+        // mess up the line_id-s
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::Up, InputModifiers::none());
+        test.input(EditorInputEvent::Char('3'), InputModifiers::none());
+        test.input(EditorInputEvent::Down, InputModifiers::none());
+        test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
+        test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
+
+        // Move to end
+        test.input(EditorInputEvent::PageDown, InputModifiers::none());
+        // ALT
+        for _ in 0..8 {
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+        }
+        test.alt_key_released();
+        for _ in 0..11 {
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+        }
+        test.alt_key_released();
+        for _ in 0..4 {
+            test.input(EditorInputEvent::Up, InputModifiers::alt());
+        }
+        test.alt_key_released();
+
+        // trigger normalizing
+        test.input(EditorInputEvent::Left, InputModifiers::shift());
+
+        // end selection
+        test.input(EditorInputEvent::Left, InputModifiers::none());
+
+        assert_eq!(
+            &test.mut_vars()[4].as_ref().unwrap().name[..],
+            &['&', '[', '5', ']'][..]
+        );
+        assert_eq!(
+            &test.mut_vars()[7].as_ref().unwrap().name[..],
+            &['&', '[', '8', ']'][..]
+        );
+        assert_eq!(
+            &test.mut_vars()[11].as_ref().unwrap().name[..],
+            &['&', '[', '1', '2', ']'][..]
+        );
     }
-    test.alt_key_released();
 
-    test.input(EditorInputEvent::Left, InputModifiers::shift());
-    assert_eq!(
-        &test.get_editor_content(),
-        "1\n2\n3\n4\n\n\n3\n7\n8\n9\n10\n11\n12\n13\n&[7] &[4] &[11]"
-    );
-    for i in 0..test.app().editor_content.line_count() {
-        assert_eq!(test.app().editor_content.get_data(i).line_id, i + 1);
+    #[test]
+    fn test_line_ref_denormalization() {
+        let test = create_test_app(35);
+        test.set_normalized_content("1111\n2222\n14 * &[2] &[2] &[2]\n");
+        let content = &test.app().editor_content;
+        assert_eq!(1, content.get_data(0).line_id);
+        assert_eq!(2, content.get_data(1).line_id);
+        assert_eq!(3, content.get_data(2).line_id);
     }
-    assert_eq!(
-        test.app().line_id_generator,
-        test.app().editor_content.line_count() + 1
-    );
-    // selection is kept
-    assert_eq!(
-        test.app().editor.get_selection(),
-        Selection::range(Pos::from_row_column(14, 15), Pos::from_row_column(14, 14),)
-    );
-}
 
-#[test]
-fn test_that_editor_objects_are_recreated() {
-    let test = create_app2(35);
-    test.paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n");
-    test.set_cursor_row_col(4, 0);
+    #[test]
+    fn test_that_inplace_normalization_is_not_undoable() {
+        let test = create_test_app(35);
+        test.paste("1\n&[1]");
+        test.handle_time(1000);
+        test.input(EditorInputEvent::PageUp, InputModifiers::none());
+        test.input(EditorInputEvent::Enter, InputModifiers::none());
+        test.input(EditorInputEvent::PageDown, InputModifiers::none());
+        test.handle_time(1000);
+        // this selection normalizez the text
+        test.input(EditorInputEvent::Left, InputModifiers::shift());
+        assert_eq!(test.get_editor_content(), "\n1\n&[2]");
 
-    // mess up the line_id-s
-    test.input(EditorInputEvent::Enter, InputModifiers::none());
-    test.input(EditorInputEvent::Enter, InputModifiers::none());
-    test.input(EditorInputEvent::Enter, InputModifiers::none());
-    test.input(EditorInputEvent::Up, InputModifiers::none());
-    test.input(EditorInputEvent::Char('3'), InputModifiers::none());
-    test.input(EditorInputEvent::Down, InputModifiers::none());
-    test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
-    test.input(EditorInputEvent::Char('x'), InputModifiers::ctrl());
-
-    // Move to end
-    test.input(EditorInputEvent::PageDown, InputModifiers::none());
-    // ALT
-    for _ in 0..8 {
-        test.input(EditorInputEvent::Up, InputModifiers::alt());
+        test.input(EditorInputEvent::Char('z'), InputModifiers::ctrl());
+        assert_eq!(test.get_editor_content(), "1\n&[2]");
     }
-    test.alt_key_released();
-    for _ in 0..11 {
-        test.input(EditorInputEvent::Up, InputModifiers::alt());
-    }
-    test.alt_key_released();
-    for _ in 0..4 {
-        test.input(EditorInputEvent::Up, InputModifiers::alt());
-    }
-    test.alt_key_released();
-
-    // trigger normalizing
-    test.input(EditorInputEvent::Left, InputModifiers::shift());
-
-    // end selection
-    test.input(EditorInputEvent::Left, InputModifiers::none());
-
-    assert_eq!(
-        &test.mut_vars()[4].as_ref().unwrap().name[..],
-        &['&', '[', '5', ']'][..]
-    );
-    assert_eq!(
-        &test.mut_vars()[7].as_ref().unwrap().name[..],
-        &['&', '[', '8', ']'][..]
-    );
-    assert_eq!(
-        &test.mut_vars()[11].as_ref().unwrap().name[..],
-        &['&', '[', '1', '2', ']'][..]
-    );
-}
-
-#[test]
-fn test_line_ref_denormalization() {
-    let test = create_app2(35);
-    test.set_normalized_content("1111\n2222\n14 * &[2] &[2] &[2]\n");
-    let content = &test.app().editor_content;
-    assert_eq!(1, content.get_data(0).line_id);
-    assert_eq!(2, content.get_data(1).line_id);
-    assert_eq!(3, content.get_data(2).line_id);
-}
-
-#[test]
-fn test_that_inplace_normalization_is_not_undoable() {
-    let test = create_app2(35);
-    test.paste("1\n&[1]");
-    test.handle_time(1000);
-    test.input(EditorInputEvent::PageUp, InputModifiers::none());
-    test.input(EditorInputEvent::Enter, InputModifiers::none());
-    test.input(EditorInputEvent::PageDown, InputModifiers::none());
-    test.handle_time(1000);
-    // this selection normalizez the text
-    test.input(EditorInputEvent::Left, InputModifiers::shift());
-    assert_eq!(test.get_editor_content(), "\n1\n&[2]");
-
-    test.input(EditorInputEvent::Char('z'), InputModifiers::ctrl());
-    assert_eq!(test.get_editor_content(), "1\n&[2]");
 }

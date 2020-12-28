@@ -37,13 +37,16 @@ use crate::renderer::{get_int_frac_part_len, render_result, render_result_into};
 use crate::shunting_yard::ShuntingYard;
 use crate::token_parser::{OperatorTokenType, Token, TokenParser, TokenType};
 use crate::units::units::Units;
+use tracy_client::*;
 
 mod functions;
 mod matrix;
 mod shunting_yard;
+pub mod test_common;
 mod token_parser;
 pub mod units;
 
+pub mod borrow_checker_fighter;
 pub mod calc;
 pub mod consts;
 pub mod editor;
@@ -225,15 +228,6 @@ pub mod helper {
 
     use crate::calc::CalcResultType;
     pub use crate::{MAX_LINE_COUNT, *};
-
-    pub fn create_vars() -> [Option<Variable>; MAX_LINE_COUNT + 1] {
-        let mut vars = [None; MAX_LINE_COUNT + 1];
-        vars[SUM_VARIABLE_INDEX] = Some(Variable {
-            name: Box::from(&['s', 'u', 'm'][..]),
-            value: Err(()),
-        });
-        return vars;
-    }
 
     #[derive(Debug)]
     pub struct EditorObjects(Vec<Vec<EditorObject>>);
@@ -486,9 +480,10 @@ pub mod helper {
                 client_height,
                 theme_index: 0,
             };
-
             r.current_editor_width = (result_gutter_x - left_gutter_width) - 1;
             r.current_result_panel_width = client_width - result_gutter_x - right_gutter_width;
+            // so tests without calling "paste" work
+            r.editor_y_to_rendered_height[0] = 1;
             r
         }
 
@@ -1715,6 +1710,9 @@ impl NoteCalcApp {
             render_buckets.set_color(Layer::Text, theme.line_num_simple);
             for i in 0..gr.client_height {
                 let y = gr.scroll_y + i;
+                if y >= MAX_LINE_COUNT {
+                    break;
+                }
                 if y == editor.get_selection().get_cursor_pos().row {
                     render_buckets.set_color(Layer::Text, theme.line_num_active);
                 }
@@ -2749,6 +2747,7 @@ impl NoteCalcApp {
         editor_objs: &mut EditorObjects,
         render_buckets: &mut RenderBuckets<'b>,
     ) -> Option<RowModificationType> {
+        let _span = Span::new("handle_input", "handle_input", file!(), line!(), 100);
         fn handle_input_with_alt<'b>(
             app: &mut NoteCalcApp,
             input: EditorInputEvent,
@@ -2978,6 +2977,8 @@ impl NoteCalcApp {
             );
         }
 
+        finish_continuous_frame!();
+
         return modif;
     }
 
@@ -3017,6 +3018,13 @@ impl NoteCalcApp {
         editor_objs: &mut EditorObjects,
         render_buckets: &mut RenderBuckets<'b>,
     ) {
+        let _span = Span::new(
+            "process_and_render_tokens",
+            "process_and_render_tokens",
+            file!(),
+            line!(),
+            100,
+        );
         fn eval_line<'a>(
             editor_content: &EditorContent<LineData>,
             line: &[char],
@@ -3028,6 +3036,7 @@ impl NoteCalcApp {
             editor_y: ContentIndex,
             updated_line_ref_obj_indices: &mut Vec<EditorObjId>,
         ) -> (bool, BitFlag256) {
+            let _span = Span::new("eval_line", "eval_line", file!(), line!(), 100);
             // TODO avoid clone
             let prev_var_name = vars[editor_y.as_usize()].as_ref().map(|it| it.name.clone());
 
@@ -4343,6 +4352,13 @@ impl NoteCalcApp {
         editor_objs: &mut EditorObjects,
         result_change_flag: BitFlag256,
     ) {
+        let _span = Span::new(
+            "generate_render_commands_and_fill_editor_objs",
+            "generate_render_commands_and_fill_editor_objs",
+            file!(),
+            line!(),
+            100,
+        );
         render_buckets.clear();
         NoteCalcApp::renderr(
             &mut self.editor,
@@ -6854,538 +6870,35 @@ mod bitflag_tests {
 #[cfg(test)]
 mod main_tests {
     use super::*;
+    use crate::test_common::test_common::{
+        assert_contains, assert_contains_pulse, create_test_app, create_test_app2,
+        pulsing_ref_rect, TestHelper,
+    };
 
     const fn result_panel_w(client_width: usize) -> usize {
         client_width * (100 - DEFAULT_RESULT_PANEL_WIDTH_PERCENT) / 100
     }
 
-    fn pulsing_ref_rect(x: usize, y: usize, w: usize, h: usize) -> PulsingRectangle {
-        PulsingRectangle {
-            x,
-            y: canvas_y(y as isize),
-            w,
-            h,
-            start_color: THEMES[0].reference_pulse_start,
-            end_color: THEMES[0].reference_pulse_end,
-            animation_time: Duration::from_millis(1000),
-            repeat: true,
-        }
-    }
-
-    fn pulsing_result_rect(x: usize, y: usize, w: usize, h: usize) -> PulsingRectangle {
-        PulsingRectangle {
-            x,
-            y: canvas_y(y as isize),
-            w,
-            h,
-            start_color: THEMES[0].change_result_pulse_start,
-            end_color: THEMES[0].change_result_pulse_end,
-            animation_time: Duration::from_millis(1000),
-            repeat: false,
-        }
-    }
-
-    fn pulsing_changed_content_rect(x: usize, y: usize, w: usize, h: usize) -> PulsingRectangle {
-        PulsingRectangle {
-            x,
-            y: canvas_y(y as isize),
-            w,
-            h,
-            start_color: THEMES[0].change_result_pulse_start,
-            end_color: THEMES[0].change_result_pulse_end,
-            animation_time: Duration::from_millis(2000),
-            repeat: false,
-        }
-    }
-
-    fn assert_contains_pulse(
-        render_bucket: &[PulsingRectangle],
-        expected_count: usize,
-        expected_command: PulsingRectangle,
-    ) {
-        let mut count = 0;
-        for command in render_bucket {
-            if *command == expected_command {
-                count += 1;
-            }
-        }
-        assert_eq!(
-            count, expected_count,
-            "Found {} times, expected {}.\n{:?}\nin\n{:?}",
-            count, expected_count, expected_command, render_bucket
-        );
-    }
-
-    fn assert_contains(
-        render_bucket: &[OutputMessage],
-        expected_count: usize,
-        expected_command: OutputMessage,
-    ) {
-        let mut count = 0;
-        for command in render_bucket {
-            if *command == expected_command {
-                count += 1;
-            }
-        }
-        assert_eq!(
-            count, expected_count,
-            "Found {} times, expected {}.\n{:?}\nin\n{:?}",
-            count, expected_count, expected_command, render_bucket
-        );
-    }
-
-    struct BorrowCheckerFighter {
-        app_ptr: u64,
-        units_ptr: u64,
-        render_bucket_ptr: u64,
-        tokens_ptr: u64,
-        results_ptr: u64,
-        vars_ptr: u64,
-        editor_objects_ptr: u64,
-        allocator: u64,
-    }
-
-    #[allow(dead_code)]
-    impl BorrowCheckerFighter {
-        fn mut_app<'a>(&self) -> &'a mut NoteCalcApp {
-            unsafe { &mut *(self.app_ptr as *mut NoteCalcApp) }
-        }
-
-        fn app<'a>(&self) -> &'a NoteCalcApp {
-            unsafe { &*(self.app_ptr as *const NoteCalcApp) }
-        }
-
-        fn units<'a>(&self) -> &'a mut Units {
-            unsafe { &mut *(self.units_ptr as *mut Units) }
-        }
-
-        fn render_bucket(&self) -> &RenderBuckets {
-            return self.mut_render_bucket();
-        }
-
-        fn mut_render_bucket<'a>(&self) -> &'a mut RenderBuckets<'a> {
-            unsafe { &mut *(self.render_bucket_ptr as *mut RenderBuckets) }
-        }
-
-        fn tokens<'a>(&self) -> &'a AppTokens<'a> {
-            unsafe { &*(self.tokens_ptr as *const AppTokens) }
-        }
-
-        fn mut_tokens<'a>(&self) -> &'a mut AppTokens<'a> {
-            unsafe { &mut *(self.tokens_ptr as *mut AppTokens) }
-        }
-
-        fn mut_results<'a>(&self) -> &'a mut Results {
-            unsafe { &mut *(self.results_ptr as *mut Results) }
-        }
-
-        fn mut_editor_objects<'a>(&self) -> &'a mut EditorObjects {
-            unsafe { &mut *(self.editor_objects_ptr as *mut EditorObjects) }
-        }
-
-        fn editor_objects<'a>(&self) -> &'a EditorObjects {
-            unsafe { &*(self.editor_objects_ptr as *const EditorObjects) }
-        }
-
-        fn mut_vars<'a>(&self) -> &'a mut [Option<Variable>] {
-            unsafe {
-                &mut (&mut *(self.vars_ptr as *mut [Option<Variable>; MAX_LINE_COUNT + 1]))[..]
-            }
-        }
-
-        fn allocator<'a>(&self) -> &'a Bump {
-            unsafe { &*(self.allocator as *const Bump) }
-        }
-
-        fn render(&self) {
-            self.mut_app()
-                .generate_render_commands_and_fill_editor_objs(
-                    self.units(),
-                    self.mut_render_bucket(),
-                    self.allocator(),
-                    self.mut_tokens(),
-                    self.mut_results(),
-                    self.mut_vars(),
-                    self.mut_editor_objects(),
-                    BitFlag256::empty(),
-                );
-        }
-
-        fn paste(&self, str: &str) {
-            self.mut_app().handle_paste(
-                str.to_owned(),
-                self.units(),
-                self.allocator(),
-                self.mut_tokens(),
-                self.mut_results(),
-                self.mut_vars(),
-                self.mut_editor_objects(),
-                self.mut_render_bucket(),
-            );
-        }
-
-        fn assert_no_highlighting_rectangle(&self) {
-            let render_buckets = &self.render_bucket().custom_commands[Layer::BehindText as usize];
-            for i in 0..9 {
-                assert_contains(
-                    render_buckets,
-                    0,
-                    OutputMessage::SetColor(ACTIVE_LINE_REF_HIGHLIGHT_COLORS[i]),
-                );
-            }
-        }
-
-        fn assert_results(&self, expected_results: &[&str]) {
-            let mut i = 0;
-            let mut ok_chars = Vec::with_capacity(32);
-            let expected_len = expected_results.iter().map(|it| it.len()).sum();
-            unsafe {
-                for (result_index, expected_result) in expected_results.iter().enumerate() {
-                    for ch in expected_result.bytes() {
-                        assert_eq!(
-                            RESULT_BUFFER[i] as char,
-                            ch as char,
-                            "{}. result, at char {}: {:?}, result_buffer: {:?}",
-                            result_index,
-                            i,
-                            String::from_utf8(ok_chars).unwrap(),
-                            &RESULT_BUFFER[0..expected_len]
-                                .iter()
-                                .map(|it| *it as char)
-                                .collect::<Vec<char>>()
-                        );
-                        ok_chars.push(ch);
-                        i += 1;
-                    }
-                    ok_chars.push(',' as u8);
-                    ok_chars.push(' ' as u8);
-                }
-                assert_eq!(
-                    RESULT_BUFFER[i], 0,
-                    "more results than expected at char {}.",
-                    i
-                );
-            }
-        }
-
-        fn assert_contains_operator<F>(&self, expected_count: usize, expected_command: F)
-        where
-            F: Fn(&RenderUtf8TextMsg) -> bool,
+    #[test]
+    fn test_that_paste_is_not_necessary_for_tests_to_work() {
         {
-            let mut count = 0;
-            let operators = &self.render_bucket().operators;
-            for op in operators {
-                if expected_command(op) {
-                    count += 1;
-                }
-            }
-            assert_eq!(
-                count, expected_count,
-                "Found {} times.\nExpected: {}\nin\n{:?}",
-                count, expected_count, operators
-            );
+            let test = create_test_app(35);
+            test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
         }
-
-        fn assert_contains_custom_command<F>(
-            &self,
-            layer: Layer,
-            expected_count: usize,
-            expected_command: F,
-        ) where
-            F: Fn(&OutputMessage) -> bool,
         {
-            let mut count = 0;
-            let commands = &self.render_bucket().custom_commands[layer as usize];
-            for op in commands {
-                if expected_command(op) {
-                    count += 1;
-                }
-            }
-            assert_eq!(
-                count, expected_count,
-                "Found {} times.\nExpected: {}\nin\n{:?}",
-                count, expected_count, commands
-            );
-        }
+            let test = create_test_app(35);
 
-        fn assert_contains_line_ref_result<F>(&self, expected_count: usize, expected_command: F)
-        where
-            F: Fn(&RenderStringMsg) -> bool,
-        {
-            let mut count = 0;
-            let operators = &self.render_bucket().line_ref_results;
-            for op in operators {
-                if expected_command(op) {
-                    count += 1;
-                }
-            }
-            assert_eq!(
-                count, expected_count,
-                "Found {} times.\nExpected: {}\nin\n{:?}",
-                count, expected_count, operators
-            );
+            test.input(EditorInputEvent::Char('a'), InputModifiers::none());
+            test.input(EditorInputEvent::Char('b'), InputModifiers::none());
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            test.input(EditorInputEvent::Char('c'), InputModifiers::none());
+            assert_eq!("ab\nc", test.get_editor_content());
         }
-
-        fn assert_contains_result<F>(&self, expected_count: usize, expected_command: F)
-        where
-            F: Fn(&RenderAsciiTextMsg) -> bool,
-        {
-            let mut count = 0;
-            let commands = &self.render_bucket().ascii_texts;
-            for cmd in commands {
-                if expected_command(cmd) {
-                    count += 1;
-                }
-            }
-            assert_eq!(
-                count, expected_count,
-                "Found {} times.\nExpected: {}\nin\n{:?}",
-                count, expected_count, commands
-            );
-        }
-
-        fn assert_contains_text<F>(&self, expected_count: usize, expected_command: F)
-        where
-            F: Fn(&RenderUtf8TextMsg) -> bool,
-        {
-            let mut count = 0;
-            let operators = &self.render_bucket().utf8_texts;
-            for op in operators {
-                if expected_command(op) {
-                    count += 1;
-                }
-            }
-            assert_eq!(
-                count, expected_count,
-                "Found {} times.\nExpected: {}\nin\n{:?}",
-                count, expected_count, operators
-            );
-        }
-
-        fn assert_contains_variable<F>(&self, expected_count: usize, expected_command: F)
-        where
-            F: Fn(&RenderUtf8TextMsg) -> bool,
-        {
-            let mut count = 0;
-            let operators = &self.render_bucket().variable;
-            for op in operators {
-                if expected_command(op) {
-                    count += 1;
-                }
-            }
-            assert_eq!(
-                count, expected_count,
-                "Found {} times.\nExpected: {}\nin\n{:?}",
-                count, expected_count, operators
-            );
-        }
-
-        fn assert_no_pulsing(&self) {
-            assert!(self.render_bucket().pulses.is_empty());
-        }
-
-        fn set_normalized_content(&self, str: &str) {
-            self.mut_app().set_normalized_content(
-                str,
-                self.units(),
-                self.allocator(),
-                self.mut_tokens(),
-                self.mut_results(),
-                self.mut_vars(),
-                self.mut_editor_objects(),
-                self.mut_render_bucket(),
-            );
-        }
-
-        fn repeated_paste(&self, str: &str, times: usize) {
-            self.mut_app().handle_paste(
-                str.repeat(times),
-                self.units(),
-                self.allocator(),
-                self.mut_tokens(),
-                self.mut_results(),
-                self.mut_vars(),
-                self.mut_editor_objects(),
-                self.mut_render_bucket(),
-            );
-        }
-
-        fn click(&self, x: usize, y: isize) {
-            self.mut_app().handle_click(
-                x,
-                canvas_y(y),
-                self.mut_editor_objects(),
-                self.units(),
-                self.allocator(),
-                self.mut_tokens(),
-                self.mut_results(),
-                self.mut_vars(),
-                self.mut_render_bucket(),
-            );
-        }
-
-        fn handle_resize(&self, new_client_width: usize) {
-            self.mut_app().handle_resize(
-                new_client_width,
-                self.mut_editor_objects(),
-                self.units(),
-                self.allocator(),
-                self.mut_tokens(),
-                self.mut_results(),
-                self.mut_vars(),
-                self.mut_render_bucket(),
-            );
-        }
-
-        fn handle_wheel(&self, dir: usize) {
-            self.mut_app().handle_wheel(
-                dir,
-                self.mut_editor_objects(),
-                self.units(),
-                self.allocator(),
-                self.mut_tokens(),
-                self.mut_results(),
-                self.mut_vars(),
-                self.mut_render_bucket(),
-            );
-        }
-
-        fn handle_drag(&self, x: usize, y: isize) {
-            self.mut_app().handle_drag(
-                x,
-                canvas_y(y),
-                self.mut_editor_objects(),
-                self.units(),
-                self.allocator(),
-                self.mut_tokens(),
-                self.mut_results(),
-                self.mut_vars(),
-                self.mut_render_bucket(),
-            );
-        }
-
-        fn handle_mouse_move(&self, x: usize, y: isize) {
-            self.mut_app().handle_mouse_move(
-                x,
-                canvas_y(y),
-                self.mut_editor_objects(),
-                self.units(),
-                self.allocator(),
-                self.mut_tokens(),
-                self.mut_results(),
-                self.mut_vars(),
-                self.mut_render_bucket(),
-            );
-        }
-
-        fn alt_key_released(&self) {
-            self.mut_app().alt_key_released(
-                self.units(),
-                self.allocator(),
-                self.mut_tokens(),
-                self.mut_results(),
-                self.mut_vars(),
-                self.mut_editor_objects(),
-                self.mut_render_bucket(),
-            );
-        }
-
-        fn handle_time(&self, tick: u32) {
-            self.mut_app().handle_time(
-                tick,
-                self.units(),
-                self.allocator(),
-                self.mut_tokens(),
-                self.mut_results(),
-                self.mut_vars(),
-                self.mut_editor_objects(),
-                self.mut_render_bucket(),
-            );
-        }
-
-        fn input(
-            &self,
-            event: EditorInputEvent,
-            modif: InputModifiers,
-        ) -> Option<RowModificationType> {
-            self.mut_app().handle_input(
-                event,
-                modif,
-                self.allocator(),
-                self.units(),
-                self.mut_tokens(),
-                self.mut_results(),
-                self.mut_vars(),
-                self.mut_editor_objects(),
-                self.mut_render_bucket(),
-            )
-        }
-
-        fn handle_mouse_up(&self) {
-            self.mut_app().handle_mouse_up();
-        }
-
-        fn get_render_data(&self) -> &GlobalRenderData {
-            return &self.app().render_data;
-        }
-
-        fn get_editor_content(&self) -> String {
-            return self.app().editor_content.get_content();
-        }
-
-        fn get_cursor_pos(&self) -> Pos {
-            return self.app().editor.get_selection().get_cursor_pos();
-        }
-
-        fn get_selection(&self) -> Selection {
-            return self.app().editor.get_selection();
-        }
-
-        fn set_selection(&self, selection: Selection) {
-            let app = &mut self.mut_app();
-            app.editor.set_selection_save_col(selection);
-        }
-
-        fn set_cursor_row_col(&self, row: usize, col: usize) {
-            self.set_selection(Selection::single_r_c(row, col));
-        }
-    }
-
-    fn create_app3<'a>(client_width: usize, client_height: usize) -> BorrowCheckerFighter {
-        for b in unsafe { &mut RESULT_BUFFER } {
-            *b = 0;
-        }
-        fn to_box_ptr<T>(t: T) -> u64 {
-            let ptr = Box::into_raw(Box::new(t)) as u64;
-            ptr
-        }
-        let app = to_box_ptr(NoteCalcApp::new(client_width, client_height));
-        let editor_objects = to_box_ptr(EditorObjects::new());
-        let tokens = to_box_ptr(AppTokens::new());
-        let results = to_box_ptr(Results::new());
-        let vars = to_box_ptr(create_vars());
-        let units = to_box_ptr(Units::new());
-        let render_buckets = to_box_ptr(RenderBuckets::new());
-        let bumper = to_box_ptr(Bump::with_capacity(MAX_LINE_COUNT * 120));
-        return BorrowCheckerFighter {
-            app_ptr: app,
-            units_ptr: units,
-            render_bucket_ptr: render_buckets,
-            tokens_ptr: tokens,
-            results_ptr: results,
-            vars_ptr: vars,
-            editor_objects_ptr: editor_objects,
-            allocator: bumper,
-        };
-    }
-
-    fn create_app2<'a>(client_height: usize) -> BorrowCheckerFighter {
-        create_app3(120, client_height)
     }
 
     #[test]
     fn bug1() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]");
 
         test.set_cursor_row_col(0, 33);
@@ -7395,7 +6908,7 @@ mod main_tests {
 
     #[test]
     fn bug2() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("[123, 2, 3; 4567981, 5, 6] * [1; 2; 3;4]");
         test.set_cursor_row_col(0, 1);
 
@@ -7407,7 +6920,7 @@ mod main_tests {
 
     #[test]
     fn bug3() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste(
             "1\n\
                     2+",
@@ -7420,7 +6933,7 @@ mod main_tests {
 
     #[test]
     fn test_that_variable_name_is_inserted_when_referenced_a_var_line() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste(
             "var_name = 1\n\
                     2+",
@@ -7438,7 +6951,7 @@ mod main_tests {
 
     #[test]
     fn bug4() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste(
             "1\n\
                     ",
@@ -7457,20 +6970,24 @@ mod main_tests {
 
     #[test]
     fn bug5() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("123\na ");
 
         test.input(EditorInputEvent::Up, InputModifiers::alt());
         test.alt_key_released();
         assert_eq!(
             3,
-            test.tokens()[content_y(1)].as_ref().unwrap().tokens.len()
+            test.bcf.tokens()[content_y(1)]
+                .as_ref()
+                .unwrap()
+                .tokens
+                .len()
         );
     }
 
     #[test]
     fn it_is_not_allowed_to_ref_lines_below() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste(
             "1\n\
                     2+\n3\n4",
@@ -7489,7 +7006,7 @@ mod main_tests {
 
     #[test]
     fn it_is_not_allowed_to_ref_lines_below2() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste(
             "1\n\
                     2+\n3\n4",
@@ -7509,7 +7026,7 @@ mod main_tests {
 
     #[test]
     fn remove_matrix_backspace() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("abcd [1,2,3;4,5,6]");
         test.render();
         test.input(EditorInputEvent::Backspace, InputModifiers::ctrl());
@@ -7520,7 +7037,7 @@ mod main_tests {
     fn matrix_step_in_dir() {
         // from right
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("abcd [1,2,3;4,5,6]");
             test.render();
             test.input(EditorInputEvent::Left, InputModifiers::none());
@@ -7531,7 +7048,7 @@ mod main_tests {
         }
         // from left
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("abcd [1,2,3;4,5,6]");
             test.set_cursor_row_col(0, 5);
             test.render();
@@ -7543,7 +7060,7 @@ mod main_tests {
         }
         // from below
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("abcd [1,2,3;4,5,6]\naaaaaaaaaaaaaaaaaa");
             test.set_cursor_row_col(1, 7);
             test.render();
@@ -7558,7 +7075,7 @@ mod main_tests {
         }
         // from above
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("aaaaaaaaaaaaaaaaaa\nabcd [1,2,3;4,5,6]");
             test.set_cursor_row_col(0, 7);
             test.render();
@@ -7575,7 +7092,7 @@ mod main_tests {
 
     #[test]
     fn cursor_is_put_after_the_matrix_after_finished_editing() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("abcd [1,2,3;4,5,6]");
         test.render();
         test.input(EditorInputEvent::Left, InputModifiers::none());
@@ -7590,7 +7107,7 @@ mod main_tests {
 
     #[test]
     fn remove_matrix_del() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("abcd [1,2,3;4,5,6]");
         test.set_cursor_row_col(0, 5);
         test.render();
@@ -7600,7 +7117,7 @@ mod main_tests {
 
     #[test]
     fn test_that_selected_matrix_content_is_copied_on_ctrl_c() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("abcd [69,2,3;4,5,6]");
         test.set_cursor_row_col(0, 5);
         test.render();
@@ -7618,7 +7135,7 @@ mod main_tests {
 
     #[test]
     fn test_insert_matrix_line_ref_panic() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("[1,2,3;4,5,6]\n[1;2;3]\n");
         test.input(EditorInputEvent::Up, InputModifiers::alt());
         test.input(EditorInputEvent::Up, InputModifiers::alt());
@@ -7630,7 +7147,7 @@ mod main_tests {
 
     #[test]
     fn test_matrix_rendering_parameters_single_row() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("[1]");
         assert_eq!(test.editor_objects()[content_y(0)][0].rendered_x, 0);
         assert_eq!(
@@ -7643,7 +7160,7 @@ mod main_tests {
 
     #[test]
     fn test_matrix_rendering_parameters_multiple_rows() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("[1;2;3]");
         assert_eq!(test.editor_objects()[content_y(0)][0].rendered_x, 0);
         assert_eq!(
@@ -7656,7 +7173,7 @@ mod main_tests {
 
     #[test]
     fn test_referencing_matrix_size_correct2() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("[6]\n&[1]");
         test.input(EditorInputEvent::Up, InputModifiers::none());
         assert_eq!(test.editor_objects()[content_y(1)][0].rendered_h, 1);
@@ -7664,7 +7181,7 @@ mod main_tests {
 
     #[test]
     fn test_referencing_matrix_size_correct2_vert_align() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("[1;2;3]\n[4]\n&[1]  &[2]");
         test.input(EditorInputEvent::Up, InputModifiers::none());
         let first_line_h = 5;
@@ -7679,7 +7196,7 @@ mod main_tests {
 
     #[test]
     fn test_referencing_matrix_size_correct() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("[1;2;3]\n&[1]");
         test.input(EditorInputEvent::Up, InputModifiers::none());
         assert_eq!(test.editor_objects()[content_y(1)][0].rendered_h, 5);
@@ -7689,7 +7206,7 @@ mod main_tests {
     fn test_moving_inside_a_matrix() {
         // right to left, cursor at end
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("abcd [1,2,3;4,5,6]");
             test.render();
             test.input(EditorInputEvent::Left, InputModifiers::none());
@@ -7704,7 +7221,7 @@ mod main_tests {
         // pressing right while there is a selection, just cancels the selection and put the cursor
         // at the end of it
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("abcd [1,2,3;4,5,6]");
             test.set_cursor_row_col(0, 5);
             test.render();
@@ -7718,7 +7235,7 @@ mod main_tests {
         }
         // left to right, cursor at start
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("abcd [1,2,3;4,5,6]");
             test.set_cursor_row_col(0, 5);
             test.render();
@@ -7735,7 +7252,7 @@ mod main_tests {
         }
         // vertical movement down, cursor tries to keep its position
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("abcd [1111,22,3;44,55555,666]");
             test.set_cursor_row_col(0, 5);
             test.render();
@@ -7753,7 +7270,7 @@ mod main_tests {
 
         // vertical movement up, cursor tries to keep its position
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("abcd [1111,22,3;44,55555,666]");
             test.set_cursor_row_col(0, 5);
             test.render();
@@ -7773,7 +7290,7 @@ mod main_tests {
 
     #[test]
     fn test_moving_inside_a_matrix_with_tab() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("[1,2,3;4,5,6]");
         test.render();
         test.input(EditorInputEvent::Home, InputModifiers::none());
@@ -7797,7 +7314,7 @@ mod main_tests {
 
     #[test]
     fn test_leaving_a_matrix_with_tab() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("[1,2,3;4,5,6]");
         test.render();
         test.input(EditorInputEvent::Left, InputModifiers::none());
@@ -7815,7 +7332,7 @@ mod main_tests {
     #[test]
     fn end_btn_matrix() {
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("abcd [1111,22,3;44,55555,666] qq");
             test.set_cursor_row_col(0, 5);
             test.render();
@@ -7835,7 +7352,7 @@ mod main_tests {
         }
         // pressing twice, exits the matrix
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("abcd [1111,22,3;44,55555,666] qq");
             test.set_cursor_row_col(0, 5);
             test.render();
@@ -7857,7 +7374,7 @@ mod main_tests {
     #[test]
     fn home_btn_matrix() {
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("abcd [1111,22,3;44,55555,666]");
             test.render();
             test.input(EditorInputEvent::Left, InputModifiers::none());
@@ -7872,7 +7389,7 @@ mod main_tests {
             assert_eq!("abcd [9,22,3;44,55555,666]", test.get_editor_content());
         }
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("abcd [1111,22,3;44,55555,666]");
             test.render();
             test.input(EditorInputEvent::Left, InputModifiers::none());
@@ -7889,7 +7406,7 @@ mod main_tests {
 
     #[test]
     fn bug8() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("16892313\n14 * ");
         test.set_cursor_row_col(1, 5);
         test.render();
@@ -7927,7 +7444,7 @@ mod main_tests {
 
     #[test]
     fn test_referenced_line_calc() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("2\n3 * ");
         test.set_cursor_row_col(1, 4);
         test.render();
@@ -7940,7 +7457,7 @@ mod main_tests {
 
     #[test]
     fn test_empty_right_gutter_min_len() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.set_normalized_content("");
         assert_eq!(test.get_render_data().result_gutter_x, result_panel_w(120));
     }
@@ -7951,7 +7468,7 @@ mod main_tests {
 
         #[test]
         fn test_scrolling_by_single_click_in_scrollbar() {
-            let test = create_app2(30);
+            let test = create_test_app(30);
             test.repeated_paste("1\n", 60);
             test.input(EditorInputEvent::PageUp, InputModifiers::none());
             assert_eq!(test.get_render_data().scroll_y, 0);
@@ -7974,7 +7491,7 @@ mod main_tests {
 
         #[test]
         fn test_scrollbar_is_highlighted_on_mouse_hover() {
-            let test = create_app2(30);
+            let test = create_test_app(30);
             test.repeated_paste("1\n", 60);
             test.input(EditorInputEvent::PageUp, InputModifiers::none());
 
@@ -8025,7 +7542,7 @@ mod main_tests {
 
         #[test]
         fn stepping_down_to_unrendered_line_scrolls_down_the_screen() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.repeated_paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n0", 6);
             assert_eq!(test.get_render_data().scroll_y, 20);
             test.input(EditorInputEvent::PageUp, InputModifiers::none());
@@ -8036,7 +7553,7 @@ mod main_tests {
 
         #[test]
         fn test_scrolling_by_keyboard() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste(
                 "0
 1
@@ -8110,7 +7627,7 @@ mod main_tests {
 
         #[test]
         fn test_that_pressing_enter_eof_moves_scrollbar_down() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             // editor height is 36 in tests, so create a 35 line text
             test.repeated_paste("a\n", 35);
             test.set_cursor_row_col(3, 0);
@@ -8128,7 +7645,7 @@ mod main_tests {
         #[test]
         fn test_that_scrollbar_stops_at_bottom() {
             let client_height = 25;
-            let test = create_app2(client_height);
+            let test = create_test_app(client_height);
             test.repeated_paste("1\n", client_height * 2);
             test.set_cursor_row_col(0, 0);
 
@@ -8142,7 +7659,7 @@ mod main_tests {
         #[test]
         fn test_that_scrollbar_stops_at_bottom2() {
             let client_height = 36;
-            let test = create_app2(client_height);
+            let test = create_test_app(client_height);
             test.paste("");
             test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
             test.input(EditorInputEvent::Del, InputModifiers::none());
@@ -8162,7 +7679,7 @@ mod main_tests {
 
         #[test]
         fn test_inserting_long_text_scrolls_down() {
-            let test = create_app2(32);
+            let test = create_test_app(32);
             test.paste("a");
             test.repeated_paste("asd\n", 40);
             assert_eq!(test.get_render_data().scroll_y, 9);
@@ -8170,7 +7687,7 @@ mod main_tests {
 
         #[test]
         fn test_that_no_overscrolling() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("1\n2\n3\n");
             test.render();
 
@@ -8181,7 +7698,7 @@ mod main_tests {
         #[test]
         fn tall_rows_are_considered_in_scrollbar_height_calc() {
             const CANVAS_HEIGHT: usize = 25;
-            let test = create_app2(CANVAS_HEIGHT);
+            let test = create_test_app(CANVAS_HEIGHT);
             test.repeated_paste("1\n2\n\n[1;2;3;4]", 5);
             test.render();
             assert_eq!(
@@ -8200,7 +7717,7 @@ mod main_tests {
 
         #[test]
         fn test_no_scrolling_in_empty_document() {
-            let test = create_app2(25);
+            let test = create_test_app(25);
             test.paste("1");
 
             test.render();
@@ -8214,7 +7731,7 @@ mod main_tests {
 
         #[test]
         fn test_that_no_overscrolling2() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.repeated_paste("aaaaaaaaaaaa\n", 35);
             test.render();
 
@@ -8226,7 +7743,7 @@ mod main_tests {
 
         #[test]
         fn test_scrolling_down_on_enter_even() {
-            let test = create_app2(32);
+            let test = create_test_app(32);
             test.paste("");
             test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
             test.input(EditorInputEvent::Del, InputModifiers::none());
@@ -8242,7 +7759,7 @@ mod main_tests {
 
         #[test]
         fn test_scroll_bug_when_scrolling_upwrads_from_bottom() {
-            let test = create_app2(32);
+            let test = create_test_app(32);
             test.paste("");
 
             test.input(EditorInputEvent::PageDown, InputModifiers::none());
@@ -8264,7 +7781,7 @@ mod main_tests {
 
         #[test]
         fn right_gutter_is_moving_if_there_would_be_enough_space_for_result() {
-            let test = create_app3(40, 35);
+            let test = create_test_app2(40, 35);
             test.paste("1\n");
             assert_eq!(test.get_render_data().result_gutter_x, result_panel_w(40));
 
@@ -8277,7 +7794,7 @@ mod main_tests {
 
         #[test]
         fn right_gutter_is_moving_if_there_would_be_enough_space_for_binary_result() {
-            let test = create_app3(40, 35);
+            let test = create_test_app2(40, 35);
             test.paste("9999");
             assert_eq!(test.get_render_data().result_gutter_x, result_panel_w(40),);
 
@@ -8290,13 +7807,13 @@ mod main_tests {
 
         #[test]
         fn right_gutter_calc_panic() {
-            let test = create_app3(176, 35);
+            let test = create_test_app2(176, 35);
             test.paste("ok");
         }
 
         #[test]
         fn test_resize_keeps_result_width() {
-            let test = create_app3(60, 35);
+            let test = create_test_app2(60, 35);
             test.set_normalized_content("80kg\n190cm\n0.0016\n0.128 kg");
             let check_longest_line_did_not_change = || {
                 assert_eq!(test.get_render_data().longest_visible_result_len, 11);
@@ -8351,7 +7868,7 @@ mod main_tests {
 
         #[test]
         fn right_gutter_is_immediately_rendered_at_its_changed_position_after_scrolling() {
-            let test = create_app3(76, 10);
+            let test = create_test_app2(76, 10);
             test.repeated_paste("1\n", 10);
             test.paste("111111111111111111111");
             test.input(EditorInputEvent::PageUp, InputModifiers::none());
@@ -8372,7 +7889,7 @@ mod main_tests {
 
         #[test]
         fn right_gutter_is_immediately_rendered_at_its_changed_position_after_input() {
-            let test = create_app3(76, 10);
+            let test = create_test_app2(76, 10);
             test.repeated_paste("1\n", 10);
             test.paste("111111111111111111111");
             test.input(EditorInputEvent::PageUp, InputModifiers::none());
@@ -8394,14 +7911,14 @@ mod main_tests {
 
     #[test]
     fn test_that_alignment_is_considered_for_longest_result_len() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.set_normalized_content("80kg\n190cm\n0.0016\n0.128 kg");
         assert_eq!(test.get_render_data().longest_visible_result_len, 11);
     }
 
     #[test]
     fn test_scroll_y_reset() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.mut_app().render_data.scroll_y = 1;
         test.set_normalized_content("1111\n2222\n14 * &[2]&[2]&[2]\n");
         assert_eq!(0, test.get_render_data().scroll_y);
@@ -8409,7 +7926,7 @@ mod main_tests {
 
     #[test]
     fn test_tab_change_clears_variables() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.set_normalized_content(
             "source: https://rippedbody.com/how-to-calculate-leangains-macros/
 
@@ -8488,7 +8005,7 @@ Fat intake
 
     #[test]
     fn test_panic_on_pressing_enter() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.set_normalized_content(
             "source: https://rippedbody.com/how-to-calculate-leangains-macros/
 
@@ -8588,7 +8105,7 @@ Fat intake
 
     #[test]
     fn no_memory_deallocation_bug_in_line_selection() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n");
         test.set_cursor_row_col(12, 2);
         test.render();
@@ -8598,7 +8115,7 @@ Fat intake
 
     #[test]
     fn matrix_deletion() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste(" [1,2,3]");
         test.set_cursor_row_col(0, 0);
         test.render();
@@ -8608,7 +8125,7 @@ Fat intake
 
     #[test]
     fn matrix_insertion_bug() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("[1,2,3]");
         test.set_cursor_row_col(0, 0);
         test.render();
@@ -8620,7 +8137,7 @@ Fat intake
 
     #[test]
     fn matrix_insertion_bug2() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("'[X] nth, sum fv");
         test.render();
         test.set_cursor_row_col(0, 0);
@@ -8631,7 +8148,7 @@ Fat intake
 
     #[test]
     fn test_err_result_rendering() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("'[X] nth, sum fv");
         test.render();
         test.set_cursor_row_col(0, 0);
@@ -8648,7 +8165,7 @@ Fat intake
 
     #[test]
     fn sum_is_nulled_in_new_header_region() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste(
             "3m * 2m
 # new header
@@ -8665,7 +8182,7 @@ sum",
 
     #[test]
     fn test_that_header_lengths_are_separate_and_not_add() {
-        let test = create_app3(79, 32);
+        let test = create_test_app2(79, 32);
         test.set_normalized_content(
             "# Header 0\n\
                 123\n\
@@ -8679,7 +8196,7 @@ sum",
 
     #[test]
     fn no_sum_value_in_case_of_error() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste(
             "3m * 2m\n\
                     4\n\
@@ -8690,7 +8207,7 @@ sum",
 
     #[test]
     fn test_ctrl_c() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("aaaaaaaaa");
         test.render();
         test.input(EditorInputEvent::Left, InputModifiers::shift());
@@ -8703,7 +8220,7 @@ sum",
 
     #[test]
     fn test_ctrl_c_without_selection() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("12*3");
         test.input(EditorInputEvent::Char('c'), InputModifiers::ctrl());
         assert_eq!(&Some("36".to_owned()), &test.app().clipboard);
@@ -8712,7 +8229,7 @@ sum",
 
     #[test]
     fn test_ctrl_c_without_selection2() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("12*3");
         test.input(EditorInputEvent::Char('c'), InputModifiers::ctrl());
         assert_eq!(
@@ -8727,7 +8244,7 @@ sum",
 
     #[test]
     fn test_changing_output_style_for_selected_rows() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste(
             "2\n\
                         4\n\
@@ -8743,7 +8260,7 @@ sum",
 
     #[test]
     fn test_matrix_sum() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("[1,2,3]\nsum");
         // both the first line and the 'sum' line renders a matrix, which leaves the result buffer empty
         test.assert_results(&["\u{0}"][..]);
@@ -8753,7 +8270,7 @@ sum",
     fn test_line_ref_selection() {
         // left
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("16892313\n14 * ");
             test.set_cursor_row_col(1, 5);
             test.render();
@@ -8766,7 +8283,7 @@ sum",
         }
         // right
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("16892313\n14 * ");
             test.set_cursor_row_col(1, 5);
             test.render();
@@ -8786,7 +8303,7 @@ sum",
         let requires_space = &['4', 'a', '_'];
         let does_not_requires_space = &['+', '*', '/', '(', ')', '[', ']'];
         for ch in requires_space {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("16892313\n");
             test.input(EditorInputEvent::Char(*ch), InputModifiers::none());
             test.input(EditorInputEvent::Up, InputModifiers::alt());
@@ -8799,7 +8316,7 @@ sum",
         }
 
         for ch in does_not_requires_space {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("16892313\n");
             test.input(EditorInputEvent::Char(*ch), InputModifiers::none());
             if *ch == '[' {
@@ -8821,7 +8338,7 @@ sum",
 
     #[test]
     fn test_line_refs_are_automatically_separated_by_space() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("16892313\n");
         test.input(EditorInputEvent::Up, InputModifiers::alt());
         test.alt_key_released();
@@ -8832,7 +8349,7 @@ sum",
 
     #[test]
     fn test_line_ref_selection_with_mouse() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("16892313\n3\n14 * ");
         test.set_cursor_row_col(2, 5);
         test.render();
@@ -8846,7 +8363,7 @@ sum",
 
     #[test]
     fn test_click_1() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("'1st row\n[1;2;3] some text\n'3rd row");
         test.render();
         // click after the vector in 2nd row
@@ -8861,7 +8378,7 @@ sum",
 
     #[test]
     fn test_click() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("'1st row\nsome text [1;2;3]\n'3rd row");
         test.render();
         // click after the vector in 2nd row
@@ -8876,7 +8393,7 @@ sum",
 
     #[test]
     fn test_click_after_eof() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("'1st row\n[1;2;3] some text\n'3rd row");
         test.render();
         let left_gutter_width = 1;
@@ -8890,7 +8407,7 @@ sum",
 
     #[test]
     fn test_click_after_eof2() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("'1st row\n[1;2;3] some text\n'3rd row");
         test.render();
         let left_gutter_width = 1;
@@ -8904,7 +8421,7 @@ sum",
 
     #[test]
     fn test_variable() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("apple = 12");
         test.render();
         test.input(EditorInputEvent::Enter, InputModifiers::none());
@@ -8914,7 +8431,7 @@ sum",
 
     #[test]
     fn test_variable_must_be_defined() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("apple = 12");
         test.render();
         test.input(EditorInputEvent::Home, InputModifiers::none());
@@ -8927,7 +8444,7 @@ sum",
 
     #[test]
     fn test_variables_can_be_defined_afterwards_of_their_usage() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("apple * 2");
         test.set_cursor_row_col(0, 0);
 
@@ -8943,7 +8460,7 @@ sum",
 
     #[test]
     fn test_variables_can_be_defined_afterwards_of_their_usage2() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("apple asd * 2");
         test.set_cursor_row_col(0, 0);
 
@@ -8960,7 +8477,7 @@ sum",
 
     #[test]
     fn test_renaming_variable_declaration() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("apple = 2\napple * 3");
         test.set_cursor_row_col(0, 0);
 
@@ -8974,7 +8491,7 @@ sum",
 
     #[test]
     fn test_moving_line_does_not_change_its_lineref() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("1\n2\n3\n\n\n50year");
         // cursor is in 4th row
         test.set_cursor_row_col(3, 0);
@@ -9056,10 +8573,13 @@ sum",
     mod test_line_dependency_and_pulsing_on_change {
         use super::super::*;
         use super::*;
+        use crate::test_common::test_common::{
+            assert_contains, pulsing_changed_content_rect, pulsing_result_rect,
+        };
 
         #[test]
         fn test_modifying_a_lineref_recalcs_its_dependants() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("2\n * 3");
             test.set_cursor_row_col(1, 0);
 
@@ -9104,7 +8624,7 @@ sum",
 
         #[test]
         fn test_that_dependant_line_refs_are_pulsed_on_change() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("2\n * 3");
             test.set_cursor_row_col(1, 0);
             test.render();
@@ -9129,7 +8649,7 @@ sum",
 
         #[test]
         fn test_that_all_dependant_line_refs_in_same_row_are_pulsed_only_once_on_change() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("2\n * 3");
             test.set_cursor_row_col(1, 0);
             test.render();
@@ -9178,7 +8698,7 @@ sum",
 
         #[test]
         fn test_that_all_dependant_line_refs_in_different_rows_are_pulsed_on_change() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("2\n * 3");
             test.set_cursor_row_col(1, 0);
 
@@ -9231,7 +8751,7 @@ sum",
 
         #[test]
         fn test_that_dependant_line_refs_are_pulsing_when_the_cursor_is_on_the_referenced_line() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("2\n * 3");
             test.set_cursor_row_col(1, 0);
             test.render();
@@ -9258,7 +8778,7 @@ sum",
 
         #[test]
         fn test_that_variable_pulsing_appears_at_edge_of_editor_if_it_is_outside_of_it() {
-            let test = create_app3(30, 30);
+            let test = create_test_app2(30, 30);
             test.paste(
                 "b = 1
 aaaaaaaaaaaaaaaaaaaaaa b",
@@ -9295,7 +8815,7 @@ aaaaaaaaaaaaaaaaaaaaaa b",
 
         #[test]
         fn test_that_variable_pulsing_appears_at_edge_of_editor_if_it_is_outside_of_it_2() {
-            let test = create_app3(30, 30);
+            let test = create_test_app2(30, 30);
             test.paste(
                 "bcdef = 1
 aaaaaaaaaaaaaaaaaa bcdef",
@@ -9350,7 +8870,7 @@ aaaaaaaaaaaaaaaaaa bcdef",
 
         #[test]
         fn test_that_lineref_pulsing_appears_at_edge_of_editor_if_it_is_outside_of_it() {
-            let test = create_app3(30, 30);
+            let test = create_test_app2(30, 30);
             test.paste(
                 "1
 aaaaaaaaaaaaaaaaaaaaaa &[1]",
@@ -9404,7 +8924,7 @@ aaaaaaaaaaaaaaaaaaaaaa &[1]",
 
         #[test]
         fn test_that_lineref_pulsing_appears_at_edge_of_editor_if_it_is_outside_of_it_2() {
-            let test = create_app3(30, 30);
+            let test = create_test_app2(30, 30);
             test.paste(
                 "1
 aaaaaaaaaaaaaaaaaaaa &[1]",
@@ -9479,7 +8999,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
         #[test]
         fn test_that_multiple_dependant_line_refs_are_pulsed_when_the_cursor_is_on_the_referenced_line(
         ) {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("2\n * 3");
             test.set_cursor_row_col(1, 0);
             test.render();
@@ -9517,7 +9037,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
         #[test]
         fn test_that_multiple_dependant_vars_are_pulsed_when_the_cursor_is_on_the_definition_line()
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("var = 2\nvar * 3\n12 * var");
             test.set_cursor_row_col(1, 0);
             test.render();
@@ -9543,7 +9063,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
         #[test]
         fn test_that_dependant_vars_are_pulsed_when_the_cursor_is_on_the_definition_line() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("var = 2\nvar * 3");
             test.set_cursor_row_col(1, 0);
             test.render();
@@ -9565,7 +9085,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
     #[test]
     fn test_modifying_a_lineref_does_not_change_the_line_id() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("2\n3\n");
         test.set_cursor_row_col(2, 0);
         test.render();
@@ -9602,10 +9122,11 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
     mod dependent_lines_recalculation_tests {
         use super::*;
+        use crate::test_common::test_common::pulsing_changed_content_rect;
 
         #[test]
         fn test_modifying_a_lineref_recalcs_its_dependants_only_if_its_value_has_changed() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("2\n * 3");
             test.set_cursor_row_col(1, 0);
 
@@ -9642,7 +9163,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
         #[test]
         fn test_renaming_variable_declaration2() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("apple = 2\naapple * 3");
             test.set_cursor_row_col(0, 0);
 
@@ -9656,7 +9177,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
         #[test]
         fn test_removing_variable_declaration() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("apple = 2\napple * 3");
             test.set_cursor_row_col(0, 0);
 
@@ -9672,7 +9193,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
         #[test]
         fn test_that_variable_dependent_rows_are_recalculated() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("apple = 2\napple * 3");
             test.set_cursor_row_col(0, 9);
 
@@ -9686,7 +9207,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
         #[test]
         fn test_that_sum_is_recalculated_if_anything_changes_above() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("2\n3\nsum");
             test.set_cursor_row_col(0, 1);
 
@@ -9700,7 +9221,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
         #[test]
         fn test_that_sum_is_recalculated_if_anything_changes_above2() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("2\n3\n4 * sum");
             test.set_cursor_row_col(0, 1);
 
@@ -9714,7 +9235,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
         #[test]
         fn test_that_sum_is_not_recalculated_if_there_is_separator() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("2\n3\n#\n5\nsum");
             test.set_cursor_row_col(0, 1);
 
@@ -9728,7 +9249,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
         #[test]
         fn test_that_sum_is_not_recalculated_if_there_is_separator_with_comment() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("2\n3\n# some comment\n5\nsum");
             test.set_cursor_row_col(0, 1);
 
@@ -9742,7 +9263,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
         #[test]
         fn test_adding_sum_updates_lower_sums() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("2\n3\n\n4\n5\nsum\n# some comment\n24\n25\nsum");
             test.set_cursor_row_col(2, 0);
 
@@ -9755,7 +9276,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
         #[test]
         fn test_updating_two_sums() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("2\n3\nsum\n4\n5\nsum\n# some comment\n24\n25\nsum");
             test.set_cursor_row_col(0, 1);
 
@@ -9770,7 +9291,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
     #[test]
     fn test_that_result_is_not_changing_if_tokens_change_before_it() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("111");
 
         test.input(EditorInputEvent::Home, InputModifiers::none());
@@ -9782,7 +9303,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
     #[test]
     fn test_variable_redefine() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("apple = 12");
         test.render();
         test.input(EditorInputEvent::Enter, InputModifiers::none());
@@ -9797,7 +9318,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
     #[test]
     fn test_backspace_bug_editor_obj_deletion_for_simple_tokens() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("asd sad asd asd sX");
         test.render();
         test.input(EditorInputEvent::Backspace, InputModifiers::none());
@@ -9806,7 +9327,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
     #[test]
     fn test_rendering_while_cursor_move() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("apple = 12$\nasd q");
         test.render();
         test.input(EditorInputEvent::Up, InputModifiers::none());
@@ -9815,7 +9336,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
     #[test]
     fn stepping_into_a_matrix_renders_it_some_lines_below() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("asdsad\n[1;2;3;4]");
         test.set_cursor_row_col(0, 2);
         test.render();
@@ -9858,7 +9379,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
     #[test]
     fn select_only_2_lines_render_bug() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("1\n2\n3");
         test.render();
         test.input(EditorInputEvent::Up, InputModifiers::shift());
@@ -9898,7 +9419,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
     #[test]
     fn sum_popup_position_itself_if_there_is_not_enough_space() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("1\n2\n3");
         test.render();
         test.input(EditorInputEvent::Up, InputModifiers::shift());
@@ -9937,7 +9458,7 @@ aaaaaaaaaaaaaaaaaaaa &[1]",
 
     #[test]
     fn test_undoing_selection_removal_works() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste(
             "aaa
 bbb
@@ -9979,7 +9500,7 @@ ddd",
 
     #[test]
     fn scroll_dragging_limit() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.repeated_paste("1\n", 39);
         test.render();
 
@@ -10001,7 +9522,7 @@ ddd",
 
     #[test]
     fn scroll_dragging_upwards() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.repeated_paste("1\n", 39);
 
         test.input(EditorInputEvent::PageUp, InputModifiers::none());
@@ -10027,7 +9548,7 @@ ddd",
 
     #[test]
     fn clicking_behind_matrix_should_move_the_cursor_there() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
 
         test.paste("firs 1t\nasdsad\n[1;2;3;4]\nfirs 1t\nasdsad\n[1;2;3;4]");
         test.set_cursor_row_col(0, 0);
@@ -10040,7 +9561,7 @@ ddd",
 
     #[test]
     fn clicking_inside_matrix_while_selected_should_put_cursor_after_matrix() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("firs 1t\nasdsad\n[1;2;3;4]\nfirs 1t\nasdsad\n[1;2;3;4]");
         test.set_cursor_row_col(0, 0);
         test.render();
@@ -10066,7 +9587,7 @@ ddd",
 
     #[test]
     fn clicking_inside_matrix_while_selected_should_put_cursor_after_matrix2() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("firs 1t\nasdsad\n[1,2,3,4]\nfirs 1t\nasdsad\n[1;2;3;4]");
         test.set_cursor_row_col(0, 0);
         test.render();
@@ -10093,7 +9614,7 @@ ddd",
 
     #[test]
     fn limiting_cursor_does_not_kill_selection() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
 
         test.repeated_paste("1\n", MAX_LINE_COUNT + 1);
         test.set_cursor_row_col(0, 0);
@@ -10111,7 +9632,7 @@ ddd",
 
     #[test]
     fn deleting_all_selected_lines_no_panic() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.repeated_paste("1\n", MAX_LINE_COUNT + 20);
         test.set_cursor_row_col(0, 0);
         test.render();
@@ -10123,7 +9644,7 @@ ddd",
     #[test]
     fn test_setting_left_gutter_width() {
         // future proof test
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("");
         for i in 0..MAX_LINE_COUNT {
             test.input(EditorInputEvent::Enter, InputModifiers::none());
@@ -10141,7 +9662,7 @@ ddd",
 
     #[test]
     fn click_into_a_row_with_matrix_put_the_cursor_after_the_rendered_matrix() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
         test.set_cursor_row_col(0, 0);
         test.render();
@@ -10156,7 +9677,7 @@ ddd",
 
     #[test]
     fn clicking_into_matrices_panic() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
         test.set_cursor_row_col(0, 0);
         test.render();
@@ -10179,7 +9700,7 @@ ddd",
 
     #[test]
     fn leaving_matrix_by_clicking_should_trigger_reevaluation() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
         test.set_cursor_row_col(0, 0);
         test.render();
@@ -10200,7 +9721,7 @@ ddd",
 
     #[test]
     fn click_into_a_matrix_start_mat_editing() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
         test.set_cursor_row_col(0, 0);
         test.render();
@@ -10211,7 +9732,7 @@ ddd",
 
     #[test]
     fn mouse_selecting_moving_mouse_out_of_editor() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
         test.set_cursor_row_col(0, 0);
         test.render();
@@ -10226,7 +9747,7 @@ ddd",
 
     #[test]
     fn test_dragging_right_gutter_panic() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
         test.set_cursor_row_col(0, 0);
         test.render();
@@ -10241,7 +9762,7 @@ ddd",
 
     #[test]
     fn test_small_right_gutter_panic() {
-        let test = create_app3(20, 35);
+        let test = create_test_app2(20, 35);
         test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
         test.set_cursor_row_col(0, 0);
         test.render();
@@ -10256,7 +9777,7 @@ ddd",
 
     #[test]
     fn bug_selection_rectangle_is_longer_than_the_selected_row() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("firs 1t\nasdsad\n[1,0;2,0;3,0;4,0;5,0;6,0]\nfirs 1t\nasdsad\n[1;2;3;4]");
         test.set_cursor_row_col(0, 0);
         test.render();
@@ -10295,7 +9816,7 @@ ddd",
 
     #[test]
     fn test_handling_too_much_rows_no_panic() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste(&("1\n".repeat(MAX_LINE_COUNT - 1).to_owned()));
         test.set_cursor_row_col(MAX_LINE_COUNT - 2, 1);
 
@@ -10305,7 +9826,7 @@ ddd",
 
     #[test]
     fn inserting_too_many_rows_no_panic() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("");
         test.set_cursor_row_col(0, 0);
 
@@ -10323,20 +9844,20 @@ ddd",
     fn test_sum_rerender() {
         // rust's borrow checker forces me to do this
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("1\n2\n3\nsum");
 
             test.assert_results(&["1", "2", "3", "6"][..]);
         }
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("1\n2\n3\nsum");
             test.input(EditorInputEvent::Up, InputModifiers::none());
 
             test.assert_results(&["1", "2", "3", "6"][..]);
         }
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("1\n2\n3\nsum");
             test.input(EditorInputEvent::Up, InputModifiers::none());
             test.input(EditorInputEvent::Up, InputModifiers::none());
@@ -10344,7 +9865,7 @@ ddd",
             test.assert_results(&["1", "2", "3", "6"][..]);
         }
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("1\n2\n3\nsum");
             test.input(EditorInputEvent::Up, InputModifiers::none());
             test.input(EditorInputEvent::Up, InputModifiers::none());
@@ -10353,7 +9874,7 @@ ddd",
             test.assert_results(&["1", "2", "3", "6"][..]);
         }
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("1\n2\n3\nsum");
             test.input(EditorInputEvent::Up, InputModifiers::none());
             test.input(EditorInputEvent::Up, InputModifiers::none());
@@ -10367,20 +9888,20 @@ ddd",
     #[test]
     fn test_sum_rerender_with_ignored_lines() {
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("1\n'2\n3\nsum");
 
             test.assert_results(&["1", "3", "4"][..]);
         }
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("1\n'2\n3\nsum");
             test.input(EditorInputEvent::Up, InputModifiers::none());
 
             test.assert_results(&["1", "3", "4"][..]);
         }
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("1\n'2\n3\nsum");
             test.input(EditorInputEvent::Up, InputModifiers::none());
             test.input(EditorInputEvent::Up, InputModifiers::none());
@@ -10388,7 +9909,7 @@ ddd",
             test.assert_results(&["1", "3", "4"][..]);
         }
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("1\n'2\n3\nsum");
             test.input(EditorInputEvent::Up, InputModifiers::none());
             test.input(EditorInputEvent::Down, InputModifiers::none());
@@ -10396,7 +9917,7 @@ ddd",
             test.assert_results(&["1", "3", "4"][..]);
         }
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("1\n'2\n3\nsum");
             test.input(EditorInputEvent::Up, InputModifiers::none());
             test.input(EditorInputEvent::Down, InputModifiers::none());
@@ -10408,13 +9929,13 @@ ddd",
     #[test]
     fn test_sum_rerender_with_sum_reset() {
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("1\n#2\n3\nsum");
 
             test.assert_results(&["1", "3", "3"][..]);
         }
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("1\n#2\n3\nsum");
             test.input(EditorInputEvent::Up, InputModifiers::none());
 
@@ -10424,7 +9945,7 @@ ddd",
 
     #[test]
     fn test_paste_long_text() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("a\nb\na\nb\na\nb\na\nb\na\nb\na\nb\n1");
 
         test.assert_results(&["", "", "", "", "", "", "", "", "", "", "", "1"][..]);
@@ -10432,7 +9953,7 @@ ddd",
 
     #[test]
     fn test_thousand_separator_and_alignment_in_result() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("1\n2.3\n2222\n4km\n50000");
         test.set_cursor_row_col(2, 0);
         // set result to binary repr
@@ -10473,7 +9994,7 @@ ddd",
 
     #[test]
     fn test_results_have_same_alignment_only_within_single_region() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("1\n2.3\n2222\n4km\n50000\n# header\n123456789");
         test.set_cursor_row_col(2, 0);
 
@@ -10515,7 +10036,7 @@ ddd",
 
     #[test]
     fn test_units_are_aligned_as_well() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("1cm\n2.3m\n2222.33 km\n4km\n50000 mm");
         let render_buckets = test.render_bucket();
 
@@ -10544,7 +10065,7 @@ ddd",
 
     #[test]
     fn test_that_alignment_changes_trigger_rerendering_of_results() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("1\n");
         test.set_cursor_row_col(1, 0);
 
@@ -10568,7 +10089,7 @@ ddd",
 
     #[test]
     fn test_ctrl_x() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12");
         test.render();
 
@@ -10582,7 +10103,7 @@ ddd",
 
     #[test]
     fn test_ctrl_x_then_ctrl_z() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("12");
         test.handle_time(1000);
 
@@ -10599,7 +10120,7 @@ ddd",
 
     #[test]
     fn selection_in_the_first_row_should_not_panic() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("1+1\nasd");
         test.input(EditorInputEvent::Up, InputModifiers::none());
         test.input(EditorInputEvent::Home, InputModifiers::shift());
@@ -10609,7 +10130,7 @@ ddd",
 
     #[test]
     fn test_that_removed_tail_rows_are_cleared() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("a\nb\n[1;2;3]\nX\na\n1");
         test.set_cursor_row_col(3, 0);
 
@@ -10635,7 +10156,7 @@ ddd",
 
     #[test]
     fn test_that_multiline_matrix_is_considered_when_scrolling() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         // editor height is 36 in tests, so create a 35 line text
         test.repeated_paste("a\n", 40);
         test.input(EditorInputEvent::PageUp, InputModifiers::none());
@@ -10702,7 +10223,7 @@ ddd",
 
     #[test]
     fn navigating_to_bottom_no_panic() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.repeated_paste("aaaaaaaaaaaa\n", 34);
 
         test.render();
@@ -10712,7 +10233,7 @@ ddd",
 
     #[test]
     fn ctrl_a_plus_typing() {
-        let test = create_app2(25);
+        let test = create_test_app(25);
         test.repeated_paste("1\n", 34);
         test.set_cursor_row_col(0, 0);
 
@@ -10730,7 +10251,7 @@ ddd",
     #[test]
     fn test_that_no_full_refresh_when_stepping_into_last_line() {
         let client_height = 25;
-        let test = create_app2(client_height);
+        let test = create_test_app(client_height);
         test.repeated_paste("1\n", client_height * 2);
         test.input(EditorInputEvent::PageUp, InputModifiers::none());
 
@@ -10754,7 +10275,7 @@ ddd",
     #[test]
     fn test_that_removed_lines_are_cleared() {
         let client_height = 25;
-        let test = create_app2(client_height);
+        let test = create_test_app(client_height);
         test.repeated_paste("1\n", client_height * 2);
         test.set_cursor_row_col(0, 0);
 
@@ -10776,7 +10297,7 @@ ddd",
 
     #[test]
     fn test_that_unvisible_rows_have_height_1() {
-        let test = create_app2(25);
+        let test = create_test_app(25);
         test.repeated_paste("1\n2\n\n[1;2;3;4]", 10);
         test.input(EditorInputEvent::PageUp, InputModifiers::none());
 
@@ -10799,7 +10320,7 @@ ddd",
 
     #[test]
     fn test_that_unvisible_rows_contribute_with_only_1_height_to_calc_content_height() {
-        let test = create_app2(25);
+        let test = create_test_app(25);
         test.repeated_paste("1\n2\n\n[1;2;3;4]", 10);
         test.input(EditorInputEvent::PageUp, InputModifiers::none());
 
@@ -10818,7 +10339,7 @@ ddd",
 
     #[test]
     fn test_stepping_into_scrolled_matrix_panic() {
-        let test = create_app2(25);
+        let test = create_test_app(25);
         test.repeated_paste("1\n2\n\n[1;2;3;4]", 10);
 
         test.render();
@@ -10840,7 +10361,7 @@ ddd",
     #[test]
     fn test_that_scrolled_result_is_not_rendered() {
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("1\n2\n3\n");
             test.repeated_paste("aaaaaaaaaaaa\n", 34);
             test.input(EditorInputEvent::PageUp, InputModifiers::none());
@@ -10878,7 +10399,7 @@ ddd",
         }
 
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("1\n2\n3\n");
             test.repeated_paste("aaaaaaaaaaaa\n", 34);
             test.input(EditorInputEvent::PageUp, InputModifiers::none());
@@ -10915,7 +10436,7 @@ ddd",
         }
 
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("1\n2\n3\n");
             test.repeated_paste("aaaaaaaaaaaa\n", 34);
             test.input(EditorInputEvent::PageUp, InputModifiers::none());
@@ -10952,7 +10473,7 @@ ddd",
         }
 
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("1\n2\n3\n");
             test.repeated_paste("aaaaaaaaaaaa\n", 34);
             test.input(EditorInputEvent::PageUp, InputModifiers::none());
@@ -10990,7 +10511,7 @@ ddd",
         }
 
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("1\n2\n3\n");
             test.repeated_paste("aaaaaaaaaaaa\n", 34);
             test.input(EditorInputEvent::PageUp, InputModifiers::none());
@@ -11029,7 +10550,7 @@ ddd",
         }
 
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("1\n2\n3\n");
             test.repeated_paste("aaaaaaaaaaaa\n", 34);
             test.input(EditorInputEvent::PageUp, InputModifiers::none());
@@ -11069,7 +10590,7 @@ ddd",
         }
 
         {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("1\n2\n3\n");
             test.repeated_paste("aaaaaaaaaaaa\n", 34);
             test.input(EditorInputEvent::PageUp, InputModifiers::none());
@@ -11113,7 +10634,7 @@ ddd",
     #[test]
     fn test_ctrl_b_jumps_to_var_def() {
         for i in 0..=3 {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("some text\nvar = 2\nvar * 3");
             test.set_cursor_row_col(2, i);
             test.render();
@@ -11128,7 +10649,7 @@ ddd",
 
     #[test]
     fn test_ctrl_b_jumps_to_var_def_and_moves_the_scrollbar() {
-        let test = create_app2(32);
+        let test = create_test_app(32);
         test.paste("var = 2\n");
         test.repeated_paste("asd\n", 40);
         test.paste("var");
@@ -11142,7 +10663,7 @@ ddd",
 
     #[test]
     fn test_ctrl_b_jumps_to_var_def_negative() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("some text\nvar = 2\nvar * 3");
         for i in 0..=9 {
             test.set_cursor_row_col(0, i);
@@ -11185,7 +10706,7 @@ ddd",
 
     #[test]
     fn test_ctrl_b_jumps_to_line_ref() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("2\n3\nasd &[2] * 4");
         test.set_cursor_row_col(2, 3);
 
@@ -11209,7 +10730,7 @@ ddd",
 
     #[test]
     fn test_that_dependant_vars_are_pulsed_when_the_cursor_gets_there_by_ctrl_b() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("var = 2\nvar * 3");
         test.set_cursor_row_col(1, 0);
 
@@ -11239,7 +10760,7 @@ ddd",
 
         #[test]
         fn test_referenced_lineref_of_active_line_are_highlighted() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("223456\nasd &[1] * 2");
             test.set_cursor_row_col(0, 0);
 
@@ -11291,7 +10812,7 @@ ddd",
 
         #[test]
         fn test_multiple_referenced_linerefs_in_different_rows_of_active_line_are_highlighted() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("234\n356789\nasd &[1] * &[2] * 2");
             test.set_cursor_row_col(1, 0);
             test.render();
@@ -11381,7 +10902,7 @@ ddd",
 
         #[test]
         fn test_that_out_of_editor_line_ref_backgrounds_are_not_rendered() {
-            let test = create_app3(51, 35);
+            let test = create_test_app2(51, 35);
             test.paste("234\n356789\nasd &[1] * &[2] * 2");
             test.input(EditorInputEvent::PageUp, InputModifiers::none());
 
@@ -11402,7 +10923,7 @@ ddd",
 
         #[test]
         fn test_that_partial_out_of_editor_line_ref_backgrounds_are_rendered_partially() {
-            let test = create_app3(51, 35);
+            let test = create_test_app2(51, 35);
             test.paste("234\n356789\nasd &[1] * &[2] * 2");
             test.input(EditorInputEvent::PageUp, InputModifiers::none());
 
@@ -11438,7 +10959,7 @@ ddd",
 
         #[test]
         fn test_that_out_of_editor_line_ref_underlines_are_not_rendered() {
-            let test = create_app3(51, 35);
+            let test = create_test_app2(51, 35);
             test.paste("234\n356789\nasd &[1] * &[2] * 2");
             test.input(EditorInputEvent::PageUp, InputModifiers::none());
 
@@ -11475,7 +10996,7 @@ ddd",
 
         #[test]
         fn test_that_partial_out_of_editor_line_ref_underlines_are_rendered_partially() {
-            let test = create_app3(51, 35);
+            let test = create_test_app2(51, 35);
             test.paste("234\n356789\nasd &[1] * &[2] * 2");
             test.input(EditorInputEvent::PageUp, InputModifiers::none());
 
@@ -11519,7 +11040,7 @@ ddd",
 
         #[test]
         fn test_that_partial_out_of_editor_line_ref_pulses_are_rendered_partially() {
-            let test = create_app3(51, 35);
+            let test = create_test_app2(51, 35);
             test.paste("234\n356789\nasd &[1] * &[2] * 2");
             test.input(EditorInputEvent::PageUp, InputModifiers::none());
 
@@ -11556,7 +11077,7 @@ ddd",
 
         #[test]
         fn test_same_lineref_referenced_multiple_times_is_highlighted() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("2345\nasd &[1] * &[1] * 2");
             test.set_cursor_row_col(0, 0);
             test.render();
@@ -11617,7 +11138,7 @@ ddd",
 
         #[test]
         fn test_same_lineref_referenced_multiple_times_plus_another_in_diff_row_is_highlighted() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("2345\n123\nasd &[1] * &[1] * &[2] * 2");
             test.set_cursor_row_col(1, 0);
 
@@ -11720,7 +11241,7 @@ ddd",
 
         #[test]
         fn test_out_of_screen_pulsing_var() {
-            let test = create_app2(20);
+            let test = create_test_app(20);
             test.paste("var = 4");
             test.repeated_paste("asd\n", 30);
             test.paste("var");
@@ -11734,7 +11255,7 @@ ddd",
 
         #[test]
         fn test_referenced_vars_and_linerefs_of_active_lines_are_pulsing() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste("2\n3\nvar = 4\nasd &[1] * &[2] * var");
             test.set_cursor_row_col(2, 0);
 
@@ -11859,7 +11380,7 @@ ddd",
 
         #[test]
         fn test_bug_wrong_referenced_line_is_highlighted() {
-            let test = create_app2(35);
+            let test = create_test_app(35);
             test.paste(
                 "pi() * 3
 nth([1,2,3], 2)
@@ -11938,7 +11459,7 @@ monthly payment = r/(1 - (1 + r)^(-n)) *finance amount",
     // is not considered.
     #[test]
     fn test_that_var_from_prev_frame_in_the_current_line_is_not_considered_during_parsing() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste(
             "
 a = 10
@@ -11954,7 +11475,7 @@ b = a * 20",
 
     #[test]
     fn converting_unit_of_line_ref() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("573 390 s\n&[1] in h");
 
         test.assert_results(&["573 390 s", "159.275 h"][..]);
@@ -11962,7 +11483,7 @@ b = a * 20",
 
     #[test]
     fn test_unit_conversion_for_variable() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("input = 573 390 s\ninput in h");
 
         test.assert_results(&["573 390 s", "159.275 h"][..]);
@@ -11970,7 +11491,7 @@ b = a * 20",
 
     #[test]
     fn test_unit_conversion_for_variable2() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("input = 1 s\ninput h");
 
         test.assert_results(&["1 s", "Err"][..]);
@@ -11978,7 +11499,7 @@ b = a * 20",
 
     #[test]
     fn test_ininin() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("12 in in in");
 
         test.assert_results(&["12 in"][..]);
@@ -11986,7 +11507,7 @@ b = a * 20",
 
     #[test]
     fn calc_pow() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste(
             "price = 350k$
 down payment = 20% * price
@@ -12004,19 +11525,19 @@ monthly payment = r/(1 - (1 + r)^(-n)) *finance amount",
 
     #[test]
     fn no_panic_on_huge_input() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("3^300");
     }
 
     #[test]
     fn no_panic_on_huge_input2() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("300^300");
     }
 
     #[test]
     fn test_error_related_to_variable_precedence() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste(
             "v0=2m/s
 t=4s
@@ -12028,7 +11549,7 @@ t=4s
 
     #[test]
     fn test_error_related_to_variable_precedence2() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste(
             "a = -9.8m/s^2
 v0 = 100m/s
@@ -12042,7 +11563,7 @@ t = 2s
 
     #[test]
     fn test_no_panic_on_too_big_number() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste(
             "pi() * 3
 nth([1,2,3], 2)
@@ -12072,7 +11593,7 @@ monthly payment = r/(1 - (1 + r)^(-n)) *finance amount",
 
     #[test]
     fn test_itself_unit_rendering() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("a = /year");
 
         test.assert_results(&[""][..]);
@@ -12080,7 +11601,7 @@ monthly payment = r/(1 - (1 + r)^(-n)) *finance amount",
 
     #[test]
     fn test_itself_unit_rendering2() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("a = 2/year");
 
         test.assert_results(&["2 / year"][..]);
@@ -12088,7 +11609,7 @@ monthly payment = r/(1 - (1 + r)^(-n)) *finance amount",
 
     #[test]
     fn test_editor_panic() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste(
             "
 a",
@@ -12099,7 +11620,7 @@ a",
 
     #[test]
     fn test_wrong_selection_removal() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste(
             "
 interest rate = 3.7%/year
@@ -12117,7 +11638,7 @@ interest rate / (12 (1/year))
 
     #[test]
     fn integration_test() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste(
             "price = 350 000$
 down payment = price * 20%
@@ -12151,7 +11672,7 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
 
     #[test]
     fn test_line_ref_rendered_precision() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("0.00005");
         test.input(EditorInputEvent::Enter, InputModifiers::none());
         test.input(EditorInputEvent::Up, InputModifiers::alt());
@@ -12164,7 +11685,7 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
 
     #[test]
     fn test_if_number_is_too_big_for_binary_repr_show_err() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("10e24");
         test.input(EditorInputEvent::Left, InputModifiers::alt());
 
@@ -12173,7 +11694,7 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
 
     #[test]
     fn test_u64_hex_form() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("0xFFFFFFFFFFFFFFFF");
         test.input(EditorInputEvent::Right, InputModifiers::alt());
 
@@ -12182,7 +11703,7 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
 
     #[test]
     fn test_u64_bin_form() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("0xFFFFFFFFFFFFFFFF");
         test.input(EditorInputEvent::Left, InputModifiers::alt());
 
@@ -12193,7 +11714,7 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
 
     #[test]
     fn test_negative_num_bin_form() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("-256");
         test.input(EditorInputEvent::Left, InputModifiers::alt());
 
@@ -12204,7 +11725,7 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
 
     #[test]
     fn test_negative_num_hex_form() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("-256");
         test.input(EditorInputEvent::Right, InputModifiers::alt());
 
@@ -12213,7 +11734,7 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
 
     #[test]
     fn test_if_number_is_too_big_for_hex_repr_show_err() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("10e24");
         test.input(EditorInputEvent::Right, InputModifiers::alt());
 
@@ -12222,7 +11743,7 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
 
     #[test]
     fn test_if_quantity_is_too_big_for_binary_repr_show_err() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("12km");
         test.input(EditorInputEvent::Left, InputModifiers::alt());
 
@@ -12231,7 +11752,7 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
 
     #[test]
     fn test_if_quantity_is_too_big_for_hex_repr_show_err() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("12km");
         test.input(EditorInputEvent::Right, InputModifiers::alt());
 
@@ -12240,7 +11761,7 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
 
     #[test]
     fn test_if_percentage_is_too_big_for_binary_repr_show_err() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("12%");
         test.input(EditorInputEvent::Left, InputModifiers::alt());
 
@@ -12249,7 +11770,7 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
 
     #[test]
     fn test_if_percentage_is_too_big_for_hex_repr_show_err() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("12%");
         test.input(EditorInputEvent::Right, InputModifiers::alt());
 
@@ -12258,7 +11779,7 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
 
     #[test]
     fn integration_test_for_rich_copy() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste(
             "price = 350 000$
 down payment = price * 20%
@@ -12277,7 +11798,7 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
 
     #[test]
     fn test_percentage_output() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("20%");
 
         test.assert_results(&["20 %"][..]);
@@ -12285,13 +11806,13 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
 
     #[test]
     fn test_parsing_panic_20201116() {
-        let test = create_app2(35);
+        let test = create_test_app(35);
         test.paste("2^63-1\n6*13\nennyi staging entity lehet &[1] / 50\n\nnaponta ennyit kell beszurni, hogy \'1 év alatt megteljen: &[1] / 365\n\nennyi évig üzemel, ha napi ezer sor szurodik be: &[1] / (365*1000)\n120 * 100 = \n1.23e20\n\n500$ / 20$/hour in hour\n1km + 1000m\n3 kg * 3 liter\n3 hours + 5minutes + 10 seconds in seconds\n20%\n\n1t in kg\nmass of earth = 5.972e18 Gg\n\n20%\n");
     }
 
     #[test]
     fn test_matrix_renders_dots_on_gutter_on_every_line_it_takes() {
-        let expected_char_at = |test: &BorrowCheckerFighter, at: usize| {
+        let expected_char_at = |test: &TestHelper, at: usize| {
             OutputMessage::RenderChar(RenderChar {
                 col: test.get_render_data().result_gutter_x - 1,
                 row: canvas_y(at as isize),
@@ -12299,20 +11820,20 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
             })
         };
 
-        let test = create_app3(25, 35);
+        let test = create_test_app2(25, 35);
         test.paste("[1,2,3,4,5,6,7,8]");
         test.render(); // must be rendered again, right gutter is updated within 2 renders :(
         let commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
         assert_contains(commands, 1, expected_char_at(&test, 0));
 
-        let test = create_app3(25, 35);
+        let test = create_test_app2(25, 35);
         test.paste("[1,2,3,4,5,6,7,8;1,2,3,4,5,6,7,8]");
         test.render(); // must be rendered again, right gutter is updated within 2 renders :(
         let commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
         assert_contains(commands, 1, expected_char_at(&test, 0));
         assert_contains(commands, 1, expected_char_at(&test, 1));
 
-        let test = create_app3(25, 35);
+        let test = create_test_app2(25, 35);
         test.paste("[1,2,3,4,5,6,7,8;1,2,3,4,5,6,7,8;1,2,3,4,5,6,7,8]");
         test.render(); // must be rendered again, right gutter is updated within 2 renders :(
         let commands = &test.render_bucket().custom_commands[Layer::AboveText as usize];
@@ -12323,7 +11844,7 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
 
     #[test]
     fn test_line_number_rendering_for_tall_rows() {
-        let test = create_app3(25, 35);
+        let test = create_test_app2(25, 35);
         test.paste(
             "1
 2
@@ -12365,7 +11886,7 @@ asd",
 
     #[test]
     fn test_matrix_dots_are_not_rendered_sometimes() {
-        let expected_char_at = |test: &BorrowCheckerFighter, at: usize| {
+        let expected_char_at = |test: &TestHelper, at: usize| {
             OutputMessage::RenderChar(RenderChar {
                 col: test.get_render_data().result_gutter_x - 1,
                 row: canvas_y(at as isize),
@@ -12373,7 +11894,7 @@ asd",
             })
         };
 
-        let test = create_app3(30, 35);
+        let test = create_test_app2(30, 35);
         test.paste("[1,2,3,4,5,6,7,8]");
         for i in 0..20 {
             test.handle_resize(30 - i);
@@ -12385,7 +11906,7 @@ asd",
 
     #[test]
     fn test_right_gutter_is_updated_when_text_changes() {
-        let test = create_app3(49, 32);
+        let test = create_test_app2(49, 32);
         test.paste("[0,0,0,0,0;0,0,0,0,0;0,0,0,0,0]");
 
         // drag the rught gutter to left
@@ -12407,7 +11928,7 @@ asd",
 
     #[test]
     fn test_right_gutter_is_moved_when_there_is_enough_result_space_but_no_editor_space() {
-        let test = create_app3(48, 32);
+        let test = create_test_app2(48, 32);
         test.paste("");
 
         // drag the rught gutter to left
@@ -12423,7 +11944,7 @@ asd",
 
     #[test]
     fn test_matrix_right_brackets_are_not_rendered_if_there_is_no_space() {
-        let test = create_app3(48, 32);
+        let test = create_test_app2(48, 32);
         test.paste("[0,0,0,0,0;0,0,0,0,0;0,0,0,0,0]");
 
         // drag the rught gutter to left
@@ -12452,7 +11973,7 @@ asd",
 
     #[test]
     fn test_matrix_left_brackets_are_not_rendered_if_there_is_no_space() {
-        let test = create_app3(48, 32);
+        let test = create_test_app2(48, 32);
         test.paste("[0,0,0,0,0;0,0,0,0,0;0,0,0,0,0]");
 
         // drag the rught gutter to left
@@ -12481,7 +12002,7 @@ asd",
 
     #[test]
     fn test_if_left_gutter_width_changes_editor_size_changes_as_well() {
-        let test = create_app3(48, 32);
+        let test = create_test_app2(48, 32);
         test.paste("");
 
         let orig_editor_w = test.get_render_data().current_editor_width;
@@ -12499,7 +12020,7 @@ asd",
 
     #[test]
     fn test_precision() {
-        let test = create_app3(48, 32);
+        let test = create_test_app2(48, 32);
         test.paste("0.0000000001165124023817148381");
 
         test.assert_results(&["0.0000000001165124023817148381"][..]);
@@ -12507,7 +12028,7 @@ asd",
 
     #[test]
     fn test_that_cursor_is_rendered_at_the_end_of_the_editor() {
-        let test = create_app3(44, 32);
+        let test = create_test_app2(44, 32);
         test.paste("1234567890123456");
         assert_contains(
             &test.render_bucket().custom_commands[Layer::AboveText as usize],
@@ -12533,7 +12054,7 @@ asd",
 
     #[test]
     fn results_must_be_rendered() {
-        let test = create_app3(84, 36);
+        let test = create_test_app2(84, 36);
         test.paste(
             "# Results must be rendered even if header is in the first line
 69",
@@ -12543,7 +12064,7 @@ asd",
 
     #[test]
     fn results_must_be_rendered2() {
-        let test = create_app3(84, 36);
+        let test = create_test_app2(84, 36);
         test.paste(
             "empty row\n\
             # Results must be rendered even if there are 2 headers below each other and an empty row in front of them\n\
@@ -12555,7 +12076,7 @@ asd",
 
     #[test]
     fn empty_variable_name() {
-        let test = create_app3(84, 36);
+        let test = create_test_app2(84, 36);
         test.paste("    =5$2*x-2044923+/I2(397-293496(6[/7k9]/^*6490^)(5/j=");
         test.input(EditorInputEvent::Char('9'), InputModifiers::none());
         assert!(test.mut_vars()[0].is_none());
@@ -12563,7 +12084,7 @@ asd",
 
     #[test]
     fn test_modification_happens_on_selection() {
-        let test = create_app3(84, 36);
+        let test = create_test_app2(84, 36);
         test.paste("asd");
         assert!(test
             .input(EditorInputEvent::Home, InputModifiers::shift())
@@ -12578,7 +12099,7 @@ asd",
             let tested_opening_char = *tested_opening_char;
             let expected_closing_char = *expected_closing_char;
             {
-                let test = create_app3(84, 36);
+                let test = create_test_app2(84, 36);
                 test.paste("");
                 test.input(
                     EditorInputEvent::Char(tested_opening_char),
@@ -12594,7 +12115,7 @@ asd",
                 if tested_opening_char == '[' || tested_opening_char == '\"' {
                     continue; // because of matrix, it does not work as for the other chars
                 }
-                let test = create_app3(84, 36);
+                let test = create_test_app2(84, 36);
                 test.paste("");
                 let mut expected_str = String::with_capacity(20);
                 for i in 0..10 {
@@ -12624,7 +12145,7 @@ asd",
             let tested_opening_char = *tested_opening_char;
             let expected_closing_char = *expected_closing_char;
             {
-                let test = create_app3(84, 36);
+                let test = create_test_app2(84, 36);
 
                 let mut pasted_str = String::with_capacity(2);
                 pasted_str.push(tested_opening_char);
@@ -12637,7 +12158,7 @@ asd",
                 assert_eq!(Pos::from_row_column(0, 0), test.get_cursor_pos());
             }
             {
-                let test = create_app3(84, 36);
+                let test = create_test_app2(84, 36);
 
                 let mut pasted_str = String::with_capacity(2);
                 pasted_str.push(tested_opening_char);
@@ -12649,7 +12170,7 @@ asd",
                 assert_eq!(Pos::from_row_column(0, 1), test.get_cursor_pos());
             }
             {
-                let test = create_app3(84, 36);
+                let test = create_test_app2(84, 36);
 
                 let mut pasted_str = String::with_capacity(2);
                 pasted_str.push(tested_opening_char);
@@ -12662,7 +12183,7 @@ asd",
                 assert_eq!(Pos::from_row_column(0, 1), test.get_cursor_pos());
             }
             {
-                let test = create_app3(84, 36);
+                let test = create_test_app2(84, 36);
 
                 let mut pasted_str = String::with_capacity(2);
                 pasted_str.push(tested_opening_char);
@@ -12683,7 +12204,7 @@ asd",
         for (tested_opening_char, expected_closing_char) in &[('(', ')'), ('{', '}')] {
             let tested_opening_char = *tested_opening_char;
             let expected_closing_char = *expected_closing_char;
-            let test = create_app3(84, 36);
+            let test = create_test_app2(84, 36);
             let mut expected_str = String::with_capacity(20);
             test.paste("");
             for i in 0..10 {
@@ -12720,7 +12241,7 @@ asd",
         {
             let tested_opening_char = *tested_opening_char;
             let expected_closing_char = *expected_closing_char;
-            let test = create_app3(84, 36);
+            let test = create_test_app2(84, 36);
             test.paste("");
             test.input(
                 EditorInputEvent::Char(tested_opening_char),
@@ -12746,7 +12267,7 @@ asd",
 
     #[test]
     fn test_parenthesis_completion_1() {
-        let test = create_app3(84, 36);
+        let test = create_test_app2(84, 36);
         test.paste("");
         test.input(EditorInputEvent::Char('{'), InputModifiers::none());
         test.input(EditorInputEvent::Char('{'), InputModifiers::none());
@@ -12762,7 +12283,7 @@ asd",
         for (tested_opening_char, _expected_closing_char) in
             &[('(', ')'), ('[', ']'), ('{', '}'), ('\"', '\"')]
         {
-            let test = create_app3(84, 36);
+            let test = create_test_app2(84, 36);
             test.paste("asd");
             test.input(EditorInputEvent::Home, InputModifiers::none());
             test.input(
@@ -12785,7 +12306,7 @@ asd",
             let tested_opening_char = *tested_opening_char;
             let expected_closing_char = *expected_closing_char;
             {
-                let test = create_app3(84, 36);
+                let test = create_test_app2(84, 36);
                 test.paste("asd");
                 test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
                 test.input(
@@ -12804,7 +12325,7 @@ asd",
                 );
             }
             {
-                let test = create_app3(84, 36);
+                let test = create_test_app2(84, 36);
                 test.paste("asd");
                 test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
                 let mut expected_str = String::with_capacity(20);
@@ -12843,7 +12364,7 @@ asd",
             let tested_opening_char = *tested_opening_char;
             let expected_closing_char = *expected_closing_char;
             {
-                let test = create_app3(84, 36);
+                let test = create_test_app2(84, 36);
                 test.paste("asd\nbsd");
                 test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
                 test.input(
@@ -12862,7 +12383,7 @@ asd",
                 );
             }
             {
-                let test = create_app3(84, 36);
+                let test = create_test_app2(84, 36);
                 test.paste("asd\nbsd");
                 test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
                 let mut expected_str = String::with_capacity(20);
@@ -12901,7 +12422,7 @@ asd",
             let tested_opening_char = *tested_opening_char;
             let expected_closing_char = *expected_closing_char;
             {
-                let test = create_app3(84, 36);
+                let test = create_test_app2(84, 36);
                 test.paste("asd\nbsd");
                 test.input(EditorInputEvent::Home, InputModifiers::shift());
                 test.input(EditorInputEvent::Up, InputModifiers::shift());
@@ -12921,7 +12442,7 @@ asd",
                 );
             }
             {
-                let test = create_app3(84, 36);
+                let test = create_test_app2(84, 36);
                 test.paste("asd\nbsd");
                 test.input(EditorInputEvent::Home, InputModifiers::shift());
                 test.input(EditorInputEvent::Up, InputModifiers::shift());
@@ -12956,7 +12477,7 @@ asd",
 
     #[test]
     fn test_paren_competion_and_mat_editing_combo() {
-        let test = create_app3(84, 36);
+        let test = create_test_app2(84, 36);
         test.paste("");
         test.input(EditorInputEvent::Char('['), InputModifiers::none());
         test.input(EditorInputEvent::Char('('), InputModifiers::none());
@@ -12968,7 +12489,7 @@ asd",
 
     #[test]
     fn test_paren_removal_bug_when_cursor_eol() {
-        let test = create_app3(84, 36);
+        let test = create_test_app2(84, 36);
         test.paste("\n\na");
         test.input(EditorInputEvent::PageUp, InputModifiers::none());
         test.input(EditorInputEvent::Char('['), InputModifiers::none());
@@ -12979,7 +12500,7 @@ asd",
 
     #[test]
     fn test_paren_competion_and_mat_editing_combo2() {
-        let test = create_app3(84, 36);
+        let test = create_test_app2(84, 36);
         test.paste("");
         test.input(EditorInputEvent::Char('['), InputModifiers::none());
         test.input(EditorInputEvent::Backspace, InputModifiers::none());
@@ -12991,7 +12512,7 @@ asd",
 
     #[test]
     fn test_paren_competion_and_mat_editing_combo3() {
-        let test = create_app3(84, 36);
+        let test = create_test_app2(84, 36);
         test.paste("");
         test.input(EditorInputEvent::Char('['), InputModifiers::none());
         test.input(EditorInputEvent::Char('a'), InputModifiers::none());
@@ -13002,7 +12523,7 @@ asd",
 
     #[test]
     fn test_paren_competion_and_mat_editing_combo4() {
-        let test = create_app3(84, 36);
+        let test = create_test_app2(84, 36);
         test.paste("");
         test.input(EditorInputEvent::Char('['), InputModifiers::none());
         test.input(EditorInputEvent::Char('a'), InputModifiers::none());
@@ -13013,14 +12534,14 @@ asd",
 
     #[test]
     fn test_single_unit_in_denom_output_format() {
-        let test = create_app3(84, 36);
+        let test = create_test_app2(84, 36);
         test.paste("50 000 / year");
         test.assert_results(&["50 000 / year"][..]);
     }
 
     #[test]
     fn test_units_can_be_applied_on_linerefs() {
-        let test = create_app3(84, 36);
+        let test = create_test_app2(84, 36);
         test.paste("12\n&[1] m");
         test.assert_results(&["12", "12 m"][..]);
     }
@@ -13028,12 +12549,12 @@ asd",
     #[test]
     fn test_units_right_after_each_other() {
         {
-            let test = create_app3(84, 36);
+            let test = create_test_app2(84, 36);
             test.paste("var = 12 byte\nvar kilobyte");
             test.assert_results(&["12 bytes", "Err"][..]);
         }
         {
-            let test = create_app3(84, 36);
+            let test = create_test_app2(84, 36);
             test.paste("var = 12 byte\nvar ok kilobyte");
             test.assert_results(&["12 bytes", "12 bytes"][..]);
         }
@@ -13041,7 +12562,7 @@ asd",
 
     #[test]
     fn test_paren_highlighting() {
-        let test = create_app3(84, 36);
+        let test = create_test_app2(84, 36);
         test.paste("asdasd hehe(12)");
         test.input(EditorInputEvent::Left, InputModifiers::none());
         let render_bucket = &test.render_bucket().custom_commands[Layer::Text as usize];
@@ -13083,7 +12604,7 @@ asd",
 
     #[test]
     fn test_paren_highlighting2() {
-        let test = create_app3(84, 36);
+        let test = create_test_app2(84, 36);
         test.paste("asdasd hehe((12))");
         test.input(EditorInputEvent::Left, InputModifiers::none());
         test.input(EditorInputEvent::Left, InputModifiers::none());
@@ -13111,7 +12632,7 @@ asd",
 
     #[test]
     fn test_parenthesis_must_not_rendered_outside_of_editor() {
-        let test = create_app3(51, 36);
+        let test = create_test_app2(51, 36);
         test.paste("1000 (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)");
         // there is enough space, everything is rendered
         let render_bucket = &test.render_bucket().parenthesis;
@@ -13157,7 +12678,7 @@ asd",
 
     #[test]
     fn test_leave_matrix_text_insertion_overflow() {
-        let test = create_app3(51, 36);
+        let test = create_test_app2(51, 36);
         test.paste(&("0".repeat(MAX_EDITOR_WIDTH - 10)));
 
         test.input(EditorInputEvent::Char('['), InputModifiers::none());
@@ -13176,7 +12697,7 @@ asd",
 
     #[test]
     fn test_leave_matrix_text_insertion_overflow2() {
-        let test = create_app3(51, 36);
+        let test = create_test_app2(51, 36);
         test.paste(&("0".repeat(MAX_EDITOR_WIDTH - 10)));
 
         test.input(EditorInputEvent::Char('['), InputModifiers::none());
@@ -13195,7 +12716,7 @@ asd",
 
     #[test]
     fn test_leave_matrix_text_insertion_overflow3() {
-        let test = create_app3(51, 36);
+        let test = create_test_app2(51, 36);
         test.paste(&("0".repeat(MAX_EDITOR_WIDTH - 10)));
 
         test.input(EditorInputEvent::Char('['), InputModifiers::none());
@@ -13215,7 +12736,7 @@ asd",
 
     #[test]
     fn test_leave_matrix_text_insertion_overflow4() {
-        let test = create_app3(51, 36);
+        let test = create_test_app2(51, 36);
         test.paste(&("0".repeat(MAX_EDITOR_WIDTH - 10)));
         test.input(EditorInputEvent::Home, InputModifiers::none());
         test.input(EditorInputEvent::Char(' '), InputModifiers::none());
@@ -13237,7 +12758,7 @@ asd",
 
     #[test]
     fn test_leave_matrix_shorter_than_it_was_with_del() {
-        let test = create_app3(51, 36);
+        let test = create_test_app2(51, 36);
         test.paste("[1+2+3]");
         test.input(EditorInputEvent::Left, InputModifiers::none());
         assert!(test.app().matrix_editing.is_some());
@@ -13249,7 +12770,7 @@ asd",
 
     #[test]
     fn test_removing_matrix_closing_bracket() {
-        let test = create_app3(51, 36);
+        let test = create_test_app2(51, 36);
         test.paste("");
         test.input(EditorInputEvent::Char('['), InputModifiers::none());
         test.input(EditorInputEvent::Char('1'), InputModifiers::none());
@@ -13260,13 +12781,34 @@ asd",
     }
 
     #[test]
-    fn asd() {
-        let test = create_app3(51, 36);
+    fn test_matrix_deletion_from_last_cell() {
+        let test = create_test_app2(51, 36);
         test.paste("[1,2,3,4]");
         test.input(EditorInputEvent::Left, InputModifiers::none());
         test.input(EditorInputEvent::Backspace, InputModifiers::none());
         test.input(EditorInputEvent::Backspace, InputModifiers::none());
         test.input(EditorInputEvent::Enter, InputModifiers::none());
         assert_eq!(test.get_editor_content(), "[1,2,3,]");
+    }
+
+    #[test]
+    pub fn test_no_panic_when_matrix_full_height() {
+        let test = create_test_app2(73, 40);
+
+        for _ in 0..MAX_LINE_COUNT {
+            test.input(EditorInputEvent::Char('['), InputModifiers::none());
+
+            test.input(EditorInputEvent::Char('1'), InputModifiers::none());
+            test.input(EditorInputEvent::Char(';'), InputModifiers::none());
+            test.input(EditorInputEvent::Char('2'), InputModifiers::none());
+            test.input(EditorInputEvent::Char(';'), InputModifiers::none());
+            test.input(EditorInputEvent::Char('3'), InputModifiers::none());
+            test.input(EditorInputEvent::Char(';'), InputModifiers::none());
+            test.input(EditorInputEvent::Char('4'), InputModifiers::none());
+            // commit matrix editing
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+            // go to the next line
+            test.input(EditorInputEvent::Enter, InputModifiers::none());
+        }
     }
 }

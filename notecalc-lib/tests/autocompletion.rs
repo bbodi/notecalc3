@@ -1,11 +1,9 @@
-mod common;
-
-use crate::common::create_app2;
 use notecalc_lib::editor::editor::{EditorInputEvent, InputModifiers};
+use notecalc_lib::test_common::test_common::create_test_app;
 
 #[test]
 fn test_matrix_autocompletion() {
-    let test = create_app2(35);
+    let test = create_test_app(35);
     test.paste(".mat");
     test.input(EditorInputEvent::Tab, InputModifiers::none());
     assert_eq!("[0]", test.get_editor_content());
@@ -13,7 +11,7 @@ fn test_matrix_autocompletion() {
 
 #[test]
 fn test_matrix_autocompletion_enables_mat_editing() {
-    let test = create_app2(35);
+    let test = create_test_app(35);
     test.paste(".mat");
     test.input(EditorInputEvent::Tab, InputModifiers::none());
     test.input(EditorInputEvent::Char('2'), InputModifiers::none());
@@ -23,7 +21,7 @@ fn test_matrix_autocompletion_enables_mat_editing() {
 
 #[test]
 fn test_matrix_autocompletion2() {
-    let test = create_app2(35);
+    let test = create_test_app(35);
     test.paste("m .mat");
     test.input(EditorInputEvent::Tab, InputModifiers::none());
     test.input(EditorInputEvent::Enter, InputModifiers::none());
@@ -32,7 +30,7 @@ fn test_matrix_autocompletion2() {
 
 #[test]
 fn test_matrix_autocompletion3() {
-    let test = create_app2(35);
+    let test = create_test_app(35);
     test.paste("_.mat");
     test.input(EditorInputEvent::Tab, InputModifiers::none());
     test.input(EditorInputEvent::Enter, InputModifiers::none());
@@ -41,7 +39,7 @@ fn test_matrix_autocompletion3() {
 
 #[test]
 fn test_matrix_autocompletion4() {
-    let test = create_app2(35);
+    let test = create_test_app(35);
     test.paste("a.mat");
     test.input(EditorInputEvent::Tab, InputModifiers::none());
     test.input(EditorInputEvent::Enter, InputModifiers::none());
@@ -50,7 +48,7 @@ fn test_matrix_autocompletion4() {
 
 #[test]
 fn test_matrix_autocompletion5() {
-    let test = create_app2(35);
+    let test = create_test_app(35);
     test.paste("longer string asd .mat");
     test.input(EditorInputEvent::Tab, InputModifiers::none());
     test.input(EditorInputEvent::Enter, InputModifiers::none());
@@ -59,7 +57,7 @@ fn test_matrix_autocompletion5() {
 
 #[test]
 fn test_matrix_autocompletion6() {
-    let test = create_app2(35);
+    let test = create_test_app(35);
     test.paste("longer string asd");
     test.input(EditorInputEvent::Left, InputModifiers::none());
     test.input(EditorInputEvent::Left, InputModifiers::none());
@@ -76,7 +74,7 @@ fn test_matrix_autocompletion6() {
 
 #[test]
 fn test_mat3_autocompletion() {
-    let test = create_app2(35);
+    let test = create_test_app(35);
     test.paste(".mat3");
     test.input(EditorInputEvent::Tab, InputModifiers::none());
     test.input(EditorInputEvent::Enter, InputModifiers::none());
@@ -85,7 +83,7 @@ fn test_mat3_autocompletion() {
 
 #[test]
 fn test_mat4_autocompletion() {
-    let test = create_app2(35);
+    let test = create_test_app(35);
     test.paste(".mat4");
     test.input(EditorInputEvent::Tab, InputModifiers::none());
     test.input(EditorInputEvent::Enter, InputModifiers::none());
@@ -97,7 +95,7 @@ fn test_mat4_autocompletion() {
 
 #[test]
 fn test_mat4_autocompletion2() {
-    let test = create_app2(35);
+    let test = create_test_app(35);
     test.paste(".mat.mat3.mat4");
     test.input(EditorInputEvent::Tab, InputModifiers::none());
     test.input(EditorInputEvent::Enter, InputModifiers::none());
@@ -109,7 +107,7 @@ fn test_mat4_autocompletion2() {
 
 #[test]
 fn test_pow_autocompletion() {
-    let test = create_app2(35);
+    let test = create_test_app(35);
     test.paste(".pow");
     test.input(EditorInputEvent::Tab, InputModifiers::none());
     assert_eq!("^", test.get_editor_content());
@@ -117,7 +115,7 @@ fn test_pow_autocompletion() {
 
 #[test]
 fn test_pow_autocompletion2() {
-    let test = create_app2(35);
+    let test = create_test_app(35);
     test.paste("2.pow");
     test.input(EditorInputEvent::Tab, InputModifiers::none());
     assert_eq!("2^", test.get_editor_content());
@@ -125,7 +123,7 @@ fn test_pow_autocompletion2() {
 
 #[test]
 fn test_pi_autocompletion() {
-    let test = create_app2(35);
+    let test = create_test_app(35);
     test.paste("2.pi");
     test.input(EditorInputEvent::Tab, InputModifiers::none());
     assert_eq!("2π", test.get_editor_content());
@@ -133,7 +131,7 @@ fn test_pi_autocompletion() {
 
 #[test]
 fn test_autocompletion_single() {
-    let test = create_app2(35);
+    let test = create_test_app(35);
     test.paste("apple = 12$");
     test.render();
     test.input(EditorInputEvent::Enter, InputModifiers::none());
@@ -144,7 +142,7 @@ fn test_autocompletion_single() {
 
 #[test]
 fn test_autocompletion_var_name_with_space() {
-    let test = create_app2(35);
+    let test = create_test_app(35);
     test.paste("some apples = 12$");
     test.render();
     test.input(EditorInputEvent::Enter, InputModifiers::none());
@@ -156,7 +154,7 @@ fn test_autocompletion_var_name_with_space() {
 
 #[test]
 fn test_autocompletion_var_name_with_space2() {
-    let test = create_app2(35);
+    let test = create_test_app(35);
     test.paste("some apples = 12$");
     test.render();
     test.input(EditorInputEvent::Enter, InputModifiers::none());
@@ -170,7 +168,7 @@ fn test_autocompletion_var_name_with_space2() {
 
 #[test]
 fn test_autocompletion_var_name_with_space3() {
-    let test = create_app2(35);
+    let test = create_test_app(35);
     test.paste("men BMR = 12");
     test.render();
     test.input(EditorInputEvent::Enter, InputModifiers::none());
@@ -185,7 +183,7 @@ fn test_autocompletion_var_name_with_space3() {
 
 #[test]
 fn test_autocompletion_only_above_vars() {
-    let test = create_app2(35);
+    let test = create_test_app(35);
     test.paste("apple = 12$");
     test.render();
     test.input(EditorInputEvent::Home, InputModifiers::none());
@@ -198,7 +196,7 @@ fn test_autocompletion_only_above_vars() {
 
 #[test]
 fn test_autocompletion_two_vars() {
-    let test = create_app2(35);
+    let test = create_test_app(35);
     test.paste("apple = 12$\nbanana = 7$\n");
     test.render();
     test.input(EditorInputEvent::Char('a'), InputModifiers::none());
@@ -216,7 +214,7 @@ fn test_autocompletion_two_vars() {
 
 #[test]
 fn test_that_no_autocompletion_for_multiple_results() {
-    let test = create_app2(35);
+    let test = create_test_app(35);
     test.paste("apple = 12$\nananas = 7$\n");
     test.render();
     test.input(EditorInputEvent::Char('a'), InputModifiers::none());

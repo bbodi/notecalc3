@@ -6,6 +6,7 @@ use crate::token_parser::{
 };
 use crate::units::units::{UnitOutput, Units};
 use std::ops::Neg;
+use tracy_client::Span;
 
 #[derive(Eq, PartialEq, Debug)]
 enum ValidationTokenType {
@@ -266,6 +267,7 @@ impl ShuntingYard {
         output_stack: &mut Vec<ShuntingYardResult>,
         units: &Units,
     ) {
+        let _span = Span::new("shunting_yard", "shunting_yard", file!(), line!(), 100);
         // TODO: into iter!!!
         // TODO:mem extract out so no alloc SmallVec?
         let mut operator_stack: Vec<ShuntingYardOperatorResult> = vec![];
@@ -1333,8 +1335,8 @@ impl ShuntingYard {
 #[allow(dead_code)]
 pub mod tests {
     use super::*;
+    use crate::borrow_checker_fighter::create_vars;
     use crate::calc::{CalcResult, CalcResultType};
-    use crate::helper::create_vars;
     use crate::token_parser::tests::print_tokens_compare_error_and_panic;
     use crate::token_parser::TokenParser;
     use crate::units::units::{UnitOutput, Units};
@@ -1516,7 +1518,7 @@ pub mod tests {
         }
     }
 
-    pub fn do_shunting_yard<'text_ptr, 'units, 'b>(
+    pub fn do_shunting_yard_for_tests<'text_ptr, 'units, 'b>(
         text: &[char],
         units: &'units Units,
         tokens: &mut Vec<Token<'text_ptr>>,
@@ -1549,7 +1551,8 @@ pub mod tests {
         let temp = text.chars().collect::<Vec<char>>();
         let units = Units::new();
         let mut tokens = vec![];
-        let output = do_shunting_yard(&temp, &units, &mut tokens, &var_names, &Bump::new());
+        let output =
+            do_shunting_yard_for_tests(&temp, &units, &mut tokens, &var_names, &Bump::new());
         compare_tokens(
             text,
             &expected_tokens,
@@ -1585,7 +1588,7 @@ pub mod tests {
             name: Box::from(&['&', '[', '1', ']'][..]),
             value: Ok(CalcResult::new(CalcResultType::Number(Decimal::zero()), 0)),
         });
-        let _ = do_shunting_yard(&temp, &units, &mut tokens, &vars, &arena);
+        let _ = do_shunting_yard_for_tests(&temp, &units, &mut tokens, &vars, &arena);
         compare_tokens(text, &expected_tokens, &tokens);
     }
 
