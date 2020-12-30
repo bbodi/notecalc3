@@ -6,9 +6,8 @@ use crate::matrix::MatrixData;
 use crate::token_parser::{debug_print, OperatorTokenType, Token, TokenType, UnitTokenType};
 use crate::units::consts::EMPTY_UNIT_DIMENSIONS;
 use crate::units::units::{UnitOutput, Units, MAX_UNIT_COUNT};
-use crate::Variables;
+use crate::{tracy_span, Variables};
 use rust_decimal::prelude::*;
-use tracy_client::Span;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct CalcResult {
@@ -103,7 +102,7 @@ pub fn evaluate_tokens<'text_ptr>(
     variables: &Variables,
     units: &Units,
 ) -> Result<Option<EvaluationResult>, ()> {
-    let _span = Span::new("calc", "calc", file!(), line!(), 100);
+    let _span = tracy_span("calc", file!(), line!());
     let mut stack: Vec<CalcResult> = vec![];
     let mut there_was_unit_conversion = false;
     let mut assignment = false;

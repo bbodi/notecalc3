@@ -1,3 +1,5 @@
 /target
 frontend-web/pkg
 *.exe
+*.pdb
+*.d

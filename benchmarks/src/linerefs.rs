@@ -3,9 +3,8 @@ use notecalc_lib::test_common::test_common::{create_test_app2, TestHelper};
 use notecalc_lib::MAX_LINE_COUNT;
 
 pub fn bench_each_line_references_prev_line(iteration_count: usize) {
-    let test = create_test_app2(73, 40);
-
     for _ in 0..iteration_count {
+        let test = create_test_app2(73, 40);
         for _ in 0..MAX_LINE_COUNT - 1 {
             test.input(EditorInputEvent::Char('+'), InputModifiers::none());
             test.input(EditorInputEvent::Char('1'), InputModifiers::none());
@@ -13,20 +12,14 @@ pub fn bench_each_line_references_prev_line(iteration_count: usize) {
             test.input(EditorInputEvent::Up, InputModifiers::alt());
             test.alt_key_released();
         }
-        // clear the editor
-        test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
-        test.input(EditorInputEvent::Del, InputModifiers::none());
     }
 }
 
 pub fn bench_each_line_references_first_line(iteration_count: usize) {
     let test = create_test_app2(73, 40);
-
     for _ in 0..iteration_count {
+        test.mut_app().reset();
         fill_each_line_references_first_line(&test);
-        // clear the editor
-        test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
-        test.input(EditorInputEvent::Del, InputModifiers::none());
     }
 }
 

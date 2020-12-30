@@ -100,6 +100,10 @@
      id="containder-div"
 >
     <canvas id='canvas'></canvas>
+<!--    <canvas-->
+<!--            style="position: absolute;top: 0;left: 0;"-->
+<!--            id='webgl_canvas'>-->
+<!--    </canvas>-->
 </div>
 <div class="modal fade"
      id="modal_div"
@@ -174,6 +178,8 @@
     };
     const canvas = document.getElementById("canvas");
     const ctx = canvas.getContext("2d");
+    //const webgl_canvas = document.getElementById("webgl_canvas");
+    //const webgl_ctx = webgl_canvas.getContext("webgl");
     const cursor_styles = ['text', 'default', 'w-resize', 'pointer'];
 
     let next_full_reparse_tick = 0;
@@ -238,6 +244,12 @@
         ctx.scale(dpi, dpi);
         canvas.style.width = size.width_px + 'px';
         canvas.style.height = size.height_px + 'px';
+
+        // WebGL Canvas
+        //webgl_canvas.width = size.width_px * dpi;
+        //webgl_canvas.height = size.height_px * dpi;
+        //webgl_canvas.style.width = size.width_px + 'px';
+        //webgl_canvas.style.height = size.height_px + 'px';
 
         CLIENT_WIDTH_IN_CHARS = size.width_char;
         CLIENT_HEIGHT_IN_CHARS = size.height_char;
@@ -427,6 +439,7 @@
         } else {
             measure_start = new Date().getTime();
             canvas.style.cursor = cursor_styles[wasm_bindgen.handle_mouse_move(app_ptr, char_x, char_y)];
+            //webgl_canvas.style.cursor = cursor_styles[wasm_bindgen.handle_mouse_move(app_ptr, char_x, char_y)];
             render_for_reason('mouse move');
         }
 

@@ -93,13 +93,13 @@ pub struct EditorContent<T: Default + Clone + Debug> {
 }
 
 impl<T: Default + Clone + Debug> EditorContent<T> {
-    pub fn new(max_len: usize) -> EditorContent<T> {
+    pub fn new(max_len: usize, max_row_count: usize) -> EditorContent<T> {
         EditorContent {
             undo_stack: Vec::with_capacity(32),
             redo_stack: Vec::with_capacity(32),
-            canvas: Vec::with_capacity(max_len * 64),
-            line_lens: Vec::with_capacity(64),
-            line_data: Vec::with_capacity(642),
+            canvas: Vec::with_capacity(max_len * max_row_count),
+            line_lens: Vec::with_capacity(max_row_count),
+            line_data: Vec::with_capacity(max_row_count),
             max_line_len: max_len,
         }
     }

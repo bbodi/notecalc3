@@ -14,6 +14,7 @@
 
 use wasm_bindgen::prelude::*;
 
+//use crate::egui_app::EguiApp;
 use crate::utils::set_panic_hook;
 use notecalc_lib::borrow_checker_fighter::{to_box_ptr, BorrowCheckerFighter};
 use notecalc_lib::editor::editor::{EditorInputEvent, InputModifiers};
@@ -23,6 +24,7 @@ use notecalc_lib::{
     RenderStringMsg, RenderUtf8TextMsg,
 };
 
+mod egui_app;
 mod utils;
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
@@ -45,6 +47,8 @@ pub fn create_app(client_width: usize, client_height: usize) -> usize {
     set_panic_hook();
     js_log(&format!("client_width: {}", client_width));
     js_log(&format!("client_height: {}", client_height));
+    //let app = EguiApp::default();
+    //egui_web::start("webgl_canvas", Box::new(app));
     return to_box_ptr(BorrowCheckerFighter::new(client_width, client_height));
 }
 

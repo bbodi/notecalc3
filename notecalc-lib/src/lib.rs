@@ -37,7 +37,6 @@ use crate::renderer::{get_int_frac_part_len, render_result, render_result_into};
 use crate::shunting_yard::ShuntingYard;
 use crate::token_parser::{OperatorTokenType, Token, TokenParser, TokenType};
 use crate::units::units::Units;
-use tracy_client::*;
 
 mod functions;
 mod matrix;
@@ -56,6 +55,16 @@ pub mod renderer;
 fn _readonly_<T: ?Sized>(e: &mut T) -> &T {
     return e;
 }
+
+#[inline]
+#[cfg(feature = "tracy")]
+fn tracy_span(name: &str, file: &str, line: u32) -> tracy_client::Span {
+    return tracy_client::Span::new(name, name, file, line, 100);
+}
+
+#[inline]
+#[cfg(not(feature = "tracy"))]
+fn tracy_span(_name: &str, _file: &str, _line: u32) -> () {}
 
 const SCROLLBAR_WIDTH: usize = 1;
 
@@ -1077,7 +1086,7 @@ impl MatrixEditing {
             Pos::from_row_column(row_count - 1, 0)
         };
 
-        let mut editor_content = EditorContent::new(32);
+        let mut editor_content = EditorContent::new(32, 1);
         let mut mat_edit = MatrixEditing {
             row_index,
             start_text_index,
@@ -1408,7 +1417,7 @@ pub const EMPTY_FILE_DEFUALT_CONTENT: &str = "\n\n\n\n\n\n\n\n\n\n";
 
 impl NoteCalcApp {
     pub fn new(client_width: usize, client_height: usize) -> NoteCalcApp {
-        let mut editor_content = EditorContent::new(MAX_EDITOR_WIDTH);
+        let mut editor_content = EditorContent::new(MAX_EDITOR_WIDTH, MAX_LINE_COUNT);
         NoteCalcApp {
             line_reference_chooser: None,
             client_width,
@@ -1429,6 +1438,24 @@ impl NoteCalcApp {
             ),
             clipboard: None,
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.line_reference_chooser = None;
+        self.matrix_editing = None;
+        self.line_id_generator = 1;
+        self.mouse_hover_type = MouseHoverType::Normal;
+        self.updated_line_ref_obj_indices.clear();
+        self.clipboard = None;
+        self.render_data = GlobalRenderData::new(
+            self.client_width,
+            self.render_data.client_height,
+            default_result_gutter_x(self.client_width),
+            LEFT_GUTTER_MIN_WIDTH,
+            RIGHT_GUTTER_WIDTH,
+        );
+        self.editor.reset();
+        self.editor_content.init_with("");
     }
 
     pub fn get_selected_text_and_clear_app_clipboard(&mut self) -> Option<String> {
@@ -2747,7 +2774,7 @@ impl NoteCalcApp {
         editor_objs: &mut EditorObjects,
         render_buckets: &mut RenderBuckets<'b>,
     ) -> Option<RowModificationType> {
-        let _span = Span::new("handle_input", "handle_input", file!(), line!(), 100);
+        let _span = tracy_span("handle_input", file!(), line!());
         fn handle_input_with_alt<'b>(
             app: &mut NoteCalcApp,
             input: EditorInputEvent,
@@ -2977,7 +3004,7 @@ impl NoteCalcApp {
             );
         }
 
-        finish_continuous_frame!();
+        // finish_continuous_frame!();
 
         return modif;
     }
@@ -3018,13 +3045,7 @@ impl NoteCalcApp {
         editor_objs: &mut EditorObjects,
         render_buckets: &mut RenderBuckets<'b>,
     ) {
-        let _span = Span::new(
-            "process_and_render_tokens",
-            "process_and_render_tokens",
-            file!(),
-            line!(),
-            100,
-        );
+        let _span = tracy_span("process_and_render_tokens", file!(), line!());
         fn eval_line<'a>(
             editor_content: &EditorContent<LineData>,
             line: &[char],
@@ -3036,7 +3057,7 @@ impl NoteCalcApp {
             editor_y: ContentIndex,
             updated_line_ref_obj_indices: &mut Vec<EditorObjId>,
         ) -> (bool, BitFlag256) {
-            let _span = Span::new("eval_line", "eval_line", file!(), line!(), 100);
+            let _span = tracy_span("eval_line", file!(), line!());
             // TODO avoid clone
             let prev_var_name = vars[editor_y.as_usize()].as_ref().map(|it| it.name.clone());
 
@@ -4352,12 +4373,10 @@ impl NoteCalcApp {
         editor_objs: &mut EditorObjects,
         result_change_flag: BitFlag256,
     ) {
-        let _span = Span::new(
-            "generate_render_commands_and_fill_editor_objs",
+        let _span = tracy_span(
             "generate_render_commands_and_fill_editor_objs",
             file!(),
             line!(),
-            100,
         );
         render_buckets.clear();
         NoteCalcApp::renderr(
@@ -12348,7 +12367,7 @@ asd",
                         test.get_selection(),
                         Selection::range(
                             Pos::from_row_column(0, i + 1),
-                            Pos::from_row_column(0, 3 + (i + 1))
+                            Pos::from_row_column(0, 3 + (i + 1)),
                         ),
                     );
                 }
@@ -12406,7 +12425,7 @@ asd",
                         test.get_selection(),
                         Selection::range(
                             Pos::from_row_column(0, i + 1),
-                            Pos::from_row_column(1, 3)
+                            Pos::from_row_column(1, 3),
                         ),
                     );
                 }

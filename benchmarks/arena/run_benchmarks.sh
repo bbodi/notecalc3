@@ -14,8 +14,10 @@ benchmarks=(
   "bench_typing_the_tutorial"
   "bench_line_uses_var_from_prev_line"
   "bench_line_uses_var_from_prev_line_then_modify_first_line"
+  "bench_select_all_mathy_text"
+  "bench_select_all_simple_text"
 )
-iteration_counts=( 100 100 1000 100 100 100 10 100 100 1000)
+iteration_counts=( 100 100 1000 100 100 100 10 100 100 1000 )
 len=${#benchmarks[@]}
 
 for (( i=0; i < ${len}; i++ ));

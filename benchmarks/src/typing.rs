@@ -6,14 +6,12 @@ pub fn bench_typing_the_tutorial(iteration_count: usize) {
     let test = create_test_app2(73, 40);
 
     for _ in 0..iteration_count {
+        test.mut_app().reset();
         for lines in text.lines() {
             for ch in lines.chars() {
                 test.input(EditorInputEvent::Char(ch), InputModifiers::none());
             }
             test.input(EditorInputEvent::Enter, InputModifiers::none());
         }
-        // clear the editor
-        test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
-        test.input(EditorInputEvent::Del, InputModifiers::none());
     }
 }

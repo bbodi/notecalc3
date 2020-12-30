@@ -318,6 +318,15 @@ impl Editor {
         return ed;
     }
 
+    pub fn reset(&mut self) {
+        self.time = 0;
+        self.selection = Selection::single_r_c(0, 0);
+        self.last_column_index = 0;
+        self.next_blink_at = 0;
+        self.modif_time_treshold_expires_at = 0;
+        self.show_cursor = false;
+    }
+
     pub fn is_cursor_at_eol<T: Default + Clone + Debug>(&self, content: &EditorContent<T>) -> bool {
         let cur_pos = self.selection.get_cursor_pos();
         cur_pos.column == content.line_len(cur_pos.row)

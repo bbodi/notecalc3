@@ -1,10 +1,9 @@
 use crate::functions::FnType;
 use crate::units::units::{UnitOutput, Units};
-use crate::{Variables, SUM_VARIABLE_INDEX};
+use crate::{tracy_span, Variables, SUM_VARIABLE_INDEX};
 use bumpalo::Bump;
 use rust_decimal::prelude::*;
 use std::str::FromStr;
-use tracy_client::*;
 
 // TODO
 #[allow(variant_size_differences)]
@@ -218,7 +217,7 @@ impl TokenParser {
         line_index: usize,
         allocator: &'text_ptr Bump,
     ) {
-        let _span = Span::new("parse_line", "parse_line", file!(), line!(), 100);
+        tracy_span("parse_line", file!(), line!());
         let mut index = 0;
         let mut can_be_unit = None;
         let mut can_be_unit_converter = false;
@@ -231,113 +230,157 @@ impl TokenParser {
             return;
         }
         while index < line.len() {
-            let parse_result = TokenParser::try_extract_comment(&line[index..], allocator)
-                .or_else(|| {
-                    let prev_was_lineref = dst
-                        .last()
-                        .map(|token| matches!(token.typ, TokenType::LineReference{..}))
-                        .unwrap_or(false);
-                    TokenParser::try_extract_variable_name(
-                        &line[index..],
-                        variable_names,
-                        line_index,
-                        allocator,
-                        prev_was_lineref,
-                    )
-                })
-                .or_else(|| {
-                    TokenParser::try_extract_unit(
-                        &line[index..],
-                        units,
-                        can_be_unit,
-                        can_be_unit_converter,
-                        allocator,
-                    )
-                    .or_else(|| {
-                        TokenParser::try_extract_operator(
-                            &line[index..],
-                            allocator,
-                            can_be_unit_converter,
-                        )
-                        .or_else(|| {
-                            TokenParser::try_extract_number_literal(&line[index..], allocator)
-                                .or_else(|| {
-                                    TokenParser::try_extract_string_literal(
-                                        &line[index..],
-                                        allocator,
-                                    )
-                                })
-                        })
-                    })
-                });
+            // let parse_result = TokenParser::try_extract_comment(&line[index..], allocator)
+            //     .or_else(|| {
+            //         let prev_was_lineref = dst
+            //             .last()
+            //             .map(|token| matches!(token.typ, TokenType::LineReference{..}))
+            //             .unwrap_or(false);
+            //         TokenParser::try_extract_variable_name(
+            //             &line[index..],
+            //             variable_names,
+            //             line_index,
+            //             allocator,
+            //             prev_was_lineref,
+            //         )
+            //     })
+            //     .or_else(|| {
+            //         TokenParser::try_extract_unit(
+            //             &line[index..],
+            //             units,
+            //             can_be_unit,
+            //             can_be_unit_converter,
+            //             allocator,
+            //         )
+            //             .or_else(|| {
+            //                 TokenParser::try_extract_operator(
+            //                     &line[index..],
+            //                     allocator,
+            //                     can_be_unit_converter,
+            //                 )
+            //                     .or_else(|| {
+            //                         TokenParser::try_extract_number_literal(&line[index..], allocator)
+            //                             .or_else(|| {
+            //                                 TokenParser::try_extract_string_literal(
+            //                                     &line[index..],
+            //                                     allocator,
+            //                                 )
+            //                             })
+            //                     })
+            //             })
+            //     });
+            let parse_result = TokenParser::try_extract_token(
+                &line[index..],
+                variable_names,
+                &dst,
+                units,
+                line_index,
+                can_be_unit,
+                can_be_unit_converter,
+                allocator,
+            );
 
-            if let Some(token) = parse_result {
-                match &token.typ {
-                    TokenType::Header => {
-                        // the functions already returned in this case
-                        panic!();
+            match &parse_result.typ {
+                TokenType::Header => {
+                    // the functions already returned in this case
+                    panic!();
+                }
+                TokenType::StringLiteral => {
+                    if parse_result.ptr[0].is_ascii_whitespace() {
+                        // keep can_be_unit as it was
+                    } else {
+                        can_be_unit = None;
+                        can_be_unit_converter = false;
                     }
-                    TokenType::StringLiteral => {
-                        if token.ptr[0].is_ascii_whitespace() {
+                }
+                TokenType::NumberLiteral(..) | TokenType::NumberErr => {
+                    can_be_unit = Some(UnitTokenType::ApplyToPrevToken);
+                    can_be_unit_converter = false;
+                }
+                TokenType::Unit(..) => {
+                    can_be_unit = Some(UnitTokenType::StandInItself);
+                    can_be_unit_converter = true;
+                }
+                TokenType::Operator(typ) => {
+                    match typ {
+                        OperatorTokenType::ParenClose => {
                             // keep can_be_unit as it was
-                        } else {
+                        }
+                        OperatorTokenType::BracketClose => {
+                            // keep can_be_unit as it was
+                        }
+                        OperatorTokenType::UnitConverter => {
+                            can_be_unit = Some(UnitTokenType::StandInItself);
+                            can_be_unit_converter = false;
+                        }
+                        OperatorTokenType::Div => can_be_unit = Some(UnitTokenType::StandInItself),
+                        _ => {
                             can_be_unit = None;
                             can_be_unit_converter = false;
                         }
                     }
-                    TokenType::NumberLiteral(..) | TokenType::NumberErr => {
-                        can_be_unit = Some(UnitTokenType::ApplyToPrevToken);
-                        can_be_unit_converter = false;
-                    }
-                    TokenType::Unit(..) => {
-                        can_be_unit = Some(UnitTokenType::StandInItself);
-                        can_be_unit_converter = true;
-                    }
-                    TokenType::Operator(typ) => {
-                        match typ {
-                            OperatorTokenType::ParenClose => {
-                                // keep can_be_unit as it was
-                            }
-                            OperatorTokenType::BracketClose => {
-                                // keep can_be_unit as it was
-                            }
-                            OperatorTokenType::UnitConverter => {
-                                can_be_unit = Some(UnitTokenType::StandInItself);
-                                can_be_unit_converter = false;
-                            }
-                            OperatorTokenType::Div => {
-                                can_be_unit = Some(UnitTokenType::StandInItself)
-                            }
-                            _ => {
-                                can_be_unit = None;
-                                can_be_unit_converter = false;
-                            }
-                        }
-                    }
-                    TokenType::Variable { .. } | TokenType::LineReference { .. } => {
-                        can_be_unit = Some(UnitTokenType::ApplyToPrevToken);
-                        can_be_unit_converter = true;
-                    }
                 }
-                index += token.ptr.len();
-                dst.push(token);
+                TokenType::Variable { .. } | TokenType::LineReference { .. } => {
+                    can_be_unit = Some(UnitTokenType::ApplyToPrevToken);
+                    can_be_unit_converter = true;
+                }
+            }
+            index += parse_result.ptr.len();
+            dst.push(parse_result);
+        }
+    }
+
+    pub fn try_extract_token<'text_ptr>(
+        rest_str: &[char],
+        variable_names: &Variables,
+        dst: &[Token<'text_ptr>],
+        units: &Units,
+        line_index: usize,
+        can_be_unit: Option<UnitTokenType>,
+        can_be_unit_converter: bool,
+        allocator: &'text_ptr Bump,
+    ) -> Token<'text_ptr> {
+        if let Some(asd) = TokenParser::try_extract_comment(rest_str, allocator) {
+            return asd;
+        } else {
+            let prev_was_lineref = dst
+                .last()
+                .map(|token| matches!(token.typ, TokenType::LineReference{..}))
+                .unwrap_or(false);
+            if let Some(asd) = TokenParser::try_extract_variable_name(
+                rest_str,
+                variable_names,
+                line_index,
+                allocator,
+                prev_was_lineref,
+            ) {
+                return asd;
+            } else if let Some(asd) = TokenParser::try_extract_unit(
+                rest_str,
+                units,
+                can_be_unit,
+                can_be_unit_converter,
+                allocator,
+            ) {
+                return asd;
+            } else if let Some(asd) =
+                TokenParser::try_extract_operator(rest_str, allocator, can_be_unit_converter)
+            {
+                return asd;
+            } else if let Some(asd) = TokenParser::try_extract_number_literal(rest_str, allocator) {
+                return asd;
             } else {
-                break;
+                return TokenParser::try_extract_string_literal(rest_str, allocator);
             }
         }
     }
 
+    #[inline]
     pub fn try_extract_number_literal<'text_ptr>(
         str: &[char],
         allocator: &'text_ptr Bump,
     ) -> Option<Token<'text_ptr>> {
-        let _span = Span::new(
-            "try_extract_number_literal",
-            "try_extract_number_literal",
-            file!(),
-            line!(),
-            100,
-        );
+        tracy_span("try_extract_number_literal", file!(), line!());
         let mut number_str = [b'0'; 256];
         let mut number_str_index = 0;
         let mut i = 0;
@@ -553,6 +596,7 @@ impl TokenParser {
         return result;
     }
 
+    #[inline]
     fn try_extract_unit<'text_ptr>(
         str: &[char],
         unit: &Units,
@@ -560,13 +604,7 @@ impl TokenParser {
         can_be_unit_converter: bool,
         allocator: &'text_ptr Bump,
     ) -> Option<Token<'text_ptr>> {
-        let _span = Span::new(
-            "try_extract_unit",
-            "try_extract_unit",
-            file!(),
-            line!(),
-            100,
-        );
+        tracy_span("try_extract_unit", file!(), line!());
         if can_be_unit.is_none() || str[0].is_ascii_whitespace() {
             return None;
         }
@@ -607,6 +645,7 @@ impl TokenParser {
         return result;
     }
 
+    #[inline]
     fn try_extract_comment<'text_ptr>(
         line: &[char],
         allocator: &'text_ptr Bump,
@@ -622,6 +661,7 @@ impl TokenParser {
         };
     }
 
+    #[inline]
     fn try_extract_variable_name<'text_ptr>(
         line: &[char],
         vars: &Variables,
@@ -629,13 +669,7 @@ impl TokenParser {
         allocator: &'text_ptr Bump,
         prev_was_lineref: bool,
     ) -> Option<Token<'text_ptr>> {
-        let _span = Span::new(
-            "try_extract_variable_name",
-            "try_extract_variable_name",
-            file!(),
-            line!(),
-            100,
-        );
+        tracy_span("try_extract_variable_name", file!(), line!());
         if line.starts_with(&['s', 'u', 'm']) && line.get(3).map(|it| *it == ' ').unwrap_or(true) {
             return Some(Token {
                 typ: TokenType::Variable {
@@ -704,17 +738,12 @@ impl TokenParser {
         return result;
     }
 
+    #[inline]
     fn try_extract_string_literal<'text_ptr>(
         str: &[char],
         allocator: &'text_ptr Bump,
-    ) -> Option<Token<'text_ptr>> {
-        let _span = Span::new(
-            "try_extract_string_literal",
-            "try_extract_string_literal",
-            file!(),
-            line!(),
-            100,
-        );
+    ) -> Token<'text_ptr> {
+        tracy_span("try_extract_string_literal", file!(), line!());
         let mut i = 0;
         for ch in str {
             if "=%/+-*^()[]".chars().any(|it| it == *ch) || ch.is_ascii_whitespace() {
@@ -726,12 +755,11 @@ impl TokenParser {
         }
         let result = if i > 0 {
             // alphabetical literal
-            Some(Token {
+            Token {
                 typ: TokenType::StringLiteral,
                 ptr: allocator.alloc_slice_fill_iter(str.iter().map(|it| *it).take(i)),
-                // ptr: &str[0..i],
                 has_error: false,
-            })
+            }
         } else {
             for ch in &str[0..] {
                 if !ch.is_ascii_whitespace() {
@@ -741,31 +769,26 @@ impl TokenParser {
             }
             if i > 0 {
                 // whitespace
-                Some(Token {
+                Token {
                     typ: TokenType::StringLiteral,
                     // ptr: &str[0..i],
                     ptr: allocator.alloc_slice_fill_iter(str.iter().map(|it| *it).take(i)),
                     has_error: false,
-                })
+                }
             } else {
-                None
+                panic!("cannot happen")
             }
         };
         return result;
     }
 
+    #[inline]
     fn try_extract_operator<'text_ptr>(
         str: &[char],
         allocator: &'text_ptr Bump,
         can_be_unit_converter: bool,
     ) -> Option<Token<'text_ptr>> {
-        let _span = Span::new(
-            "try_extract_operator",
-            "try_extract_operator",
-            file!(),
-            line!(),
-            100,
-        );
+        tracy_span("try_extract_operator", file!(), line!());
         fn op<'text_ptr>(
             typ: OperatorTokenType,
             str: &[char],
@@ -899,7 +922,7 @@ impl TokenParser {
                     op(OperatorTokenType::BinOr, str, 2, allocator)
                 } else if cmp(str, &['N', 'O', 'T', '(']) {
                     op(OperatorTokenType::BinNot, str, 3, allocator)
-                // '(' will be parsed separately as an operator
+                    // '(' will be parsed separately as an operator
                 } else if cmp(str, &['X', 'O', 'R']) {
                     op(OperatorTokenType::BinXor, str, 3, allocator)
                 } else if str.starts_with(&['<', '<']) {

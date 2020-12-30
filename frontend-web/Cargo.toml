@@ -19,6 +19,10 @@ byteorder = "1.3.4"
 flate2 = "1.0.19"
 base64 = "0.13.0"
 bumpalo = "3.4.0"
+#egui = { path = "../../egui/egui" }
+#egui_web = { path = "../../egui/egui_web" }
+#js-sys = "0.3"
+#wasm-bindgen = "0.2"
 
 # The `console_error_panic_hook` crate provides better debugging of panics by
 # logging them with `console.error`. This is great for development, but requires
@@ -34,4 +38,3 @@ console_error_panic_hook = { version = "0.1.6", optional = true }
 wee_alloc = { version = "0.4.2", optional = true }
 
 [dev-dependencies]
-wasm-bindgen-test = "0.2"

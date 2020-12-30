@@ -7,10 +7,8 @@ pub fn bench_line_uses_var_from_prev_line(iteration_count: usize) {
     let test = create_test_app2(73, 40);
 
     for _ in 0..iteration_count {
+        test.mut_app().reset();
         fill_each_line_references_first_line(&test);
-        // clear the editor
-        test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
-        test.input(EditorInputEvent::Del, InputModifiers::none());
     }
 }
 

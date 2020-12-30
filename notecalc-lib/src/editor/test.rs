@@ -4,6 +4,7 @@ mod tests {
         Editor, EditorInputEvent, InputModifiers, Pos, RowModificationType, Selection,
     };
     use crate::editor::editor_content::EditorContent;
+    use crate::MAX_LINE_COUNT;
 
     const CURSOR_MARKER: char = '█';
     // U+2770	❰	e2 9d b0	HEAVY LEFT-POINTING ANGLE BRACKET OR­NA­MENT
@@ -34,7 +35,7 @@ mod tests {
 
     fn test_normal_undo_redo(params: TestParams2) -> Vec<Option<RowModificationType>> {
         // normal test
-        let mut content = EditorContent::<usize>::new(80);
+        let mut content = EditorContent::<usize>::new(80, MAX_LINE_COUNT);
         let mut editor = Editor::new(&mut content);
         let mut modif_types: Vec<Option<RowModificationType>> = Vec::with_capacity(8);
         modif_types.append(&mut test0(
@@ -52,7 +53,7 @@ mod tests {
             },
         ));
         // undo test
-        let mut content = EditorContent::<usize>::new(80);
+        let mut content = EditorContent::<usize>::new(80, MAX_LINE_COUNT);
         let mut editor = Editor::new(&mut content);
         modif_types.append(&mut test0(
             &mut editor,
@@ -69,7 +70,7 @@ mod tests {
             },
         ));
         // redo test
-        let mut content = EditorContent::<usize>::new(80);
+        let mut content = EditorContent::<usize>::new(80, MAX_LINE_COUNT);
         let mut editor = Editor::new(&mut content);
         modif_types.append(&mut test0(
             &mut editor,
@@ -89,7 +90,7 @@ mod tests {
     }
 
     fn test_undo(params: TestParams) {
-        let mut content = EditorContent::<usize>::new(80);
+        let mut content = EditorContent::<usize>::new(80, MAX_LINE_COUNT);
         let mut editor = Editor::new(&mut content);
         test0(&mut editor, &mut content, params);
     }
@@ -100,7 +101,7 @@ mod tests {
         modifiers: InputModifiers,
         expected_content: &'static str,
     ) {
-        let mut content = EditorContent::<usize>::new(80);
+        let mut content = EditorContent::<usize>::new(80, MAX_LINE_COUNT);
         let mut editor = Editor::new(&mut content);
         test0(
             &mut editor,
@@ -274,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_the_test() {
-        let mut content = EditorContent::<usize>::new(80);
+        let mut content = EditorContent::<usize>::new(80, MAX_LINE_COUNT);
         let mut editor = Editor::new(&mut content);
         test0(
             &mut editor,
@@ -405,10 +406,10 @@ mod tests {
 
     #[test]
     fn test_the_test_selection() {
-        let mut editor = Editor::new(&mut EditorContent::<usize>::new(80));
+        let mut editor = Editor::new(&mut EditorContent::<usize>::new(80, MAX_LINE_COUNT));
         test0(
             &mut editor,
-            &mut EditorContent::<usize>::new(80),
+            &mut EditorContent::<usize>::new(80, MAX_LINE_COUNT),
             TestParams {
                 text_input: None,
                 initial_content: "a❱bcdefghij❰klmnopqrstuvwxyz",
@@ -434,7 +435,7 @@ mod tests {
 
         test0(
             &mut editor,
-            &mut EditorContent::<usize>::new(80),
+            &mut EditorContent::<usize>::new(80, MAX_LINE_COUNT),
             TestParams {
                 text_input: None,
                 initial_content: "a❱bcdefghijklmnopqrstuvwxyz\n\
@@ -462,7 +463,7 @@ mod tests {
 
         test0(
             &mut editor,
-            &mut EditorContent::<usize>::new(80),
+            &mut EditorContent::<usize>::new(80, MAX_LINE_COUNT),
             TestParams {
                 text_input: None,
                 initial_content: "a❰bcdefghijklmnopqrstuvwxyz\n\
@@ -491,7 +492,7 @@ mod tests {
 
     #[test]
     fn test_moving_line_data() {
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
 
@@ -518,7 +519,7 @@ mod tests {
         assert_eq!(&content.line_data, &[0, 1, 2, 3]);
 
         // otherwise...
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
         test0(
@@ -543,7 +544,7 @@ mod tests {
         assert_eq!(&content.line_data, &[1, 0, 2, 3]);
 
         // if the prev row is empty, the line takes its data with itself
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
         test0(
@@ -565,7 +566,7 @@ mod tests {
         );
         assert_eq!(&content.line_data, &[2, 3]);
 
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
         test0(
@@ -588,7 +589,7 @@ mod tests {
         assert_eq!(&content.line_data, &[1, 3]);
 
         // if the current row is empty, the next line brings its data with itself
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
         test0(
@@ -610,7 +611,7 @@ mod tests {
         );
         assert_eq!(&content.line_data, &[2, 3]);
 
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
         test0(
@@ -635,7 +636,7 @@ mod tests {
 
     #[test]
     fn test_moving_line_data_undo() {
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
 
@@ -659,7 +660,7 @@ mod tests {
         );
         assert_eq!(&content.line_data, &[1, 2, 3]);
 
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
         test0(
@@ -682,7 +683,7 @@ mod tests {
         );
         assert_eq!(&content.line_data, &[1, 2, 3]);
 
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
         test0(
@@ -705,7 +706,7 @@ mod tests {
         );
         assert_eq!(&content.line_data, &[1, 2, 3]);
 
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
         test0(
@@ -728,7 +729,7 @@ mod tests {
         );
         assert_eq!(&content.line_data, &[1, 2, 3]);
 
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
         test0(
@@ -751,7 +752,7 @@ mod tests {
         );
         assert_eq!(&content.line_data, &[1, 2, 3]);
 
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
         test0(
@@ -774,7 +775,7 @@ mod tests {
         );
         assert_eq!(&content.line_data, &[1, 2, 3]);
 
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
         test0(
@@ -797,7 +798,7 @@ mod tests {
         );
         assert_eq!(&content.line_data, &[1, 2, 3]);
 
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
         test0(
@@ -823,7 +824,7 @@ mod tests {
 
     #[test]
     fn test_moving_line_data_redo() {
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
 
@@ -848,7 +849,7 @@ mod tests {
         );
         assert_eq!(&content.line_data, &[0, 1, 2, 3]);
 
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
         test0(
@@ -872,7 +873,7 @@ mod tests {
         );
         assert_eq!(&content.line_data, &[1, 0, 2, 3]);
 
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
         test0(
@@ -894,7 +895,7 @@ mod tests {
         );
         assert_eq!(&content.line_data, &[2, 3]);
 
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
         test0(
@@ -916,7 +917,7 @@ mod tests {
         );
         assert_eq!(&content.line_data, &[1, 3]);
 
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
         test0(
@@ -938,7 +939,7 @@ mod tests {
         );
         assert_eq!(&content.line_data, &[2, 3]);
 
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
         test0(
@@ -960,7 +961,7 @@ mod tests {
         );
         assert_eq!(&content.line_data, &[1, 3]);
 
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
         test0(
@@ -982,7 +983,7 @@ mod tests {
         );
         assert_eq!(&content.line_data, &[1, 3]);
 
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
         test0(
@@ -1005,7 +1006,7 @@ mod tests {
         );
         assert_eq!(&content.line_data, &[2, 1, 3]);
 
-        let mut content = EditorContent::new(80);
+        let mut content = EditorContent::new(80, MAX_LINE_COUNT);
         content.line_data = vec![1, 2, 3];
         let mut editor = Editor::new(&mut content);
         test0(
@@ -1032,10 +1033,10 @@ mod tests {
     #[test]
     #[should_panic(expected = "Selection start")]
     fn test_the_test_selection2() {
-        let mut editor = Editor::new(&mut EditorContent::<usize>::new(80));
+        let mut editor = Editor::new(&mut EditorContent::<usize>::new(80, MAX_LINE_COUNT));
         test0(
             &mut editor,
-            &mut EditorContent::<usize>::new(80),
+            &mut EditorContent::<usize>::new(80, MAX_LINE_COUNT),
             TestParams {
                 text_input: None,
                 initial_content: "a❱bcdefghij❰klmnopqrstuvwxyz",
@@ -1052,10 +1053,10 @@ mod tests {
     #[test]
     #[should_panic(expected = "Selection end")]
     fn test_the_test_selection3() {
-        let mut editor = Editor::new(&mut EditorContent::<usize>::new(80));
+        let mut editor = Editor::new(&mut EditorContent::<usize>::new(80, MAX_LINE_COUNT));
         test0(
             &mut editor,
-            &mut EditorContent::<usize>::new(80),
+            &mut EditorContent::<usize>::new(80, MAX_LINE_COUNT),
             TestParams {
                 text_input: None,
                 initial_content: "a❱bcdefghij❰klmnopqrstuvwxyz",
@@ -5034,7 +5035,7 @@ mod tests {
         });
 
         {
-            let mut content = EditorContent::<usize>::new(80);
+            let mut content = EditorContent::<usize>::new(80, MAX_LINE_COUNT);
             let mut editor = Editor::new(&mut content);
             let modif_types = test0(
                 &mut editor,
@@ -5631,7 +5632,7 @@ mod tests {
 
     #[test]
     fn test_ctrl_x() {
-        let mut content = EditorContent::<usize>::new(80);
+        let mut content = EditorContent::<usize>::new(80, MAX_LINE_COUNT);
         let mut editor = Editor::new(&mut content);
         test0(
             &mut editor,
@@ -5785,7 +5786,7 @@ mod tests {
 
     #[test]
     fn test_copy() {
-        let mut content = EditorContent::<usize>::new(80);
+        let mut content = EditorContent::<usize>::new(80, MAX_LINE_COUNT);
         let mut editor = Editor::new(&mut content);
         test0(
             &mut editor,
@@ -5864,7 +5865,7 @@ interest rate / (12 (1/year))
 
     #[test]
     fn test_insert_char_selection_should_not_set_cursor_pos_if_command_is_rejected() {
-        let mut content = EditorContent::<usize>::new(120);
+        let mut content = EditorContent::<usize>::new(120, MAX_LINE_COUNT);
         let mut editor = Editor::new(&mut content);
 
         editor.insert_text_undoable(&"a".repeat(100), &mut content);
@@ -5902,7 +5903,7 @@ interest rate / (12 (1/year))
 
     #[test]
     fn test_that_undo_stack_is_cleared() {
-        let mut content = EditorContent::<usize>::new(120);
+        let mut content = EditorContent::<usize>::new(120, MAX_LINE_COUNT);
         let mut editor = Editor::new(&mut content);
 
         editor.handle_input_undoable(
@@ -5927,7 +5928,7 @@ interest rate / (12 (1/year))
 
     #[test]
     fn test_ctrl_z_case_insensitive() {
-        let mut content = EditorContent::<usize>::new(120);
+        let mut content = EditorContent::<usize>::new(120, MAX_LINE_COUNT);
         let mut editor = Editor::new(&mut content);
 
         assert_eq!(&content.get_content(), "");
@@ -5947,7 +5948,7 @@ interest rate / (12 (1/year))
 
     #[test]
     fn test_ctrl_shift_z_case_insensitive() {
-        let mut content = EditorContent::<usize>::new(120);
+        let mut content = EditorContent::<usize>::new(120, MAX_LINE_COUNT);
         let mut editor = Editor::new(&mut content);
 
         assert_eq!(&content.get_content(), "");
@@ -5973,7 +5974,7 @@ interest rate / (12 (1/year))
 
     #[test]
     fn test_that_redo_is_cleared_if_new_undo_inserted() {
-        let mut content = EditorContent::<usize>::new(120);
+        let mut content = EditorContent::<usize>::new(120, MAX_LINE_COUNT);
         let mut editor = Editor::new(&mut content);
 
         // go to the second row to put an invalid row index (1) to the redo stack
@@ -6076,7 +6077,7 @@ interest rate / (12 (1/year))
 
     #[test]
     fn insert_three_times_as_the_max_len() {
-        let mut content = EditorContent::<usize>::new(120);
+        let mut content = EditorContent::<usize>::new(120, MAX_LINE_COUNT);
         let mut editor = Editor::new(&mut content);
 
         editor.insert_text_undoable(
@@ -6091,7 +6092,7 @@ interest rate / (12 (1/year))
 
     #[test]
     fn insert_three_times_as_the_max_len_with_text_overflow() {
-        let mut content = EditorContent::<usize>::new(120);
+        let mut content = EditorContent::<usize>::new(120, MAX_LINE_COUNT);
         let mut editor = Editor::new(&mut content);
 
         editor.insert_text_undoable("this will be overflowed", &mut content);
@@ -6113,7 +6114,7 @@ interest rate / (12 (1/year))
 
     #[test]
     fn insert_three_times_as_the_max_len_with_text_overflow2() {
-        let mut content = EditorContent::<usize>::new(120);
+        let mut content = EditorContent::<usize>::new(120, MAX_LINE_COUNT);
         let mut editor = Editor::new(&mut content);
 
         editor.insert_text_undoable("this will not be overflowed", &mut content);
@@ -6134,7 +6135,7 @@ interest rate / (12 (1/year))
 
     #[test]
     fn test_that_if_row_overflows_than_modif_is_all_lines_from_0() {
-        let mut content = EditorContent::<usize>::new(120);
+        let mut content = EditorContent::<usize>::new(120, MAX_LINE_COUNT);
         let mut editor = Editor::new(&mut content);
 
         editor.insert_text_undoable("this will be overflowed", &mut content);
@@ -6151,7 +6152,7 @@ interest rate / (12 (1/year))
 
     #[test]
     fn test_that_if_row_overflows_than_modif_is_all_lines_from_1() {
-        let mut content = EditorContent::<usize>::new(120);
+        let mut content = EditorContent::<usize>::new(120, MAX_LINE_COUNT);
         let mut editor = Editor::new(&mut content);
 
         editor.insert_text_undoable(
@@ -6178,7 +6179,7 @@ interest rate / (12 (1/year))
 
     #[test]
     fn test_ctrl_x_without_selection_send_line_to_clipboard() {
-        let mut content = EditorContent::<usize>::new(120);
+        let mut content = EditorContent::<usize>::new(120, MAX_LINE_COUNT);
         let mut editor = Editor::new(&mut content);
 
         editor.insert_text_undoable(&"a".repeat(10), &mut content);

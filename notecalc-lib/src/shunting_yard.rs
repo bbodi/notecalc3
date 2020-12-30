@@ -4,9 +4,9 @@ use crate::helper::BitFlag256;
 use crate::token_parser::{
     debug_print, Assoc, OperatorTokenType, Token, TokenType, UnitTokenType, APPLY_UNIT_OP_PREC,
 };
+use crate::tracy_span;
 use crate::units::units::{UnitOutput, Units};
 use std::ops::Neg;
-use tracy_client::Span;
 
 #[derive(Eq, PartialEq, Debug)]
 enum ValidationTokenType {
@@ -267,7 +267,7 @@ impl ShuntingYard {
         output_stack: &mut Vec<ShuntingYardResult>,
         units: &Units,
     ) {
-        let _span = Span::new("shunting_yard", "shunting_yard", file!(), line!(), 100);
+        let _span = tracy_span("shunting_yard", file!(), line!());
         // TODO: into iter!!!
         // TODO:mem extract out so no alloc SmallVec?
         let mut operator_stack: Vec<ShuntingYardOperatorResult> = vec![];

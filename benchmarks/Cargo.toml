@@ -6,5 +6,5 @@ edition = "2018"
 
 
 [dependencies]
-notecalc-lib = { path = "../notecalc-lib" }
-tracy-client = { version = "0.10.0", features = ["enable"] }
+notecalc-lib = { path = "../notecalc-lib", features = [] }
+# tracy-client = { version = "0.10.0", features = ["enable"] }

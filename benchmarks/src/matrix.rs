@@ -4,9 +4,8 @@ use notecalc_lib::MAX_LINE_COUNT;
 
 pub fn bench_insert_matrix(iteration_count: usize) {
     let test = create_test_app2(73, 40);
-
     for _ in 0..iteration_count {
-        tracy_client::message("Iteration has started...", 1);
+        test.mut_app().reset();
         for _ in 0..MAX_LINE_COUNT {
             test.input(EditorInputEvent::Char('['), InputModifiers::none());
 
@@ -18,8 +17,5 @@ pub fn bench_insert_matrix(iteration_count: usize) {
             // go to the next line
             test.input(EditorInputEvent::Enter, InputModifiers::none());
         }
-        // clear the editor
-        test.input(EditorInputEvent::Char('a'), InputModifiers::ctrl());
-        test.input(EditorInputEvent::Del, InputModifiers::none());
     }
 }
