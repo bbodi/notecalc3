@@ -14,6 +14,25 @@ Honestly, it just tries to be a free Soulver alternative in your browser.
 
 [Try out](https://bbodi.github.io/notecalc3/notecalc#)
 
+## Roadmap
+- [ ] User-defined functions (0.4.0)
+- [ ] Conditionals & comparisons (0.4.0)
+- [ ] Configurations (decimal point, font size etc) (0.4.0)
+- [ ] Embeddable expressions
+- [ ] Error messages
+- [ ] Autocompletion
+- [ ] Currencies
+- [ ] Arbitrary large calculation
+- [ ] Laptimes
+- [ ] Timestamps
+- [ ] Financial functions
+- [ ] Line wrapping
+- [ ] Time zone math
+- [ ] Embeddable NoteCalc
+- [ ] Better result outputs (scientific notation, SI suffixes etc)
+- [ ] Search
+- [ ] Specifiers (e.g. xy as number)
+
 ## Run locally
 
 First, you will need to make sure that the following tools are installed:
