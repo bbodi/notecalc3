@@ -52,6 +52,19 @@ git clone https://github.com/bbodi/notecalc3.git
 
 Then, open your browser and go to  [http://localhost:5000/notecalc](http://localhost:5000/notecalc).
 
+## Run using docker
+
+You can also run using a container with this command:
+
+```sh
+git clone https://github.com/bbodi/notecalc3.git
+cd notecalc3
+docker build . --tag notecalc3
+docker run --rm -d -p 5000:5000 notecalc3
+```
+
+Then, open your browser and go to  [http://localhost:5000/notecalc](http://localhost:5000/notecalc).
+
 ## Libraries used
 Huge thanks for the following libraries
 - https://mathjs.org/
