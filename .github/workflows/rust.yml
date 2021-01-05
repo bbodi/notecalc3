@@ -30,4 +30,5 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: test
+          args: --test-threads=1 
     
