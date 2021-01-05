@@ -24,7 +24,6 @@ use notecalc_lib::{
     RenderStringMsg, RenderUtf8TextMsg,
 };
 
-mod egui_app;
 mod utils;
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
