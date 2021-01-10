@@ -2,18 +2,25 @@ use std::ops::Not;
 use std::ops::{BitXor, Shl};
 use std::ops::{Neg, Shr};
 
+use crate::borrow_checker_fighter::create_vars;
+use crate::editor::editor_content::EditorContent;
+use crate::functions::FnType;
+use crate::helper::{content_y, AppTokens, BitFlag256};
 use crate::matrix::MatrixData;
-use crate::token_parser::{debug_print, OperatorTokenType, Token, TokenType, UnitTokenType};
+use crate::token_parser::{debug_print, OperatorTokenType, TokenType, UnitTokenType};
 use crate::units::consts::EMPTY_UNIT_DIMENSIONS;
 use crate::units::units::{UnitOutput, Units, MAX_UNIT_COUNT};
-use crate::{tracy_span, Variables};
+use crate::{
+    tracy_span, FunctionDefinitions, LineData, Variable, Variables, FIRST_FUNC_PARAM_VAR_INDEX,
+    MAX_TOKEN_COUNT_PER_LINE, SUM_VARIABLE_INDEX, VARIABLE_ARR_SIZE,
+};
 use rust_decimal::prelude::*;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct CalcResult {
     pub typ: CalcResultType,
-    index_into_tokens: usize,
-    index2_into_tokens: Option<usize>,
+    pub index_into_tokens: usize,
+    pub index2_into_tokens: Option<usize>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -46,16 +53,6 @@ impl CalcResult {
         self.index_into_tokens
     }
 
-    pub fn set_token_error_flag<'text_ptr>(&self, tokens: &mut [Token<'text_ptr>]) {
-        // TODO I could not reproduce it but it happened runtime, so I use 'get_mut'
-        // later when those indices will be used correctly (now they are just dummy values lot of times),
-        // we can use direct indexing
-        Token::set_token_error_flag_by_index(self.index_into_tokens, tokens);
-        if let Some(i2) = self.index2_into_tokens {
-            Token::set_token_error_flag_by_index(i2, tokens);
-        }
-    }
-
     /// creates a cheap CalcResult without memory allocation. Use it only as a temporary value.
     pub fn hack_empty() -> CalcResult {
         CalcResult {
@@ -74,6 +71,7 @@ impl CalcResult {
     }
 }
 
+#[derive(Debug)]
 pub struct EvaluationResult {
     pub there_was_unit_conversion: bool,
     pub there_was_operation: bool,
@@ -96,27 +94,113 @@ impl ShuntingYardResult {
     }
 }
 
+#[derive(Debug)]
+pub struct EvalErr {
+    pub token_index: usize,
+    pub token_index_lhs_1: Option<usize>,
+    pub token_index_lhs_2: Option<usize>,
+    pub token_index_rhs_1: Option<usize>,
+    pub token_index_rhs_2: Option<usize>,
+    // TODO String :(
+    pub reason: String,
+}
+impl EvalErr {
+    pub fn new(str: String, token_index: usize) -> EvalErr {
+        EvalErr {
+            token_index,
+            token_index_lhs_1: None,
+            token_index_lhs_2: None,
+            token_index_rhs_1: None,
+            token_index_rhs_2: None,
+            reason: str,
+        }
+    }
+
+    pub fn new2(str: String, param: &CalcResult) -> EvalErr {
+        EvalErr {
+            token_index: param.index_into_tokens,
+            token_index_lhs_1: param.index2_into_tokens,
+            token_index_lhs_2: None,
+            token_index_rhs_1: None,
+            token_index_rhs_2: None,
+            reason: str,
+        }
+    }
+
+    pub fn new3(str: String, token_index: usize, lhs: &CalcResult, rhs: &CalcResult) -> EvalErr {
+        EvalErr {
+            token_index,
+            reason: str,
+            token_index_lhs_1: Some(lhs.index_into_tokens),
+            token_index_lhs_2: lhs.index2_into_tokens,
+            token_index_rhs_1: Some(rhs.index_into_tokens),
+            token_index_rhs_2: rhs.index2_into_tokens,
+        }
+    }
+}
+
 pub fn evaluate_tokens<'text_ptr>(
-    tokens: &mut [Token<'text_ptr>],
-    shunting_tokens: &mut Vec<ShuntingYardResult>,
-    variables: &Variables,
+    editor_y: usize,
+    apptokens: &AppTokens,
+    vars: &Variables,
+    func_defs: &FunctionDefinitions,
     units: &Units,
-) -> Result<Option<EvaluationResult>, ()> {
+    editor_content: &EditorContent<LineData>,
+    call_depth: usize,
+) -> (BitFlag256, Result<Option<EvaluationResult>, EvalErr>) {
     let _span = tracy_span("calc", file!(), line!());
+    let mut wrong_type_token_indices: BitFlag256 = BitFlag256::empty();
+
+    if call_depth >= 10 {
+        return (
+            wrong_type_token_indices,
+            Err(EvalErr::new("too much recursion TODO index".to_string(), 0)),
+        );
+    }
+
     let mut stack: Vec<CalcResult> = vec![];
     let mut there_was_unit_conversion = false;
     let mut assignment = false;
     let mut last_success_operation_result_index = None;
 
-    for i in 0..shunting_tokens.len() {
-        let token = &shunting_tokens[i];
-        match &token.typ {
-            TokenType::NumberLiteral(num) => stack.push(CalcResult::new(
-                CalcResultType::Number(num.clone()),
-                token.index_into_tokens,
-            )),
+    let len = apptokens[content_y(editor_y)]
+        .as_ref()
+        .unwrap()
+        .shunting_output_stack
+        .len();
+    for i in 0..len {
+        let token_type = apptokens[content_y(editor_y)]
+            .as_ref()
+            .unwrap()
+            .shunting_output_stack[i]
+            .typ
+            .clone(); // I hate rust;
+        debug_print(&format!("calc> {:?}", token_type));
+        match &token_type {
+            TokenType::NumberLiteral(num) => {
+                let shunting_tokens = &apptokens[content_y(editor_y)]
+                    .as_ref()
+                    .unwrap()
+                    .shunting_output_stack;
+                let token = &shunting_tokens[i];
+                stack.push(CalcResult::new(
+                    CalcResultType::Number(num.clone()),
+                    token.index_into_tokens,
+                ))
+            }
             TokenType::NumberErr => {
-                return Err(());
+                let shunting_tokens = &apptokens[content_y(editor_y)]
+                    .as_ref()
+                    .unwrap()
+                    .shunting_output_stack;
+                let token = &shunting_tokens[i];
+                return (
+                    wrong_type_token_indices,
+                    Err(EvalErr::new(
+                        "Number parsin/format".to_string(),
+                        token.index_into_tokens,
+                    )),
+                );
             }
             TokenType::Unit(unit_typ, target_unit) => {
                 // next token must be a UnitConverter or Div
@@ -129,6 +213,11 @@ pub fn evaluate_tokens<'text_ptr>(
                             index2_into_tokens: _index2_into_tokens,
                         }) = operand
                         {
+                            let shunting_tokens = &apptokens[content_y(editor_y)]
+                                .as_ref()
+                                .unwrap()
+                                .shunting_output_stack;
+                            let token = &shunting_tokens[i];
                             if let Some(result) = unit_conversion(
                                 operand_num,
                                 target_unit,
@@ -139,18 +228,37 @@ pub fn evaluate_tokens<'text_ptr>(
                                 stack.push(result);
                                 last_success_operation_result_index = Some(stack.len() - 1);
                             } else {
-                                Token::set_token_error_flag_by_index(
-                                    token.index_into_tokens,
-                                    tokens,
+                                let tokens = apptokens[content_y(editor_y)].as_ref().unwrap();
+                                let shunting_tokens = &tokens.shunting_output_stack;
+                                let token = &shunting_tokens[i];
+                                return (
+                                    wrong_type_token_indices,
+                                    Err(EvalErr::new(
+                                        format!(
+                                            "Could not apply '{}' to '{}'",
+                                            target_unit, operand_num
+                                        ),
+                                        token.index_into_tokens,
+                                    )),
                                 );
-                                return Err(());
                             }
                         } else {
-                            Token::set_token_error_flag_by_index(token.index_into_tokens, tokens);
-                            return Err(());
+                            let tokens = apptokens[content_y(editor_y)].as_ref().unwrap();
+                            let shunting_tokens = &tokens.shunting_output_stack;
+                            let token = &shunting_tokens[i];
+                            return (
+                                wrong_type_token_indices,
+                                Err(EvalErr::new(
+                                    format!("There is no operand to apply '{}' on", target_unit),
+                                    token.index_into_tokens,
+                                )),
+                            );
                         }
                     }
                     UnitTokenType::StandInItself => {
+                        let tokens = apptokens[content_y(editor_y)].as_ref().unwrap();
+                        let shunting_tokens = &tokens.shunting_output_stack;
+                        let token = &shunting_tokens[i];
                         if shunting_tokens
                             .get(i + 1)
                             .map(|it| {
@@ -168,10 +276,90 @@ pub fn evaluate_tokens<'text_ptr>(
                                 token.index_into_tokens,
                             ));
                         } else {
-                            dbg!(&tokens);
-                            tokens[token.index_into_tokens].typ = TokenType::StringLiteral;
+                            if token.index_into_tokens <= MAX_TOKEN_COUNT_PER_LINE {
+                                wrong_type_token_indices.set(token.index_into_tokens);
+                            }
                         }
                     }
+                }
+            }
+            TokenType::Operator(OperatorTokenType::Fn {
+                typ: FnType::UserDefined(fn_index),
+                arg_count,
+            }) => {
+                let fd = func_defs[*fn_index].as_ref().unwrap();
+                let expected_arg_count = fd.param_count;
+                if *arg_count != expected_arg_count || stack.len() < expected_arg_count {
+                    let tokens = apptokens[content_y(editor_y)].as_ref().unwrap();
+                    let shunting_tokens = &tokens.shunting_output_stack;
+                    let index_into_tokens = shunting_tokens[i].index_into_tokens;
+                    return (
+                        wrong_type_token_indices,
+                        Err(EvalErr::new(
+                            format!(
+                                "Expected {} arguments, provided {}",
+                                expected_arg_count, *arg_count
+                            ),
+                            index_into_tokens,
+                        )),
+                    );
+                }
+                // fill variables from the stack
+                // TODO avoid copy
+                let mut local_vars = create_vars();
+
+                // don't clone sum
+                local_vars[0..SUM_VARIABLE_INDEX].clone_from_slice(&vars[0..SUM_VARIABLE_INDEX]);
+                local_vars[SUM_VARIABLE_INDEX + 1..VARIABLE_ARR_SIZE]
+                    .clone_from_slice(&vars[SUM_VARIABLE_INDEX + 1..VARIABLE_ARR_SIZE]);
+                for i in (0..expected_arg_count).rev() {
+                    local_vars[FIRST_FUNC_PARAM_VAR_INDEX + i] = Some(Variable {
+                        // TODO: absolutely not, it would mean an alloc in hot path
+                        name: Box::from(fd.param_names[i]),
+                        value: stack.pop().ok_or(()),
+                    });
+                }
+                let mut result: Result<Option<EvaluationResult>, EvalErr> =
+                    Err(EvalErr::new(String::new(), 0));
+                let mut sum_is_null = true;
+                debug_print("calc> evaluate function");
+                for i in (fd.first_row_index.as_usize() + 1)..=fd.last_row_index.as_usize() {
+                    result = evaluate_tokens(
+                        i,
+                        apptokens,
+                        &local_vars,
+                        &func_defs,
+                        units,
+                        editor_content,
+                        call_depth + 1,
+                    )
+                    .1;
+                    process_variable_assignment_or_line_ref(
+                        &result,
+                        &mut local_vars,
+                        i,
+                        editor_content,
+                    );
+                    if let Ok(Some(result)) = result.as_ref() {
+                        if sum_is_null {
+                            sum_is_null = false;
+                            local_vars[SUM_VARIABLE_INDEX].as_mut().unwrap().value =
+                                Ok(result.result.clone());
+                        }
+                    }
+                }
+                debug_print("calc> evaluate end");
+                if let Ok(Some(result)) = result {
+                    stack.push(result.result);
+                    last_success_operation_result_index = Some(stack.len() - 1);
+                } else {
+                    let tokens = apptokens[content_y(editor_y)].as_ref().unwrap();
+                    let shunting_tokens = &tokens.shunting_output_stack;
+                    let index_into_tokens = shunting_tokens[i].index_into_tokens;
+                    return (
+                        wrong_type_token_indices,
+                        Err(EvalErr::new("No result".to_owned(), index_into_tokens)),
+                    );
                 }
             }
             TokenType::Operator(typ) => {
@@ -179,53 +367,72 @@ pub fn evaluate_tokens<'text_ptr>(
                     assignment = true;
                     continue;
                 }
-                if apply_operation(tokens, &mut stack, &typ, token.index_into_tokens, units) == true
+                let tokens = apptokens[content_y(editor_y)].as_ref().unwrap();
+                let shunting_tokens = &tokens.shunting_output_stack;
+                let token = &shunting_tokens[i];
+
+                if let Err(eval_err) =
+                    apply_operation(&mut stack, &typ, token.index_into_tokens, units)
                 {
+                    return (wrong_type_token_indices, Err(eval_err));
+                } else {
                     if matches!(typ, OperatorTokenType::UnitConverter) {
                         there_was_unit_conversion = true;
                     }
                     if !stack.is_empty() {
                         last_success_operation_result_index = Some(stack.len() - 1);
                     }
-                } else {
-                    return Err(());
                 }
             }
             TokenType::StringLiteral | TokenType::Header => panic!(),
             TokenType::Variable { var_index } | TokenType::LineReference { var_index } => {
                 // TODO clone :(
-                match &variables[*var_index]
+                match &vars[*var_index]
                     .as_ref()
-                    .expect("var_index should be valid")
+                    .expect("var_index should be valid!")
                     .value
                 {
                     Ok(value) => {
+                        let shunting_tokens = &apptokens[content_y(editor_y)]
+                            .as_ref()
+                            .unwrap()
+                            .shunting_output_stack;
+                        let token = &shunting_tokens[i];
                         stack.push(CalcResult::new(value.typ.clone(), token.index_into_tokens));
                     }
                     Err(_) => {
-                        return Err(());
+                        let tokens = apptokens[content_y(editor_y)].as_ref().unwrap();
+                        let shunting_tokens = &tokens.shunting_output_stack;
+                        let index_into_tokens = shunting_tokens[i].index_into_tokens;
+                        return (
+                            wrong_type_token_indices,
+                            Err(EvalErr::new(
+                                "Variable contains error".to_owned(),
+                                index_into_tokens,
+                            )),
+                        );
                     }
                 }
             }
         }
     }
-    return match last_success_operation_result_index {
+
+    let result = match last_success_operation_result_index {
         Some(last_success_operation_index) => {
             // e.g. "1+2 some text 3"
             // in this case prefer the result of 1+2 and convert 3 to String
             for (i, stack_elem) in stack.iter().enumerate() {
                 if last_success_operation_index != i {
-                    debug_print(&format!(
-                        " calc> {:?} --> String",
-                        &tokens[stack_elem.index_into_tokens]
-                    ));
-                    tokens[stack_elem.index_into_tokens].typ = TokenType::StringLiteral;
+                    if stack_elem.index_into_tokens <= MAX_TOKEN_COUNT_PER_LINE {
+                        wrong_type_token_indices.set(stack_elem.index_into_tokens);
+                    }
                 }
             }
             Ok(Some(EvaluationResult {
                 there_was_unit_conversion,
                 there_was_operation: true,
                 assignment,
+                // nocheckin TODO: remove clone
                 result: stack[last_success_operation_index].clone(),
             }))
         }
@@ -236,15 +443,104 @@ pub fn evaluate_tokens<'text_ptr>(
             result: it,
         })),
     };
+
+    return (wrong_type_token_indices, result);
+}
+
+pub fn process_variable_assignment_or_line_ref<'a, 'b>(
+    result: &Result<Option<EvaluationResult>, EvalErr>,
+    vars: &mut Variables,
+    editor_y: usize,
+    editor_content: &EditorContent<LineData>,
+) {
+    if let Ok(Some(result)) = &result {
+        fn replace_or_insert_var(
+            vars: &mut Variables,
+            var_name: &[char],
+            result: CalcResult,
+            editor_y: usize,
+        ) {
+            if let Some(var) = &mut vars[editor_y] {
+                // TODO Box::from O-O
+                var.name = Box::from(var_name);
+                var.value = Ok(result);
+            } else {
+                vars[editor_y] = Some(Variable {
+                    name: Box::from(var_name),
+                    value: Ok(result),
+                });
+            };
+        }
+
+        if result.assignment {
+            let var_name = get_var_name_from_assignment(editor_y, editor_content);
+            if !var_name.is_empty() {
+                debug_print(&format!(
+                    "eval> assign {:?} at {} to {:?}",
+                    var_name, editor_y, &result.result
+                ));
+                replace_or_insert_var(vars, var_name, result.result.clone(), editor_y);
+            }
+        } else {
+            let line_data = editor_content.get_data(editor_y);
+            debug_assert!(line_data.line_id > 0);
+            let line_id = line_data.line_id;
+            // TODO opt
+            let var_name: Vec<char> = format!("&[{}]", line_id).chars().collect();
+            replace_or_insert_var(vars, &var_name, result.result.clone(), editor_y);
+        }
+    } else if let Some(var) = &mut vars[editor_y] {
+        let line_data = editor_content.get_data(editor_y);
+        debug_assert!(line_data.line_id > 0);
+        let line_id = line_data.line_id;
+        // TODO opt
+        let var_name: Vec<char> = format!("&[{}]", line_id).chars().collect();
+        var.name = Box::from(var_name);
+        var.value = Err(());
+    } else {
+        vars[editor_y] = None;
+    }
+}
+
+pub fn get_var_name_from_assignment(
+    editor_y: usize,
+    editor_content: &EditorContent<LineData>,
+) -> &[char] {
+    let line = editor_content.get_line_valid_chars(editor_y);
+    let mut i = 0;
+    if line[0] == '=' {
+        // it might happen that there are more '=' in a line.
+        // To avoid panic, start the index from 1, so if the first char is
+        // '=', it will be ignored.
+        i += 1;
+    }
+    // skip whitespaces
+    while line[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    let start = i;
+    // take until '='
+    while i < line.len() && line[i] != '=' {
+        i += 1;
+    }
+    if i == line.len() {
+        return &[];
+    }
+    // remove trailing whitespaces
+    i -= 1;
+    while i > start && line[i].is_ascii_whitespace() {
+        i -= 1;
+    }
+    let end = i;
+    return &line[start..=end];
 }
 
 fn apply_operation<'text_ptr>(
-    tokens: &mut [Token<'text_ptr>],
     stack: &mut Vec<CalcResult>,
     op: &OperatorTokenType,
     op_token_index: usize,
     units: &Units,
-) -> bool {
+) -> Result<(), EvalErr> {
     let succeed = match &op {
         OperatorTokenType::Mult
         | OperatorTokenType::Div
@@ -272,15 +568,17 @@ fn apply_operation<'text_ptr>(
                 if let Some(result) = binary_operation(op, lhs, rhs) {
                     stack.truncate(stack.len() - 2);
                     stack.push(result);
-                    true
+                    Ok(())
                 } else {
-                    lhs.set_token_error_flag(tokens);
-                    rhs.set_token_error_flag(tokens);
-                    Token::set_token_error_flag_by_index(op_token_index, tokens);
-                    false
+                    Err(EvalErr::new3(
+                        "Op failed".to_owned(),
+                        op_token_index,
+                        lhs,
+                        rhs,
+                    ))
                 }
             } else {
-                false
+                Err(EvalErr::new("Not enugh operand".to_owned(), 0))
             }
         }
         OperatorTokenType::UnaryMinus
@@ -298,9 +596,9 @@ fn apply_operation<'text_ptr>(
             if let Some(result) = result {
                 stack.pop();
                 stack.push(result);
-                true
+                Ok(())
             } else {
-                false
+                Err(EvalErr::new("??".to_owned(), 0))
             }
         }
         OperatorTokenType::Matrix {
@@ -315,19 +613,21 @@ fn apply_operation<'text_ptr>(
                     op_token_index,
                 ));
                 debug_print("calc> Matrix");
-                true
+                Ok(())
             } else {
-                debug_print("calc> Matrix");
-                false
+                Err(EvalErr::new(
+                    "Not enough argument for matrix creation".to_owned(),
+                    op_token_index,
+                ))
             }
         }
         OperatorTokenType::Fn { arg_count, typ } => {
             debug_print(&format!("calc> Fn {:?}", typ));
-            typ.execute(*arg_count, stack, op_token_index, tokens, units)
+            typ.execute(*arg_count, stack, op_token_index, units)
         }
         OperatorTokenType::Semicolon | OperatorTokenType::Comma => {
             // ignore
-            true
+            Ok(())
         }
         OperatorTokenType::Assign => panic!("handled in the main loop above"),
         OperatorTokenType::ParenOpen
@@ -336,11 +636,11 @@ fn apply_operation<'text_ptr>(
         | OperatorTokenType::BracketClose => {
             // this branch was executed during fuzz testing, don't panic here
             // check test_panic_fuzz_3
-            return false;
+            return Err(EvalErr::new(String::new(), op_token_index));
         }
         OperatorTokenType::PercentageIs => {
             // ignore
-            true
+            Ok(())
         }
     };
     return succeed;
@@ -715,9 +1015,6 @@ fn pow_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
             let p = rhs.to_i64()?;
             let num_powered = pow(lhs.clone(), p)?;
             let unit_powered = lhs_unit.pow(p);
-            dbg!(&p);
-            dbg!(&num_powered);
-            dbg!(&unit_powered);
             Some(CalcResult::new(
                 CalcResultType::Quantity(num_powered, unit_powered?),
                 0,
@@ -1284,12 +1581,14 @@ mod tests {
         str, unit,
     };
     use crate::units::units::Units;
-    use crate::{ResultFormat, Variable, Variables};
+    use crate::{ResultFormat, Tokens, Variable, Variables, MAX_LINE_COUNT};
     use std::str::FromStr;
 
     use crate::borrow_checker_fighter::create_vars;
     use crate::calc::{CalcResult, CalcResultType, EvaluationResult};
+    use crate::editor::editor_content::EditorContent;
     use crate::functions::FnType;
+    use crate::helper::{content_y, AppTokens};
     use crate::renderer::render_result;
     use crate::token_parser::{OperatorTokenType, Token};
     use bumpalo::Bump;
@@ -1305,17 +1604,53 @@ mod tests {
         let mut tokens = vec![];
         let vars = create_vars();
         let arena = Bump::new();
-        let mut shunting_output = crate::shunting_yard::tests::do_shunting_yard_for_tests(
+        let shunting_output = crate::shunting_yard::tests::do_shunting_yard_for_tests(
             &temp,
             &units,
             &mut tokens,
             &vars,
             &arena,
         );
-        let _result_stack =
-            crate::calc::evaluate_tokens(&mut tokens, &mut shunting_output, &vars, &units);
+        let mut apptokens = AppTokens::new();
+        apptokens[content_y(0)] = Some(Tokens {
+            tokens,
+            shunting_output_stack: shunting_output,
+        });
+        let fds = [None; MAX_LINE_COUNT];
+        let (_, result) = crate::calc::evaluate_tokens(
+            0,
+            &mut apptokens,
+            &vars,
+            &fds,
+            &units,
+            &EditorContent::new(120, 120),
+            0,
+        );
+        if let Err(err) = result {
+            Token::set_token_error_flag_by_index(
+                err.token_index,
+                &mut apptokens[content_y(0)].as_mut().unwrap().tokens,
+            );
+            for i in &[
+                err.token_index_lhs_1,
+                err.token_index_lhs_2,
+                err.token_index_rhs_1,
+                err.token_index_rhs_2,
+            ] {
+                if let Some(i) = i {
+                    Token::set_token_error_flag_by_index(
+                        *i,
+                        &mut apptokens[content_y(0)].as_mut().unwrap().tokens,
+                    );
+                }
+            }
+        }
 
-        crate::shunting_yard::tests::compare_tokens(text, &expected_tokens, &tokens);
+        crate::shunting_yard::tests::compare_tokens(
+            text,
+            &expected_tokens,
+            &apptokens[content_y(0)].as_ref().unwrap().tokens,
+        );
     }
 
     fn test_vars(vars: &Variables, text: &str, expected: &str, dec_count: usize) {
@@ -1327,7 +1662,7 @@ mod tests {
 
         let mut tokens = vec![];
         let arena = Bump::new();
-        let mut shunting_output = crate::shunting_yard::tests::do_shunting_yard_for_tests(
+        let shunting_output = crate::shunting_yard::tests::do_shunting_yard_for_tests(
             &temp,
             &units,
             &mut tokens,
@@ -1335,7 +1670,21 @@ mod tests {
             &arena,
         );
 
-        let result = crate::calc::evaluate_tokens(&mut tokens, &mut shunting_output, vars, &units);
+        let mut all_lines_tokens = AppTokens::new();
+        all_lines_tokens[content_y(0)] = Some(Tokens {
+            tokens,
+            shunting_output_stack: shunting_output,
+        });
+        let fds = [None; MAX_LINE_COUNT];
+        let (_, result) = crate::calc::evaluate_tokens(
+            0,
+            &mut all_lines_tokens,
+            vars,
+            &fds,
+            &units,
+            &EditorContent::new(120, 120),
+            0,
+        );
 
         if let Err(..) = &result {
             assert_eq!("Err", expected);
@@ -1503,36 +1852,6 @@ mod tests {
     #[test]
     fn test_longer_texts3() {
         test("I traveled 13km at a rate / 40km/h in min", "19.5 min");
-    }
-
-    #[test]
-    fn test_longer_texts3_tokens() {
-        test_tokens(
-            "I traveled 13km at a rate / 40km/h in min",
-            &[
-                str("I"),
-                str(" "),
-                str("traveled"),
-                str(" "),
-                num(13),
-                apply_to_prev_token_unit("km"),
-                str(" "),
-                str("at"),
-                str(" "),
-                str("a"),
-                str(" "),
-                str("rate"),
-                str(" "),
-                op(OperatorTokenType::Div),
-                str(" "),
-                num(40),
-                apply_to_prev_token_unit("km / h"),
-                str(" "),
-                op(OperatorTokenType::UnitConverter),
-                str(" "),
-                unit("min"),
-            ],
-        );
     }
 
     #[test]
@@ -1979,28 +2298,6 @@ mod tests {
         test("nth([5, 6, 7], 0)", "5");
         test("nth([5, 6, 7], 1)", "6");
         test("nth([5, 6, 7], 2)", "7");
-    }
-
-    #[test]
-    fn test_missing_arg_nth_panic() {
-        test_tokens(
-            "nth(,[1])",
-            &[
-                op_err(OperatorTokenType::Fn {
-                    arg_count: 0,
-                    typ: FnType::Nth,
-                }),
-                op(OperatorTokenType::ParenOpen),
-                op(OperatorTokenType::Comma),
-                op(OperatorTokenType::Matrix {
-                    row_count: 1,
-                    col_count: 1,
-                }),
-                num(1),
-                op(OperatorTokenType::BracketClose),
-                op(OperatorTokenType::ParenClose),
-            ],
-        )
     }
 
     #[test]
@@ -2743,7 +3040,7 @@ mod tests {
     fn test_explicit_multipl_is_mandatory_before_units() {
         test_tokens(
             "2m^4kg/s^3",
-            &[num(2), apply_to_prev_token_unit("m^4"), str("kg/s^3")],
+            &[num(2), apply_to_prev_token_unit("m^4"), unit("kg / s^3")],
         );
         // it is the accepted form
         test_tokens(
@@ -2795,7 +3092,8 @@ mod tests {
 
     #[test]
     fn test_fuzz_bug_201221_2_no_panic_if_arg_is_not_valid_token() {
-        test("e(R())", "Err");
+        test("e(R())", "2.7183");
+        test("e(e())", "Err");
     }
 
     #[test]
@@ -2819,62 +3117,4 @@ mod tests {
     fn test_fuzz_bug_201221_6_no_panic_if_arg_is_not_valid_token() {
         test("ceil(R())", "Err");
     }
-
-    #[test]
-    fn test_fuzz_bug_201220_2() {
-        test("[]8F(*^5+[2)]/)=^]0/", "[2]");
-        test_tokens(
-            "[]8F(*^5+[2)]/)=^]0/",
-            &[
-                str("["),
-                str("]"),
-                str("8"),
-                str("F"),
-                str("("),
-                str("*"),
-                str("^"),
-                str("5"),
-                str("+"),
-                op(OperatorTokenType::Matrix {
-                    row_count: 1,
-                    col_count: 1,
-                }),
-                num(2),
-                str(")"),
-                op(OperatorTokenType::BracketClose),
-                str("/"),
-                str(")"),
-                str("="),
-                str("^"),
-                str("]"),
-                str("0"),
-                str("/"),
-            ],
-        );
-    }
-
-    #[test]
-    fn test_illegal_unary_minus_is_not_added_to_the_output() {
-        test_tokens(
-            "[7*7]*9#8=-+",
-            &[
-                op(OperatorTokenType::Matrix {
-                    row_count: 1,
-                    col_count: 1,
-                }),
-                num(7),
-                op(OperatorTokenType::Mult),
-                num(7),
-                op(OperatorTokenType::BracketClose),
-                str("*"),
-                str("9"),
-                str("#8"),
-                str("="),
-                str("-"),
-                str("+"),
-            ],
-        );
-    }
-
-    // "str".split('').map(function(it){return 'str("'+it+'")';}).join(',')
 }

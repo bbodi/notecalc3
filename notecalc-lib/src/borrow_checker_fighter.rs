@@ -1,6 +1,9 @@
 use crate::helper::{AppTokens, EditorObjects, Results};
 use crate::units::units::Units;
-use crate::{NoteCalcApp, RenderBuckets, Variable, MAX_LINE_COUNT, SUM_VARIABLE_INDEX};
+use crate::{
+    FunctionDef, NoteCalcApp, RenderBuckets, Variable, MAX_LINE_COUNT, SUM_VARIABLE_INDEX,
+    VARIABLE_ARR_SIZE,
+};
 use bumpalo::Bump;
 
 #[allow(dead_code)]
@@ -11,6 +14,7 @@ pub struct BorrowCheckerFighter {
     tokens_ptr: usize,
     results_ptr: usize,
     vars_ptr: usize,
+    func_defs_ptr: usize,
     editor_objects_ptr: usize,
     allocator: usize,
 }
@@ -20,8 +24,8 @@ pub fn to_box_ptr<T>(t: T) -> usize {
     ptr
 }
 
-pub fn create_vars() -> [Option<Variable>; MAX_LINE_COUNT + 1] {
-    let mut vars = [None; MAX_LINE_COUNT + 1];
+pub fn create_vars() -> [Option<Variable>; VARIABLE_ARR_SIZE] {
+    let mut vars = [None; VARIABLE_ARR_SIZE];
     vars[SUM_VARIABLE_INDEX] = Some(Variable {
         name: Box::from(&['s', 'u', 'm'][..]),
         value: Err(()),
@@ -37,6 +41,8 @@ impl BorrowCheckerFighter {
         let tokens = to_box_ptr(AppTokens::new());
         let results = to_box_ptr(Results::new());
         let vars = to_box_ptr(create_vars());
+        let func_def_tmp: [Option<FunctionDef>; MAX_LINE_COUNT] = [None; MAX_LINE_COUNT];
+        let func_defs = to_box_ptr(func_def_tmp);
         let app = to_box_ptr(NoteCalcApp::new(client_width, client_height));
         let units = to_box_ptr(Units::new());
         let render_buckets = to_box_ptr(RenderBuckets::new());
@@ -48,6 +54,7 @@ impl BorrowCheckerFighter {
             tokens_ptr: tokens,
             results_ptr: results,
             vars_ptr: vars,
+            func_defs_ptr: func_defs,
             editor_objects_ptr: editor_objects,
             allocator: bumper,
         };
@@ -103,11 +110,21 @@ impl BorrowCheckerFighter {
     }
 
     pub fn mut_vars<'a>(&self) -> &'a mut [Option<Variable>] {
-        unsafe { &mut (&mut *(self.vars_ptr as *mut [Option<Variable>; MAX_LINE_COUNT + 1]))[..] }
+        unsafe { &mut (&mut *(self.vars_ptr as *mut [Option<Variable>; VARIABLE_ARR_SIZE]))[..] }
     }
 
     pub fn vars<'a>(&self) -> &'a [Option<Variable>] {
-        unsafe { &(&*(self.vars_ptr as *const [Option<Variable>; MAX_LINE_COUNT + 1]))[..] }
+        unsafe { &(&*(self.vars_ptr as *const [Option<Variable>; VARIABLE_ARR_SIZE]))[..] }
+    }
+
+    pub fn mut_func_defs<'a>(&self) -> &'a mut [Option<FunctionDef>] {
+        unsafe {
+            &mut (&mut *(self.func_defs_ptr as *mut [Option<FunctionDef>; MAX_LINE_COUNT]))[..]
+        }
+    }
+
+    pub fn func_defs<'a>(&self) -> &'a [Option<FunctionDef>] {
+        unsafe { &(&*(self.func_defs_ptr as *const [Option<FunctionDef>; MAX_LINE_COUNT]))[..] }
     }
 
     pub fn allocator<'a>(&self) -> &'a Bump {

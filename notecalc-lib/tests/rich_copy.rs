@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod shit {
+mod testmod {
     use notecalc_lib::editor::editor::{Pos, Selection};
     use notecalc_lib::test_common::test_common::create_test_app;
     use std::ops::RangeInclusive;

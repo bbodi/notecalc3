@@ -130,3 +130,40 @@ buying that much ticket would cost all possibilities * &[105]
 If the prize of the lottery is 3.6e9$ (TODO 3.6 Mrd)
 Then it is (&[106] / &[107]) times
 more expensive to buy all the tickets than the reward itself.
+
+# Functions
+Functions can be called in the following form function_name(param1, param2), e.g.
+pi()
+e()
+ln(2)
+sin(30degree)
+// nth. element of the first parameter
+nth([3, 6, 9], 1)
+
+# Custom functions
+Users are able to define their own functions. The function definition
+must start with the function name at the beginning of the line
+without any whitespace characters. Then comes the parameters in parenthesis, then a single colon:
+
+blend(start, end, t):
+  start + t*(end-start)
+User defined functions can be called the same way as builtin functions:
+blend(0, 255, 0.5)
+
+Other examples:
+rotate(point, angle):
+  x = nth(point, 0)
+  y = nth(point, 1)
+  ca = cos(angle)
+  sa = sin(angle)
+  [x * ca - y * sa, y * ca + x * sa]
+
+rotate([10, 0], (pi()/3) rad)
+
+
+time_til_millionaire(net income):
+  income per year = net income in $/year
+  (1M$) / income per year in year
+
+time_til_millionmaire(  8 000$/month)
+time_til_millionmaire( 10 000$/day) in month

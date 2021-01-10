@@ -24,7 +24,7 @@ use notecalc_lib::{
     RenderStringMsg, RenderUtf8TextMsg,
 };
 
-mod egui_app;
+//mod egui_app;
 mod utils;
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
@@ -70,6 +70,7 @@ pub fn alt_key_released(app_ptr: usize) {
         bcf.mut_tokens(),
         bcf.mut_results(),
         bcf.mut_vars(),
+        bcf.mut_func_defs(),
         bcf.mut_editor_objects(),
         rb,
     );
@@ -86,6 +87,7 @@ pub fn handle_resize(app_ptr: usize, new_client_width: usize) {
         bcf.mut_tokens(),
         bcf.mut_results(),
         bcf.mut_vars(),
+        bcf.mut_func_defs(),
         bcf.mut_render_bucket(),
     );
 }
@@ -102,6 +104,7 @@ pub fn set_theme(app_ptr: usize, theme_index: usize) {
         bcf.mut_tokens(),
         bcf.mut_results(),
         bcf.mut_vars(),
+        bcf.mut_func_defs(),
         bcf.mut_render_bucket(),
     );
 }
@@ -150,6 +153,7 @@ pub fn set_compressed_encoded_content(app_ptr: usize, compressed_encoded: String
             bcf.mut_tokens(),
             bcf.mut_results(),
             bcf.mut_vars(),
+            bcf.mut_func_defs(),
             bcf.mut_editor_objects(),
             bcf.mut_render_bucket(),
         );
@@ -166,6 +170,7 @@ pub fn handle_time(app_ptr: usize, now: u32) -> bool {
         bcf.mut_tokens(),
         bcf.mut_results(),
         bcf.mut_vars(),
+        bcf.mut_func_defs(),
         bcf.mut_editor_objects(),
         bcf.mut_render_bucket(),
     );
@@ -185,6 +190,7 @@ pub fn handle_mouse_move(app_ptr: usize, x: usize, y: usize) -> usize {
         bcf.tokens(),
         bcf.results(),
         bcf.vars(),
+        bcf.func_defs(),
         bcf.mut_render_bucket(),
     );
 }
@@ -201,6 +207,7 @@ pub fn handle_drag(app_ptr: usize, x: usize, y: usize) -> bool {
         bcf.tokens(),
         bcf.results(),
         bcf.vars(),
+        bcf.func_defs(),
         bcf.mut_render_bucket(),
     );
 }
@@ -223,6 +230,7 @@ pub fn handle_click(app_ptr: usize, x: usize, y: usize) {
         bcf.mut_tokens(),
         bcf.mut_results(),
         bcf.mut_vars(),
+        bcf.mut_func_defs(),
         bcf.mut_render_bucket(),
     );
 }
@@ -238,6 +246,7 @@ pub fn handle_wheel(app_ptr: usize, dir: usize) -> bool {
         bcf.mut_tokens(),
         bcf.mut_results(),
         bcf.mut_vars(),
+        bcf.mut_func_defs(),
         bcf.mut_render_bucket(),
     );
 }
@@ -271,6 +280,7 @@ pub fn handle_paste(app_ptr: usize, input: String) {
         bcf.mut_tokens(),
         bcf.mut_results(),
         bcf.mut_vars(),
+        bcf.mut_func_defs(),
         bcf.mut_editor_objects(),
         bcf.mut_render_bucket(),
     );
@@ -298,6 +308,7 @@ pub fn reparse_everything(app_ptr: usize) {
         bcf.mut_tokens(),
         bcf.mut_results(),
         bcf.mut_vars(),
+        bcf.mut_func_defs(),
         bcf.mut_editor_objects(),
         bcf.mut_render_bucket(),
     );
@@ -387,6 +398,7 @@ pub fn handle_input(app_ptr: usize, input: u32, modifiers: u8) -> bool {
         bcf.mut_tokens(),
         bcf.mut_results(),
         bcf.mut_vars(),
+        bcf.mut_func_defs(),
         bcf.mut_editor_objects(),
         bcf.mut_render_bucket(),
     );

@@ -4,8 +4,8 @@ use crate::helper::BitFlag256;
 use crate::token_parser::{
     debug_print, Assoc, OperatorTokenType, Token, TokenType, UnitTokenType, APPLY_UNIT_OP_PREC,
 };
-use crate::tracy_span;
 use crate::units::units::{UnitOutput, Units};
+use crate::{tracy_span, FunctionDefinitions};
 use std::ops::Neg;
 
 #[derive(Eq, PartialEq, Debug)]
@@ -266,6 +266,7 @@ impl ShuntingYard {
         tokens: &mut [Token<'text_ptr>],
         output_stack: &mut Vec<ShuntingYardResult>,
         units: &Units,
+        func_defs: &FunctionDefinitions<'text_ptr>,
     ) {
         let _span = tracy_span("shunting_yard", file!(), line!());
         // TODO: into iter!!!
@@ -288,7 +289,17 @@ impl ShuntingYard {
                     return;
                 }
                 TokenType::StringLiteral => {
-                    if let Some(fn_type) = FnType::value_of(input_token.ptr) {
+                    // to allow func name reusing, search in reverse
+                    if let Some(fn_type) = FnType::value_of(input_token.ptr).or_else(|| {
+                        for (i, fd) in func_defs.iter().enumerate().rev() {
+                            if let Some(fd) = fd {
+                                if fd.func_name == input_token.ptr {
+                                    return Some(FnType::UserDefined(i));
+                                }
+                            }
+                        }
+                        None
+                    }) {
                         // next token is parenthesis
                         if tokens
                             .get(input_index as usize + 1)
@@ -724,7 +735,7 @@ impl ShuntingYard {
 
                         // push the unit onto the output, and close it
 
-                        // TODO ha a köv token egy unit és az azutánui az
+                        // TODO ha a köv token egy unit és az az utolsó token
                         match ShuntingYard::get_next_nonstring_token(
                             tokens,
                             input_index as usize + 1,
@@ -903,6 +914,7 @@ impl ShuntingYard {
         // output_stack can be empty since the Assign operator is put
         // to the end of  the list at the end of this method
         if v.is_valid_assignment_expression() && !output_stack.is_empty() {
+            debug_print("shunt> valid assignment");
             // close it
             // set everything to string which is in front of this expr
             v.close_valid_range(output_stack.len(), input_index, operator_stack.len());
@@ -1340,7 +1352,7 @@ pub mod tests {
     use crate::token_parser::tests::print_tokens_compare_error_and_panic;
     use crate::token_parser::TokenParser;
     use crate::units::units::{UnitOutput, Units};
-    use crate::{Variable, Variables, MAX_LINE_COUNT};
+    use crate::{FunctionDef, Variable, Variables, MAX_LINE_COUNT, VARIABLE_ARR_SIZE};
     use bumpalo::Bump;
     use rust_decimal::prelude::*;
 
@@ -1526,13 +1538,15 @@ pub mod tests {
         allocator: &'text_ptr Bump,
     ) -> Vec<ShuntingYardResult> {
         let mut output = vec![];
-        TokenParser::parse_line(&text, vars, tokens, &units, 10, allocator);
-        ShuntingYard::shunting_yard(tokens, &mut output, units);
+        let func_def_tmp: [Option<FunctionDef>; MAX_LINE_COUNT] = [None; MAX_LINE_COUNT];
+        TokenParser::parse_line(&text, vars, tokens, &units, 10, allocator, 0, &func_def_tmp);
+        let fds = [None; MAX_LINE_COUNT];
+        ShuntingYard::shunting_yard(tokens, &mut output, units, &fds);
         return output;
     }
 
     fn test_output_vars(var_names: &[&'static [char]], text: &str, expected_tokens: &[Token]) {
-        let var_names: Vec<Option<Variable>> = (0..MAX_LINE_COUNT + 1)
+        let var_names: Vec<Option<Variable>> = (0..VARIABLE_ARR_SIZE)
             .into_iter()
             .map(|index| {
                 if let Some(var_name) = var_names.get(index) {

@@ -1,5 +1,5 @@
 use crate::editor::editor::{Pos, RowModificationType, Selection};
-use smallvec::alloc::fmt::Debug;
+use std::fmt::Debug;
 
 pub type Canvas = Vec<char>;
 type EditorCommandGroup<T> = Vec<EditorCommand<T>>;

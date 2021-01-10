@@ -4,14 +4,14 @@ use crate::units::consts::{
     BASE_UNIT_DIMENSIONS, BASE_UNIT_DIMENSION_COUNT,
 };
 use crate::units::{Prefix, Unit, UnitPrefixes};
+use bumpalo::core_alloc::fmt::{Debug, Display, Formatter};
 use rust_decimal::Decimal;
-use smallvec::alloc::fmt::{Debug, Display, Formatter};
-use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fmt::Write;
 use std::rc::Rc;
 use std::str::FromStr;
+use tinyvec::ArrayVec;
 
 fn next(str: &[char]) -> &[char] {
     &str[1..]
@@ -366,8 +366,8 @@ impl Display for UnitOutput {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut nnum = 0;
         let mut nden = 0;
-        let mut str_num: SmallVec<[char; 32]> = SmallVec::with_capacity(32);
-        let mut str_den: SmallVec<[char; 32]> = SmallVec::with_capacity(32);
+        let mut str_num: ArrayVec<[char; 32]> = ArrayVec::new();
+        let mut str_den: ArrayVec<[char; 32]> = ArrayVec::new();
 
         for unit in self.unit_instances.iter().take(self.unit_count) {
             let unit = unit.as_ref().unwrap();

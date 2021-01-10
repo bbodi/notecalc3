@@ -23,6 +23,7 @@ pub mod test_common {
                     self.bcf.mut_tokens(),
                     self.bcf.mut_results(),
                     self.bcf.mut_vars(),
+                    self.bcf.mut_func_defs(),
                     self.bcf.mut_editor_objects(),
                     BitFlag256::empty(),
                 );
@@ -36,6 +37,7 @@ pub mod test_common {
                 self.bcf.mut_tokens(),
                 self.bcf.mut_results(),
                 self.bcf.mut_vars(),
+                self.bcf.mut_func_defs(),
                 self.bcf.mut_editor_objects(),
                 self.bcf.mut_render_bucket(),
             );
@@ -92,6 +94,42 @@ pub mod test_common {
         {
             let mut count = 0;
             let operators = &self.bcf.render_bucket().operators;
+            for op in operators {
+                if expected_command(op) {
+                    count += 1;
+                }
+            }
+            assert_eq!(
+                count, expected_count,
+                "Found {} times.\nExpected: {}\nin\n{:?}",
+                count, expected_count, operators
+            );
+        }
+
+        pub fn assert_contains_paren<F>(&self, expected_count: usize, expected_command: F)
+        where
+            F: Fn(&RenderChar) -> bool,
+        {
+            let mut count = 0;
+            let operators = &self.bcf.render_bucket().parenthesis;
+            for op in operators {
+                if expected_command(op) {
+                    count += 1;
+                }
+            }
+            assert_eq!(
+                count, expected_count,
+                "Found {} times.\nExpected: {}\nin\n{:?}",
+                count, expected_count, operators
+            );
+        }
+
+        pub fn assert_contains_error<F>(&self, expected_count: usize, expected_command: F)
+        where
+            F: Fn(&RenderUtf8TextMsg) -> bool,
+        {
+            let mut count = 0;
+            let operators = &self.bcf.render_bucket().number_errors;
             for op in operators {
                 if expected_command(op) {
                     count += 1;
@@ -180,6 +218,42 @@ pub mod test_common {
             );
         }
 
+        pub fn assert_contains_num<F>(&self, expected_count: usize, expected_command: F)
+        where
+            F: Fn(&RenderUtf8TextMsg) -> bool,
+        {
+            let mut count = 0;
+            let operators = &self.bcf.render_bucket().numbers;
+            for op in operators {
+                if expected_command(op) {
+                    count += 1;
+                }
+            }
+            assert_eq!(
+                count, expected_count,
+                "Found {} times.\nExpected: {}\nin\n{:?}",
+                count, expected_count, operators
+            );
+        }
+
+        pub fn assert_contains_unit<F>(&self, expected_count: usize, expected_command: F)
+        where
+            F: Fn(&RenderUtf8TextMsg) -> bool,
+        {
+            let mut count = 0;
+            let operators = &self.bcf.render_bucket().units;
+            for op in operators {
+                if expected_command(op) {
+                    count += 1;
+                }
+            }
+            assert_eq!(
+                count, expected_count,
+                "Found {} times.\nExpected: {}\nin\n{:?}",
+                count, expected_count, operators
+            );
+        }
+
         pub fn assert_contains_variable<F>(&self, expected_count: usize, expected_command: F)
         where
             F: Fn(&RenderUtf8TextMsg) -> bool,
@@ -210,6 +284,7 @@ pub mod test_common {
                 self.bcf.mut_tokens(),
                 self.bcf.mut_results(),
                 self.bcf.mut_vars(),
+                self.bcf.mut_func_defs(),
                 self.bcf.mut_editor_objects(),
                 self.bcf.mut_render_bucket(),
             );
@@ -223,6 +298,7 @@ pub mod test_common {
                 self.bcf.mut_tokens(),
                 self.bcf.mut_results(),
                 self.bcf.mut_vars(),
+                self.bcf.mut_func_defs(),
                 self.bcf.mut_editor_objects(),
                 self.bcf.mut_render_bucket(),
             );
@@ -238,6 +314,7 @@ pub mod test_common {
                 self.bcf.mut_tokens(),
                 self.bcf.mut_results(),
                 self.bcf.mut_vars(),
+                self.bcf.mut_func_defs(),
                 self.bcf.mut_render_bucket(),
             );
         }
@@ -251,6 +328,7 @@ pub mod test_common {
                 self.bcf.mut_tokens(),
                 self.bcf.mut_results(),
                 self.bcf.mut_vars(),
+                self.bcf.mut_func_defs(),
                 self.bcf.mut_render_bucket(),
             );
         }
@@ -261,9 +339,10 @@ pub mod test_common {
                 self.bcf.mut_editor_objects(),
                 self.bcf.units(),
                 self.bcf.allocator(),
-                self.bcf.mut_tokens(),
-                self.bcf.mut_results(),
-                self.bcf.mut_vars(),
+                self.bcf.tokens(),
+                self.bcf.results(),
+                self.bcf.vars(),
+                self.bcf.func_defs(),
                 self.bcf.mut_render_bucket(),
             );
         }
@@ -278,6 +357,7 @@ pub mod test_common {
                 self.bcf.mut_tokens(),
                 self.bcf.mut_results(),
                 self.bcf.mut_vars(),
+                self.bcf.mut_func_defs(),
                 self.bcf.mut_render_bucket(),
             );
         }
@@ -292,6 +372,7 @@ pub mod test_common {
                 self.bcf.mut_tokens(),
                 self.bcf.mut_results(),
                 self.bcf.mut_vars(),
+                self.bcf.mut_func_defs(),
                 self.bcf.mut_render_bucket(),
             );
         }
@@ -303,6 +384,7 @@ pub mod test_common {
                 self.bcf.mut_tokens(),
                 self.bcf.mut_results(),
                 self.bcf.mut_vars(),
+                self.bcf.mut_func_defs(),
                 self.bcf.mut_editor_objects(),
                 self.bcf.mut_render_bucket(),
             );
@@ -316,6 +398,7 @@ pub mod test_common {
                 self.bcf.mut_tokens(),
                 self.bcf.mut_results(),
                 self.bcf.mut_vars(),
+                self.bcf.mut_func_defs(),
                 self.bcf.mut_editor_objects(),
                 self.bcf.mut_render_bucket(),
             );
@@ -334,6 +417,7 @@ pub mod test_common {
                 self.bcf.mut_tokens(),
                 self.bcf.mut_results(),
                 self.bcf.mut_vars(),
+                self.bcf.mut_func_defs(),
                 self.bcf.mut_editor_objects(),
                 self.bcf.mut_render_bucket(),
             )
@@ -388,6 +472,21 @@ pub mod test_common {
             self.bcf.render_bucket()
         }
 
+        pub fn get_all_custom_commands_render_commands<'a>(&self) -> Vec<OutputMessage> {
+            let rb = self.bcf.render_bucket();
+            let mut vec = Vec::with_capacity(
+                rb.custom_commands[0].len()
+                    + rb.custom_commands[1].len()
+                    + rb.custom_commands[2].len(),
+            );
+            for layer in &rb.custom_commands {
+                for cmd in layer.iter() {
+                    vec.push(cmd.clone());
+                }
+            }
+            return vec;
+        }
+
         pub fn mut_tokens<'a>(&self) -> &'a mut AppTokens<'a> {
             self.bcf.mut_tokens()
         }
@@ -439,6 +538,10 @@ pub mod test_common {
 
     pub fn create_test_app<'a>(client_height: usize) -> TestHelper {
         create_test_app2(120, client_height)
+    }
+
+    pub fn to_char_slice(str: &str) -> Vec<char> {
+        str.chars().collect::<Vec<char>>()
     }
 
     pub fn create_test_app2<'a>(w: usize, client_height: usize) -> TestHelper {

@@ -1,8 +1,8 @@
 // Credits to https://mathjs.org, most of this code based on their implementation
 
 use crate::units::consts::BASE_UNIT_DIMENSION_COUNT;
+use bumpalo::core_alloc::fmt::Formatter;
 use rust_decimal::prelude::*;
-use smallvec::alloc::fmt::Formatter;
 use std::rc::Rc;
 
 pub mod consts;

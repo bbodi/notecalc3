@@ -1,5 +1,5 @@
 use crate::editor::editor_content::{EditorCommand, EditorContent, JumpMode};
-use smallvec::alloc::fmt::Debug;
+use std::fmt::Debug;
 use std::ops::{Range, RangeInclusive};
 
 pub const EDITOR_CURSOR_TICK_MS: u32 = 500;

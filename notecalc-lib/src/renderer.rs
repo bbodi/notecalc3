@@ -4,8 +4,8 @@ use crate::{ResultFormat, ResultLengths};
 use byteorder::WriteBytesExt;
 use rust_decimal::prelude::*;
 use rust_decimal::Decimal;
-use smallvec::SmallVec;
 use std::io::Cursor;
+use tinyvec::ArrayVec;
 
 pub fn render_result(
     units: &Units,
@@ -302,7 +302,7 @@ fn remove_repeatings(num: &Decimal) -> Option<Decimal> {
 
 fn apply_grouping(f: &mut impl std::io::Write, ss: &str, group_size: usize) -> usize {
     // TODO isnt it too much/is it enough?
-    let mut buf: SmallVec<[u8; 128]> = SmallVec::with_capacity(ss.len());
+    let mut buf: ArrayVec<[u8; 128]> = ArrayVec::new();
     for ch in ss.as_bytes() {
         buf.push(*ch);
     }

@@ -1,6 +1,9 @@
 use crate::functions::FnType;
 use crate::units::units::{UnitOutput, Units};
-use crate::{tracy_span, Variables, SUM_VARIABLE_INDEX};
+use crate::{
+    tracy_span, FunctionDefinitions, Variable, Variables, FIRST_FUNC_PARAM_VAR_INDEX,
+    SUM_VARIABLE_INDEX,
+};
 use bumpalo::Bump;
 use rust_decimal::prelude::*;
 use std::str::FromStr;
@@ -216,6 +219,8 @@ impl TokenParser {
         units: &Units,
         line_index: usize,
         allocator: &'text_ptr Bump,
+        function_param_count: usize,
+        func_defs: &FunctionDefinitions<'text_ptr>,
     ) {
         tracy_span("parse_line", file!(), line!());
         let mut index = 0;
@@ -230,45 +235,6 @@ impl TokenParser {
             return;
         }
         while index < line.len() {
-            // let parse_result = TokenParser::try_extract_comment(&line[index..], allocator)
-            //     .or_else(|| {
-            //         let prev_was_lineref = dst
-            //             .last()
-            //             .map(|token| matches!(token.typ, TokenType::LineReference{..}))
-            //             .unwrap_or(false);
-            //         TokenParser::try_extract_variable_name(
-            //             &line[index..],
-            //             variable_names,
-            //             line_index,
-            //             allocator,
-            //             prev_was_lineref,
-            //         )
-            //     })
-            //     .or_else(|| {
-            //         TokenParser::try_extract_unit(
-            //             &line[index..],
-            //             units,
-            //             can_be_unit,
-            //             can_be_unit_converter,
-            //             allocator,
-            //         )
-            //             .or_else(|| {
-            //                 TokenParser::try_extract_operator(
-            //                     &line[index..],
-            //                     allocator,
-            //                     can_be_unit_converter,
-            //                 )
-            //                     .or_else(|| {
-            //                         TokenParser::try_extract_number_literal(&line[index..], allocator)
-            //                             .or_else(|| {
-            //                                 TokenParser::try_extract_string_literal(
-            //                                     &line[index..],
-            //                                     allocator,
-            //                                 )
-            //                             })
-            //                     })
-            //             })
-            //     });
             let parse_result = TokenParser::try_extract_token(
                 &line[index..],
                 variable_names,
@@ -278,6 +244,8 @@ impl TokenParser {
                 can_be_unit,
                 can_be_unit_converter,
                 allocator,
+                function_param_count,
+                func_defs,
             );
 
             match &parse_result.typ {
@@ -339,40 +307,45 @@ impl TokenParser {
         can_be_unit: Option<UnitTokenType>,
         can_be_unit_converter: bool,
         allocator: &'text_ptr Bump,
+        function_param_count: usize,
+        func_defs: &FunctionDefinitions<'text_ptr>,
     ) -> Token<'text_ptr> {
-        if let Some(asd) = TokenParser::try_extract_comment(rest_str, allocator) {
-            return asd;
+        return if let Some(token) = TokenParser::try_extract_comment(rest_str, allocator) {
+            token
         } else {
             let prev_was_lineref = dst
                 .last()
                 .map(|token| matches!(token.typ, TokenType::LineReference{..}))
                 .unwrap_or(false);
-            if let Some(asd) = TokenParser::try_extract_variable_name(
+            if let Some(token) = TokenParser::try_extract_variable_name(
                 rest_str,
                 variable_names,
                 line_index,
                 allocator,
                 prev_was_lineref,
+                function_param_count,
+                func_defs,
             ) {
-                return asd;
-            } else if let Some(asd) = TokenParser::try_extract_unit(
+                token
+            } else if let Some(token) = TokenParser::try_extract_unit(
                 rest_str,
                 units,
                 can_be_unit,
                 can_be_unit_converter,
                 allocator,
             ) {
-                return asd;
-            } else if let Some(asd) =
+                token
+            } else if let Some(token) =
                 TokenParser::try_extract_operator(rest_str, allocator, can_be_unit_converter)
             {
-                return asd;
-            } else if let Some(asd) = TokenParser::try_extract_number_literal(rest_str, allocator) {
-                return asd;
+                token
+            } else if let Some(token) = TokenParser::try_extract_number_literal(rest_str, allocator)
+            {
+                token
             } else {
-                return TokenParser::try_extract_string_literal(rest_str, allocator);
+                TokenParser::try_extract_string_literal(rest_str, allocator)
             }
-        }
+        };
     }
 
     #[inline]
@@ -665,9 +638,11 @@ impl TokenParser {
     fn try_extract_variable_name<'text_ptr>(
         line: &[char],
         vars: &Variables,
-        row_index: usize,
+        parsed_row_index: usize,
         allocator: &'text_ptr Bump,
         prev_was_lineref: bool,
+        function_param_count: usize,
+        func_defs: &FunctionDefinitions<'text_ptr>,
     ) -> Option<Token<'text_ptr>> {
         tracy_span("try_extract_variable_name", file!(), line!());
         if line.starts_with(&['s', 'u', 'm']) && line.get(3).map(|it| *it == ' ').unwrap_or(true) {
@@ -679,39 +654,59 @@ impl TokenParser {
                 has_error: false,
             });
         }
+
         let mut longest_match_index = 0;
         let mut longest_match = 0;
-        'asd: for (var_index, var) in vars[0..row_index].iter().enumerate().rev() {
-            if var.is_none() {
-                continue;
-            }
-            let var = var.as_ref().unwrap();
-            for (i, ch) in var.name.iter().enumerate() {
-                if i >= line.len() || line[i] != *ch {
-                    continue 'asd;
+        // first try to find the var in 'vars' so parameters can be shadowed
+        // TODO minden sorra fölösleges a belső 'for', leehtne értelmesebben
+        'outer: for (var_index, var) in vars[0..parsed_row_index].iter().enumerate().rev() {
+            // avoid variable declarations that are in a function
+            // we are not part of
+            for investigated_line_i in (0..=var_index).rev() {
+                if let Some(fd) = func_defs[investigated_line_i].as_ref() {
+                    let investigated_line_is_part_of_that_func =
+                        var_index <= fd.last_row_index.as_usize();
+                    let parsed_line_is_not_part_of_that_func =
+                        parsed_row_index > fd.last_row_index.as_usize();
+                    if investigated_line_is_part_of_that_func {
+                        if parsed_line_is_not_part_of_that_func {
+                            // if this line belongs to a function we are not part of
+                            continue 'outer;
+                        } else {
+                            // first check the lines inside the function
+                            // then check the parameters
+                            // then the lines above the function
+                            if investigated_line_i == var_index {
+                                for (var_index, var) in vars[FIRST_FUNC_PARAM_VAR_INDEX
+                                    ..FIRST_FUNC_PARAM_VAR_INDEX + function_param_count]
+                                    .iter()
+                                    .enumerate()
+                                {
+                                    TokenParser::find_variable_match(
+                                        line,
+                                        &mut longest_match_index,
+                                        &mut longest_match,
+                                        FIRST_FUNC_PARAM_VAR_INDEX + var_index,
+                                        var,
+                                    )
+                                }
+                                continue 'outer;
+                            }
+                        }
+                    }
+                    break;
                 }
             }
-            // if the next char is '(', it can't be a var name
-            if line
-                .get(var.name.len())
-                .map(|it| *it == '(')
-                .unwrap_or(false)
-            {
-                continue 'asd;
-            }
-            // only full match allowed e.g. if there is variable 'b', it should not match "b0" as 'b' and '0'
-            let not_full_match = line
-                .get(var.name.len())
-                .map(|it| it.is_alphanumeric())
-                .unwrap_or(false);
-            if not_full_match {
-                continue 'asd;
-            }
-            if var.name.len() > longest_match {
-                longest_match = var.name.len();
-                longest_match_index = var_index;
-            }
+
+            TokenParser::find_variable_match(
+                line,
+                &mut longest_match_index,
+                &mut longest_match,
+                var_index,
+                var,
+            );
         }
+
         let result = if longest_match > 0 {
             let is_line_ref = longest_match > 2 && line[0] == '&' && line[1] == '[';
             let typ = if is_line_ref {
@@ -738,6 +733,45 @@ impl TokenParser {
         return result;
     }
 
+    fn find_variable_match(
+        line: &[char],
+        longest_match_index: &mut usize,
+        longest_match: &mut usize,
+        var_index: usize,
+        var: &Option<Variable>,
+    ) {
+        if var.is_none() {
+            return;
+        }
+        let var = var.as_ref().unwrap();
+
+        for (i, ch) in var.name.iter().enumerate() {
+            if i >= line.len() || line[i] != *ch {
+                return;
+            }
+        }
+        // if the next char is '(', it can't be a var name
+        if line
+            .get(var.name.len())
+            .map(|it| *it == '(')
+            .unwrap_or(false)
+        {
+            return;
+        }
+        // only full match allowed e.g. if there is variable 'b', it should not match "b0" as 'b' and '0'
+        let not_full_match = line
+            .get(var.name.len())
+            .map(|it| it.is_alphanumeric())
+            .unwrap_or(false);
+        if not_full_match {
+            return;
+        }
+        if var.name.len() > *longest_match {
+            *longest_match = var.name.len();
+            *longest_match_index = var_index;
+        }
+    }
+
     #[inline]
     fn try_extract_string_literal<'text_ptr>(
         str: &[char],
@@ -746,7 +780,7 @@ impl TokenParser {
         tracy_span("try_extract_string_literal", file!(), line!());
         let mut i = 0;
         for ch in str {
-            if "=%/+-*^()[]".chars().any(|it| it == *ch) || ch.is_ascii_whitespace() {
+            if "=%/+-*^()[],".chars().any(|it| it == *ch) || ch.is_ascii_whitespace() {
                 break;
             }
             // it means somwewhere we passed an invalid slice
@@ -941,7 +975,7 @@ impl TokenParser {
 #[allow(dead_code)]
 #[allow(unused_variables)]
 pub fn debug_print(str: &str) {
-    if true {
+    if false {
         return;
     }
     #[cfg(debug_assertions)]
@@ -971,7 +1005,7 @@ pub mod tests {
     use crate::calc::{CalcResult, CalcResultType};
     use crate::shunting_yard::tests::*;
     use crate::units::units::Units;
-    use crate::{Variable, MAX_LINE_COUNT};
+    use crate::{FunctionDef, Variable, MAX_LINE_COUNT, VARIABLE_ARR_SIZE};
 
     #[test]
     fn test_number_parsing() {
@@ -980,7 +1014,18 @@ pub mod tests {
             let temp = str.chars().collect::<Vec<_>>();
             let units = Units::new();
             let arena = Bump::new();
-            TokenParser::parse_line(&temp, &create_vars(), &mut vec, &units, 0, &arena);
+            // shitty rust: i can't pass this without creating a tmp var for it
+            let func_def_tmp: [Option<FunctionDef>; MAX_LINE_COUNT] = [None; MAX_LINE_COUNT];
+            TokenParser::parse_line(
+                &temp,
+                &create_vars(),
+                &mut vec,
+                &units,
+                0,
+                &arena,
+                0,
+                &func_def_tmp,
+            );
             match vec.get(0) {
                 Some(Token {
                     ptr: _,
@@ -999,7 +1044,17 @@ pub mod tests {
             let temp = str.chars().collect::<Vec<_>>();
             let units = Units::new();
             let arena = Bump::new();
-            TokenParser::parse_line(&temp, &create_vars(), &mut vec, &units, 0, &arena);
+            let func_def_tmp: [Option<FunctionDef>; MAX_LINE_COUNT] = [None; MAX_LINE_COUNT];
+            TokenParser::parse_line(
+                &temp,
+                &create_vars(),
+                &mut vec,
+                &units,
+                0,
+                &arena,
+                0,
+                &func_def_tmp,
+            );
             match vec.get(0) {
                 Some(Token {
                     ptr: _,
@@ -1035,7 +1090,7 @@ pub mod tests {
     }
 
     fn test_vars(var_names: &[&'static [char]], text: &str, expected_tokens: &[Token]) {
-        let var_names: Vec<Option<Variable>> = (0..MAX_LINE_COUNT + 1)
+        let var_names: Vec<Option<Variable>> = (0..VARIABLE_ARR_SIZE)
             .into_iter()
             .map(|index| {
                 if let Some(var_name) = var_names.get(index) {
@@ -1053,8 +1108,19 @@ pub mod tests {
         let temp = text.chars().collect::<Vec<_>>();
         let units = Units::new();
         let arena = Bump::new();
-        // line index is 10 so the search for the variable does not stop at 0
-        TokenParser::parse_line(&temp, &var_names, &mut vec, &units, 10, &arena);
+
+        let func_def_tmp: [Option<FunctionDef>; MAX_LINE_COUNT] = [None; MAX_LINE_COUNT];
+        TokenParser::parse_line(
+            &temp,
+            &var_names,
+            &mut vec,
+            &units,
+            // line index is 10 so the search for the variable does not stop at 0
+            10,
+            &arena,
+            0,
+            &func_def_tmp,
+        );
 
         let mut differences = Vec::with_capacity(vec.len().max(expected_tokens.len()));
         for (error_index, (actual_token, expected_token)) in
