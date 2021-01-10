@@ -14,6 +14,25 @@ Honestly, it just tries to be a free Soulver alternative in your browser.
 
 [Try out](https://bbodi.github.io/notecalc3/notecalc#)
 
+## Roadmap
+- [ ] User-defined functions (0.4.0)
+- [ ] Conditionals & comparisons (0.4.0)
+- [ ] Configurations (decimal point, font size etc) (0.4.0)
+- [ ] Embeddable expressions
+- [ ] Error messages
+- [ ] Autocompletion
+- [ ] Currencies
+- [ ] Arbitrary large calculation
+- [ ] Laptimes
+- [ ] Timestamps
+- [ ] Financial functions
+- [ ] Line wrapping
+- [ ] Time zone math
+- [ ] Embeddable NoteCalc
+- [ ] Better result outputs (scientific notation, SI suffixes etc)
+- [ ] Search
+- [ ] Specifiers (e.g. xy as number)
+
 ## Run locally
 
 First, you will need to make sure that the following tools are installed:
@@ -29,6 +48,19 @@ Once the above tools are installed, you can run:
 ```sh
 git clone https://github.com/bbodi/notecalc3.git
 ./compile_and_run.bat
+```
+
+Then, open your browser and go to  [http://localhost:5000/notecalc](http://localhost:5000/notecalc).
+
+## Run using docker
+
+You can also run using a container with this command:
+
+```sh
+git clone https://github.com/bbodi/notecalc3.git
+cd notecalc3
+docker build . --tag notecalc3
+docker run --rm -d -p 5000:5000 notecalc3
 ```
 
 Then, open your browser and go to  [http://localhost:5000/notecalc](http://localhost:5000/notecalc).
