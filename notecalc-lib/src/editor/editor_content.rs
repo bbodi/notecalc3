@@ -82,6 +82,7 @@ pub enum JumpMode {
     BlockOnWhitespace,
 }
 
+#[derive(Debug)]
 pub struct EditorContent<T: Default + Clone + Debug> {
     // TODO: need for fuzz testing, set it back to priv later
     pub undo_stack: Vec<EditorCommandGroup<T>>,

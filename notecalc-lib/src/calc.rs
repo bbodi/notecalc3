@@ -15,6 +15,7 @@ use crate::{
     MAX_TOKEN_COUNT_PER_LINE, SUM_VARIABLE_INDEX, VARIABLE_ARR_SIZE,
 };
 use rust_decimal::prelude::*;
+use tinyvec::ArrayVec;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct CalcResult {
@@ -168,6 +169,7 @@ pub fn evaluate_tokens<'text_ptr>(
         .unwrap()
         .shunting_output_stack
         .len();
+    let mut lock_stack: ArrayVec<[u16; 64]> = ArrayVec::new();
     for i in 0..len {
         let token_type = apptokens[content_y(editor_y)]
             .as_ref()
@@ -283,6 +285,9 @@ pub fn evaluate_tokens<'text_ptr>(
                     }
                 }
             }
+            TokenType::Operator(OperatorTokenType::StartLock) => {
+                lock_stack.push(stack.len() as u16);
+            }
             TokenType::Operator(OperatorTokenType::Fn {
                 typ: FnType::UserDefined(fn_index),
                 arg_count,
@@ -371,9 +376,13 @@ pub fn evaluate_tokens<'text_ptr>(
                 let shunting_tokens = &tokens.shunting_output_stack;
                 let token = &shunting_tokens[i];
 
-                if let Err(eval_err) =
-                    apply_operation(&mut stack, &typ, token.index_into_tokens, units)
-                {
+                if let Err(eval_err) = apply_operation(
+                    &mut stack,
+                    &typ,
+                    token.index_into_tokens,
+                    units,
+                    &mut lock_stack,
+                ) {
                     return (wrong_type_token_indices, Err(eval_err));
                 } else {
                     if matches!(typ, OperatorTokenType::UnitConverter) {
@@ -540,6 +549,7 @@ fn apply_operation<'text_ptr>(
     op: &OperatorTokenType,
     op_token_index: usize,
     units: &Units,
+    lock_stack: &mut ArrayVec<[u16; 64]>,
 ) -> Result<(), EvalErr> {
     let succeed = match &op {
         OperatorTokenType::Mult
@@ -570,12 +580,7 @@ fn apply_operation<'text_ptr>(
                     stack.push(result);
                     Ok(())
                 } else {
-                    Err(EvalErr::new3(
-                        "Op failed".to_owned(),
-                        op_token_index,
-                        lhs,
-                        rhs,
-                    ))
+                    Err(EvalErr::new("Op failed".to_owned(), op_token_index))
                 }
             } else {
                 Err(EvalErr::new("Not enugh operand".to_owned(), 0))
@@ -605,8 +610,9 @@ fn apply_operation<'text_ptr>(
             row_count,
             col_count,
         } => {
+            let lock_offset = lock_stack.pop().expect("must");
             let arg_count = row_count * col_count;
-            if stack.len() >= arg_count {
+            if stack.len() - lock_offset as usize >= arg_count {
                 let matrix_args = stack.drain(stack.len() - arg_count..).collect::<Vec<_>>();
                 stack.push(CalcResult::new(
                     CalcResultType::Matrix(MatrixData::new(matrix_args, *row_count, *col_count)),
@@ -629,7 +635,9 @@ fn apply_operation<'text_ptr>(
             // ignore
             Ok(())
         }
-        OperatorTokenType::Assign => panic!("handled in the main loop above"),
+        OperatorTokenType::Assign | OperatorTokenType::StartLock => {
+            panic!("handled in the main loop above")
+        }
         OperatorTokenType::ParenOpen
         | OperatorTokenType::ParenClose
         | OperatorTokenType::BracketOpen
@@ -1934,15 +1942,18 @@ mod tests {
         test_tokens(
             "[2, asda]",
             &[
-                str("["),
-                str("2"),
-                str(","),
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 2,
+                }),
+                num(2),
+                op(OperatorTokenType::Comma),
                 str(" "),
                 str("asda"),
-                str("]"),
+                op_err(OperatorTokenType::BracketClose),
             ],
         );
-        test("[2, asda]", " ");
+        test("[2, asda]", "Err");
 
         test(
             "2+3 - this minus sign is part of the text, should not affect the result",
@@ -2001,15 +2012,18 @@ mod tests {
             &[
                 num(1),
                 str(" "),
-                str("+"),
+                op(OperatorTokenType::Add),
                 str(" "),
-                str("["),
-                str("2"),
-                str(","),
-                str("]"),
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 2,
+                }),
+                num(2),
+                op(OperatorTokenType::Comma),
+                op_err(OperatorTokenType::BracketClose),
             ],
         );
-        test("1 + [2,]", "1");
+        test("1 + [2,]", "Err");
 
         // multiply operator must be explicit, "5" is ignored here
         test("5(1+2)", "3");
@@ -2196,7 +2210,9 @@ mod tests {
 
     #[test]
     fn test_matrix_wont_take_operands_from_outside_its_scope() {
-        test("1 + [2, asda]", "1");
+        test("[1, 2] + [2,]", "Err");
+        test("1 + [2, asda]", "Err");
+        test("[1, 2] + [3,4]", "[4, 6]");
     }
 
     #[test]
@@ -2500,10 +2516,10 @@ mod tests {
         test_tokens(
             "30^5%",
             &[
-                num_with_err(30),
+                num(30),
                 op_err(OperatorTokenType::Pow),
-                num_with_err(5),
-                op_err(OperatorTokenType::Perc),
+                num(5),
+                op(OperatorTokenType::Perc),
             ],
         );
     }
@@ -2977,11 +2993,11 @@ mod tests {
         test_tokens(
             "1 << 200",
             &[
-                num_with_err(1),
+                num(1),
                 str(" "),
                 op_err(OperatorTokenType::ShiftLeft),
                 str(" "),
-                num_with_err(200),
+                num(200),
             ],
         );
     }
@@ -2996,11 +3012,11 @@ mod tests {
         test_tokens(
             "1 >> 64",
             &[
-                num_with_err(1),
+                num(1),
                 str(" "),
                 op_err(OperatorTokenType::ShiftRight),
                 str(" "),
-                num_with_err(64),
+                num(64),
             ],
         );
     }
@@ -3071,7 +3087,7 @@ mod tests {
             &[
                 num(1),
                 op(OperatorTokenType::Add),
-                op_err(OperatorTokenType::Fn {
+                op(OperatorTokenType::Fn {
                     arg_count: 0,
                     typ: FnType::E,
                 }),
@@ -3079,7 +3095,7 @@ mod tests {
                 op(OperatorTokenType::ParenClose),
                 op_err(OperatorTokenType::Pow),
                 op(OperatorTokenType::ParenOpen),
-                num_with_err(100),
+                num(100),
                 op(OperatorTokenType::ParenClose),
             ],
         );

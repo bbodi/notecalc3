@@ -8,10 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Breaking Changes
+- Empty matrices or matrices with invalid content are now considered as matrix, so the matrix editor can be used on them
 ### Features
 - User defined functions
 ### Changed
 ### Fixed
+- Bin or Hex representation of a float is now an Error
+- Referenced matrices were not visible due to the reference-highlighting covered them
+- Referenced matrices were rendered outside the editor
+- Empty matrices (`[]`) inside parenthesis were not evaluated correctly
+- Added new rendering layers so rendered rectangles can be positioned better (e.g. where to put matrix editor background to not be hidden by cursor highlighter nor function bg color etc)
 
 
 ## [0.3.0] - 2020-12-21

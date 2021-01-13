@@ -293,6 +293,7 @@ impl RowModificationType {
     }
 }
 
+#[derive(Debug)]
 pub struct Editor {
     selection: Selection,
     last_column_index: usize,

@@ -1,4 +1,5 @@
 use notecalc_lib::editor::editor::{EditorInputEvent, InputModifiers};
+use notecalc_lib::helper::canvas_y;
 use notecalc_lib::test_common::test_common::create_test_app;
 use notecalc_lib::{Layer, OutputMessage, ACTIVE_LINE_REF_HIGHLIGHT_COLORS, MAX_LINE_COUNT};
 
@@ -259,6 +260,39 @@ func2(12)",
 }
 
 #[test]
+fn test_update_function_body_range_if_it_changes_5() {
+    let test = create_test_app(35);
+    test.paste(
+        "func2():
+  1
+func2()
+2",
+    );
+    test.assert_results(&["", "1", "1", "2"][..]);
+
+    // press space in front of "2"
+    test.input(EditorInputEvent::Left, InputModifiers::none());
+    test.input(EditorInputEvent::Char(' '), InputModifiers::none());
+    test.assert_results(&["", "1", "1", "2"][..]);
+    assert_eq!(
+        test.bcf.func_defs()[0]
+            .as_ref()
+            .unwrap()
+            .first_row_index
+            .as_usize(),
+        0
+    );
+    assert_eq!(
+        test.bcf.func_defs()[0]
+            .as_ref()
+            .unwrap()
+            .last_row_index
+            .as_usize(),
+        1
+    );
+}
+
+#[test]
 fn test_func_name_reuse() {
     let test = create_test_app(35);
     test.paste(
@@ -452,6 +486,45 @@ kamatos_kamat(10M, 10%, 10years)",
 }
 
 #[test]
+fn test_function_with_empty_body() {
+    let test = create_test_app(35);
+    test.paste(
+        "filler
+func():
+1",
+    );
+    assert!(test.bcf.func_defs()[1].is_some());
+    assert_eq!(
+        test.bcf.func_defs()[1]
+            .as_ref()
+            .unwrap()
+            .first_row_index
+            .as_usize(),
+        1
+    );
+    assert_eq!(
+        test.bcf.func_defs()[1]
+            .as_ref()
+            .unwrap()
+            .last_row_index
+            .as_usize(),
+        1
+    );
+}
+
+#[test]
+fn test_calling_function_with_empty_body() {
+    let test = create_test_app(35);
+    test.paste(
+        "filler
+func():
+1
+func()",
+    );
+    test.assert_results(&["", "", "1", "Err"]);
+}
+
+#[test]
 fn test_removing_func_removes_its_fd() {
     let test = create_test_app(35);
     test.paste(
@@ -508,7 +581,7 @@ func(1)",
             OutputMessage::SetColor(color) => *color == *expected_color,
             _ => false,
         });
-        test.assert_contains_custom_command(Layer::BehindText, 0, |cmd| match cmd {
+        test.assert_contains_custom_command(Layer::BehindTextCursor, 0, |cmd| match cmd {
             OutputMessage::SetColor(color) => *color == *expected_color,
             _ => false,
         });
@@ -828,4 +901,62 @@ func2(a):
     for i in 3..MAX_LINE_COUNT {
         assert!(test.bcf.func_defs()[i].is_none());
     }
+}
+
+#[test]
+fn test_fn_bg_is_drawed_at_the_correct_position() {
+    let test = create_test_app(35);
+    test.paste(
+        "filler
+filler
+func2():
+  1",
+    );
+    test.assert_contains_custom_command(Layer::BehindTextBehindCursor, 1, |cmd| match cmd {
+        OutputMessage::RenderRectangle { x: 2, h: 2, y, .. } if *y == canvas_y(2) => true,
+        _ => false,
+    });
+}
+
+#[test]
+fn test_fn_bg_is_drawed_at_the_correct_position_with_matrix_front_of_it() {
+    let test = create_test_app(35);
+    test.paste(
+        "[1;2;3;4]
+func2():
+  1",
+    );
+    test.assert_contains_custom_command(Layer::BehindTextBehindCursor, 1, |cmd| match cmd {
+        OutputMessage::RenderRectangle { x: 2, h: 2, y, .. } if *y == canvas_y(6) => true,
+        _ => false,
+    });
+}
+
+#[test]
+fn test_fn_bg_is_drawed_at_the_correct_position_with_matrix_inside() {
+    let test = create_test_app(35);
+    test.paste(
+        "func2():
+  [1;2;3;4]
+  1",
+    );
+    test.assert_contains_custom_command(Layer::BehindTextBehindCursor, 1, |cmd| match cmd {
+        OutputMessage::RenderRectangle { x: 2, h: 8, y, .. } if *y == canvas_y(0) => true,
+        _ => false,
+    });
+}
+
+#[test]
+fn test_fn_bg_is_drawed_at_the_correct_position_with_matrix_2() {
+    let test = create_test_app(35);
+    test.paste(
+        "[1;2;3;4]
+func2():
+  [1;2;3;4]
+  1",
+    );
+    test.assert_contains_custom_command(Layer::BehindTextBehindCursor, 1, |cmd| match cmd {
+        OutputMessage::RenderRectangle { x: 2, h: 8, y, .. } if *y == canvas_y(6) => true,
+        _ => false,
+    });
 }

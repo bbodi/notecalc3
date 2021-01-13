@@ -167,7 +167,8 @@ fn num_to_string(
     decimal_count: Option<usize>,
     use_grouping: bool,
 ) -> ResultLengths {
-    let num_a = if *format != ResultFormat::Dec && num.trunc() == *num {
+    let is_int = num.trunc() == *num;
+    let num_a = if *format != ResultFormat::Dec && is_int {
         Some(num.clone())
     } else if let Some(decimal_count) = decimal_count {
         let mut result = num.clone();
@@ -184,7 +185,10 @@ fn num_to_string(
     let num = num_a.as_ref().unwrap_or(num);
 
     return if *format == ResultFormat::Bin || *format == ResultFormat::Hex {
-        if let Some(n) = num.to_u64().or_else(|| num.to_i64().map(|it| it as u64)) {
+        let rust_is_shit = if is_int { Some(true) } else { None };
+        if let Some(n) =
+            rust_is_shit.and_then(|_| num.to_u64().or_else(|| num.to_i64().map(|it| it as u64)))
+        {
             let ss = if *format == ResultFormat::Bin {
                 format!("{:b}", n)
             } else {

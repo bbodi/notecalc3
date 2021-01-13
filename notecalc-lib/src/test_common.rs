@@ -45,7 +45,7 @@ pub mod test_common {
 
         pub fn assert_no_highlighting_rectangle(&self) {
             let render_buckets =
-                &self.bcf.render_bucket().custom_commands[Layer::BehindText as usize];
+                &self.bcf.render_bucket().custom_commands[Layer::BehindTextAboveCursor as usize];
             for i in 0..9 {
                 assert_contains(
                     render_buckets,

@@ -41,9 +41,9 @@ enum ParenStackEntry {
 }
 
 impl ParenStackEntry {
-    fn new_mat(index: isize) -> ParenStackEntry {
+    fn new_mat(token_index: isize) -> ParenStackEntry {
         ParenStackEntry::Matrix(MatrixStackEntry {
-            matrix_start_input_pos: index as usize,
+            matrix_start_input_pos: token_index as usize,
             matrix_row_count: 1,
             matrix_prev_row_len: None,
             matrix_current_row_len: 1,
@@ -493,6 +493,13 @@ impl ShuntingYard {
                                 &mut v,
                             );
                         }
+
+                        to_out(
+                            output_stack,
+                            &TokenType::Operator(OperatorTokenType::StartLock),
+                            input_index,
+                        );
+
                         if tokens
                             .get(input_index as usize + 1)
                             .map(|it| {
@@ -513,20 +520,18 @@ impl ShuntingYard {
                             debug_print("    Replace '[' with Matrix Token");
                             tokens[input_index as usize].typ = matrix_token_type.clone();
                             input_index += 1;
-                            if v.can_be_valid_closing_token() {
-                                ShuntingYard::send_everything_to_output(
-                                    &mut operator_stack,
-                                    output_stack,
-                                    &mut v.last_valid_operator_index,
-                                    &mut v.last_valid_output_range,
-                                    &mut v.last_valid_input_token_range,
-                                );
-                                v.close_valid_range(
-                                    output_stack.len(),
-                                    input_index,
-                                    operator_stack.len(),
-                                );
-                            }
+                            ShuntingYard::send_everything_to_output(
+                                &mut operator_stack,
+                                output_stack,
+                                &mut v.last_valid_operator_index,
+                                &mut v.last_valid_output_range,
+                                &mut v.last_valid_input_token_range,
+                            );
+                            v.close_valid_range(
+                                output_stack.len(),
+                                input_index,
+                                operator_stack.len(),
+                            );
                             continue;
                         }
 
@@ -540,8 +545,7 @@ impl ShuntingYard {
                         });
                     }
                     OperatorTokenType::BracketClose => {
-                        if v.expect_expression || v.open_brackets == 0 || v.is_matrix_row_len_err()
-                        {
+                        if v.open_brackets == 0 || v.is_matrix_row_len_err() {
                             ShuntingYard::rollback(
                                 &mut operator_stack,
                                 output_stack,
@@ -1092,7 +1096,7 @@ impl ShuntingYard {
         output_stack: &[ShuntingYardResult],
         operator_stack: &[ShuntingYardOperatorResult],
     ) {
-        if true {
+        if false {
             return;
         }
         #[cfg(debug_assertions)]
@@ -1723,6 +1727,7 @@ pub mod tests {
         test_output(
             "[2] + 1",
             &[
+                op(OperatorTokenType::StartLock),
                 num(2),
                 op(OperatorTokenType::Matrix {
                     row_count: 1,
@@ -1735,6 +1740,7 @@ pub mod tests {
         test_output(
             "[2, 3] + 1",
             &[
+                op(OperatorTokenType::StartLock),
                 num(2),
                 num(3),
                 op(OperatorTokenType::Matrix {
@@ -1749,6 +1755,7 @@ pub mod tests {
         test_output(
             "[2, 3, 4; 5, 6, 7] + 1",
             &[
+                op(OperatorTokenType::StartLock),
                 num(2),
                 num(3),
                 num(4),
@@ -1806,6 +1813,7 @@ pub mod tests {
         test_output(
             "[[2, 3, 4], [5, 6, 7]] + 1",
             &[
+                op(OperatorTokenType::StartLock),
                 num(5),
                 num(6),
                 num(7),
@@ -1915,6 +1923,7 @@ pub mod tests {
         test_output(
             "[1,2,3]*[4;5;6]",
             &[
+                op(OperatorTokenType::StartLock),
                 num(1),
                 num(2),
                 num(3),
@@ -1922,6 +1931,7 @@ pub mod tests {
                     row_count: 1,
                     col_count: 3,
                 }),
+                op(OperatorTokenType::StartLock),
                 num(4),
                 num(5),
                 num(6),
@@ -1953,6 +1963,7 @@ pub mod tests {
         test_output(
             "[[2, 3, 4], [5, 6, 7]] + 1",
             &[
+                op(OperatorTokenType::StartLock),
                 num(5),
                 num(6),
                 num(7),
@@ -1966,6 +1977,7 @@ pub mod tests {
         test_output(
             "[2 + 3, 4 * 5;  6 / 7, 8^9]",
             &[
+                op(OperatorTokenType::StartLock),
                 num(2),
                 num(3),
                 op(OperatorTokenType::Add),
@@ -1985,7 +1997,19 @@ pub mod tests {
             ],
         );
 
-        test_output("1 + [2,]", &[num(1)]);
+        test_output(
+            "1 + [2,]",
+            &[
+                num(1),
+                op(OperatorTokenType::StartLock),
+                num(2),
+                op(OperatorTokenType::Matrix {
+                    row_count: 1,
+                    col_count: 2,
+                }),
+                op(OperatorTokenType::Add),
+            ],
+        );
         test_output(
             "1 + [2,] 3*4",
             &[num(3), num(4), op(OperatorTokenType::Mult)],
@@ -2584,6 +2608,7 @@ pub mod tests {
         test_output(
             "[sin(60), cos(30)]",
             &[
+                op(OperatorTokenType::StartLock),
                 num(60),
                 op(OperatorTokenType::Fn {
                     arg_count: 1,
@@ -2604,6 +2629,7 @@ pub mod tests {
         test_output(
             "sin([60, 30])",
             &[
+                op(OperatorTokenType::StartLock),
                 num(60),
                 num(30),
                 op(OperatorTokenType::Matrix {
@@ -3177,6 +3203,7 @@ pub mod tests {
         test_output(
             "[7*7]*9#8=-+",
             &[
+                op(OperatorTokenType::StartLock),
                 num(7),
                 num(7),
                 op(OperatorTokenType::Mult),

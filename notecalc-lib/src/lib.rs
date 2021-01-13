@@ -820,11 +820,13 @@ pub mod helper {
     #[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
     pub struct ContentIndex(usize);
 
+    #[inline]
     pub fn content_y(y: usize) -> ContentIndex {
         ContentIndex(y)
     }
 
     impl ContentIndex {
+        #[inline]
         pub fn new(n: usize) -> ContentIndex {
             ContentIndex(n)
         }
@@ -1011,7 +1013,12 @@ pub enum OutputMessage<'a> {
 
 #[repr(C)]
 pub enum Layer {
-    BehindText,
+    // function background
+    BehindTextBehindCursor,
+    // cursor
+    BehindTextCursor,
+    // highlighting words, matrix editor bg
+    BehindTextAboveCursor,
     Text,
     AboveText,
 }
@@ -1026,7 +1033,6 @@ pub struct Rect {
 
 #[derive(Debug)]
 pub struct RenderBuckets<'a> {
-    pub current_line_highlight: Option<Rect>,
     pub left_gutter_bg: Rect,
     pub right_gutter_bg: Rect,
     pub result_panel_bg: Rect,
@@ -1041,7 +1047,7 @@ pub struct RenderBuckets<'a> {
     pub parenthesis: Vec<RenderChar>,
     pub variable: Vec<RenderUtf8TextMsg<'a>>,
     pub line_ref_results: Vec<RenderStringMsg>,
-    pub custom_commands: [Vec<OutputMessage<'a>>; 3],
+    pub custom_commands: [Vec<OutputMessage<'a>>; 5],
     pub pulses: Vec<PulsingRectangle>,
     pub clear_pulses: bool,
 }
@@ -1049,7 +1055,6 @@ pub struct RenderBuckets<'a> {
 impl<'a> RenderBuckets<'a> {
     pub fn new() -> RenderBuckets<'a> {
         RenderBuckets {
-            current_line_highlight: None,
             left_gutter_bg: Rect {
                 x: 0,
                 y: 0,
@@ -1076,6 +1081,8 @@ impl<'a> RenderBuckets<'a> {
                 Vec::with_capacity(128),
                 Vec::with_capacity(128),
                 Vec::with_capacity(128),
+                Vec::with_capacity(128),
+                Vec::with_capacity(128),
             ],
             numbers: Vec::with_capacity(32),
             number_errors: Vec::with_capacity(32),
@@ -1097,9 +1104,9 @@ impl<'a> RenderBuckets<'a> {
         self.ascii_texts.clear();
         self.utf8_texts.clear();
         self.headers.clear();
-        self.custom_commands[0].clear();
-        self.custom_commands[1].clear();
-        self.custom_commands[2].clear();
+        for bucket in self.custom_commands.iter_mut() {
+            bucket.clear();
+        }
         self.numbers.clear();
         self.number_errors.clear();
         self.units.clear();
@@ -1183,6 +1190,7 @@ impl Default for LineData {
     }
 }
 
+#[derive(Debug)]
 pub struct MatrixEditing {
     pub editor_content: EditorContent<usize>,
     pub editor: Editor,
@@ -1365,6 +1373,7 @@ impl MatrixEditing {
             self.row_count,
             render_buckets,
             vert_align_offset,
+            false,
         );
         render_x += 1;
 
@@ -1398,9 +1407,10 @@ impl MatrixEditing {
                 );
 
                 if self.current_cell == Pos::from_row_column(row_i, col_i) {
-                    render_buckets.set_color(Layer::BehindText, theme.matrix_edit_active_bg);
+                    render_buckets
+                        .set_color(Layer::BehindTextAboveCursor, theme.matrix_edit_active_bg);
                     render_buckets.draw_rect(
-                        Layer::BehindText,
+                        Layer::BehindTextAboveCursor,
                         render_x + padding_x + left_gutter_width,
                         dst_y,
                         text_len,
@@ -1419,9 +1429,10 @@ impl MatrixEditing {
                     let sel = self.editor.get_selection();
                     if let Some((first, second)) = sel.is_range_ordered() {
                         let len = second.column - first.column;
-                        render_buckets.set_color(Layer::BehindText, theme.selection_color);
+                        render_buckets
+                            .set_color(Layer::BehindTextAboveCursor, theme.selection_color);
                         render_buckets.draw_rect(
-                            Layer::BehindText,
+                            Layer::BehindTextAboveCursor,
                             render_x + padding_x + left_gutter_width + first.column,
                             dst_y,
                             len,
@@ -1466,6 +1477,7 @@ impl MatrixEditing {
             self.row_count,
             render_buckets,
             vert_align_offset,
+            false,
         );
 
         render_x += 1;
@@ -1852,37 +1864,61 @@ impl NoteCalcApp {
                 gr.longest_visible_editor_line_len =
                     gr.longest_visible_editor_line_len.max(r.render_x);
             }
-            // #[cfg(debug_assertions)]
-            // {
-            //     let chars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
-            //     for i in 0..(gr.left_gutter_width
-            //         + (gr.current_editor_width + 1)
-            //         + RIGHT_GUTTER_WIDTH
-            //         + gr.current_result_panel_width)
-            //     {
-            //         let d = i + 1;
-            //         render_buckets.draw_char(Layer::AboveText, i, canvas_y(0), chars[d % 10]);
-            //         if d % 10 == 0 && d < 100 {
-            //             render_buckets.draw_char(Layer::AboveText, i, canvas_y(1), chars[d / 10]);
-            //         }
-            //     }
-            // }
-        }
-
-        render_buckets.set_color(Layer::BehindText, theme.func_bg);
-        for i in gr.scroll_y..(gr.scroll_y + gr.client_height).min(MAX_LINE_COUNT) {
-            if let Some(fd) = func_defs[i].as_ref() {
-                render_buckets.draw_rect(
-                    Layer::BehindText,
-                    gr.left_gutter_width,
-                    canvas_y((i - gr.scroll_y) as isize),
-                    gr.current_editor_width,
-                    fd.last_row_index.as_usize().max(i) - i + 1,
-                )
+            #[cfg(debug_assertions)]
+            {
+                let chars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+                for i in 0..(gr.left_gutter_width
+                    + (gr.current_editor_width + 1)
+                    + RIGHT_GUTTER_WIDTH
+                    + gr.current_result_panel_width)
+                {
+                    let d = i + 1;
+                    render_buckets.draw_char(Layer::AboveText, i, canvas_y(0), chars[d % 10]);
+                    if d % 10 == 0 && d < 100 {
+                        render_buckets.draw_char(Layer::AboveText, i, canvas_y(1), chars[d / 10]);
+                    }
+                }
             }
         }
 
-        highlight_current_line(render_buckets, editor, &gr, theme);
+        let mut cursor_inside_function_body = false;
+        // render function background fn bg
+        {
+            let cursor_row = editor.get_selection().get_cursor_pos().row;
+            render_buckets.set_color(Layer::BehindTextBehindCursor, theme.func_bg);
+            let mut i = gr.scroll_y;
+            let to = (i + gr.client_height).min(MAX_LINE_COUNT);
+            while i < to {
+                if let Some(fd) = func_defs[i].as_ref() {
+                    let mut rendered_h = 1;
+                    for j in fd.first_row_index.add(1).as_usize()..=fd.last_row_index.as_usize() {
+                        rendered_h += gr.get_rendered_height(content_y(j));
+                    }
+                    render_buckets.draw_rect(
+                        Layer::BehindTextBehindCursor,
+                        gr.left_gutter_width,
+                        gr.get_render_y(content_y(i - gr.scroll_y)).expect("must"),
+                        gr.current_editor_width,
+                        rendered_h,
+                    );
+
+                    cursor_inside_function_body |= cursor_row >= fd.first_row_index.as_usize()
+                        && cursor_row <= fd.last_row_index.as_usize();
+
+                    i = fd.last_row_index.as_usize() + 1;
+                } else {
+                    i += 1;
+                }
+            }
+        }
+
+        highlight_current_line(
+            render_buckets,
+            editor,
+            &gr,
+            theme,
+            cursor_inside_function_body,
+        );
 
         // line numbers
         {
@@ -3300,6 +3336,7 @@ impl NoteCalcApp {
 
             if let Some(mut fd) = try_extract_function_def(&mut parsed_tokens, allocator) {
                 fd.first_row_index = editor_y;
+                fd.last_row_index = editor_y;
                 apptokens[editor_y] = Some(Tokens {
                     tokens: parsed_tokens,
                     shunting_output_stack: Vec::with_capacity(0),
@@ -3428,6 +3465,7 @@ impl NoteCalcApp {
                             err.token_index,
                             &mut apptokens[editor_y].as_mut().unwrap().tokens,
                         );
+                        dbg!(&apptokens[editor_y].as_mut().unwrap().tokens);
                         for i in &[
                             err.token_index_lhs_1,
                             err.token_index_lhs_2,
@@ -3845,7 +3883,10 @@ impl NoteCalcApp {
                         value: Err(()),
                     })
                 }
-            } else {
+            } else if let Some(fdi) = function_def_index {
+                if func_defs[fdi].as_ref().expect("must").last_row_index < content_y(editor_y) {
+                    function_def_index = None;
+                }
             }
 
             let function_def_index = function_def_index;
@@ -5174,9 +5215,9 @@ fn highlight_line_ref_background<'text_ptr>(
             let width = allowed_end_x as isize - start_render_x as isize;
             if width > 0 {
                 let vert_align_offset = (r.rendered_row_height - editor_obj.rendered_h) / 2;
-                render_buckets.set_color(Layer::Text, theme.line_ref_bg);
+                render_buckets.set_color(Layer::BehindTextAboveCursor, theme.line_ref_bg);
                 render_buckets.draw_rect(
-                    Layer::Text,
+                    Layer::BehindTextAboveCursor,
                     start_render_x,
                     editor_obj.rendered_y.add(vert_align_offset),
                     width as usize,
@@ -5550,51 +5591,62 @@ fn draw_right_gutter_num_prefixes(
     }
 }
 
+fn blend_color(src_color: u32, dst_color: u32, src_alpha: f32) -> u32 {
+    let dst_alpha = 1f32 - src_alpha;
+    let src_r = (src_color >> 24 & 0xFF) as f32;
+    let src_g = (src_color >> 16 & 0xFF) as f32;
+    let src_b = (src_color >> 8 & 0xFF) as f32;
+    let dst_r = (dst_color >> 24 & 0xFF) as f32;
+    let dst_g = (dst_color >> 16 & 0xFF) as f32;
+    let dst_b = (dst_color >> 8 & 0xFF) as f32;
+    let out_r = (src_r * src_alpha + dst_r * dst_alpha) as u32;
+    let out_g = (src_g * src_alpha + dst_g * dst_alpha) as u32;
+    let out_b = (src_b * src_alpha + dst_b * dst_alpha) as u32;
+    return (out_r << 24 | out_g << 16 | out_b << 8) | 0xFF;
+}
+
 fn highlight_current_line(
     render_buckets: &mut RenderBuckets,
     editor: &Editor,
     gr: &GlobalRenderData,
     theme: &Theme,
+    cursor_inside_function_body: bool,
 ) {
     let cursor_row = editor.get_selection().get_cursor_pos().row;
-    render_buckets.current_line_highlight =
-        if let Some(render_y) = gr.get_render_y(content_y(cursor_row)) {
-            let render_h = gr.get_rendered_height(content_y(cursor_row));
-            render_buckets.set_color(Layer::BehindText, theme.current_line_bg);
-            let result = Some(Rect {
-                x: 0,
-                y: render_y.as_usize() as u16,
-                w: (gr.result_gutter_x + RIGHT_GUTTER_WIDTH + gr.current_result_panel_width) as u16,
-                h: render_h as u16,
-            });
-            // render a blended rectangle to the right gutter as if the highlighting rectangle
-            // would blend into it (without it it hides the gutter and it is ugly).
-            let blended_color = {
-                let src_alpha = 0.5f32;
-                let dst_alpha = 1f32 - src_alpha;
-                let src_r = (theme.result_gutter_bg >> 24 & 0xFF) as f32;
-                let src_g = (theme.result_gutter_bg >> 16 & 0xFF) as f32;
-                let src_b = (theme.result_gutter_bg >> 8 & 0xFF) as f32;
-                let dst_r = (theme.current_line_bg >> 24 & 0xFF) as f32;
-                let dst_g = (theme.current_line_bg >> 16 & 0xFF) as f32;
-                let dst_b = (theme.current_line_bg >> 8 & 0xFF) as f32;
-                let out_r = (src_r * src_alpha + dst_r * dst_alpha) as u32;
-                let out_g = (src_g * src_alpha + dst_g * dst_alpha) as u32;
-                let out_b = (src_b * src_alpha + dst_b * dst_alpha) as u32;
-                (out_r << 24 | out_g << 16 | out_b << 8) | 0xFF
-            };
-            render_buckets.set_color(Layer::Text, blended_color);
+    if let Some(render_y) = gr.get_render_y(content_y(cursor_row)) {
+        let render_h = gr.get_rendered_height(content_y(cursor_row));
+        render_buckets.set_color(Layer::BehindTextCursor, theme.current_line_bg);
+        render_buckets.draw_rect(
+            Layer::BehindTextCursor,
+            0,
+            render_y,
+            gr.result_gutter_x + RIGHT_GUTTER_WIDTH + gr.current_result_panel_width,
+            render_h,
+        );
+        // render a blended rectangle to the right gutter as if the highlighting rectangle
+        // would blend into it (without it it hides the gutter and it is ugly).
+        let blended_color = blend_color(theme.result_gutter_bg, theme.current_line_bg, 0.5);
+        render_buckets.set_color(Layer::Text, blended_color);
+        render_buckets.draw_rect(
+            Layer::Text,
+            gr.result_gutter_x,
+            render_y,
+            RIGHT_GUTTER_WIDTH,
+            render_h,
+        );
+
+        if cursor_inside_function_body {
+            let blended_color = blend_color(theme.func_bg, theme.current_line_bg, 0.5);
+            render_buckets.set_color(Layer::BehindTextCursor, blended_color);
             render_buckets.draw_rect(
-                Layer::Text,
-                gr.result_gutter_x,
+                Layer::BehindTextCursor,
+                gr.left_gutter_width,
                 render_y,
-                RIGHT_GUTTER_WIDTH,
+                gr.current_editor_width,
                 render_h,
             );
-            result
-        } else {
-            None
-        };
+        }
+    };
 }
 
 fn sum_result(sum_var: &mut Variable, result: &CalcResult, sum_is_null: &mut bool) {
@@ -5630,12 +5682,14 @@ fn render_matrix<'text_ptr>(
     _decimal_count: Option<usize>,
     theme: &Theme,
 ) -> usize {
+    dbg!(&tokens[token_index]);
     let mut text_width = 0;
     let mut end_token_index = token_index;
     while tokens[end_token_index].typ != TokenType::Operator(OperatorTokenType::BracketClose) {
         text_width += tokens[end_token_index].ptr.len();
         end_token_index += 1;
     }
+    let matrix_has_errors = tokens[end_token_index].has_error;
     // ignore the bracket as well
     text_width += 1;
     end_token_index += 1;
@@ -5674,6 +5728,7 @@ fn render_matrix<'text_ptr>(
             render_buckets,
             r.rendered_row_height,
             theme,
+            matrix_has_errors,
         )
     };
 
@@ -5828,6 +5883,7 @@ fn render_matrix_obj<'text_ptr>(
     render_buckets: &mut RenderBuckets<'text_ptr>,
     rendered_row_height: usize,
     theme: &Theme,
+    matrix_has_errors: bool,
 ) -> usize {
     let vert_align_offset = (rendered_row_height - MatrixData::calc_render_height(row_count)) / 2;
 
@@ -5838,6 +5894,7 @@ fn render_matrix_obj<'text_ptr>(
             row_count,
             render_buckets,
             vert_align_offset,
+            matrix_has_errors,
         );
     }
     render_x += 1;
@@ -5930,6 +5987,7 @@ fn render_matrix_obj<'text_ptr>(
             row_count,
             render_buckets,
             vert_align_offset,
+            matrix_has_errors,
         );
     }
     render_x += 1;
@@ -5943,27 +6001,33 @@ fn render_matrix_left_brackets(
     row_count: usize,
     render_buckets: &mut RenderBuckets,
     vert_align_offset: usize,
+    matrix_has_errors: bool,
 ) {
+    let dst_bucket = if matrix_has_errors {
+        &mut render_buckets.number_errors
+    } else {
+        &mut render_buckets.operators
+    };
     if row_count == 1 {
-        render_buckets.operators.push(RenderUtf8TextMsg {
+        dst_bucket.push(RenderUtf8TextMsg {
             text: &['['],
             row: render_y.add(vert_align_offset),
             column: x,
         });
     } else {
-        render_buckets.operators.push(RenderUtf8TextMsg {
+        dst_bucket.push(RenderUtf8TextMsg {
             text: &['┌'],
             row: render_y.add(vert_align_offset),
             column: x,
         });
         for i in 0..row_count {
-            render_buckets.operators.push(RenderUtf8TextMsg {
+            dst_bucket.push(RenderUtf8TextMsg {
                 text: &['│'],
                 row: render_y.add(i + vert_align_offset + 1),
                 column: x,
             });
         }
-        render_buckets.operators.push(RenderUtf8TextMsg {
+        dst_bucket.push(RenderUtf8TextMsg {
             text: &['└'],
             row: render_y.add(row_count + vert_align_offset + 1),
             column: x,
@@ -5977,27 +6041,33 @@ fn render_matrix_right_brackets(
     row_count: usize,
     render_buckets: &mut RenderBuckets,
     vert_align_offset: usize,
+    matrix_has_errors: bool,
 ) {
+    let dst_bucket = if matrix_has_errors {
+        &mut render_buckets.number_errors
+    } else {
+        &mut render_buckets.operators
+    };
     if row_count == 1 {
-        render_buckets.operators.push(RenderUtf8TextMsg {
+        dst_bucket.push(RenderUtf8TextMsg {
             text: &[']'],
             row: render_y.add(vert_align_offset),
             column: x,
         });
     } else {
-        render_buckets.operators.push(RenderUtf8TextMsg {
+        dst_bucket.push(RenderUtf8TextMsg {
             text: &['┐'],
             row: render_y.add(vert_align_offset),
             column: x,
         });
         for i in 0..row_count {
-            render_buckets.operators.push(RenderUtf8TextMsg {
+            dst_bucket.push(RenderUtf8TextMsg {
                 text: &['│'],
                 row: render_y.add(i + 1 + vert_align_offset),
                 column: x,
             });
         }
-        render_buckets.operators.push(RenderUtf8TextMsg {
+        dst_bucket.push(RenderUtf8TextMsg {
             text: &['┘'],
             row: render_y.add(row_count + 1 + vert_align_offset),
             column: x,
@@ -6009,6 +6079,7 @@ fn render_matrix_result<'text_ptr>(
     units: &Units,
     mut render_x: usize,
     render_y: CanvasY,
+    clip_right: usize,
     mat: &MatrixData,
     render_buckets: &mut RenderBuckets<'text_ptr>,
     prev_mat_result_lengths: Option<&ResultLengths>,
@@ -6019,13 +6090,16 @@ fn render_matrix_result<'text_ptr>(
     let start_x = render_x;
 
     let vert_align_offset = (rendered_row_height - mat.render_height()) / 2;
-    render_matrix_left_brackets(
-        start_x,
-        render_y,
-        mat.row_count,
-        render_buckets,
-        vert_align_offset,
-    );
+    if render_x < clip_right {
+        render_matrix_left_brackets(
+            start_x,
+            render_y,
+            mat.row_count,
+            render_buckets,
+            vert_align_offset,
+            false,
+        );
+    }
     render_x += 1;
 
     let cells_strs = {
@@ -6063,6 +6137,9 @@ fn render_matrix_result<'text_ptr>(
     render_buckets.set_color(Layer::Text, text_color);
 
     for col_i in 0..mat.col_count {
+        if render_x >= clip_right {
+            break;
+        }
         for row_i in 0..mat.row_count {
             let cell_str = &cells_strs[row_i * mat.col_count + col_i];
             let lengths = get_int_frac_part_len(cell_str);
@@ -6129,13 +6206,16 @@ fn render_matrix_result<'text_ptr>(
         };
     }
 
-    render_matrix_right_brackets(
-        render_x,
-        render_y,
-        mat.row_count,
-        render_buckets,
-        vert_align_offset,
-    );
+    if render_x < clip_right {
+        render_matrix_right_brackets(
+            render_x,
+            render_y,
+            mat.row_count,
+            render_buckets,
+            vert_align_offset,
+            false,
+        );
+    }
     render_x += 1;
     return render_x - start_x;
 }
@@ -6158,6 +6238,7 @@ fn render_result_inside_editor<'text_ptr>(
                 units,
                 gr.left_gutter_width + r.render_x,
                 r.render_y,
+                gr.result_gutter_x - SCROLLBAR_WIDTH,
                 mat,
                 render_buckets,
                 None,
@@ -6474,6 +6555,7 @@ fn create_render_commands_for_results_and_render_matrices<'text_ptr>(
                         units,
                         gr.result_gutter_x + RIGHT_GUTTER_WIDTH,
                         render_y,
+                        gr.client_width,
                         mat,
                         render_buckets,
                         prev_result_matrix_length.as_ref(),
@@ -6585,9 +6667,9 @@ fn draw_line_refs_and_vars_referenced_from_cur_row<'b>(
                 let defined_at = content_y(var_index);
                 if let Some(render_y) = gr.get_render_y(defined_at) {
                     // render a rectangle on the *left gutter*
-                    render_buckets.custom_commands[Layer::BehindText as usize]
+                    render_buckets.custom_commands[Layer::BehindTextAboveCursor as usize]
                         .push(OutputMessage::SetColor(color));
-                    render_buckets.custom_commands[Layer::BehindText as usize].push(
+                    render_buckets.custom_commands[Layer::BehindTextAboveCursor as usize].push(
                         OutputMessage::RenderRectangle {
                             x: 0,
                             y: render_y,
@@ -6596,7 +6678,7 @@ fn draw_line_refs_and_vars_referenced_from_cur_row<'b>(
                         },
                     );
                     // render a rectangle on the *right gutter*
-                    render_buckets.custom_commands[Layer::BehindText as usize].push(
+                    render_buckets.custom_commands[Layer::BehindTextAboveCursor as usize].push(
                         OutputMessage::RenderRectangle {
                             x: gr.result_gutter_x,
                             y: render_y,
@@ -6764,7 +6846,14 @@ fn render_buckets_into(buckets: &RenderBuckets, canvas: &mut [[char; 256]]) {
         }
     }
 
-    for command in &buckets.custom_commands[Layer::BehindText as usize] {
+    for command in &buckets.custom_commands[Layer::BehindTextBehindCursor as usize] {
+        write_command(canvas, command);
+    }
+
+    for command in &buckets.custom_commands[Layer::BehindTextCursor as usize] {
+        write_command(canvas, command);
+    }
+    for command in &buckets.custom_commands[Layer::BehindTextAboveCursor as usize] {
         write_command(canvas, command);
     }
 
@@ -6829,14 +6918,14 @@ fn render_selection_and_its_sum<'text_ptr>(
     theme: &Theme,
     apptokens: &AppTokens,
 ) {
-    render_buckets.set_color(Layer::BehindText, theme.selection_color);
+    render_buckets.set_color(Layer::BehindTextAboveCursor, theme.selection_color);
     if let Some((start, end)) = editor.get_selection().is_range_ordered() {
         if end.row > start.row {
             // first line
             if let Some(start_render_y) = gr.get_render_y(content_y(start.row)) {
                 let height = gr.get_rendered_height(content_y(start.row));
                 render_buckets.draw_rect(
-                    Layer::BehindText,
+                    Layer::BehindTextAboveCursor,
                     start.column + gr.left_gutter_width,
                     start_render_y,
                     (editor_content.line_len(start.row) - start.column)
@@ -6849,7 +6938,7 @@ fn render_selection_and_its_sum<'text_ptr>(
                 if let Some(render_y) = gr.get_render_y(content_y(i)) {
                     let height = gr.get_rendered_height(content_y(i));
                     render_buckets.draw_rect(
-                        Layer::BehindText,
+                        Layer::BehindTextAboveCursor,
                         gr.left_gutter_width,
                         render_y,
                         editor_content.line_len(i).min(gr.current_editor_width),
@@ -6861,7 +6950,7 @@ fn render_selection_and_its_sum<'text_ptr>(
             if let Some(end_render_y) = gr.get_render_y(content_y(end.row)) {
                 let height = gr.get_rendered_height(content_y(end.row));
                 render_buckets.draw_rect(
-                    Layer::BehindText,
+                    Layer::BehindTextAboveCursor,
                     gr.left_gutter_width,
                     end_render_y,
                     end.column.min(gr.current_editor_width),
@@ -6871,7 +6960,7 @@ fn render_selection_and_its_sum<'text_ptr>(
         } else if let Some(start_render_y) = gr.get_render_y(content_y(start.row)) {
             let height = gr.get_rendered_height(content_y(start.row));
             render_buckets.draw_rect(
-                Layer::BehindText,
+                Layer::BehindTextAboveCursor,
                 start.column + gr.left_gutter_width,
                 start_render_y,
                 (end.column - start.column).min(gr.current_editor_width),

@@ -625,14 +625,19 @@ fn send_render_commands_to_js(render_buckets: &RenderBuckets, theme: &Theme) {
         &render_buckets.result_panel_bg,
         theme.result_bg_color,
     );
+
+    for command in &render_buckets.custom_commands[Layer::BehindTextBehindCursor as usize] {
+        write_command(&mut js_command_buffer, command);
+    }
+
     if let Some((color, rect)) = &render_buckets.scroll_bar {
         write_color_rect(&mut js_command_buffer, rect, *color);
     }
-    if let Some(rect) = &render_buckets.current_line_highlight {
-        write_color_rect(&mut js_command_buffer, rect, theme.current_line_bg);
-    }
 
-    for command in &render_buckets.custom_commands[Layer::BehindText as usize] {
+    for command in &render_buckets.custom_commands[Layer::BehindTextCursor as usize] {
+        write_command(&mut js_command_buffer, command);
+    }
+    for command in &render_buckets.custom_commands[Layer::BehindTextAboveCursor as usize] {
         write_command(&mut js_command_buffer, command);
     }
 

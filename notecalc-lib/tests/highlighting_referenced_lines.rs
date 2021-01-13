@@ -159,11 +159,27 @@ fn test_that_out_of_editor_line_ref_backgrounds_are_not_rendered() {
         test.input(EditorInputEvent::Char('1'), InputModifiers::none());
     }
 
-    test.assert_contains_custom_command(Layer::Text, 1, |cmd| match cmd {
+    test.assert_contains_custom_command(Layer::BehindTextAboveCursor, 1, |cmd| match cmd {
         OutputMessage::RenderRectangle { y, .. } => *y == canvas_y(2),
         _ => false,
     });
-    test.assert_contains_custom_command(Layer::Text, 1, |cmd| match cmd {
+    test.assert_contains_custom_command(Layer::BehindTextAboveCursor, 1, |cmd| match cmd {
+        OutputMessage::SetColor(c) => *c == THEMES[0].line_ref_bg,
+        _ => false,
+    });
+}
+
+// otherwise the content of a referenced matrix is not visible
+#[test]
+fn test_that_lineref_bg_is_behind_text() {
+    let test = create_test_app2(51, 35);
+    test.paste("234\n356789\nasd &[1] * &[2] * 2");
+
+    test.assert_contains_custom_command(Layer::BehindTextAboveCursor, 2, |cmd| match cmd {
+        OutputMessage::RenderRectangle { y, .. } => *y == canvas_y(2),
+        _ => false,
+    });
+    test.assert_contains_custom_command(Layer::BehindTextAboveCursor, 2, |cmd| match cmd {
         OutputMessage::SetColor(c) => *c == THEMES[0].line_ref_bg,
         _ => false,
     });
@@ -181,7 +197,7 @@ fn test_that_partial_out_of_editor_line_ref_backgrounds_are_rendered_partially()
     }
 
     // everything visible yet
-    test.assert_contains_custom_command(Layer::Text, 1, |cmd| match cmd {
+    test.assert_contains_custom_command(Layer::BehindTextAboveCursor, 1, |cmd| match cmd {
         OutputMessage::RenderRectangle { x, y, w, h } => {
             *y == canvas_y(2) && *x == 22 && *w == 7 && *h == 1
         }
@@ -189,7 +205,7 @@ fn test_that_partial_out_of_editor_line_ref_backgrounds_are_rendered_partially()
     });
 
     test.input(EditorInputEvent::Char('1'), InputModifiers::none());
-    test.assert_contains_custom_command(Layer::Text, 1, |cmd| match cmd {
+    test.assert_contains_custom_command(Layer::BehindTextAboveCursor, 1, |cmd| match cmd {
         OutputMessage::RenderRectangle { x, y, w, h } => {
             *y == canvas_y(2) && *x == 23 && *w == 4 && *h == 1
         }
@@ -197,7 +213,7 @@ fn test_that_partial_out_of_editor_line_ref_backgrounds_are_rendered_partially()
     });
 
     test.input(EditorInputEvent::Char('1'), InputModifiers::none());
-    test.assert_contains_custom_command(Layer::Text, 1, |cmd| match cmd {
+    test.assert_contains_custom_command(Layer::BehindTextAboveCursor, 1, |cmd| match cmd {
         OutputMessage::RenderRectangle { x, y, w, h } => {
             *y == canvas_y(2) && *x == 24 && *w == 2 && *h == 1
         }
@@ -220,7 +236,7 @@ fn test_that_out_of_editor_line_ref_underlines_are_not_rendered() {
 
     // there is only 1 line ref background since the 2nd one is out of editor
     // the one setcolor is for the rectangle, but there is no for the underline
-    test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+    test.assert_contains_custom_command(Layer::BehindTextAboveCursor, 1, |cmd| match cmd {
         OutputMessage::SetColor(color) => *color == ACTIVE_LINE_REF_HIGHLIGHT_COLORS[1],
         _ => false,
     });
@@ -229,7 +245,7 @@ fn test_that_out_of_editor_line_ref_underlines_are_not_rendered() {
         _ => false,
     });
     // just to be sure that there are 2 setcolor for normal cases
-    test.assert_contains_custom_command(Layer::BehindText, 1, |cmd| match cmd {
+    test.assert_contains_custom_command(Layer::BehindTextAboveCursor, 1, |cmd| match cmd {
         OutputMessage::SetColor(color) => *color == ACTIVE_LINE_REF_HIGHLIGHT_COLORS[0],
         _ => false,
     });
@@ -247,7 +263,7 @@ fn test_that_out_of_editor_line_ref_underlines_are_not_rendered() {
             OutputMessage::SetColor(color) => *color == *expected_color,
             _ => false,
         });
-        test.assert_contains_custom_command(Layer::BehindText, 0, |cmd| match cmd {
+        test.assert_contains_custom_command(Layer::BehindTextAboveCursor, 0, |cmd| match cmd {
             OutputMessage::SetColor(color) => *color == *expected_color,
             _ => false,
         });
