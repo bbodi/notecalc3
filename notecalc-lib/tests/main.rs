@@ -2005,6 +2005,15 @@ mod dependent_lines_recalculation_tests {
 }
 
 #[test]
+fn test_sum_inside_parens() {
+    {
+        let test = create_test_app(35);
+        test.paste("12\n(2*sum)");
+        test.assert_results(&["12", "24"]);
+    }
+}
+
+#[test]
 fn test_that_result_is_not_changing_if_tokens_change_before_it() {
     let test = create_test_app(35);
     test.paste("111");

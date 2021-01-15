@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Empty matrices or matrices with invalid content are now considered as matrix, so the matrix editor can be used on them
 ### Features
 - User defined functions
+- Indent and Unindent lines (tab/shift+tab)
+    - Better editor handling, which paves the road for multiple cursors
 ### Changed
 ### Fixed
 - Bin or Hex representation of a float is now an Error
@@ -18,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Referenced matrices were rendered outside the editor
 - Empty matrices (`[]`) inside parenthesis were not evaluated correctly
 - Added new rendering layers so rendered rectangles can be positioned better (e.g. where to put matrix editor background to not be hidden by cursor highlighter nor function bg color etc)
+- Builtin variable `sum` was not parsed correctly if it was followed by some special chars
 
 
 ## [0.3.0] - 2020-12-21

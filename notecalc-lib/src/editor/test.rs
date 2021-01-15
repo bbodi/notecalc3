@@ -123,7 +123,7 @@ mod tests {
     /// '|' marks the cursor's position. If there are two of them, then
     /// it means a selection's begin and end.
     fn test0(
-        editor: &mut Editor,
+        editor: &mut Editor<usize>,
         content: &mut EditorContent<usize>,
         params: TestParams,
     ) -> Vec<Option<RowModificationType>> {
@@ -191,7 +191,7 @@ mod tests {
         }
 
         // assert
-        let editor: &Editor = editor;
+        let editor: &Editor<usize> = editor;
         let mut expected_cursor = Selection::single_r_c(0, 0);
         let mut expected_selection_start = Pos { row: 0, column: 0 };
         let mut expected_selection_end = Pos { row: 0, column: 0 };
@@ -230,8 +230,8 @@ mod tests {
             }
 
             assert_eq!(
-                params.expected_content.lines().count(),
                 content.line_count(),
+                params.expected_content.lines().count(),
                 "Expected line count differs. Current content: {}",
                 content.get_content()
             );
@@ -5527,6 +5527,64 @@ mod tests {
     }
 
     #[test]
+    fn test_shift_tab() {
+        test(
+            "█abcdef",
+            &[EditorInputEvent::Tab],
+            InputModifiers::shift(),
+            "█abcdef",
+        );
+        test(
+            "a█bcdef",
+            &[EditorInputEvent::Tab],
+            InputModifiers::shift(),
+            "a█bcdef",
+        );
+        test(
+            "ab█cdef",
+            &[EditorInputEvent::Tab],
+            InputModifiers::shift(),
+            "ab█cdef",
+        );
+        test(
+            "abc█def",
+            &[EditorInputEvent::Tab],
+            InputModifiers::shift(),
+            "abc█def",
+        );
+        test(
+            " abc█def",
+            &[EditorInputEvent::Tab],
+            InputModifiers::shift(),
+            "abc█def",
+        );
+        test(
+            "  abc█def",
+            &[EditorInputEvent::Tab],
+            InputModifiers::shift(),
+            "abc█def",
+        );
+        test(
+            "   abc█def",
+            &[EditorInputEvent::Tab],
+            InputModifiers::shift(),
+            "abc█def",
+        );
+        test(
+            "    abc█def",
+            &[EditorInputEvent::Tab],
+            InputModifiers::shift(),
+            "abc█def",
+        );
+        test(
+            "     abc█def",
+            &[EditorInputEvent::Tab],
+            InputModifiers::shift(),
+            "    abc█def",
+        );
+    }
+
+    #[test]
     fn test_ctrl_a() {
         test(
             "aaa█aa12s aa\n\
@@ -5912,11 +5970,11 @@ interest rate / (12 (1/year))
             &mut content,
         );
 
+        editor.reset();
         content.init_with("");
-        editor.set_cursor_pos_r_c(0, 0);
 
-        assert_eq!(content.undo_stack.len(), 0);
-        assert_eq!(content.redo_stack.len(), 0);
+        assert_eq!(editor.undo_stack.len(), 0);
+        assert_eq!(editor.redo_stack.len(), 0);
 
         // no panic
         editor.handle_input_undoable(
@@ -5989,7 +6047,7 @@ interest rate / (12 (1/year))
             InputModifiers::none(),
             &mut content,
         );
-        assert_eq!(content.redo_stack.len(), 0);
+        assert_eq!(editor.redo_stack.len(), 0);
 
         editor.handle_tick(10000); // to put it into a separate undo group
         editor.handle_input_undoable(
@@ -5997,7 +6055,7 @@ interest rate / (12 (1/year))
             InputModifiers::ctrl(),
             &mut content,
         );
-        assert_eq!(content.redo_stack.len(), 1);
+        assert_eq!(editor.redo_stack.len(), 1);
 
         // remove the 2nd row so the '1' row index becomes invalid
         editor.handle_tick(15000); // to put it into a separate undo group
@@ -6006,7 +6064,7 @@ interest rate / (12 (1/year))
             InputModifiers::none(),
             &mut content,
         );
-        assert_eq!(content.redo_stack.len(), 0);
+        assert_eq!(editor.redo_stack.len(), 0);
 
         editor.handle_tick(20000); // to put it into a separate undo group
         editor.handle_input_undoable(
@@ -6014,7 +6072,7 @@ interest rate / (12 (1/year))
             InputModifiers::none(),
             &mut content,
         );
-        assert_eq!(content.redo_stack.len(), 0);
+        assert_eq!(editor.redo_stack.len(), 0);
 
         // no panic, and no content change
         editor.handle_tick(25000); // to put it into a separate undo group
@@ -6197,5 +6255,112 @@ interest rate / (12 (1/year))
         );
 
         assert_eq!(editor.clipboard, "aaaaaaaaaa\n".to_owned());
+    }
+
+    #[test]
+    fn test_pressing_tab_while_selection() {
+        //❱❰
+        let modif_types = test_normal_undo_redo(TestParams2 {
+            initial_content: "❱abcdefghijklmnopqrstuvwxyz\n\
+            abcd❰efghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Tab],
+            text_input: None,
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "    ❱abcdefghijklmnopqrstuvwxyz\n    abcd❰efghijklmnopqrstuvwxyz",
+        });
+        assert_eq!(
+            modif_types[0].unwrap(),
+            RowModificationType::AllLinesFrom(0)
+        );
+        assert_eq!(
+            modif_types[1].unwrap(),
+            RowModificationType::AllLinesFrom(0)
+        );
+        assert_eq!(
+            modif_types[2].unwrap(),
+            RowModificationType::AllLinesFrom(0)
+        );
+
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "    ❱abcdefghijklmnopqrstuvwxyz\n    abcd❰efghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Tab],
+            text_input: None,
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content:
+                "        ❱abcdefghijklmnopqrstuvwxyz\n        abcd❰efghijklmnopqrstuvwxyz",
+        });
+
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "a❱b\n bb\n  cb\n   db\n    ❰eb\n",
+            inputs: &[EditorInputEvent::Tab],
+            text_input: None,
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "    a❱b\n    bb\n    cb\n    db\n        ❰eb\n",
+        });
+
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "❱abcd❰",
+            inputs: &[EditorInputEvent::Tab],
+            text_input: None,
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::none(),
+            expected_content: "    ❱abcd❰",
+        });
+    }
+
+    #[test]
+    fn test_pressing_shift_tab_while_selection() {
+        //❱❰
+        let modif_types = test_normal_undo_redo(TestParams2 {
+            initial_content: "    ❱abcdefghijklmnopqrstuvwxyz\n    abcd❰efghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Tab],
+            text_input: None,
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::shift(),
+            expected_content: "❱abcdefghijklmnopqrstuvwxyz\n\
+            abcd❰efghijklmnopqrstuvwxyz",
+        });
+        assert_eq!(
+            modif_types[0].unwrap(),
+            RowModificationType::AllLinesFrom(0)
+        );
+        assert_eq!(
+            modif_types[1].unwrap(),
+            RowModificationType::AllLinesFrom(0)
+        );
+        assert_eq!(
+            modif_types[2].unwrap(),
+            RowModificationType::AllLinesFrom(0)
+        );
+
+        test_normal_undo_redo(TestParams2 {
+            initial_content:
+                "        ❱abcdefghijklmnopqrstuvwxyz\n        abcd❰efghijklmnopqrstuvwxyz",
+            inputs: &[EditorInputEvent::Tab],
+            text_input: None,
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::shift(),
+            expected_content: "    ❱abcdefghijklmnopqrstuvwxyz\n    abcd❰efghijklmnopqrstuvwxyz",
+        });
+
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "    a❱b\n    ab\n    ab\n    ab\n        ❰ab\n",
+            inputs: &[EditorInputEvent::Tab],
+            text_input: None,
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::shift(),
+            expected_content: "a❱b\nab\nab\nab\n    ❰ab\n",
+        });
+        test_normal_undo_redo(TestParams2 {
+            initial_content: "    ❱abcd❰",
+            inputs: &[EditorInputEvent::Tab],
+            text_input: None,
+            delay_after_inputs: &[],
+            modifiers: InputModifiers::shift(),
+            expected_content: "❱abcd❰",
+        });
     }
 }

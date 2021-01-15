@@ -68,7 +68,6 @@ fn test_referenced_matrix_right_brackets_are_not_rendered_if_there_is_no_space()
     // drag the rught gutter to left
     test.click(test.get_render_data().result_gutter_x, 0);
     test.handle_drag(0, 0);
-    dbg!(test.get_render_data().result_gutter_x);
 
     // start typing at beginning of the line
     test.input(EditorInputEvent::Home, InputModifiers::none());
@@ -1130,4 +1129,12 @@ fn test_matrix_invalid_op_only_op_is_in_error() {
     test.paste("1 + [2,3]");
     test.assert_contains_error(1, |_cmd| true);
     test.assert_contains_error(1, |cmd| cmd.text == to_char_slice("+"));
+}
+
+#[test]
+fn test_sum_inside_matrix() {
+    let test = create_test_app(35);
+    test.paste("12\n[1, sum]");
+    // there is no "Err" in the result
+    test.assert_results(&["12"]);
 }

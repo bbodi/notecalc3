@@ -355,7 +355,7 @@ pub fn get_cursor(app_ptr: usize) -> String {
 pub fn get_top_of_undo_stack(app_ptr: usize) -> String {
     let bcf = BorrowCheckerFighter::from_ptr(app_ptr);
     let app = bcf.app();
-    format!("{:?}", app.editor_content.undo_stack.last())
+    format!("{:?}", app.editor.undo_stack.last())
 }
 
 #[wasm_bindgen]

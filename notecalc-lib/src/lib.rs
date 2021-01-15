@@ -1192,8 +1192,8 @@ impl Default for LineData {
 
 #[derive(Debug)]
 pub struct MatrixEditing {
-    pub editor_content: EditorContent<usize>,
-    pub editor: Editor,
+    pub editor_content: EditorContent<LineData>,
+    pub editor: Editor<LineData>,
     row_count: usize,
     col_count: usize,
     current_cell: Pos,
@@ -1547,7 +1547,7 @@ pub struct EditorObjId {
 
 pub struct NoteCalcApp {
     pub result_panel_width_percent: usize,
-    pub editor: Editor,
+    pub editor: Editor<LineData>,
     pub editor_content: EditorContent<LineData>,
     pub matrix_editing: Option<MatrixEditing>,
     pub line_reference_chooser: Option<ContentIndex>,
@@ -1708,7 +1708,7 @@ impl NoteCalcApp {
     }
 
     pub fn renderr<'b>(
-        editor: &mut Editor,
+        editor: &mut Editor<LineData>,
         editor_content: &EditorContent<LineData>,
         units: &Units,
         matrix_editing: &mut Option<MatrixEditing>,
@@ -5045,7 +5045,7 @@ fn draw_cursor(
     render_buckets: &mut RenderBuckets,
     r: &PerLineRenderData,
     gr: &GlobalRenderData,
-    editor: &Editor,
+    editor: &Editor<LineData>,
     matrix_editing: &Option<MatrixEditing>,
     theme: &Theme,
 ) {
@@ -5276,7 +5276,7 @@ fn render_tokens<'text_ptr>(
     gr: &mut GlobalRenderData,
     render_buckets: &mut RenderBuckets<'text_ptr>,
     editor_objects: &mut Vec<EditorObject>,
-    editor: &Editor,
+    editor: &Editor<LineData>,
     matrix_editing: &Option<MatrixEditing>,
     vars: &Variables,
     units: &Units,
@@ -5607,7 +5607,7 @@ fn blend_color(src_color: u32, dst_color: u32, src_alpha: f32) -> u32 {
 
 fn highlight_current_line(
     render_buckets: &mut RenderBuckets,
-    editor: &Editor,
+    editor: &Editor<LineData>,
     gr: &GlobalRenderData,
     theme: &Theme,
     cursor_inside_function_body: bool,
@@ -5676,13 +5676,12 @@ fn render_matrix<'text_ptr>(
     gr: &mut GlobalRenderData,
     render_buckets: &mut RenderBuckets<'text_ptr>,
     editor_objects: &mut Vec<EditorObject>,
-    editor: &Editor,
+    editor: &Editor<LineData>,
     matrix_editing: &Option<MatrixEditing>,
     // TODO: why unused?
     _decimal_count: Option<usize>,
     theme: &Theme,
 ) -> usize {
-    dbg!(&tokens[token_index]);
     let mut text_width = 0;
     let mut end_token_index = token_index;
     while tokens[end_token_index].typ != TokenType::Operator(OperatorTokenType::BracketClose) {
@@ -5762,7 +5761,7 @@ fn render_matrix<'text_ptr>(
 
 fn evaluate_selection(
     units: &Units,
-    editor: &Editor,
+    editor: &Editor<LineData>,
     editor_content: &EditorContent<LineData>,
     vars: &Variables,
     func_defs: &FunctionDefinitions,
@@ -6333,6 +6332,8 @@ fn render_results_into_buf_and_calc_len<'text_ptr>(
         };
         if !gr.is_visible(editor_y) {
             continue;
+        } else if editor_y.as_usize() >= editor_content.line_count() {
+            break;
         }
         if render_y.as_usize() != 0 && editor_content.get_char(editor_y.as_usize(), 0) == '#' {
             let max_lens = &tmp.max_lengths[region_index];
@@ -6909,7 +6910,7 @@ fn render_selection_and_its_sum<'text_ptr>(
     units: &Units,
     render_buckets: &mut RenderBuckets<'text_ptr>,
     results: &Results,
-    editor: &Editor,
+    editor: &Editor<LineData>,
     editor_content: &EditorContent<LineData>,
     gr: &GlobalRenderData,
     vars: &Variables,
@@ -6924,14 +6925,16 @@ fn render_selection_and_its_sum<'text_ptr>(
             // first line
             if let Some(start_render_y) = gr.get_render_y(content_y(start.row)) {
                 let height = gr.get_rendered_height(content_y(start.row));
-                render_buckets.draw_rect(
-                    Layer::BehindTextAboveCursor,
-                    start.column + gr.left_gutter_width,
-                    start_render_y,
-                    (editor_content.line_len(start.row) - start.column)
-                        .min(gr.current_editor_width),
-                    height,
-                );
+                let w = editor_content.line_len(start.row);
+                if w > start.column {
+                    render_buckets.draw_rect(
+                        Layer::BehindTextAboveCursor,
+                        start.column + gr.left_gutter_width,
+                        start_render_y,
+                        (w - start.column).min(gr.current_editor_width),
+                        height,
+                    );
+                }
             }
             // full lines
             for i in start.row + 1..end.row {
@@ -7113,7 +7116,7 @@ fn is_pos_inside_an_obj(editor_objects: &EditorObjects, pos: Pos) -> Option<&Edi
 
 pub fn end_matrix_editing(
     matrix_editing: &mut Option<MatrixEditing>,
-    editor: &mut Editor,
+    editor: &mut Editor<LineData>,
     editor_content: &mut EditorContent<LineData>,
     new_cursor_pos: Option<Pos>,
 ) {

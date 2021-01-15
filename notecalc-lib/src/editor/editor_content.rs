@@ -2,77 +2,78 @@ use crate::editor::editor::{Pos, RowModificationType, Selection};
 use std::fmt::Debug;
 
 pub type Canvas = Vec<char>;
-type EditorCommandGroup<T> = Vec<EditorCommand<T>>;
 
 #[derive(Debug)]
 pub enum EditorCommand<T: Default + Clone + Debug> {
-    SwapLineUpwards(Pos),
-    SwapLineDownards(Pos),
+    SwapLineUpwards,
+    SwapLineDownards,
     Del {
         removed_char: char,
-        pos: Pos,
     },
     MergeLineWithNextRow {
         upper_row_index: usize,
         upper_line_data: Box<T>,
         lower_line_data: Box<T>,
-        pos_before_merge: Pos,
-        pos_after_merge: Pos,
+        cursor_pos_after_merge: Pos,
     },
     DelSelection {
         removed_text: String,
-        selection: Selection,
     },
     DelCtrl {
         removed_text: Option<String>,
-        pos: Pos,
     },
-    InsertEmptyRow(usize),
+    InsertEmptyRow,
     EnterSelection {
-        selection: Selection,
         selected_text: String,
     },
-    Enter(Pos),
+    Enter,
     Backspace {
         removed_char: char,
-        pos: Pos,
     },
     BackspaceSelection {
         removed_text: String,
-        selection: Selection,
     },
     BackspaceCtrl {
         removed_text: Option<String>,
-        pos: Pos,
     },
     InsertChar {
-        pos: Pos,
         ch: char,
     },
+    // nocheckin: lecserélni DelSelection + insertcharra
     InsertCharSelection {
         ch: char,
-        selection: Selection,
         selected_text: String,
     },
     CutLine {
-        pos: Pos,
         removed_text: String,
     },
     DuplicateLine {
-        pos: Pos,
         inserted_text: String,
     },
     InsertText {
-        pos: Pos,
         text: String,
         is_there_line_overflow: bool,
     },
+    Indent {
+        row: usize,
+        space_count: usize,
+    },
+    Unident {
+        row: usize,
+        space_count: usize,
+    },
     InsertTextSelection {
-        selection: Selection,
         text: String,
         removed_text: String,
         is_there_line_overflow: bool,
     },
+}
+
+#[derive(Debug)]
+pub struct EditDelta {
+    pub start_i: usize,
+    pub end_i: usize,
+    pub before_cursor: Selection,
 }
 
 #[derive(Eq, PartialEq, Copy, Clone)]
@@ -84,9 +85,6 @@ pub enum JumpMode {
 
 #[derive(Debug)]
 pub struct EditorContent<T: Default + Clone + Debug> {
-    // TODO: need for fuzz testing, set it back to priv later
-    pub undo_stack: Vec<EditorCommandGroup<T>>,
-    pub(super) redo_stack: Vec<EditorCommandGroup<T>>,
     pub(super) max_line_len: usize,
     pub(super) line_lens: Vec<usize>,
     pub(super) canvas: Canvas,
@@ -96,8 +94,6 @@ pub struct EditorContent<T: Default + Clone + Debug> {
 impl<T: Default + Clone + Debug> EditorContent<T> {
     pub fn new(max_len: usize, max_row_count: usize) -> EditorContent<T> {
         EditorContent {
-            undo_stack: Vec::with_capacity(32),
-            redo_stack: Vec::with_capacity(32),
             canvas: Vec::with_capacity(max_len * max_row_count),
             line_lens: Vec::with_capacity(max_row_count),
             line_data: Vec::with_capacity(max_row_count),
@@ -266,8 +262,6 @@ impl<T: Default + Clone + Debug> EditorContent<T> {
 
     pub fn clear(&mut self) {
         self.line_lens.clear();
-        self.undo_stack.clear();
-        self.redo_stack.clear();
     }
 
     pub fn init_with(&mut self, text: &str) {

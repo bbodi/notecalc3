@@ -648,7 +648,12 @@ impl TokenParser {
         func_defs: &FunctionDefinitions<'text_ptr>,
     ) -> Option<Token<'text_ptr>> {
         tracy_span("try_extract_variable_name", file!(), line!());
-        if line.starts_with(&['s', 'u', 'm']) && line.get(3).map(|it| *it == ' ').unwrap_or(true) {
+        if line.starts_with(&['s', 'u', 'm'])
+            && line
+                .get(3)
+                .map(|it| !it.is_alphanumeric() && *it != '_' && *it != '(')
+                .unwrap_or(true)
+        {
             return Some(Token {
                 typ: TokenType::Variable {
                     var_index: SUM_VARIABLE_INDEX,
