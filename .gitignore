@@ -3,3 +3,4 @@ frontend-web/pkg
 *.exe
 *.pdb
 *.d
+Cargo.lock
