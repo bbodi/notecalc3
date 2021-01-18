@@ -348,7 +348,7 @@
 
     function save_content() {
         let content = wasm_bindgen.get_compressed_encoded_content(app_ptr);
-        window.location.hash = content;
+        history.replaceState(undefined, undefined, '#' + content)
         let notecalc_data = localStorage.getItem('notecalc');
         if (notecalc_data === null) {
             notecalc_data = {
@@ -982,7 +982,7 @@
             app_ptr,
             tabs[active_tab_index].encoded_content
         );
-        window.location.hash = tabs[active_tab_index].encoded_content;
+        history.replaceState(undefined, undefined, '#' + tabs[active_tab_index].encoded_content)
         render_for_reason('reload content');
     }
 

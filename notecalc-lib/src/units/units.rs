@@ -5,10 +5,12 @@ use crate::units::consts::{
 };
 use crate::units::{Prefix, Unit, UnitPrefixes};
 use bumpalo::core_alloc::fmt::{Debug, Display, Formatter};
+use rust_decimal::prelude::One;
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fmt::Write;
+use std::ops::Mul;
 use std::rc::Rc;
 use std::str::FromStr;
 use tinyvec::ArrayVec;
@@ -356,6 +358,22 @@ pub struct UnitOutput {
     pub dimensions: [UnitDimensionExponent; BASE_UNIT_DIMENSION_COUNT],
 }
 
+impl PartialEq for UnitOutput {
+    fn eq(&self, other: &Self) -> bool {
+        return self.unit_count == other.unit_count
+            && self
+                .iter_unit_instances()
+                .zip(other.iter_unit_instances())
+                .all(|(a, b)| {
+                    a.power == b.power
+                        && a.prefix == b.prefix
+                        && a.unit.value == b.unit.value
+                        && a.unit.offset == b.unit.offset
+                        && a.unit.base == b.unit.base
+                });
+    }
+}
+
 impl Debug for UnitOutput {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "[{:?}]", self.unit_instances)
@@ -369,8 +387,7 @@ impl Display for UnitOutput {
         let mut str_num: ArrayVec<[char; 32]> = ArrayVec::new();
         let mut str_den: ArrayVec<[char; 32]> = ArrayVec::new();
 
-        for unit in self.unit_instances.iter().take(self.unit_count) {
-            let unit = unit.as_ref().unwrap();
+        for unit in self.iter_unit_instances() {
             if unit.power > 0 {
                 nnum += 1;
                 str_num.push(' ');
@@ -386,8 +403,7 @@ impl Display for UnitOutput {
         }
 
         if nden > 0 {
-            for unit in self.unit_instances.iter().take(self.unit_count) {
-                let unit = unit.as_ref().unwrap();
+            for unit in self.iter_unit_instances() {
                 if unit.power < 0 {
                     if nnum > 0 {
                         str_den.push(' ');
@@ -449,8 +465,18 @@ impl UnitOutput {
         }
     }
 
+    pub fn iter_unit_instances(&self) -> impl Iterator<Item = &UnitInstance> {
+        return self.unit_instances[0..self.unit_count]
+            .iter()
+            .map(|it| it.as_ref().unwrap());
+    }
+
     pub fn get_unit(&self, i: usize) -> &UnitInstance {
         self.unit_instances[i].as_ref().unwrap()
+    }
+
+    pub fn get_mut_unit(&mut self, i: usize) -> &mut UnitInstance {
+        self.unit_instances[i].as_mut().unwrap()
     }
 
     pub fn new_inch(units: &Units) -> UnitOutput {
@@ -505,6 +531,9 @@ impl UnitOutput {
 
     pub fn simplify(&self, units: &Units) -> Option<UnitOutput> {
         if let Some(base_unit) = units.simplify(self) {
+            //if true {
+            //    panic!();
+            //}
             // e.g. don't convert from km to m, but convert from kg*m/s^2 to N
             // base_unit.unit_count is always 1
             let base_unit_is_simpler = self.unit_count > 1;
@@ -533,11 +562,12 @@ impl UnitOutput {
             }
             // Is the proposed unit list "simpler" than the existing one?
             if proposed_unit_count < self.unit_count {
-                Some(UnitOutput {
+                let result_unit = UnitOutput {
                     unit_instances: proposed_unit_list,
                     unit_count: proposed_unit_count,
                     ..self.clone()
-                })
+                };
+                Some(result_unit)
             } else {
                 None
             }
@@ -549,11 +579,10 @@ impl UnitOutput {
     }
 }
 
-impl std::ops::Mul for &UnitOutput {
-    type Output = UnitOutput;
-
-    fn mul(self, other: Self) -> Self::Output {
+impl UnitOutput {
+    pub fn mul(&self, other: &Self) -> Option<(UnitOutput, Decimal)> {
         let mut result = self.clone();
+        let mut k = Decimal::one();
 
         for (i, (this_dim, other_dim)) in self
             .dimensions
@@ -564,21 +593,47 @@ impl std::ops::Mul for &UnitOutput {
             result.dimensions[i] = this_dim + other_dim;
         }
 
-        for other_unit in other.unit_instances.iter().take(other.unit_count) {
-            let other_unit = other_unit.as_ref().unwrap();
-            result.unit_instances[result.unit_count] = Some(other_unit.clone());
-            result.unit_count += 1;
+        for other_unit in other.iter_unit_instances() {
+            let result_already_contains_this_unit = result
+                .iter_unit_instances()
+                .position(|result_unit| result_unit.unit.base == other_unit.unit.base);
+            if let Some(pos) = result_already_contains_this_unit {
+                let self_unit = result.get_mut_unit(pos);
+                // convert from rhs to lhs
+                let other_base_conv = other_unit.unit.value.mul(&other_unit.prefix.value);
+                let self_base_conv = self_unit.unit.value.mul(&self_unit.prefix.value);
+                let conv_num = pow(
+                    other_base_conv.checked_div(&self_base_conv)?,
+                    other_unit.power as i64,
+                )?;
+                k = k.checked_mul(&conv_num)?;
+
+                self_unit.power += other_unit.power;
+            } else {
+                result.unit_instances[result.unit_count] = Some(other_unit.clone());
+                result.unit_count += 1;
+            }
         }
 
-        return result;
+        let final_result = result.remove_cancelled_out_units()?;
+        return Some((final_result, k));
     }
-}
 
-impl std::ops::Div for &UnitOutput {
-    type Output = UnitOutput;
+    pub fn remove_cancelled_out_units(&self) -> Option<UnitOutput> {
+        let mut final_result = UnitOutput::new();
+        for result_unit in self.iter_unit_instances() {
+            if result_unit.power != 0 {
+                if final_result.add_unit(result_unit.clone()) == false {
+                    return None;
+                }
+            }
+        }
+        return Some(final_result);
+    }
 
-    fn div(self, other: Self) -> Self::Output {
+    pub fn div(&self, other: &Self) -> Option<(UnitOutput, Decimal)> {
         let mut result = self.clone();
+        let mut k = Decimal::one();
 
         for (i, (this_dim, other_dim)) in self
             .dimensions
@@ -589,20 +644,34 @@ impl std::ops::Div for &UnitOutput {
             result.dimensions[i] = this_dim - other_dim;
         }
 
-        for other_unit in other.unit_instances.iter().take(other.unit_count) {
-            let other_unit = other_unit.as_ref().unwrap();
-            let mut clone = other_unit.clone();
-            clone.power = -clone.power;
-            result.unit_instances[result.unit_count] = Some(clone);
-            result.unit_count += 1;
+        for other_unit in other.iter_unit_instances() {
+            let result_already_contains_this_unit = result
+                .iter_unit_instances()
+                .position(|result_unit| result_unit.unit.base == other_unit.unit.base);
+            if let Some(pos) = result_already_contains_this_unit {
+                let self_unit = result.get_mut_unit(pos);
+                // convert from rhs to lhs
+                let other_base_conv = other_unit.unit.value.mul(&other_unit.prefix.value);
+                let self_base_conv = self_unit.unit.value.mul(&self_unit.prefix.value);
+                let conv_num = pow(
+                    other_base_conv.checked_div(&self_base_conv)?,
+                    other_unit.power as i64,
+                )?;
+                k = k.checked_mul(&conv_num)?;
+
+                self_unit.power -= other_unit.power;
+            } else {
+                let mut instance = other_unit.clone();
+                instance.power *= -1;
+                result.unit_instances[result.unit_count] = Some(instance);
+                result.unit_count += 1;
+            }
         }
-
-        return result;
+        let final_result = result.remove_cancelled_out_units()?;
+        return Some((final_result, k));
     }
-}
 
-impl PartialEq for UnitOutput {
-    fn eq(&self, other: &Self) -> bool {
+    pub fn is_compatible(&self, other: &Self) -> bool {
         // All dimensions must be the same
         for (a, b) in self.dimensions.iter().zip(other.dimensions.iter()) {
             if a != b {
@@ -611,67 +680,94 @@ impl PartialEq for UnitOutput {
         }
         return true;
     }
-}
 
-impl UnitOutput {
-    pub fn normalize(&self, value: &Decimal) -> Option<Decimal> {
-        if self.is_derived() {
-            let mut result = value.clone();
-            for unit in self.unit_instances.iter().take(self.unit_count) {
-                let unit = unit.as_ref().unwrap();
-                let base_value = &unit.unit.value;
-                let prefix_val = &unit.prefix.value;
-                let power = unit.power;
-
-                result = result.checked_mul(&pow(base_value * prefix_val, power as i64)?)?;
+    pub fn convert_same_powers(from: &Self, to: &Self, num: &Decimal) -> Option<Decimal> {
+        if from.is_derived() {
+            let mut result = num.clone();
+            // TODO N etc handle
+            for (from_instance, to_instance) in
+                from.iter_unit_instances().zip(to.iter_unit_instances())
+            {
+                let from = &from_instance.unit;
+                let to = &to_instance.unit;
+                let k = if from_instance.power > 0 {
+                    from.value
+                        .mul(from_instance.prefix.value)
+                        .checked_div(&to.value.mul(to_instance.prefix.value))?
+                } else {
+                    to.value
+                        .mul(to_instance.prefix.value)
+                        .checked_div(&from.value.mul(from_instance.prefix.value))?
+                };
+                result = result.checked_mul(&k)?;
             }
             return Some(result);
         } else {
-            let instance = self.get_unit(0);
-            let base_value = &instance.unit.value;
-            let offset = &instance.unit.offset;
-            let prefix_val = &instance.prefix.value;
+            let from_instance = from.get_unit(0);
+            let to_instance = to.get_unit(0);
+            let from = &from_instance.unit;
+            let to = &to_instance.unit;
 
-            let a = value + offset;
-            let b = base_value * prefix_val;
-            return a.checked_mul(&b);
+            let k = from
+                .value
+                .mul(from_instance.prefix.value)
+                .checked_div(&to.value.mul(to_instance.prefix.value))?;
+            return num.checked_mul(&k);
         }
     }
 
-    pub fn from_base_to_this_unit(&self, value: &Decimal) -> Option<Decimal> {
-        return if self.is_derived() {
-            let mut result = value.clone();
-            for unit in self.unit_instances.iter().take(self.unit_count) {
-                let unit = unit.as_ref().unwrap();
-                let base_value = &unit.unit.value;
-                let prefix_val = &unit.prefix.value;
-                let power = unit.power;
-                let pow = pow(base_value.checked_mul(prefix_val)?, power as i64)?;
-                result = result.checked_div(&pow)?;
-            }
-            Some(result)
-        } else {
-            // az előző ág az a current numra hivodik meg mivel az a km/h*h unitot számolja
-            // ki, ami derived, viszont a /h*h miatt eltünik a m/sbol fakadó
-            // pontatlanság és visszakap 120at
-            //     ez az ág akkor hivodik, amikor a 120 000.0006.. m-t akarja megkapni mben,
-            // mivel a méter már alapban pontatlanul van tárolva, vissza is pontatlant kap
-            let instance = self.get_unit(0);
-            let borrow = &instance.unit;
-            let base_value = &borrow.value;
-            let offset = &borrow.offset;
-            let borrow_prefix = &instance.prefix;
-            let prefix_val = &borrow_prefix.value;
+    pub fn convert(from: &Self, to: &Self, num: &Decimal) -> Option<Decimal> {
+        if from.is_derived() {
+            let mut _result = num.clone();
 
-            use rust_decimal::prelude::One;
-            if base_value < &Decimal::one() {
-                let denom = prefix_val.checked_mul(base_value)?;
-                value.checked_div(&denom)?.checked_sub(offset)
-            } else {
-                let a = value.checked_div(base_value)?;
-                a.checked_div(&prefix_val)?.checked_sub(offset)
+            let mut from_k = Decimal::one();
+            let mut to_k = Decimal::one();
+            for dim_idx in 0..BASE_UNIT_DIMENSION_COUNT {
+                // collect the unit instances for this Unit
+                for from_instance in from.iter_unit_instances() {
+                    if from_instance.unit.base == BASE_UNIT_DIMENSIONS[dim_idx] {
+                        from_k = from_k.checked_mul(&pow(
+                            from_instance.unit.value.mul(from_instance.prefix.value),
+                            from_instance.power as i64,
+                        )?)?;
+                    }
+                }
+                for to_instance in to.iter_unit_instances() {
+                    if to_instance.unit.base == BASE_UNIT_DIMENSIONS[dim_idx] {
+                        to_k = to_k.checked_mul(&pow(
+                            to_instance.unit.value.mul(to_instance.prefix.value),
+                            to_instance.power as i64,
+                        )?)?;
+                    }
+                }
             }
-        };
+            let k = from_k.checked_div(&to_k)?;
+            return num.checked_mul(&k);
+        } else {
+            let from_instance = from.get_unit(0);
+            let to_instance = to.get_unit(0);
+            let from = &from_instance.unit;
+            let to = &to_instance.unit;
+
+            let k = from
+                .value
+                .mul(from_instance.prefix.value)
+                .checked_div(&to.value.mul(to_instance.prefix.value))?;
+            return num.checked_mul(&k);
+        }
+    }
+
+    // e.g. mm/km is 0.001 / 1000 = 0.000001
+    pub fn get_unit_coeff(&self) -> Option<Decimal> {
+        let mut result = Decimal::one();
+        for unit in self.iter_unit_instances() {
+            let base_value = &unit.unit.value;
+            let prefix_val = &unit.prefix.value;
+            let power = unit.power;
+
+            result = result.checked_mul(&pow(base_value * prefix_val, power as i64)?)?;
+        }
+        return Some(result);
     }
 
     pub fn pow(&self, p: i64) -> Option<UnitOutput> {
@@ -802,12 +898,21 @@ mod tests {
         assert_eq!(&['k'], unit1.get_unit(0).prefix.name);
 
         // should test whether two units have the same base unit
-        assert_eq!(&parse("cm", &units), &parse("m", &units));
-        assert_ne!(&parse("cm", &units), &parse("kg", &units));
-        assert_eq!(&parse("N", &units), &parse("kg*m / s ^ 2", &units));
         assert_eq!(
-            &parse("J / mol*K", &units),
-            &parse("ft^3*psi / mol*degF", &units)
+            &parse("cm", &units).dimensions,
+            &parse("m", &units).dimensions
+        );
+        assert_ne!(
+            &parse("cm", &units).dimensions,
+            &parse("kg", &units).dimensions
+        );
+        assert_eq!(
+            &parse("N", &units).dimensions,
+            &parse("kg*m / s ^ 2", &units).dimensions
+        );
+        assert_eq!(
+            &parse("J / mol*K", &units).dimensions,
+            &parse("ft^3*psi / mol*degF", &units).dimensions
         );
 
         let unit1 = parse("bytes", &units);
@@ -1082,15 +1187,42 @@ mod tests {
     #[test]
     fn test_value_and_dim() {
         let units = Units::new();
-        assert_eq!(parse("s*A", &units), parse("C", &units));
-        assert_eq!(parse("W/A", &units), parse("V", &units));
-        assert_eq!(parse("V/A", &units), parse("ohm", &units));
-        assert_eq!(parse("C/V", &units), parse("F", &units));
-        assert_eq!(parse("J/A", &units), parse("Wb", &units));
-        assert_eq!(parse("Wb/m^2", &units), parse("T", &units));
-        assert_eq!(parse("Wb/A", &units), parse("H", &units));
-        assert_eq!(parse("ohm^-1", &units), parse("S", &units));
-        assert_eq!(parse("eV", &units), parse("J", &units));
+        assert_eq!(
+            parse("s*A", &units).dimensions,
+            parse("C", &units).dimensions
+        );
+        assert_eq!(
+            parse("W/A", &units).dimensions,
+            parse("V", &units).dimensions
+        );
+        assert_eq!(
+            parse("V/A", &units).dimensions,
+            parse("ohm", &units).dimensions
+        );
+        assert_eq!(
+            parse("C/V", &units).dimensions,
+            parse("F", &units).dimensions
+        );
+        assert_eq!(
+            parse("J/A", &units).dimensions,
+            parse("Wb", &units).dimensions
+        );
+        assert_eq!(
+            parse("Wb/m^2", &units).dimensions,
+            parse("T", &units).dimensions
+        );
+        assert_eq!(
+            parse("Wb/A", &units).dimensions,
+            parse("H", &units).dimensions
+        );
+        assert_eq!(
+            parse("ohm^-1", &units).dimensions,
+            parse("S", &units).dimensions
+        );
+        assert_eq!(
+            parse("eV", &units).dimensions,
+            parse("J", &units).dimensions
+        );
     }
 
     #[test]

@@ -1096,7 +1096,7 @@ impl ShuntingYard {
         output_stack: &[ShuntingYardResult],
         operator_stack: &[ShuntingYardOperatorResult],
     ) {
-        if false {
+        if true {
             return;
         }
         #[cfg(debug_assertions)]

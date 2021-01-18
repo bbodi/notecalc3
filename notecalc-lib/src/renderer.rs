@@ -1,5 +1,5 @@
 use crate::calc::{CalcResult, CalcResultType};
-use crate::units::units::Units;
+use crate::units::units::{UnitOutput, Units};
 use crate::{ResultFormat, ResultLengths};
 use byteorder::WriteBytesExt;
 use rust_decimal::prelude::*;
@@ -49,24 +49,39 @@ pub fn render_result_into(
                     unit_part_len: 0,
                 };
             }
-            let final_unit = if there_was_unit_conversion {
+            let final_unit_and_coeff = if there_was_unit_conversion {
                 None
             } else {
-                unit.simplify(units)
+                if let Some(new_unit) = unit.simplify(units) {
+                    if let Some(coeff) = new_unit.get_unit_coeff() {
+                        if let Some(orig_coeff) = unit.get_unit_coeff() {
+                            if let Some(rust_is_a_joke) = orig_coeff.checked_div(&coeff) {
+                                Some((new_unit, rust_is_a_joke))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             };
-            let unit = final_unit.as_ref().unwrap_or(unit);
-            if unit.unit_count == 0 {
-                num_to_string(f, &num, &ResultFormat::Dec, decimal_count, use_grouping)
-            } else {
-                let denormalized_num = unit.from_base_to_this_unit(num);
-                if let Some(denormalized_num) = denormalized_num {
-                    let mut lens = num_to_string(
-                        f,
-                        &denormalized_num,
-                        &ResultFormat::Dec,
-                        decimal_count,
-                        use_grouping,
-                    );
+            fn rust_is_a_joke_lang(
+                num: &Decimal,
+                unit: &UnitOutput,
+                f: &mut impl std::io::Write,
+                decimal_count: Option<usize>,
+                use_grouping: bool,
+            ) -> ResultLengths {
+                if unit.unit_count == 0 {
+                    num_to_string(f, &num, &ResultFormat::Dec, decimal_count, use_grouping)
+                } else {
+                    let mut lens =
+                        num_to_string(f, &num, &ResultFormat::Dec, decimal_count, use_grouping);
                     f.write_u8(b' ').expect("");
                     // TODO:mem to_string -> into(buf)
                     // implement a into(std::io:Write) method for UnitOutput
@@ -88,14 +103,24 @@ pub fn render_result_into(
                         }
                     }
                     lens
-                } else {
-                    ResultLengths {
-                        int_part_len: 0,
-                        frac_part_len: 0,
-                        unit_part_len: 0,
-                    }
                 }
             }
+            return if let Some((final_unit, coeff)) = final_unit_and_coeff {
+                if let Some(rust_is_a_joke) = num.checked_mul(&coeff) {
+                    rust_is_a_joke_lang(
+                        &rust_is_a_joke,
+                        &final_unit,
+                        f,
+                        decimal_count,
+                        use_grouping,
+                    )
+                } else {
+                    rust_is_a_joke_lang(num, unit, f, decimal_count, use_grouping)
+                }
+            } else {
+                // rust is a joke
+                rust_is_a_joke_lang(num, unit, f, decimal_count, use_grouping)
+            };
         }
         CalcResultType::Unit(unit) => {
             // TODO:mem to_string -> into(buf)

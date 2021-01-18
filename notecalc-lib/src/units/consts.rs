@@ -324,7 +324,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.0254").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -334,7 +334,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.3048").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -344,7 +344,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.9144").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -354,7 +354,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("1609.344").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -364,7 +364,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.201168").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -374,7 +374,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("5.0292").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -384,7 +384,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("20.1168").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -394,7 +394,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
             value: Decimal::from_scientific("1e-10").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -403,8 +403,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['m'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -414,7 +414,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.0254").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -424,7 +424,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.3048").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -434,7 +434,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.9144").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -444,7 +444,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("1609.344").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -454,7 +454,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.201168").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -464,7 +464,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("5.029210").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -474,7 +474,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("20.1168").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -484,7 +484,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Length as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.0000254").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 1/1000 inch
        // Surface
@@ -494,8 +494,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['m', '2'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Surface as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.squared)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -505,7 +505,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Surface as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.00064516").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 645.16 mm2
     map.insert(
@@ -515,7 +515,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Surface as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.09290304").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 0.09290304 m2
     map.insert(
@@ -525,7 +525,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Surface as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.83612736").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 0.83612736 m2
     map.insert(
@@ -535,7 +535,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Surface as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("2589988.110336").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 2.589988110336 km2
     map.insert(
@@ -545,7 +545,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Surface as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("25.29295").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 25.29295 m2
     map.insert(
@@ -555,7 +555,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Surface as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("404.6873").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 404.6873 m2
     map.insert(
@@ -565,7 +565,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Surface as usize],
             prefix_groups: (None, None),
             value: Decimal::from_scientific("6.4516e-10").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 6.4516 * 10^-10 m2
     map.insert(
@@ -575,7 +575,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Surface as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("4046.86").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 4046.86 m2
     map.insert(
@@ -585,7 +585,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Surface as usize],
             prefix_groups: (None, None),
             value: Decimal::from_i64(10000).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 10000 m2
        // Volume
@@ -595,8 +595,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['m', '3'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.cubic)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -606,7 +606,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_str("0.001").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // litre
     map.insert(
@@ -616,7 +616,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_str("0.001").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // litre
     map.insert(
@@ -626,7 +626,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_str("0.001").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -636,7 +636,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_scientific("1.6387064e-5").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 1.6387064e-5 m3
     map.insert(
@@ -646,7 +646,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.028316846592").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 28.316 846 592 L
     map.insert(
@@ -656,7 +656,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.764554857984").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 764.554 857 984 L
     map.insert(
@@ -666,7 +666,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.000005").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 5 mL
     map.insert(
@@ -676,7 +676,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.000015").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 15 mL
        // {name: &['c', 'u', 'p'], base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize], prefixes: (None, None), value: Decimal::from_str("0.000240").unwrap(), offset: Decimal::from_i64(0}).unwrap(), // 240 mL  // not possible, we have already another cup
@@ -687,7 +687,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_scientific("5e-8").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 0.05 mL = 5e-8 m3
     map.insert(
@@ -697,7 +697,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_scientific("5e-8").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 0.05 mL = 5e-8 m3
        // Liquid volume
@@ -708,7 +708,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.00000006161152").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 0.06161152 mL
     map.insert(
@@ -718,7 +718,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.0000036966911").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 3.696691 mL
     map.insert(
@@ -728,7 +728,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.00002957353").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 29.57353 mL
     map.insert(
@@ -738,7 +738,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.0001182941").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 118.2941 mL
     map.insert(
@@ -748,7 +748,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_scientific("1e-6").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 1e-6 L
     map.insert(
@@ -758,7 +758,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.0002365882").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 236.5882 mL
     map.insert(
@@ -768,7 +768,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.0004731765").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 473.1765 mL
     map.insert(
@@ -778,7 +778,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.0009463529").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 946.3529 mL
     map.insert(
@@ -788,7 +788,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.003785412").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 3.785412 L
     map.insert(
@@ -798,7 +798,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.1173478").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 117.3478 L
     map.insert(
@@ -808,7 +808,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.1589873").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 158.9873 L
     map.insert(
@@ -818,7 +818,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.2384810").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 238.4810 L
        // {name: &['m', 'i', 'n'], base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize], prefixes: (None, None), value: Decimal::from_str("0.00000006161152").unwrap(), offset: Decimal::from_i64(0}).unwrap(), // 0.06161152 mL // min is already in use as minute
@@ -829,7 +829,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.0000036966911").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 3.696691 mL
     map.insert(
@@ -839,7 +839,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.00002957353").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 29.57353 mL
     map.insert(
@@ -849,7 +849,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.0001182941").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 118.2941 mL
     map.insert(
@@ -859,7 +859,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.0002365882").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 236.5882 mL
     map.insert(
@@ -869,7 +869,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.0004731765").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 473.1765 mL
     map.insert(
@@ -879,7 +879,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.0009463529").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 946.3529 mL
     map.insert(
@@ -889,7 +889,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.003785412").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 3.785412 L
     map.insert(
@@ -899,7 +899,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.1173478").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 117.3478 L
     map.insert(
@@ -909,7 +909,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("0.1589873").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     ); // 158.9873 L
        // {name: &['h', 'o', 'g', 's', 'h','e','a', 'd'], base: BASE_UNIT_DIMENSIONS[UnitType::Volume as usize], prefixes: (None, None), value: Decimal::from_str("0.2384810").unwrap(), offset: Decimal::from_i64(0}).unwrap(), // 238.4810 L // TODO: hh?
@@ -922,7 +922,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_str("0.001").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -932,7 +932,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_str("0.001").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -942,7 +942,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_str("907.18474").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -952,7 +952,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(1000).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -962,7 +962,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_i64(1000).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -972,7 +972,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
             value: Decimal::from_scientific("64.79891e-6").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -982,7 +982,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
             value: Decimal::from_scientific("1.7718451953125e-3").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -992,7 +992,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
             value: Decimal::from_scientific("28.349523125e-3").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1002,7 +1002,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
             value: Decimal::from_scientific("453.59237e-3").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1014,7 +1014,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("45.359237").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1024,7 +1024,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
             value: Decimal::from_scientific("115e-3").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1034,7 +1034,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("6.35029318").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1044,7 +1044,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
             value: Decimal::from_scientific("64.79891e-6").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1054,7 +1054,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
             value: Decimal::from_scientific("1.7718451953125e-3").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1064,7 +1064,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
             value: Decimal::from_scientific("28.349523125e-3").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1074,7 +1074,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
             value: Decimal::from_scientific("453.59237e-3").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1084,7 +1084,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Mass as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("45.359237").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     // Time
@@ -1094,8 +1094,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['s'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1105,7 +1105,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (None, None),
             value: Decimal::from_i64(60).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1115,7 +1115,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (None, None),
             value: Decimal::from_i64(3600).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1124,8 +1124,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['s', 'e', 'c', 'o', 'n', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1134,8 +1134,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['s', 'e', 'c'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1145,7 +1145,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (None, None),
             value: Decimal::from_i64(60).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1155,7 +1155,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (None, None),
             value: Decimal::from_i64(3600).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1165,7 +1165,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (None, None),
             value: Decimal::from_i64(86400).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1176,7 +1176,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             prefix_groups: (None, None),
             // 7 * 86400
             value: Decimal::from_i64(604800).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1186,7 +1186,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (None, None),
             value: Decimal::from_i64(2629800).unwrap(), // 1/12th of Julian year
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1196,7 +1196,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (None, None),
             value: Decimal::from_i64(31557600).unwrap(), // Julian year
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1206,7 +1206,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (None, None),
             value: Decimal::from_i64(315576000).unwrap(), // Julian decade
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1216,7 +1216,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (None, None),
             value: Decimal::from_i64(3155760000).unwrap(), // Julian century
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1226,7 +1226,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Time as usize],
             prefix_groups: (None, None),
             value: Decimal::from_i64(31557600000).unwrap(), // Julian millennium
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     // Frequency
@@ -1236,8 +1236,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['H', 'e', 'r', 't', 'z'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Frequency as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
             // reciprocal: true,
         },
     );
@@ -1247,8 +1247,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['H', 'z'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Frequency as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
             // reciprocal: true,
         },
     );
@@ -1259,8 +1259,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['r', 'a', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1269,8 +1269,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['r', 'a', 'd', 'i', 'a', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     // deg = rad / (2*pi) * 360 = rad / 0.017453292519943295769236907684888
@@ -1281,7 +1281,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: &pi / &Decimal::from_isize(180).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1291,7 +1291,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: &pi / &Decimal::from_isize(180).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     // grad = rad / (2*pi) * 400  = rad / 0.015707963267948966192313216916399
@@ -1302,7 +1302,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: &pi / &Decimal::from_isize(200).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1312,7 +1312,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: &pi / &Decimal::from_isize(200).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     // cycle = rad / (2*pi) = rad / 6.2831853071795864769252867665793
@@ -1323,7 +1323,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
             prefix_groups: (None, None),
             value: &pi * &Decimal::from_isize(2).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     // arcsec = rad / (3600 * (360 / 2 * pi)) = rad / 0.0000048481368110953599358991410235795
@@ -1334,7 +1334,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
             prefix_groups: (None, None),
             value: &pi / &Decimal::from_isize(648000).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     // arcmin = rad / (60 * (360 / 2 * pi)) = rad / 0.00029088820866572159615394846141477
@@ -1345,7 +1345,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Angle as usize],
             prefix_groups: (None, None),
             value: &pi / &Decimal::from_isize(10800).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     // Electric current
@@ -1355,8 +1355,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['A'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Current as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1365,8 +1365,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['a', 'm', 'p', 'e', 'r', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Current as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     // Temperature
@@ -1379,8 +1379,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['K'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Temperature as usize],
             prefix_groups: (None, None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1389,7 +1389,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['d', 'e', 'g', 'C'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Temperature as usize],
             prefix_groups: (None, None),
-            value: Decimal::from_i64(1).unwrap(),
+            value: Decimal::one(),
             offset: Decimal::from_str("273.15").unwrap(),
         },
     );
@@ -1410,7 +1410,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Temperature as usize],
             prefix_groups: (None, None),
             value: Decimal::one() / Decimal::from_str("1.8").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1419,8 +1419,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['k', 'e', 'l', 'v', 'i', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Temperature as usize],
             prefix_groups: (None, None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1429,7 +1429,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['c', 'e', 'l', 's', 'i', 'u', 's'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Temperature as usize],
             prefix_groups: (None, None),
-            value: Decimal::from_i64(1).unwrap(),
+            value: Decimal::one(),
             offset: Decimal::from_str("273.15").unwrap(),
         },
     );
@@ -1450,7 +1450,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Temperature as usize],
             prefix_groups: (None, None),
             value: Decimal::one() / Decimal::from_str("1.8").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     // amount of substance
@@ -1460,8 +1460,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['m', 'o', 'l'],
             base: BASE_UNIT_DIMENSIONS[UnitType::AmountOfSubstance as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1470,8 +1470,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['m', 'o', 'l', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::AmountOfSubstance as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     // luminous intensity
@@ -1481,8 +1481,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['c', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::LuminousIntensity as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1491,13 +1491,13 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['c', 'a', 'n', 'd', 'e', 'l', 'a'],
             base: BASE_UNIT_DIMENSIONS[UnitType::LuminousIntensity as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     // TODO: units STERADIAN
-    // {name: &['s', 'r'], base: BASE_UNITS_STERADIAN, prefixes: (None, None), value: Decimal::from_i64(1).unwrap(), offset: Decimal::from_i64(0}).unwrap(),
-    // {name: &['s', 't', 'e', 'r', 'a','d','i', 'a', 'n'], base: BASE_UNITS_STERADIAN, prefixes: (None, None), value: Decimal::from_i64(1).unwrap(), offset: Decimal::from_i64(0}).unwrap(),
+    // {name: &['s', 'r'], base: BASE_UNITS_STERADIAN, prefixes: (None, None), value: Decimal::one(), offset: Decimal::from_i64(0}).unwrap(),
+    // {name: &['s', 't', 'e', 'r', 'a','d','i', 'a', 'n'], base: BASE_UNITS_STERADIAN, prefixes: (None, None), value: Decimal::one(), offset: Decimal::from_i64(0}).unwrap(),
 
     // Force
     map.insert(
@@ -1506,8 +1506,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['N'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Force as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1516,8 +1516,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['n', 'e', 'w', 't', 'o', 'n'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Force as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1527,7 +1527,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Force as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_str("0.00001").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1537,7 +1537,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Force as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_str("0.00001").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1547,7 +1547,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Force as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("4.4482216152605").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1557,7 +1557,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Force as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("4.4482216152605").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1567,7 +1567,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Force as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_str("4448.2216").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     // Energy
@@ -1577,8 +1577,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['J'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1587,8 +1587,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['j', 'o', 'u', 'l', 'e'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1598,7 +1598,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_str("4.1868").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1608,7 +1608,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
             prefix_groups: (None, None),
             value: Decimal::from_scientific("1e-7").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1618,7 +1618,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_i64(3600).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1628,7 +1628,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.btu)), None),
             value: Decimal::from_str("1055.05585262").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1638,7 +1638,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
             value: Decimal::from_scientific("1.602176565e-19").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1648,7 +1648,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Energy as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
             value: Decimal::from_scientific("1.602176565e-19").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     // Power
@@ -1658,8 +1658,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['W'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Power as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1668,8 +1668,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['w', 'a', 't', 't'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Power as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1679,7 +1679,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Power as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("745.6998715386").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     ///////////////////////////////////
@@ -1690,7 +1690,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
     //     base: BASE_UNIT_DIMENSIONS[UnitType::Power as usize],
     //     prefixes: (Some(Rc::clone(&prefixes.short)), None),
     //     value: Decimal::from_str("Complex.I").unwrap(),
-    //     offset: Decimal::from_i64(0).unwrap(),
+    //     offset: Decimal::zero(),
     // },
     map.insert(
         "VA",
@@ -1698,8 +1698,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['V', 'A'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Power as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     // Pressure
@@ -1709,8 +1709,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['P', 'a'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Pressure as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1720,7 +1720,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Pressure as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("6894.75729276459").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1730,7 +1730,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Pressure as usize],
             prefix_groups: (None, None),
             value: Decimal::from_i64(101325).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1743,7 +1743,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
                 Some(Rc::clone(&prefixes.long)),
             ),
             value: Decimal::from_i64(100000).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1753,7 +1753,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Pressure as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("133.322").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1763,7 +1763,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Pressure as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("133.322").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1773,7 +1773,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Pressure as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("9.80665").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1783,7 +1783,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             base: BASE_UNIT_DIMENSIONS[UnitType::Pressure as usize],
             prefix_groups: (None, None),
             value: Decimal::from_str("98.0665").unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     // Electric charge
@@ -1793,8 +1793,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['c', 'o', 'u', 'l', 'o', 'm', 'b'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricCharge as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1803,8 +1803,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['C'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricCharge as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     // Electric capacitance
@@ -1814,8 +1814,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['f', 'a', 'r', 'a', 'd'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricCapacitance as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1824,8 +1824,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['F'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricCapacitance as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     // Electric potential
@@ -1835,8 +1835,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['v', 'o', 'l', 't'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricPotential as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1845,8 +1845,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['V'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricPotential as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     // Electric resistance
@@ -1859,8 +1859,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
                 Some(Rc::clone(&prefixes.short)),
                 Some(Rc::clone(&prefixes.long)),
             ), // Both Mohm and megaohm are acceptable
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1869,8 +1869,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['Ω'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricResistance as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     // Electric inductance
@@ -1880,8 +1880,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['h', 'e', 'n', 'r', 'y'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricInductance as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1890,8 +1890,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['H'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricInductance as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     // Electric conductance
@@ -1901,8 +1901,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['s', 'i', 'e', 'm', 'e', 'n', 's'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricConductance as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1911,8 +1911,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['S'],
             base: BASE_UNIT_DIMENSIONS[UnitType::ElectricConductance as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     // Magnetic flux
@@ -1922,8 +1922,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['w', 'e', 'b', 'e', 'r'],
             base: BASE_UNIT_DIMENSIONS[UnitType::MagneticFlux as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1932,8 +1932,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['W', 'b'],
             base: BASE_UNIT_DIMENSIONS[UnitType::MagneticFlux as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     // Magnetic flux density
@@ -1943,8 +1943,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['t', 'e', 's', 'l', 'a'],
             base: BASE_UNIT_DIMENSIONS[UnitType::MagneticFluxDensity as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.long)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1953,8 +1953,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['T'],
             base: BASE_UNIT_DIMENSIONS[UnitType::MagneticFluxDensity as usize],
             prefix_groups: (Some(Rc::clone(&prefixes.short)), None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     // Binary
@@ -1967,8 +1967,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
                 Some(Rc::clone(&prefixes.binary_short_si)),
                 Some(Rc::clone(&prefixes.binary_short_iec)),
             ),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1980,8 +1980,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
                 Some(Rc::clone(&prefixes.binary_long_si)),
                 Some(Rc::clone(&prefixes.binary_long_iec)),
             ),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -1994,7 +1994,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
                 Some(Rc::clone(&prefixes.binary_short_iec)),
             ),
             value: Decimal::from_i64(8).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
     map.insert(
@@ -2007,7 +2007,7 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
                 Some(Rc::clone(&prefixes.binary_long_iec)),
             ),
             value: Decimal::from_i64(8).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            offset: Decimal::zero(),
         },
     );
 
@@ -2017,8 +2017,8 @@ pub fn init_units() -> (HashMap<&'static str, Rc<Unit>>, UnitPrefixes) {
             name: &['$'],
             base: BASE_UNIT_DIMENSIONS[UnitType::Money as usize],
             prefix_groups: (None, None),
-            value: Decimal::from_i64(1).unwrap(),
-            offset: Decimal::from_i64(0).unwrap(),
+            value: Decimal::one(),
+            offset: Decimal::zero(),
         },
     );
 

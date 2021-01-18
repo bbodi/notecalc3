@@ -148,11 +148,12 @@ pub fn evaluate_tokens<'text_ptr>(
     units: &Units,
     editor_content: &EditorContent<LineData>,
     call_depth: usize,
+    fn_context_index: Option<usize>,
 ) -> (BitFlag256, Result<Option<EvaluationResult>, EvalErr>) {
     let _span = tracy_span("calc", file!(), line!());
     let mut wrong_type_token_indices: BitFlag256 = BitFlag256::empty();
 
-    if call_depth >= 10 {
+    if call_depth >= 5 {
         return (
             wrong_type_token_indices,
             Err(EvalErr::new("too much recursion TODO index".to_string(), 0)),
@@ -220,7 +221,7 @@ pub fn evaluate_tokens<'text_ptr>(
                                 .unwrap()
                                 .shunting_output_stack;
                             let token = &shunting_tokens[i];
-                            if let Some(result) = unit_conversion(
+                            if let Some(result) = apply_unit_to_num(
                                 operand_num,
                                 target_unit,
                                 *index_into_tokens,
@@ -336,7 +337,12 @@ pub fn evaluate_tokens<'text_ptr>(
                         &func_defs,
                         units,
                         editor_content,
-                        call_depth + 1,
+                        if fn_context_index.map(|it| it == *fn_index).unwrap_or(false) {
+                            call_depth + 1
+                        } else {
+                            call_depth
+                        },
+                        Some(*fn_index),
                     )
                     .1;
                     process_variable_assignment_or_line_ref(
@@ -575,7 +581,7 @@ fn apply_operation<'text_ptr>(
         | OperatorTokenType::UnitConverter => {
             if stack.len() > 1 {
                 let (lhs, rhs) = (&stack[stack.len() - 2], &stack[stack.len() - 1]);
-                if let Some(result) = binary_operation(op, lhs, rhs) {
+                if let Some(result) = binary_operation(op, lhs, rhs, units) {
                     stack.truncate(stack.len() - 2);
                     stack.push(result);
                     Ok(())
@@ -654,24 +660,25 @@ fn apply_operation<'text_ptr>(
     return succeed;
 }
 
-fn unit_conversion<'text_ptr>(
+fn apply_unit_to_num(
     num: &Decimal,
     target_unit: &UnitOutput,
     operand_token_index: usize,
     unit_token_index: usize,
 ) -> Option<CalcResult> {
-    let norm = target_unit.normalize(num);
     if target_unit.dimensions == EMPTY_UNIT_DIMENSIONS {
-        // the units cancelled each other, e.g. km/m
-        norm.map(|norm| CalcResult::new(CalcResultType::Number(norm), operand_token_index))
+        // the units cancelled each other, e.g. 1 km/m
+        let k = target_unit.get_unit_coeff()?;
+        Some(CalcResult::new(
+            CalcResultType::Number(num.checked_mul(&k)?),
+            operand_token_index,
+        ))
     } else {
-        norm.map(|norm| {
-            CalcResult::new2(
-                CalcResultType::Quantity(norm, target_unit.clone()),
-                operand_token_index,
-                unit_token_index,
-            )
-        })
+        Some(CalcResult::new2(
+            CalcResultType::Quantity(num.clone(), target_unit.clone()),
+            operand_token_index,
+            unit_token_index,
+        ))
     }
 }
 
@@ -693,6 +700,7 @@ fn binary_operation(
     op: &OperatorTokenType,
     lhs: &CalcResult,
     rhs: &CalcResult,
+    units: &Units,
 ) -> Option<CalcResult> {
     let result = match &op {
         OperatorTokenType::Mult => multiply_op(lhs, rhs),
@@ -742,9 +750,10 @@ fn binary_operation(
                     CalcResultType::Quantity(lhs_num, source_unit),
                     CalcResultType::Unit(target_unit),
                 ) => {
-                    if source_unit == target_unit {
+                    if source_unit.is_compatible(target_unit) {
+                        let converted_num = UnitOutput::convert(source_unit, target_unit, lhs_num)?;
                         Some(CalcResult::new(
-                            CalcResultType::Quantity(lhs_num.clone(), target_unit.clone()),
+                            CalcResultType::Quantity(converted_num, target_unit.clone()),
                             0,
                         ))
                     } else {
@@ -755,7 +764,7 @@ fn binary_operation(
                     let cells: Option<Vec<CalcResult>> = mat
                         .cells
                         .iter()
-                        .map(|cell| binary_operation(op, cell, rhs))
+                        .map(|cell| binary_operation(op, cell, rhs, units))
                         .collect();
                     cells.map(|it| {
                         CalcResult::new(
@@ -776,7 +785,7 @@ fn binary_operation(
         _ => panic!(),
     };
     debug_print(&format!(
-        "calc> {:?} {:?} {:?} = {:?}",
+        "calc====\n  {:?}\n  {:?}\n  {:?}\n  = {:?}",
         &lhs.typ, op, &rhs.typ, &result
     ));
     result
@@ -1081,16 +1090,15 @@ pub fn multiply_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
             if lhs_unit.unit_count + rhs_unit.unit_count >= MAX_UNIT_COUNT {
                 None
             } else {
-                let new_unit = lhs_unit * rhs_unit;
-                if new_unit.is_unitless() {
-                    lhs_num
-                        .checked_mul(&rhs_num)
-                        .map(|num| CalcResult::new(CalcResultType::Number(num), 0))
+                let result = lhs_num.checked_mul(&rhs_num)?;
+                let (new_unit, k) = lhs_unit.mul(rhs_unit)?;
+                let corrected_result = result.checked_mul(&k)?;
+
+                Some(if new_unit.is_unitless() {
+                    CalcResult::new(CalcResultType::Number(corrected_result), 0)
                 } else {
-                    lhs_num
-                        .checked_mul(rhs_num)
-                        .map(|num| CalcResult::new(CalcResultType::Quantity(num, new_unit), 0))
-                }
+                    CalcResult::new(CalcResultType::Quantity(corrected_result, new_unit), 0)
+                })
             }
         }
         (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Percentage(rhs)) => {
@@ -1221,15 +1229,30 @@ pub fn add_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
             // 2m + 5
             None
         }
-        (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Quantity(rhs, rhs_unit)) => {
+        (
+            CalcResultType::Quantity(lhs_num, lhs_unit),
+            CalcResultType::Quantity(rhs_num, rhs_unit),
+        ) => {
             // 2s + 3s
-            if lhs_unit != rhs_unit {
+            if !lhs_unit.is_compatible(rhs_unit) {
                 None
             } else {
-                Some(CalcResult::new(
-                    CalcResultType::Quantity(lhs.checked_add(rhs)?, lhs_unit.clone()),
-                    0,
-                ))
+                return if lhs_unit == rhs_unit {
+                    let result = rhs_num.checked_add(lhs_num)?;
+                    Some(CalcResult::new(
+                        CalcResultType::Quantity(result, lhs_unit.clone()),
+                        0,
+                    ))
+                } else {
+                    let same_unit_rhs_num =
+                        UnitOutput::convert_same_powers(rhs_unit, lhs_unit, rhs_num)?;
+                    let result = lhs_num.checked_add(&same_unit_rhs_num)?;
+
+                    Some(CalcResult::new(
+                        CalcResultType::Quantity(result, lhs_unit.clone()),
+                        0,
+                    ))
+                };
             }
         }
         (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Percentage(rhs)) => {
@@ -1328,15 +1351,29 @@ fn sub_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
             // 2m - 5
             None
         }
-        (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Quantity(rhs, rhs_unit)) => {
+        (
+            CalcResultType::Quantity(lhs_num, lhs_unit),
+            CalcResultType::Quantity(rhs_num, rhs_unit),
+        ) => {
             // 2s - 3s
-            if lhs_unit != rhs_unit {
+            if !lhs_unit.is_compatible(rhs_unit) {
                 None
             } else {
-                Some(CalcResult::new(
-                    CalcResultType::Quantity(lhs.checked_sub(rhs)?, lhs_unit.clone()),
-                    0,
-                ))
+                return if lhs_unit == rhs_unit {
+                    let result = lhs_num.checked_sub(rhs_num)?;
+                    Some(CalcResult::new(
+                        CalcResultType::Quantity(result, lhs_unit.clone()),
+                        0,
+                    ))
+                } else {
+                    let same_unit_rhs_num =
+                        UnitOutput::convert_same_powers(rhs_unit, lhs_unit, rhs_num)?;
+                    let result = lhs_num.checked_sub(&same_unit_rhs_num)?;
+                    Some(CalcResult::new(
+                        CalcResultType::Quantity(result, lhs_unit.clone()),
+                        0,
+                    ))
+                };
             }
         }
         (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Percentage(rhs)) => {
@@ -1407,28 +1444,20 @@ pub fn divide_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         | (CalcResultType::Unit(..), CalcResultType::Matrix(..))
         | (CalcResultType::Matrix(..), CalcResultType::Unit(..)) => None,
         //////////////
-        // 12 / year
+        // 30 years * 12/year
         //////////////
-        (CalcResultType::Quantity(lhs_num, lhs_unit), CalcResultType::Unit(rhs_unit)) => {
-            let new_unit = lhs_unit / rhs_unit;
-            if new_unit.is_unitless() {
-                if let Some(lhs_num) = lhs_unit.from_base_to_this_unit(lhs_num) {
-                    Some(CalcResult::new(CalcResultType::Number(lhs_num), 0))
-                } else {
-                    None
-                }
-            } else {
-                Some(CalcResult::new(
-                    CalcResultType::Quantity(lhs_num.clone(), new_unit),
-                    0,
-                ))
-            }
-        }
+        (CalcResultType::Quantity(..), CalcResultType::Unit(rhs_unit)) => divide_op(
+            lhs,
+            &CalcResult {
+                typ: CalcResultType::Quantity(Decimal::one(), rhs_unit.clone()),
+                index_into_tokens: 0,
+                index2_into_tokens: None,
+            },
+        ),
         (CalcResultType::Number(num), CalcResultType::Unit(unit)) => {
             let new_unit = unit.pow(-1)?;
-            let num_part = new_unit.normalize(&num)?;
             Some(CalcResult::new(
-                CalcResultType::Quantity(num_part, new_unit),
+                CalcResultType::Quantity(num.clone(), new_unit),
                 0,
             ))
         }
@@ -1437,9 +1466,8 @@ pub fn divide_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         //////////////
         (CalcResultType::Percentage(num), CalcResultType::Unit(unit)) => {
             let new_unit = unit.pow(-1)?;
-            let num_part = new_unit.normalize(&num.checked_div(&DECIMAL_100)?)?;
             Some(CalcResult::new(
-                CalcResultType::Quantity(num_part, new_unit),
+                CalcResultType::Quantity(num.checked_div(&DECIMAL_100)?, new_unit),
                 0,
             ))
         }
@@ -1453,17 +1481,16 @@ pub fn divide_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
                 0,
             ))
         }
-        (CalcResultType::Number(lhs), CalcResultType::Quantity(rhs, unit)) => {
+        (CalcResultType::Number(lhs_num), CalcResultType::Quantity(rhs_num, unit)) => {
             // 100 / 2km => 100 / (2 km)
             let new_unit = unit.pow(-1)?;
 
-            let denormalized_num = unit.from_base_to_this_unit(rhs)?;
-            if denormalized_num.is_zero() {
+            if rhs_num.is_zero() {
                 return None;
             }
-            let num_part = new_unit.normalize(&(lhs / &denormalized_num))?;
+            let num_part = (lhs_num.checked_div(rhs_num))?;
             Some(CalcResult::new(
-                CalcResultType::Quantity(num_part, new_unit.clone()),
+                CalcResultType::Quantity(num_part, new_unit),
                 0,
             ))
         }
@@ -1481,27 +1508,44 @@ pub fn divide_op(lhs: &CalcResult, rhs: &CalcResult) -> Option<CalcResult> {
         //////////////
         // 12km / x
         //////////////
-        (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Number(rhs)) => {
+        (CalcResultType::Quantity(lhs_num, lhs_unit), CalcResultType::Number(rhs)) => {
             // 2m / 5
             if rhs.is_zero() {
                 return None;
             }
             Some(CalcResult::new(
-                CalcResultType::Quantity(lhs / rhs, lhs_unit.clone()),
+                CalcResultType::Quantity(lhs_num / rhs, lhs_unit.clone()),
                 0,
             ))
         }
-        (CalcResultType::Quantity(lhs, lhs_unit), CalcResultType::Quantity(rhs, rhs_unit)) => {
+        (
+            CalcResultType::Quantity(lhs_num, lhs_unit),
+            CalcResultType::Quantity(rhs_num, rhs_unit),
+        ) => {
             // 12 km / 3s
-            if rhs.is_zero() {
+            if rhs_num.is_zero() {
                 return None;
             } else if lhs_unit.unit_count + rhs_unit.unit_count >= MAX_UNIT_COUNT {
                 None
             } else {
-                Some(CalcResult::new(
-                    CalcResultType::Quantity(lhs / rhs, lhs_unit / rhs_unit),
-                    0,
-                ))
+                return if lhs_unit == rhs_unit {
+                    let result = lhs_num.checked_div(rhs_num)?;
+                    Some(CalcResult::new(CalcResultType::Number(result), 0))
+                } else {
+                    let result = lhs_num.checked_div(&rhs_num)?;
+                    let (new_unit, k) = lhs_unit.div(rhs_unit)?;
+                    let corrected_result = result.checked_div(&k)?;
+                    Some(if new_unit.is_unitless() {
+                        CalcResult::new(CalcResultType::Number(corrected_result), 0)
+                    } else {
+                        CalcResult::new(CalcResultType::Quantity(corrected_result, new_unit), 0)
+                    })
+                };
+
+                // Some(CalcResult::new(
+                //      CalcResultType::Quantity(lhs_num / rhs_num, lhs_unit / rhs_unit),
+                //     0,
+                // ))
             }
         }
         (CalcResultType::Quantity(_lhs, _lhs_unit), CalcResultType::Percentage(_rhs)) => {
@@ -1633,6 +1677,7 @@ mod tests {
             &units,
             &EditorContent::new(120, 120),
             0,
+            None,
         );
         if let Err(err) = result {
             Token::set_token_error_flag_by_index(
@@ -1692,6 +1737,7 @@ mod tests {
             &units,
             &EditorContent::new(120, 120),
             0,
+            None,
         );
 
         if let Err(..) = &result {
@@ -1748,7 +1794,6 @@ mod tests {
     fn calc_tests() {
         test("2^-2", "0.25");
         test_with_dec_count(5, "5km + 5cm", "5.00005 km");
-        test("5kg*m / 1s^2", "5 N");
         test("0.000001 km2 in m2", "1 m2");
         test("0.000000001 km3 in m3", "1 m3");
 
@@ -1758,9 +1803,6 @@ mod tests {
         test("2 - -1", "3");
 
         test("24 bla + 0", "24");
-
-        // should skip automatic simplification if created directly in the constructor
-        test("9.81 kg*m/s^2 * 1", "9.81 N");
 
         // should test whether two units are equal
         test("100 cm in m", "1 m");
@@ -1805,6 +1847,67 @@ mod tests {
         test("10 millennia in millennium", "10 millennium");
 
         test("(10 + 20)km", "30 km");
+    }
+
+    #[test]
+    fn simple_add() {
+        test("1m + 2cm", "1.02 m");
+        test("1cm + 2m", "201 cm");
+        test("1cm^2 + 2m^2", "201 cm^2");
+        test("1m^2 + 2cm^2", "1.02 m^2");
+
+        test("1 h + 2 s", "1.0006 h");
+        test("1 h^-1 + 2 s^-1", "7201 / h");
+        test("1 km/h + 2km/h", "3 km / h");
+        test("1 km/h + 2m/s", "8.2 km / h");
+
+        test("2 N + 3 kg * m * s^-2", "5 N");
+    }
+
+    #[test]
+    fn simple_mul() {
+        test("3 m * 2m", "6 m^2");
+        test("1 m * 2cm", "0.02 m^2");
+        test("1 cm * 2m", "200 cm^2");
+        test("1 cm^2 * 2m", "200 cm^3");
+        test("1 m * 2cm^2", "0.0002 m^3");
+        test("1 m^2 * 2cm^2", "0.0002 m^4");
+        test("1cm^2 * 2m^2", "20000 cm^4");
+
+        test("1 m^2 * 2cm^-1", "200 m");
+
+        test("2 N * 3 kg * m * s^-2", "6 (kg^2 m^2) / s^4");
+        test("2 N * 3 kg * m * s^-2 / 3 N", "2 N");
+    }
+
+    #[test]
+    fn simple_div() {
+        test("1 m / 2m", "0.5");
+        test("1 m / 2cm", "50");
+        test("1 cm / 2m", "0.005");
+        test("1 cm^2 / 2m", "0.005 cm");
+        test("1 m / 2cm^2", "5000 / m");
+        test("1 m^2 / 2cm^2", "5000");
+        test_with_dec_count(100, "1cm^2 / 2m^2", "0.00005");
+
+        test("4 N / 2 kg * m * s^-2", "2");
+    }
+
+    #[test]
+    fn simple_sub() {
+        test("1m - 2cm", "0.98 m");
+        test("2m - 1cm", "1.99 m");
+        test("200cm - 0.01m", "199 cm");
+        test("2m^2 - 1cm^2", "1.99 m^2");
+        test("200cm^2 - 0.01m^2", "199 cm^2");
+        test("1m^2 - 2cm^2", "0.98 m^2");
+
+        test("1 h - 2 s", "0.9994 h");
+        test("1 h^-1 - 2 s^-1", "-7199 / h");
+        test("1 km/h - 3km/h", "-2 km / h");
+        test("1 km/h - 2m/s", "-6.2 km / h");
+
+        test("5 N - 3 kg * m * s^-2", "2 N");
     }
 
     #[test]
@@ -1874,6 +1977,10 @@ mod tests {
         );
         test(
             "Now let's say you rode your bike at a rate of 10 miles/h for * 4 h",
+            "40 mile",
+        );
+        test(
+            "Now let's say you rode your bike at a rate of 10 miles/h for * 4 h in m",
             "64373.76 m",
         );
         test(
@@ -1987,7 +2094,8 @@ mod tests {
         test("100 Hz in s", "Err");
 
         test("12m/h * 45s ^^", "0.15 m");
-        test("12km/h * 45s ^^", "150 m");
+        test("12km/h * 45s ^^", "0.15 km");
+        test("12m/h * 45s ^^", "0.15 m");
         test_tokens(
             "12km/h * 45s ^^",
             &[
@@ -2036,12 +2144,18 @@ mod tests {
 
     #[test]
     fn calc_simplify_units() {
+        test("128PiB / 30Mb/s", "38430716586.6667 s");
+        test_with_dec_count(39, "128PiB / 30Mb/s", "38430716586.666666661101237895 s");
+        test_with_dec_count(40, "128PiB / 30Mb/s", "38430716586.666666661101237895 s");
+    }
+
+    #[test]
+    fn calc_indentify_derived_unit() {
         // simplify from base to derived units if possible
         test("3 kg * m * 1 s^-2", "3 N");
-
-        test("128PiB / 30Mb/s", "38430716586.6667 s");
-        test_with_dec_count(39, "128PiB / 30Mb/s", "38430716586.6667 s");
-        test_with_dec_count(40, "128PiB / 30Mb/s", "38430716586.6667 s");
+        test("5kg*m / 1s^2", "5 N");
+        // should skip automatic simplification if created directly in the constructor
+        test("9.81 kg*m/s^2 * 1", "9.81 N");
     }
 
     #[test]
@@ -2049,7 +2163,11 @@ mod tests {
         test_with_dec_count(5, "50km + 50mm", "50.00005 km");
         test_with_dec_count(5, "50km - 50mm", "49.99995 km");
         test("5kg * 5g", "0.025 kg^2");
-        test("5km * 5mm", "25 m^2");
+        test_with_dec_count(100, "5km * 5mm", "0.000025 km^2");
+        test("5km * 5mm in m^2", "25 m^2");
+        test("5km * 5mm in cm^2", "250000 cm^2");
+        test_with_dec_count(100, "5km^-3 * 5mm in m^-2", "0.000000000025 m^-2");
+        test("5km * 5mm^-3 in cm^-2", "2500000000 cm^-2");
     }
 
     #[test]
@@ -2060,23 +2178,42 @@ mod tests {
 
     #[test]
     fn test_cancelling_out() {
-        test("40 m * 40 N / 40 J", "40");
         test("3 (s^-1) * 4 s", "12");
-        test("(8.314 J / mol / K) ^ 0", "1");
         test("60 minute / 1 s", "3600");
         test_with_dec_count(
             303,
-            "60 km/h*h/h/h * 1",
-            "0.0046296296296296296296296307 m / s^2",
+            "60 km/h*h/h/h * 1 in m/s^2",
+            "0.00462962962962962962962963 m / s^2",
         );
         // it is a very important test, if it gets converted wrongly
         // then 60 km/h is converted to m/s, which is 16.6666...7 m/s,
         // and it causes inaccuracies
-        test("60km/h * 2h", "120000 m");
-        test("60km/h * 2h in km", "120 km");
+        test("60km/h * 2h", "120 km");
+        test("60km/h * 2h in m", "120000 m");
         test("1s * 2s^-1", "2");
         test("2s * 3(s^-1)", "6");
         test("2s * 3(1/s)", "6");
+
+        test("1m*km in m^2", "1000 m^2");
+        test("1cm*km in m^2", "10 m^2");
+        test("3600cm/h in m/s", "0.01 m / s");
+    }
+
+    #[test]
+    fn test_cancelling_out_derived() {
+        test("40 m * 40 N / 40 J", "40");
+        test("(8.314 J / mol / K) ^ 0", "1");
+    }
+
+    #[test]
+    fn test_cancelling_out_try_simplifying_at_render() {
+        test_with_dec_count(
+            303,
+            "60 km/h*h/h/h * 1",
+            "0.00462962962962962962962963 m / s^2",
+        );
+        test("2 m*km", "2000 m^2");
+        test("2 cm*km", "20 m^2");
     }
 
     #[test]
@@ -2216,6 +2353,13 @@ mod tests {
     }
 
     #[test]
+    fn test_percent_div_period() {
+        test("3.7%/year", "0.037 / year");
+        test("350 000$ * 20%", "70000 $");
+        test("350 000$ - 70 000$", "280000 $");
+    }
+
+    #[test]
     fn test_bitwise_ops() {
         test("0xFF AND 0b111", "7");
 
@@ -2281,6 +2425,9 @@ mod tests {
 
     #[test]
     fn test_unit_cancelling() {
+        test("1 km/m", "1000");
+        test("2 cm/mm", "20");
+        test_with_dec_count(100, "3 mm/km", "0.000003");
         test("1 km / 50m", "20");
 
         test_tokens(
@@ -2290,8 +2437,8 @@ mod tests {
         test("1 km/m", "1000");
         test("1 m/km", "0.001");
         test_with_dec_count(100, "140k h/ month", "191.6495550992470910335272");
-
-        test("1 m*km", "1000 m^2");
+        test("100 / 2km", "50 / km");
+        test("100 / 2km/m", "0.05");
     }
 
     #[test]
@@ -2689,7 +2836,11 @@ mod tests {
 
     #[test]
     fn calc_bug_period_calc() {
+        test("(1000/month) + (2000/year) in year^-1", "14000 / year");
         test("(1000/month) + (2000/year)", "1166.6667 / month");
+        test("(1000/year) + (2000/month)", "25000 / year");
+        test("(1000/year) + (2000/year)", "3000 / year");
+        test("(1000/month) + (2000/month)", "3000 / month");
     }
 
     #[test]
@@ -2700,6 +2851,51 @@ mod tests {
     #[test]
     fn calc_bug_period_calc3() {
         test("50 000 / month * 1 year", "600000");
+    }
+
+    #[test]
+    fn calc_period_avoid_precision_loss_y_m_y() {
+        test_with_dec_count(100, "((50000/year) + (25000/month)) * 10 year", "3500000");
+    }
+
+    #[test]
+    fn calc_period_avoid_precision_loss_m_y_y() {
+        test_with_dec_count(100, "((50000/month) + (25000/year)) * 10 year", "6250000");
+    }
+    #[test]
+    fn calc_period_avoid_precision_loss_y_y_y() {
+        test_with_dec_count(100, "((50000/year) + (25000/year)) * 10 year", "750000");
+    }
+
+    #[test]
+    fn calc_period_avoid_precision_loss_m_m_m() {
+        test_with_dec_count(100, "((50000/month) + (25000/month)) * 10 month", "750000");
+    }
+
+    #[test]
+    fn calc_period_avoid_precision_loss_y_y_m() {
+        test_with_dec_count(
+            100,
+            "((50000/year) + (25000/year)) * 10 month",
+            "62500.0000",
+        );
+    }
+
+    #[test]
+    fn calc_period_avoid_precision_loss_m_m_y() {
+        test_with_dec_count(100, "((50000/month) + (25000/month)) * 10 year", "9000000");
+    }
+
+    ///////////////////////////////////
+    // dollar
+    ///////////////////////////////////
+    #[test]
+    fn calc_period_avoid_precision_loss_dollar_y_m_y() {
+        test_with_dec_count(
+            100,
+            "((50000$/year) + (25000$/month)) * 10 year",
+            "3500000 $",
+        );
     }
 
     #[test]

@@ -3447,6 +3447,7 @@ impl NoteCalcApp {
                         units,
                         editor_content,
                         0,
+                        None,
                     );
                     for (i, token) in apptokens[editor_y]
                         .as_mut()
@@ -3465,7 +3466,6 @@ impl NoteCalcApp {
                             err.token_index,
                             &mut apptokens[editor_y].as_mut().unwrap().tokens,
                         );
-                        dbg!(&apptokens[editor_y].as_mut().unwrap().tokens);
                         for i in &[
                             err.token_index_lhs_1,
                             err.token_index_lhs_2,
@@ -5656,7 +5656,7 @@ fn sum_result(sum_var: &mut Variable, result: &CalcResult, sum_is_null: &mut boo
     } else {
         sum_var.value = match &sum_var.value {
             Ok(current_sum) => {
-                if let Some(ok) = add_op(&current_sum, &result) {
+                if let Some(ok) = add_op(current_sum, &result) {
                     Ok(ok)
                 } else {
                     Err(())
@@ -5867,6 +5867,7 @@ fn evaluate_text<'text_ptr>(
         units,
         editor_content,
         0,
+        None,
     );
     return result;
 }

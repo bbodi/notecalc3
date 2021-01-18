@@ -1,1 +1,1 @@
-cargo test -- --test-threads=1
+cargo test --no-fail-fast -- --test-threads=1 | findstr "result:"

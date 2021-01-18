@@ -86,19 +86,19 @@ impl FnType {
                 fn_const(stack, fn_token_index, DECIMAL_E)
             }),
             FnType::Sin => arg_count_limited_fn(1, arg_count, stack, fn_token_index, |stack| {
-                fn_f64_rad_to_num(stack, f64::sin)
+                fn_f64_rad_to_num(stack, units, f64::sin)
             }),
             FnType::Asin => arg_count_limited_fn(1, arg_count, stack, fn_token_index, |stack| {
                 fn_f64_num_to_rad(stack, f64::asin, units)
             }),
             FnType::Cos => arg_count_limited_fn(1, arg_count, stack, fn_token_index, |stack| {
-                fn_f64_rad_to_num(stack, f64::cos)
+                fn_f64_rad_to_num(stack, units, f64::cos)
             }),
             FnType::Acos => arg_count_limited_fn(1, arg_count, stack, fn_token_index, |stack| {
                 fn_f64_num_to_rad(stack, f64::acos, units)
             }),
             FnType::Tan => arg_count_limited_fn(1, arg_count, stack, fn_token_index, |stack| {
-                fn_f64_rad_to_num(stack, f64::tan)
+                fn_f64_rad_to_num(stack, units, f64::tan)
             }),
             FnType::Atan => arg_count_limited_fn(1, arg_count, stack, fn_token_index, |stack| {
                 fn_f64_num_to_rad(stack, f64::atan, units)
@@ -241,14 +241,21 @@ where
     }
 }
 
-fn fn_f64_rad_to_num<'text_ptr, F>(stack: &mut Vec<CalcResult>, action: F) -> Result<(), EvalErr>
+fn fn_f64_rad_to_num<'text_ptr, F>(
+    stack: &mut Vec<CalcResult>,
+    units: &Units,
+    action: F,
+) -> Result<(), EvalErr>
 where
     F: Fn(f64) -> f64,
 {
     let param = &stack[stack.len() - 1];
     match &param.typ {
         CalcResultType::Quantity(num, unit) if unit.is(UnitType::Angle) => {
-            let rad = num; // the base unit is rad, so num is already in radian
+            // TODO make it const
+            let rad_unit = UnitOutput::new_rad(units);
+            let rad = UnitOutput::convert(unit, &rad_unit, num)
+                .ok_or(EvalErr::new2("Could not convert to rad".to_owned(), param))?;
             if let Some(result) = rad
                 .to_f64()
                 .map(|it| action(it))

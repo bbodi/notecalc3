@@ -3234,7 +3234,7 @@ fn converting_unit_of_line_ref() {
     let test = create_test_app(35);
     test.paste("573 390 s\n&[1] in h");
 
-    test.assert_results(&["573 390 s", "159.275 h"][..]);
+    test.assert_results(&["573 390 s", "159.2750 h"][..]);
 }
 
 #[test]
@@ -3242,7 +3242,7 @@ fn test_unit_conversion_for_variable() {
     let test = create_test_app(35);
     test.paste("input = 573 390 s\ninput in h");
 
-    test.assert_results(&["573 390 s", "159.275 h"][..]);
+    test.assert_results(&["573 390 s", "159.2750 h"][..]);
 }
 
 #[test]
@@ -3422,13 +3422,13 @@ monthly payment = r/(1 - (1+r)^(-n)) * finance amount",
             "70 000 $",
             "280 000 $",
             "",
-            "0.0369999999999999999978225256 / year",
+            "0.037 / year",
             "30 year",
             "",
             "360",
-            "0.0030833333333333333331518771",
+            "0.003083",
             "",
-            "1 288.792357188724336477306092 $",
+            "1 288.792357188724336511790584 $",
         ][..],
     );
 }
