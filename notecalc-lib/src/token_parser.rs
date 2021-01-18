@@ -275,7 +275,7 @@ impl TokenParser {
                 TokenType::Operator(typ) => {
                     match typ {
                         OperatorTokenType::ParenClose => {
-                            // keep can_be_unit as it was
+                            can_be_unit = Some(UnitTokenType::ApplyToPrevToken);
                         }
                         OperatorTokenType::BracketClose => {
                             // keep can_be_unit as it was

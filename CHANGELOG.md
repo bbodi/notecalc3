@@ -17,7 +17,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     So far every quantity was stored in the base unit (e.g. 10 years was stored as 315 576 000 seconds).  
     It caused precision problems in expressions like `(10k/year cost + 3k/month tax) * 10 years`,  
     resulting in a wrong output (`459 999.9` instead of `460 000`)
-    
 ### Changed
 ### Fixed
 - Bin or Hex representation of a float is now an Error
@@ -27,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added new rendering layers so rendered rectangles can be positioned better (e.g. where to put matrix editor background to not be hidden by cursor highlighter nor function bg color etc)
 - Builtin variable `sum` was not parsed correctly if it was followed by some special chars
 - Saving the content into the #hash of the URL does not create browser history entries anymore (does not work under chrome)
+- Units can be applied to function results (e.g. `sin(pi() rad)` now works)
 
 
 ## [0.3.0] - 2020-12-21

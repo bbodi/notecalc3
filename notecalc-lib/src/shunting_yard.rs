@@ -2399,7 +2399,16 @@ pub mod tests {
     #[test]
     fn test_panic() {
         test_tokens("()", &[str("("), str(")")]);
-        test_tokens("() Hz", &[str("("), str(")"), str(" "), str("Hz")]);
+
+        test_tokens(
+            "() Hz",
+            &[
+                op(OperatorTokenType::ParenOpen),
+                op(OperatorTokenType::ParenClose),
+                str(" "),
+                apply_to_prev_token_unit("Hz"),
+            ],
+        );
     }
 
     #[test]

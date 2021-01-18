@@ -165,6 +165,8 @@ pub fn evaluate_tokens<'text_ptr>(
     let mut assignment = false;
     let mut last_success_operation_result_index = None;
 
+    let mut last_op_was_fn_call = false;
+
     let len = apptokens[content_y(editor_y)]
         .as_ref()
         .unwrap()
@@ -172,6 +174,7 @@ pub fn evaluate_tokens<'text_ptr>(
         .len();
     let mut lock_stack: ArrayVec<[u16; 64]> = ArrayVec::new();
     for i in 0..len {
+        let mut op_is_fn_call = false;
         let token_type = apptokens[content_y(editor_y)]
             .as_ref()
             .unwrap()
@@ -207,81 +210,70 @@ pub fn evaluate_tokens<'text_ptr>(
             }
             TokenType::Unit(unit_typ, target_unit) => {
                 // next token must be a UnitConverter or Div
-                match unit_typ {
-                    UnitTokenType::ApplyToPrevToken => {
-                        let operand = stack.last();
-                        if let Some(CalcResult {
-                            typ: CalcResultType::Number(operand_num),
-                            index_into_tokens,
-                            index2_into_tokens: _index2_into_tokens,
-                        }) = operand
-                        {
-                            let shunting_tokens = &apptokens[content_y(editor_y)]
-                                .as_ref()
-                                .unwrap()
-                                .shunting_output_stack;
-                            let token = &shunting_tokens[i];
-                            if let Some(result) = apply_unit_to_num(
-                                operand_num,
-                                target_unit,
-                                *index_into_tokens,
-                                token.index_into_tokens,
-                            ) {
-                                stack.pop();
-                                stack.push(result);
-                                last_success_operation_result_index = Some(stack.len() - 1);
-                            } else {
-                                let tokens = apptokens[content_y(editor_y)].as_ref().unwrap();
-                                let shunting_tokens = &tokens.shunting_output_stack;
-                                let token = &shunting_tokens[i];
-                                return (
-                                    wrong_type_token_indices,
-                                    Err(EvalErr::new(
-                                        format!(
-                                            "Could not apply '{}' to '{}'",
-                                            target_unit, operand_num
-                                        ),
-                                        token.index_into_tokens,
-                                    )),
-                                );
-                            }
+                if *unit_typ == UnitTokenType::ApplyToPrevToken
+                    || (*unit_typ == UnitTokenType::StandInItself && last_op_was_fn_call)
+                {
+                    let operand = stack.last();
+                    if let Some(CalcResult {
+                        typ: CalcResultType::Number(operand_num),
+                        index_into_tokens,
+                        index2_into_tokens: _index2_into_tokens,
+                    }) = operand
+                    {
+                        if let Some(result) = apply_unit_to_num(
+                            operand_num,
+                            target_unit,
+                            *index_into_tokens,
+                            get_token_index_into_tokens(apptokens, editor_y, i),
+                        ) {
+                            stack.pop();
+                            debug_print(&format!("calc> result = {:?}", &result));
+                            stack.push(result);
+                            last_success_operation_result_index = Some(stack.len() - 1);
                         } else {
-                            let tokens = apptokens[content_y(editor_y)].as_ref().unwrap();
-                            let shunting_tokens = &tokens.shunting_output_stack;
-                            let token = &shunting_tokens[i];
                             return (
                                 wrong_type_token_indices,
                                 Err(EvalErr::new(
-                                    format!("There is no operand to apply '{}' on", target_unit),
-                                    token.index_into_tokens,
+                                    format!(
+                                        "Could not apply '{}' to '{}'",
+                                        target_unit, operand_num
+                                    ),
+                                    get_token_index_into_tokens(apptokens, editor_y, i),
                                 )),
                             );
                         }
+                    } else {
+                        return (
+                            wrong_type_token_indices,
+                            Err(EvalErr::new(
+                                format!("There is no operand to apply '{}' on", target_unit),
+                                get_token_index_into_tokens(apptokens, editor_y, i),
+                            )),
+                        );
                     }
-                    UnitTokenType::StandInItself => {
-                        let tokens = apptokens[content_y(editor_y)].as_ref().unwrap();
-                        let shunting_tokens = &tokens.shunting_output_stack;
-                        let token = &shunting_tokens[i];
-                        if shunting_tokens
-                            .get(i + 1)
-                            .map(|it| {
-                                matches!(
-                                    it.typ,
-                                    TokenType::Operator(OperatorTokenType::UnitConverter)
-                                        | TokenType::Operator(OperatorTokenType::Div)
-                                )
-                            })
-                            .unwrap_or(false)
-                        {
-                            // TODO clone
-                            stack.push(CalcResult::new(
-                                CalcResultType::Unit(target_unit.clone()),
-                                token.index_into_tokens,
-                            ));
-                        } else {
-                            if token.index_into_tokens <= MAX_TOKEN_COUNT_PER_LINE {
-                                wrong_type_token_indices.set(token.index_into_tokens);
-                            }
+                } else {
+                    let tokens = apptokens[content_y(editor_y)].as_ref().unwrap();
+                    let shunting_tokens = &tokens.shunting_output_stack;
+                    let token = &shunting_tokens[i];
+                    if shunting_tokens
+                        .get(i + 1)
+                        .map(|it| {
+                            matches!(
+                                it.typ,
+                                TokenType::Operator(OperatorTokenType::UnitConverter)
+                                    | TokenType::Operator(OperatorTokenType::Div)
+                            )
+                        })
+                        .unwrap_or(false)
+                    {
+                        // TODO clone
+                        stack.push(CalcResult::new(
+                            CalcResultType::Unit(target_unit.clone()),
+                            token.index_into_tokens,
+                        ));
+                    } else {
+                        if token.index_into_tokens <= MAX_TOKEN_COUNT_PER_LINE {
+                            wrong_type_token_indices.set(token.index_into_tokens);
                         }
                     }
                 }
@@ -363,6 +355,7 @@ pub fn evaluate_tokens<'text_ptr>(
                 if let Ok(Some(result)) = result {
                     stack.push(result.result);
                     last_success_operation_result_index = Some(stack.len() - 1);
+                    op_is_fn_call = true;
                 } else {
                     let tokens = apptokens[content_y(editor_y)].as_ref().unwrap();
                     let shunting_tokens = &tokens.shunting_output_stack;
@@ -393,6 +386,8 @@ pub fn evaluate_tokens<'text_ptr>(
                 } else {
                     if matches!(typ, OperatorTokenType::UnitConverter) {
                         there_was_unit_conversion = true;
+                    } else if matches!(typ, OperatorTokenType::Fn {..}) {
+                        op_is_fn_call = true;
                     }
                     if !stack.is_empty() {
                         last_success_operation_result_index = Some(stack.len() - 1);
@@ -430,6 +425,7 @@ pub fn evaluate_tokens<'text_ptr>(
                 }
             }
         }
+        last_op_was_fn_call = op_is_fn_call;
     }
 
     let result = match last_success_operation_result_index {
@@ -634,7 +630,7 @@ fn apply_operation<'text_ptr>(
             }
         }
         OperatorTokenType::Fn { arg_count, typ } => {
-            debug_print(&format!("calc> Fn {:?}", typ));
+            debug_print(&format!("calc> call Fn {:?}", typ));
             typ.execute(*arg_count, stack, op_token_index, units)
         }
         OperatorTokenType::Semicolon | OperatorTokenType::Comma => {
@@ -658,6 +654,13 @@ fn apply_operation<'text_ptr>(
         }
     };
     return succeed;
+}
+
+fn get_token_index_into_tokens(apptokens: &AppTokens, editor_y: usize, i: usize) -> usize {
+    let tokens = apptokens[content_y(editor_y)].as_ref().unwrap();
+    let shunting_tokens = &tokens.shunting_output_stack;
+    let token = &shunting_tokens[i];
+    return token.index_into_tokens;
 }
 
 fn apply_unit_to_num(
@@ -1812,7 +1815,7 @@ mod tests {
         test("100 N in kg*m / s ^ 2", "100 (kg m) / s^2");
         test("100 cm in m", "1 m");
         test("100 Hz in 1/s", "100 / s");
-        test("() Hz", " ");
+        test("() Hz", "Err");
 
         test("1 ft * lbf * 2 rad", "2 ft lbf rad");
         test("1 ft * lbf * 2 rad in in*lbf*rad", "24 in lbf rad");
@@ -3328,5 +3331,14 @@ mod tests {
     #[test]
     fn test_fuzz_bug_201221_6_no_panic_if_arg_is_not_valid_token() {
         test("ceil(R())", "Err");
+    }
+
+    #[test]
+    fn test_aply_unit_to_func_result() {
+        test("(12+3)m", "15 m");
+        test("sin(2 degree) m", "0.0349 m");
+        test("sin(pi() rad)", "0");
+        test("sin(0.5*pi() rad)", "1");
+        test("sin(0.3*pi() rad)", "0.809");
     }
 }
