@@ -6,27 +6,128 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 
-## [Unreleased]
+## 0.4.0 - 2024-03-07
 ### Breaking Changes
-- Empty matrices or matrices with invalid content are now considered as matrix, so the matrix editor can be used on them
+  - Empty matrices or matrices with invalid content are now considered as a valid matrix instead of plain text, so the matrix editor can be used on them
+  - Syntax of Line References has been changed to `{3}` instead of {`&[3]`} (the previous syntax caused ambiguity during matrix parsing)
+    This change should not affect users, since they use ALT+up/down to select and insert Line References
+  - Matrix resizing now requires ``alt+ctrl`` keys instead of just `alt`
+  - Autocompletion (ctrl space instead of tabs).
+  - Regions (paragraphs under different #Headers) are now have the same alignments across all the 
+    document
+  - `sum` variable is not set to zero anymore at headers. You can do that explicitly by writing `sum = 0`
+  - `$` is now a prefix operator, so the expression `12$` is now invalid and should be written as `$12`
 ### Features
-- User defined functions
-- Indent and Unindent lines (tab/shift+tab)
-    - Better editor handling, which paves the road for multiple cursors
-- Better handling of period of times in calculations  
-    So far every quantity was stored in the base unit (e.g. 10 years was stored as 315 576 000 seconds).  
-    It caused precision problems in expressions like `(10k/year cost + 3k/month tax) * 10 years`,  
-    resulting in a wrong output (`459 999.9` instead of `460 000`)
+  - #Headers appears in the Result area as well
+  - Name of the navigation tabs are now can be set: It gets the value of the first line if it is a `#Header`
+  - Word selection by double click
+  - When it comes to binary operations, single row matrices now work as arrays, meaning that the operation is applied
+    to all of their elements.
+    ```
+    [2  3  4] + 1  ---> [3  4  5]
+    ```
+    #### Usecase
+    Let's say you want to compare job offers, so you make an array of offers (`daily rate`).  
+    You calculate what those offers mean as a monthly income, including taxes etc.  
+    In the `Comparison` part you can see the summary of your calculations, what
+    offer would end up in what monthly salary, and how they compare to your current salary.  
+    Now if you got a new offer, it is enough just to add that offer to the `daily rate` array,
+    and all the information (monthly profit after taxes and comparison to your current salary) will
+    appear to this new offer.
+    ```
+    daily rate = [$90  $100  $120]                    █ [    90 $     100 $     120 $]
+    annual gross = (daily rate * 20) * 12             █ [21 600 $  24 000 $  28 800 $]
+    tax free = $10k                                   █ 10 000 $
+    tax base = annual gross - tax free                █ [11 600 $  14 000 $  18 800 $]
+    tax = tax base * 40%                              █ [ 4 640 $   5 600 $   7 520 $]
+    net = annual gross - tax                          █ [16 960 $  18 400 $  21 280 $]
+    monthly net = net / 12                            █ [ 1 413 $   1 533 $   1 773 $]
+    current monthly salary = $1000                    █  1 000 $
+                                                      █
+    # Comparison                                      █
+    daily rate                                        █ [   90 $    100 $    120 $]
+    monthly net                                       █ [1 413 $  1 533 $  1 773 $]
+    monthly net is what % on current monthly salary   █ [   41 %     53 %     77 %]
+  
+    ```
+    All operators now work on Matrices when it makes sense.
+  - Percentage operators work on quantities now: ``5m is 25% of what ==> 20 m``
+  - Pasting back Exported text to the editor chops down the Result part
+  - User defined functions
+    - Pressing `ctrl-b` on a funtion invocation jumps to its definition (same as for Line References and variables)
+  - Indent and Unindent lines (tab/shift+tab)
+      - Better editor handling, which paves the road for multiple cursors
+  - Better handling of period of times in calculations  
+      So far every quantity was stored in the base unit (e.g. 10 years was stored as 315 576 000 seconds).  
+      It caused precision problems in expressions like `(10k/year cost + 3k/month tax) * 10 years`,  
+      resulting in a wrong output (`459 999.9` instead of `460 000`)
+  - `&`, `|` and `~` can be used as bitwise operators
+  - Smart output units e.g.: By default the result was in seconds for `500$ / 20$/hour`, now it is hours.
+  - Only the changed digits are pulsed when a result had changed (it helps to identify changes in a number when the user 
+    explores different scenarios, or helps to compare binary results )
+  - Performance impr: Result calculation occurs only when the user stops typing for 150 ms
+  - If there is not enough space for the editor content + its results, the user is allowed to
+    move the right gutter wherever she wants (if there is enough space, NoteCalc will automatically align
+    it to show both the editor and result contents)
+  - Typing closing parenthesis works similar to IntelliJ, if a closing Parentheses is already there,
+    it will be overwritten.
+  - Settings modal window
+  - Smart indentation when typing Enter (it preserves the actual line's indentation)
+  - It is now possible to insert Line References inside matrices, however its rendering is still not supported (so e.g. `{23}` will appear instead of the value of LineRef 23).
+  - Function parameter hints
+  - If fractional decimals are missing due to low precision set by the user, trailing zeroes are not trimmed, which hopefully rings some bells to the user
+  - Added remainder operator (both `rem` and `mod` work)
+  - Line References can be copied and pasted
+  - Bool type (true, false) 
+  - Conditional Expressions (``if <expr> then <expr> else <expr>``, e.g. ``(if true then 2 else 3) + (if false then 4 else 5)`` == 7)
+  - Comparison operators (`<`, `>`, `<=`, `>=`, `==`, `!=`)
+  - If multiple Assignments are selected, then pressing ctrl-space (autocompletion) brings up an action "Align", which aligns
+  the lines on the '=' char
+  - Specifiers: 50km as number = 50, 0.2 as percent = 20%
+  - Headers `/sum`, show result, bold, sum etc
+      Sum Headers create a variable implicitly
+  - "Copy as plain text" action in autocompletion
+  - If a line result is copied (by pressing ctrl-c without having a selection), the copied result is flashing to highligh what was copied
 ### Changed
+  - Beside `//`, the ` character behaves as a comment as well (explain that ' is used for ignoring single numbers, e.g. 12+3 '4, here the 4 is ignored)
+  - Clicking on a result on the Result Panel does not insert a reference to the result any more (it was easy to misclick and as not that useful feature)
+  - `ctrl-b` (jumping to the definition line of the variable the cursor is standing on) now scrolls a little bit above the target line if it is out of the visible area
 ### Fixed
-- Bin or Hex representation of a float is now an Error
-- Referenced matrices were not visible due to the reference-highlighting covered them
-- Referenced matrices were rendered outside the editor
-- Empty matrices (`[]`) inside parenthesis were not evaluated correctly
-- Added new rendering layers so rendered rectangles can be positioned better (e.g. where to put matrix editor background to not be hidden by cursor highlighter nor function bg color etc)
-- Builtin variable `sum` was not parsed correctly if it was followed by some special chars
-- Saving the content into the #hash of the URL does not create browser history entries anymore (does not work under chrome)
-- Units can be applied to function results (e.g. `sin(pi() rad)` now works)
+  - Thousand grouping was affected by the minus sign which resulted 
+    in wrong grouping when having multiple results, e.g.:
+    ```
+      fuel     -40k   █   -40 000
+      vacation -100k  █ - 100 000 // there is an extra space after '-'
+      clothing -10k   █   -10 000
+    ```  
+  - Fix selecting complex expressions when stepped into matrix  
+    When the user stepped into a matrix, the selected cell's content was determined by a primitive algorithm which did not take into account
+    the AST, but naively parsed the string and looked for commas or semi colons for cell separators. Obviously this solution did not work
+    when the cell content was a complex expressions with function calls etc inside.
+    The new solution uses the AST to determine what is inside a matrix cell.
+  - Clicking into the result area did nothing so far, now it put the cursos into the clicked line
+  - Bin or Hex representation of a float is now an Error
+  - Referenced matrices were not visible due to the reference-highlighting covered them
+  - Referenced matrices were rendered outside the editor
+  - Empty matrices (`[]`) inside parenthesis were not evaluated correctly
+  - Added new rendering layers so rendered rectangles can be positioned better (e.g. where to put matrix editor background to not be hidden by cursor highlighter nor function bg color etc)
+  - Builtin variable `sum` was not parsed correctly if it was followed by some special chars
+  - Saving the content into the #hash of the URL does not create browser history entries anymore (does not work under chrome)
+  - Units can be applied to function results (e.g. `sin(pi() rad)` now works)
+  - Operator precedence were calculated wrongly when a quantity was involved in the expression (e.g. `2*3 + (4/g)*5g*6` was calculated as `((2*3) + (4/g)*5g)*6`)
+  - Line numbers were rendered even below the last physical line
+  - Variables did not require full name match (e.g. if variable `a` existed, the string `a_b` would have matched it)
+  - If value of a LineRef was 'Err' (aka the result of a referenced line was 'Err'), it was rendered even when was covered by the result panel
+  - Changing the vlaue of a LineRef caused pulsing even when the LineRef was not visible due to the result panel
+  - Line Reference pulsing was not moved when scrolling
+  - Line reference pulsing command was duplicated in the RenderBucket when cursor movement occurred due to mouse clicking
+  - If Line Reference Selector (alt + up/down) went out of screen, it did not move the scrollbar
+  - Modifying a LineReference source result by pasting (ctrl-v), it did not refresh the line reference pulsings' attributes
+  - Already rendered scrollbar were not cleared when a a text was inserted which had enough vertical space
+  - LineReferences were rendered without vertical alignment
+  - Fix an error when unit conversion happens between the same units but in different representation (ml*m ==> m^4)
+  - Fraction numbers were not pulsed when changed
+  - Fix parsing expressions like '12 km is x% of...'
 
 
 ## [0.3.0] - 2020-12-21

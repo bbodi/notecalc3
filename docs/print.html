@@ -1,0 +1,1168 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>NoteCalc</title>
+        <meta name="robots" content="noindex">
+
+
+        <!-- Custom HTML head -->
+        <style type="text/css">
+            @font-face {
+                font-family: "JetBrainsMono-Regular";
+                src: url("https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff/JetBrainsMono-Regular.woff") format("woff");
+            }
+        
+            @font-face {
+                font-family: "JetBrainsMono-ExtraBold";
+                src: url("https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff/JetBrainsMono-ExtraBold.woff") format("woff");
+            }
+            canvas {
+                border: 1px solid black;
+            }
+            .mykbd {
+                display: inline-block;
+                padding: 0.2rem 0.4rem;
+                font-size: 87.5%; 
+                font-weight: 700; 
+                line-height: 1; 
+                color: #fff; 
+                text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.25); 
+                background-color: #212529; 
+                border: 1px solid #4c4f53; 
+                border-radius: 0.2rem; 
+                box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.25); 
+            }
+            :root {
+              --content-max-width: 500px;
+            }
+        </style>
+        
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/webfont/1.6.28/webfontloader.js"></script>
+        <!-- <script src="assets/webfont_v1.6.26.js"></script> -->
+        <script src="assets/notecalc.js?v=0.3.0"></script>
+        <script src="assets/notecalc_instance.js?v=0.3.0"></script>
+        <script>
+            window.setTimeout(function () {
+                let print_btn = document.getElementsByClassName("right-buttons")[0];
+                print_btn.addEventListener('click', function(e) { 
+                    const str = wasm_bindgen.get_selected_rows_with_results(active_notecalc_editor.app_ptr);
+                    navigator.clipboard.writeText(str).then(function () {
+                        console.log('Async: Copying to clipboard was successful!');
+                    }, function (err) {
+                        console.error('Async: Could not copy text: ', err);
+                    });
+                    event.stopPropagation();
+                    event.preventDefault();
+                    return false;
+                }, false);
+            }, 2000)
+        </script>
+        
+        <!-- <style type="text/css">
+            @font-face {
+                font-family: "JetBrainsMono-Regular";
+                src: url("fonts/JetBrainsMono-Regular.woff") format("woff");
+            }
+        
+            @font-face {
+                font-family: "JetBrainsMono-ExtraBold";
+                src: url("fonts/JetBrainsMono-ExtraBold.woff") format("woff");
+            }
+        </style>
+         -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('light')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="home.html">Home</a></li><li class="chapter-item expanded affix "><li class="part-title">User Guide</li><li class="chapter-item expanded "><a href="guide.html"><strong aria-hidden="true">1.</strong> Introduction</a></li><li class="chapter-item expanded "><a href="headings_comments.html"><strong aria-hidden="true">2.</strong> Headers and Comments</a></li><li class="chapter-item expanded "><a href="variables.html"><strong aria-hidden="true">3.</strong> Variables</a></li><li class="chapter-item expanded "><a href="autocompletion.html"><strong aria-hidden="true">4.</strong> Autocompletion</a></li><li class="chapter-item expanded "><a href="line_refs.html"><strong aria-hidden="true">5.</strong> Line references</a></li><li class="chapter-item expanded "><a href="selection_actions.html"><strong aria-hidden="true">6.</strong> Actions on selections</a></li><li class="chapter-item expanded "><a href="conditional.html"><strong aria-hidden="true">7.</strong> Conditional expressions</a></li><li class="chapter-item expanded "><a href="matrices.html"><strong aria-hidden="true">8.</strong> Vectors and Matrices</a></li><li class="chapter-item expanded "><a href="functions.html"><strong aria-hidden="true">9.</strong> Functions</a></li><li class="chapter-item expanded "><a href="number_formats.html"><strong aria-hidden="true">10.</strong> Number formats</a></li><li class="chapter-item expanded "><a href="export.html"><strong aria-hidden="true">11.</strong> Copying & Exporting</a></li><li class="chapter-item expanded affix "><li class="part-title">Calculations</li><li class="chapter-item expanded "><div><strong aria-hidden="true">12.</strong> Operations</div></li><li class="chapter-item expanded "><a href="binary.html"><strong aria-hidden="true">13.</strong> Binary</a></li><li class="chapter-item expanded "><a href="percentages.html"><strong aria-hidden="true">14.</strong> Percentages</a></li><li class="chapter-item expanded "><a href="units.html"><strong aria-hidden="true">15.</strong> Units and Conversions</a></li><li class="spacer"></li><li class="chapter-item expanded affix "><a href="changelog.html">Changelog</a></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">NoteCalc</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <pre id='home' data-notecalc-visible-line-count="36" class="notecalc-instance" data-notecalc-font-size="14">
+</pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
+<p>NoteCalc is a useful little calculator that combines text notes and the calculations within them, thus providing context to the numbers.</p>
+<p>This guide walks you through its usage and showcases its features, or you can jump straight to the <a href="./home.html">homepage</a> to start using it immediately.</p>
+<p>On the left side, there is a text editor where you can freely edit your notes. On the right side, the results of each line appear.<br />
+The small separator gutter found between them can be moved with the mouse.</p>
+<p>On the <a href="./home.html">Home</a> page, text is automatically saved in your local browser, nothing is sent to the server.</p>
+<p>Some examples. Feel free to change them and play around, changes are automatically reflected
+in the result pane.</p>
+<pre data-notecalc-visible-line-count="20" class="notecalc-instance" data-notecalc-font-size="14">
+12 dollar bed * 3 beds
+people = 3
+price is people * {1}
+
+# Variables
+Bank of America = $50 000/year + 5.25%
+Citibank = $50 000/year + 6%
+the difference in 3 years is (Citibank - Bank of America) * 3years
+
+a  =  -9.8m/s^2
+v0 = 100  m/s
+x0 = 490  m
+t  =   1  s
+
+x = 1/2*a*t^2 + v0*t + x0
+</pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="headers"><a class="header" href="#headers">Headers</a></h1>
+<p>Headers appear in an emphasized font style in both panels of the editor,
+thus they can be used to visually distinguish them from the rest of the document
+and organize content into a single paragraph.</p>
+<p>Headers can be created by placing the '#' character at the beginning of a line.</p>
+<pre  data-notecalc-visible-line-count="10" class="notecalc-instance" data-notecalc-font-size="14">
+# Banking Costs
+Bank of America = $50 000/year + 5.25%
+Citibank = $50 000/year + 6%
+the difference in 3 years is (Citibank - Bank of America) * 3years
+# Math lesson
+a  =  -9.8m/s^2
+v0 = 100  m/s
+x0 = 490  m
+t  =   1  s
+x = 1/2*a*t^2 + v0*t + x0
+</pre>
+<p>The line of a header is not evaluated; calculations cannot be performed within it.</p>
+<p>The <code>/sum</code> attribute can be placed in the header, which changes its value and displays the total value of the lines found beneath the header.</p>
+<pre data-notecalc-visible-line-count="4" class="notecalc-instance" data-notecalc-font-size="14">
+#Budget /sum
+food $500
+mortgage $2000
+bills $1500
+</pre>
+<p>As can be seen, in this case, the text found in the header does not appear at all (this is to ensure that the summarized value aligns nicely with the results below it, enhancing readability).<br />
+This can currently be compensated for by writing an additional header above it with the desired title text, e.g.</p>
+<pre data-notecalc-visible-line-count="5" class="notecalc-instance" data-notecalc-font-size="14">
+#Budget
+#Budget /sum
+food $500
+mortgage $2000
+bills $1500
+</pre>
+<h1 id="comments"><a class="header" href="#comments">Comments</a></h1>
+<p>Every text that follows the <code>//</code> characters will be commented out, their content will not be evaluated.<br />
+Additionally, individual items can be excluded from the expression by placing a <code>'</code> character in front of them.</p>
+<pre data-notecalc-visible-line-count="9" class="notecalc-instance" data-notecalc-font-size="14">
+# Math lesson
+a  =  -9.8m/s^2
+v0 = 100  m/s
+x0 = 490  m
+t  =   1  s
+x = 1/2*a*t^2 + // v0*t + x0
+v1 = 150  m/s
+// Notice that below, v0 is ignored
+x = 1/2*a*t^2 +'v0 v1*t + x0
+</pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="variables"><a class="header" href="#variables">Variables</a></h1>
+<h2 id="declaring-a-variable"><a class="header" href="#declaring-a-variable">Declaring a variable</a></h2>
+<p>A variable is a named value that you can refer to in your calculations.<br />
+You can create a variable by specifying the variable's name followed by an <code>=</code> sign, and then the value of the variable can follow after the equals sign.</p>
+<p>Variable names can contain spaces.</p>
+<pre data-notecalc-visible-line-count="10" class="notecalc-instance" data-notecalc-font-size="14">
+people = 3
+price per day = $26
+days = 4
+cost is people * price per day * days
+</pre>
+<p>As can be seen, standing with the cursor in the fourth line, the individual variables have been underlined with different colors, and the color corresponding to each variable appeared on the left side of the lines they have been defined at.<br />
+These colors help to identify and find where the variables used in an expression are defined.</p>
+<p>It works the other way around too: by placing the cursor on a line of a variable declaration (e.g., the second line),<br />
+that particular variable starts to flash in every expression where it is used, thereby helping the reader to see where exactly a variable is used in a note.</p>
+<p>In this short document, of course, it's not a big help, but it is mostly useful in more complex notes.</p>
+<p>By pressing <kbd class='mykbd'>CTRL B</kbd> while standing on a variable with the cursor, you can jump to its declaration line.</p>
+<h2 id="reassigning-variables"><a class="header" href="#reassigning-variables">Reassigning variables</a></h2>
+<p>New values can be freely reassigned to variables, in the following expressions, the last assigned value will be used.</p>
+<pre data-notecalc-visible-line-count="10" class="notecalc-instance" data-notecalc-font-size="14">
+# 2022
+people = 3
+price per day = $26
+days = 4
+cost is people * price per day * days
+# 2024
+In '2024 Jane and Robert joined to the vacation
+people = people + 2
+cost is people * price per day * days
+</pre>
+<h2 id="value-of-subexpressions"><a class="header" href="#value-of-subexpressions">Value of subexpressions</a></h2>
+<p>If you are curious about the value of a subexpression within a more complex expression, simply select the particular subexpression with the mouse or keyboard <kbd class='mykbd'>SHIFT+cursor</kbd>.<br />
+If the selected subexpression is valid, its value will appear above the selection.</p>
+<h2 id="total-value-of-selected-lines"><a class="header" href="#total-value-of-selected-lines">Total value of selected lines</a></h2>
+<p>If you are interested in the sum of only a selected few lines from several, simply highlight them and similarly, their summed value will appear.</p>
+<pre data-notecalc-visible-line-count="10" class="notecalc-instance" data-notecalc-font-size="14">
+Select only the '(2 + 3) part
+1 + 2 + 3 + 4 + 5
+
+Now select the lines that contain '2 and '3
+1
+2
+3
+4
+5
+</pre>
+<h2 id="inserting-a-variable-with-line-selection"><a class="header" href="#inserting-a-variable-with-line-selection">Inserting a variable with line selection</a></h2>
+<p>Instead of typing the name of the variable you want to reference, you can navigate to the line of the variable declaration holding down <kbd class='mykbd'>ALT</kbd>, then pressing up/down arrows.<br />
+Upon releasing the <kbd class='mykbd'>ALT</kbd> key, the name of the variable will be automatically inserted.</p>
+<pre data-notecalc-visible-line-count="6" class="notecalc-instance" data-notecalc-font-size="14">
+Insurance price A = $250/year
+Insurance price B = $300/year
+Insurance price C = $375/year
+It will cost 3year * 
+</pre>
+<p>With the cursor positioned behind the <code>3year * </code> expression in the fourth line, press the <kbd class='mykbd'>ALT ↑</kbd> arrow and keep the <kbd class='mykbd'>ALT</kbd> key down.<br />
+Then, using the <kbd class='mykbd'>↑/↓</kbd> arrows, select the price that you prefer, and once you have made your selection, release the <kbd class='mykbd'>ALT</kbd> key.</p>
+<h2 id="implicit-sum-variable"><a class="header" href="#implicit-sum-variable">Implicit <code>sum</code> variable</a></h2>
+<p>A variable named <code>sum</code> is implicitly defined for you, and within each header, it automatically contains the total of the lines from the header to the use of the <code>sum</code> variable, provided the results of the lines are addable.</p>
+<pre data-notecalc-visible-line-count="11" class="notecalc-instance" data-notecalc-font-size="14">
+# Trip 2021
+accomodation $20
+gas $35
+food $16
+sum
+# Trip 2023
+accomodation $40
+gas $75
+food $100
+sum
+</pre>
+<p>The value of <code>sum</code> can be reset.</p>
+<pre data-notecalc-visible-line-count="13" class="notecalc-instance" data-notecalc-font-size="14">
+For Jane
+accomodation $20
+gas $35
+food $16
+sum
+sum = $0 // Reset sum
+For Jack
+accomodation $20
+gas $35
+food $16
+sum
+</pre>
+<div style="break-before: page; page-break-before: always;"></div><h2 id="autocompletion"><a class="header" href="#autocompletion">Autocompletion</a></h2>
+<pre data-notecalc-visible-line-count="20" class="notecalc-instance" data-notecalc-font-size="14">
+price per day = $16/day
+price per week = price per day * 7days
+price per year = price per day * 365days
+</pre>
+<p>Autocompletion means that by pressing <kbd class='mykbd'>CTRL Space</kbd> on a piece of text, a list of variable names starting with that text will appear, from which we can select the desired variable name with the help of arrows and the enter key, and it will be automatically inserted.</p>
+<p>For example, type <code>price</code> in line 4 then press <kbd class='mykbd'>CTRL Space</kbd>.</p>
+<h2 id="autocompletion-as-qualitty-of-life-tool"><a class="header" href="#autocompletion-as-qualitty-of-life-tool">Autocompletion as qualitty of life tool</a></h2>
+<p>Invoking autocompletion without the cursor standing on a prefix string
+we can see that the menu lists not only possible variables but also constants constants (π),
+hard-to-type things like vector/matrix creation (see later),
+or easily forgettable operators such as the percentage calculation operators (I can never remember them).</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="line-references"><a class="header" href="#line-references">Line references</a></h1>
+<p>Just as with a variable, if you go back and modify the value of the variable, every expression in which the variable appears will automatically update with the new value.<br />
+A similar effect is achieved with line references but without using variables.<br />
+Simply reference a line, and the result of that line will be inserted at the cursor's position.<br />
+From that point on, any modification to the referenced line will be reflected in the lines that contain it.</p>
+<p>You can reference a line using the already familiar <kbd class='mykbd'>ALT ↑</kbd> or <kbd class='mykbd'>ALT ↓</kbd> buttons, with the difference being that if the selected line does not contain a variable declaration, then the line itself will be referenced.</p>
+<pre data-notecalc-visible-line-count="6" class="notecalc-instance" data-notecalc-font-size="14">
+$16/day
+{1} * 7days
+{1} * 365days
+</pre>
+<p>The background of the inserted line references is <span style='background-color: #DCE2F7;'>blue</span>, and they contain the result of the referenced line.<br />
+Similarly to variables, line references are also marked with colors to help indicate where they are used, or which line they refer to.</p>
+<p>In the note above, both the second and third lines contain a reference to the first line. Try modifying the first line and observe how the second and third lines change accordingly.</p>
+<p>Additionally, try referencing lines yourself using the <kbd class='mykbd'>ALT ↑↓</kbd> buttons, as you have already learned with variables.</p>
+<p>Similarly to jumping to variables, by pressing <kbd class='mykbd'>CTRL B</kbd> while standing on a reference, you can jump to the referenced line.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="actions-with-selections"><a class="header" href="#actions-with-selections">Actions with selections</a></h1>
+<p>As we saw earlier, <kbd class='mykbd'>CTRL Space</kbd> can be used to invoke autocompletion, but if multiple entire lines are selected while pressing it, then other functionalities appear in the popup list.</p>
+<h2 id="alignment-to-"><a class="header" href="#alignment-to-">Alignment to '='</a></h2>
+<pre data-notecalc-visible-line-count="6" class="notecalc-instance" data-notecalc-font-size="14">
+# 2022
+people = 3
+price per day = $26
+days = 4
+cost is people * price per day * days
+</pre>
+<p>Select the 2nd, 3rd, and 4th lines, and press Ctrl space. From the popping-up options, choose <code>Align to =</code>.<br />
+This aligns the equal signs under each other in the selected lines, thereby increasing readability.
+The result should look like this:</p>
+<pre><code># 2022
+people        = 3
+price per day = $26
+days          = 4
+cost is people * price per day * days
+</code></pre>
+<h2 id="copy-as-plain-text"><a class="header" href="#copy-as-plain-text">Copy as plain text</a></h2>
+<p>As discussed in the copy section, copying selected text with <kbd class='mykbd'>CTRL C</kbd> places a format on the clipboard that is designed to be inserted into a NoteCalc note,
+not for sharing the note in a readable form (as a traditional editor would behave in this situation).<br />
+Therefore, if you need the latter, select the lines you wish to copy and after pressing <kbd class='mykbd'>CTRL Space</kbd>, choose the <code>Copy as plain text</code> option.</p>
+<p>Copying with simple <kbd class='mykbd'>CTRL C</kbd> would result in the following:</p>
+<pre><code>{[#2,d]} people = 3
+{[#3,d]} price per day = $26
+{[#4,d]} days = 4
+</code></pre>
+<p>While using <code>Copy as plain text</code>, results in:</p>
+<pre><code>people = 3
+price per day = $26
+days = 4
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="conditional-expressions"><a class="header" href="#conditional-expressions">Conditional expressions</a></h1>
+<p>The result of a conditional expression can be one value or another, depending on a condition.</p>
+<pre data-notecalc-visible-line-count="5" class="notecalc-instance" data-notecalc-font-size="14">
+gross revenue = $10k
+tax = if gross revenue > $5k then 10% else 5%
+net income = gross revenue - tax
+</pre>
+<p>A conditional expression can also appear as an operand; in this case, it should be placed in parentheses.</p>
+<pre data-notecalc-visible-line-count="5" class="notecalc-instance" data-notecalc-font-size="14">
+gross revenue = $10k
+net income = gross revenue - (if gross revenue > $5k then 10% else 5%)
+</pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="vectors"><a class="header" href="#vectors">Vectors</a></h1>
+<p>There is the possibility to represent vectors or matrices and perform operations on them. A vector is described by separating its elements with commas and enclosing them in brackets.</p>
+<pre data-notecalc-visible-line-count="4" class="notecalc-instance" data-notecalc-font-size="14">
+pos = [1, 2, 3]
+dir = [3, 2, 1]
+new pos = pos + dir
+</pre>
+<p>To edit a vector, you need to navigate into it with the cursor, and then each element can be edited individually.<br />
+Upon leaving the vector, its elements are automatically saved, and its representation reverts back to vector form.</p>
+<p>During editing, it's also possible to add elements simply by writing the new element's value into one of the boxes, separated by a comma.</p>
+<h1 id="matrix"><a class="header" href="#matrix">Matrix</a></h1>
+<p>Matrices are essentially lists containing vectors, separated by semicolons.
+So, for example, the matrix below is defined with the following string <code>idetnity = [1, 0, 0; 0, 1, 0; 0, 0, 1]</code></p>
+<pre data-notecalc-visible-line-count="8" class="notecalc-instance" data-notecalc-font-size="14">
+identity = [1, 0, 0; 0, 1, 0; 0, 0, 1]
+dir = [3, 2, 1]
+same dir = dir * identity
+</pre>
+<p>The elements of vectors/matrices are evaluated in the same way as any other line in the note, meaning they can contain variables, line references, values with units, more complex expressions, etc.</p>
+<pre data-notecalc-decimal-places='0', data-notecalc-visible-line-count="15" class="notecalc-instance" data-notecalc-font-size="14">
+daily rate = [$90, $100, $120]
+annual gross = (daily rate * 20) * 12
+tax free = $10k
+tax base = annual gross - tax free
+tax = tax base * 40%
+net = annual gross - tax
+monthly net = net / 12
+current monthly salary = $1000
+                                                  
+# Comparison
+daily rate
+monthly net
+monthly net is what % on current monthly salary
+</pre>
+<h1 id="shortcuts"><a class="header" href="#shortcuts">Shortcuts</a></h1>
+<p>When standing with the cursor in a matrix, we can easily change the dimensions of the matrix with the <kbd class='mykbd'>CTRL ALT →</kbd>,
+<kbd class='mykbd'>CTRL ALT ←</kbd>, <kbd class='mykbd'>CTRL ALT ↑</kbd> or <kbd class='mykbd'>CTRL ALT ↓</kbd> buttons.</p>
+<p>Usually, when creating a matrix, I simply type a <code>[</code> character, which automatically places the cursor into the editing mode of a 1x1 matrix, and from there, I just adjust the size with the aforementioned buttons, and then edit the individual elements.</p>
+<p>Another method is using autocompletion: type a <code>v</code> or <code>m</code> letter and press <kbd class='mykbd'>CTRL Space</kbd>; different size matrices names will appear in the popup panel, and by pressing enter, they will be inserted.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="functions"><a class="header" href="#functions">Functions</a></h1>
+<h2 id="user-defined-functions"><a class="header" href="#user-defined-functions">User-defined functions</a></h2>
+<p>For performing repetitive calculations, functions can be defined.
+A function definition:</p>
+<ul>
+<li>starts right at the beginning of the line,</li>
+<li>its name can contain spaces,</li>
+<li>followed by the parameters listed in parentheses, separated by commas,</li>
+<li>then a closing parenthesis is followed by a <code>:</code>,</li>
+<li>the body of the function starts with at least one space from the beginning of the line.</li>
+</ul>
+<p>A function can be called by its name, followed by listing the parameters in parentheses, separated by commas.</p>
+<p>The function name and its body appear with a <span style='background-color: #EFEFEF'>gray</span> background.</p>
+<pre data-notecalc-visible-line-count="8" class="notecalc-instance" data-notecalc-font-size="14">
+vacation cost(people count, accomodation per day):
+	tax = if people count <= 3 then 0% else 10%
+	(people count * accomodation per day) + tax
+
+vacation cost(3, $30)
+vacation cost(6, $25)
+vacation cost(9, $20)
+</pre>
+<h2 id="builtin-functions"><a class="header" href="#builtin-functions">Builtin Functions</a></h2>
+<ul>
+<li><code>pi()</code></li>
+<li><code>e()</code></li>
+<li><code>abs(num)</code></li>
+<li><code>ln(num)</code></li>
+<li><code>lg(num)</code></li>
+<li><code>log(num, num)</code></li>
+<li><code>ceil(num)</code></li>
+<li><code>floor(num)</code></li>
+<li><code>round(num)</code></li>
+<li><code>round_dp(num, decimal places)</code></li>
+<li><code>sin(angle) -&gt; num</code></li>
+<li><code>cos(angle) -&gt; num</code></li>
+<li><code>tan(angle) -&gt; num</code></li>
+<li><code>asin(num) -&gt; angle</code></li>
+<li><code>acos(num) -&gt; angle</code></li>
+<li><code>atan(num) -&gt; angle</code></li>
+<li><code>nth(Matrix, index)</code></li>
+<li><code>transpose(Matrix)</code></li>
+<li><code>sum(Matrix)</code></li>
+</ul>
+<pre data-notecalc-visible-line-count="21" class="notecalc-instance" data-notecalc-font-size="14">
+sum([1, 2, 3])
+transpose([1, 2, 3]) * [1, 2, 3]
+pi()
+e()
+abs(-3)
+ln(2)
+lg(2)
+log(2, 10)
+ceil(12.3)
+floor(12.3)
+round(12.51)
+round_dp(12.549, 2)
+sin(90degree)
+cos(90degree)
+nth([1, 2, 3], 2)
+</pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="numbers"><a class="header" href="#numbers">Numbers</a></h1>
+<p>Numbers can be specified in decimal, hexadecimal(<code>0x</code>), binary(<code>0b</code>), and scientific notation forms.</p>
+<pre data-notecalc-decimal-places='4' data-notecalc-visible-line-count="5" class="notecalc-instance" data-notecalc-font-size="14">
+4e12
+3.14e-2
+0xc0e0_0000
+0b1111 0000 1111 0000
+</pre>
+<p>Spaces can be freely inserted between the digits, thereby increasing readability.<br />
+The <code>k</code> suffix can be used to express multiples of 1000, and <code>M</code> for millions.</p>
+<pre data-notecalc-decimal-places='4' data-notecalc-visible-line-count="5" class="notecalc-instance" data-notecalc-font-size="14">
+1 000 000
+or 1M
+$253k
+</pre>
+<h1 id="decimal-places"><a class="header" href="#decimal-places">Decimal places</a></h1>
+<p>The number of decimal places can be increased by pressing <kbd class='mykbd'>CTRL ALT →</kbd>, and decreased with the <kbd class='mykbd'>CTRL ALT ←</kbd> key.</p>
+<p>It's important to note, however, that NoteCalc trims off decimal places with a value of 0 from the end of numbers.</p>
+<pre data-notecalc-decimal-places='20' data-notecalc-visible-line-count="5" class="notecalc-instance" data-notecalc-font-size="12">
+G = 6.67384e-11 m^3/kg/s^2 
+earth gravity = G*(5.972e24 kg)/(6 378 100 m)^2
+</pre>
+<h1 id="specifiers-with-as"><a class="header" href="#specifiers-with-as">Specifiers with '<code>as</code>'</a></h1>
+<pre data-notecalc-visible-line-count="3" class="notecalc-instance" data-notecalc-font-size="12">
+50 km as number
+0.2 as percent
+</pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="copying-and-exporting"><a class="header" href="#copying-and-exporting">Copying and Exporting</a></h1>
+<h2 id="ctrl-c-without-selection"><a class="header" href="#ctrl-c-without-selection"><kbd class='mykbd'>CTRL C</kbd> without selection</a></h2>
+<p>By pressing <kbd class='mykbd'>CTRL C</kbd> without any active selection, the <strong>result</strong> of the line where the cursor is located is copied to the clipboard.</p>
+<h2 id="ctrl-c-with-selection"><a class="header" href="#ctrl-c-with-selection"><kbd class='mykbd'>CTRL C</kbd> with selection</a></h2>
+<p>If text is selected, that text is copied to the clipboard.</p>
+<p>Be careful, as this copies the raw content, so if, for example, the selection contains a line reference, it will copy the string describing the reference, not its value, to the clipboard.</p>
+<pre data-notecalc-visible-line-count="10" class="notecalc-instance" data-notecalc-font-size="14">
+$16/day
+{1} * 7days
+{1} * 365days
+</pre>
+<p>For example, by selecting the entire text above and copying it, this is what gets copied to the clipboard:</p>
+<pre><code>{[#1,d]} $16/day
+{[#2,d]} {1} * 7days
+{[#3,d]} {1} * 365days
+</code></pre>
+<p>The advantage of this is that you can save or send this to a friend, and then by pasting it back into NoteCalc, you will get the same result, with the line references pointing to the correct places in the new note as well.</p>
+<h2 id="wyswyg-export"><a class="header" href="#wyswyg-export">WYSWYG export</a></h2>
+<p>If you only want to copy the final result, you can do this by clicking the print button <i id="print-button" class="fa fa-print"></i> located in the upper right corner, which copies the entire note to the clipboard in the format as you see it.<br />
+For example clicking on the print button on this page will copy the following text to the clipboard:</p>
+<pre><code>$16/day               █    16 $ / day
+16 $ / day * 7days    █   112       $
+16 $ / day * 365days  █ 5 840       $
+</code></pre>
+<h2 id="url"><a class="header" href="#url">URL</a></h2>
+<p><strong>Only on the <a href="./home">Home page</a></strong>, the content of the note is automatically saved, compressed, and encoded into the URL. By copying this, you can share or save your work. When you paste the URL into your browser, you will see the same content again.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="working-with-binary-numbers"><a class="header" href="#working-with-binary-numbers">Working with binary numbers</a></h1>
+<p>Numbers can also be provided in binary and hexadecimal formats, using the <code>0x</code> and <code>0b</code> prefixes respectively.</p>
+<pre data-notecalc-visible-line-count="3" class="notecalc-instance" data-notecalc-font-size="14">
+input = 0xc0e0_0000
+input = 0b1111 0000 1111
+</pre>
+<p>Results also can be displayed in hexadecimal and binary forms as well.<br />
+To switch between them, stand on the given line and press <kbd class='mykbd'>ALT ←</kbd> or <kbd class='mykbd'>ALT →</kbd>.</p>
+<pre data-notecalc-visible-line-count="25" class="notecalc-instance" data-notecalc-font-size="14">
+# Write your input here
+input = 0xc0e00000
+// use ALT+(Left|Right) while 
+// the cursor is on the above line
+// to change to hex or binary representation
+
+# interpreting input as...
+## ...several unsigned data types
+input & 0xFF                  //  u8
+input & 0xFFFF                // u16
+input & 0xFFFFFFFF            // u32
+input & 0xFFFFFFFFFFFFFFFF    // u64
+
+## ...file sizes / number of bytes
+input = input bytes
+input in kilobytes
+input in MB
+input in GB
+// ... *ibi-bytes
+input in KiB
+input in MiB
+input in GiB
+</pre>
+<p>Developers can use their loved operators as well</p>
+<pre data-notecalc-visible-line-count="3" class="notecalc-instance" data-notecalc-font-size="14">
+bit shifting 0b0001 << 4
+(0b1100 & 0b0011) | 0x08 & ~1
+</pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="percentages"><a class="header" href="#percentages">Percentages</a></h1>
+<ul>
+<li>
+<p>Finding a percentage of a number</p>
+<pre data-notecalc-visible-line-count="1" class="notecalc-instance" data-notecalc-font-size="14">
+200 * 5%
+</pre>
+</li>
+<li>
+<p>Adding/subtracting percentages from a base number</p>
+<pre data-notecalc-visible-line-count="2" class="notecalc-instance" data-notecalc-font-size="14">
+100 + 10%
+200 - 20%
+</pre>
+</li>
+<li>
+<p>Asking for the percentage of 60 that 20 represents</p>
+<pre data-notecalc-visible-line-count="1" class="notecalc-instance" data-notecalc-font-size="14">
+20 is what % of 60
+</pre>
+</li>
+<li>
+<p>Searching for the base value from which 25% equals 5</p>
+  <pre data-notecalc-visible-line-count="1" class="notecalc-instance" data-notecalc-font-size="14">
+  5 is 25% of what
+  </pre>
+</li>
+<li>
+<p>Looking for the original amount before an increase of 25% was added to make it 5</p>
+<pre data-notecalc-visible-line-count="4" class="notecalc-instance" data-notecalc-font-size="14">
+5 is 25% on what
+or in other forms:
+25% on what is 5
+what plus 25% is 5
+</pre>
+</li>
+<li>
+<p>Looking for the original amount before a decrease of 25% was subtracted to make it 5</p>
+<pre data-notecalc-visible-line-count="4" class="notecalc-instance" data-notecalc-font-size="14">
+5 is 25% off what
+or in other forms:
+what minus 25% is 5
+25% off what is 5
+</pre>
+</li>
+<li>
+<p>Looking for the percentage increase or decrease</p>
+<pre data-notecalc-visible-line-count="4" class="notecalc-instance" data-notecalc-font-size="14">
+44 is what % on 40
+24 is what % off 300
+</pre>
+</li>
+</ul>
+<h2 id="autocompletion-1"><a class="header" href="#autocompletion-1">Autocompletion</a></h2>
+<p>You don't need to memorize these percentage expressions; generally,
+if I need any percentage-related expression, I type a <code>%</code> sign and invoke <a href="./autocompletion.html">autocompletion</a> with <kbd class='mykbd'>CTRL Space</kbd>, which lists the operations.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="units--conversions"><a class="header" href="#units--conversions">Units &amp; Conversions</a></h1>
+<p>You can convert from one unit of measurement to another using the <code>in</code> operator.</p>
+<pre data-notecalc-decimal-places='15' data-notecalc-visible-line-count="10" class="notecalc-instance" data-notecalc-font-size="14">
+3m in cm
+1024kB in megabytes
+3 years in months
+[1, 1000, 10000]cm in m
+
+101325 kg/(m*s^2)
+8.314 m^3*Pa/mol/K
+
+</pre>
+<h2 id="units"><a class="header" href="#units">Units</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Base</th><th>Unit</th></tr></thead><tbody>
+<tr><td>Length</td><td>meter (m), inch (in), foot (ft), yard (yd), mile (mi), link (li), rod (rd), chain (ch), angstrom, mil</td></tr>
+<tr><td>Surface</td><td>area	m2, sqin, sqft, sqyd, sqmi, sqrd, sqch, sqmil, acre, hectare</td></tr>
+<tr><td>Volume</td><td>m3, litre (l, L, lt, liter), cc, cuin, cuft, cuyd, teaspoon, tablespoon</td></tr>
+<tr><td>Liquid</td><td>volume	minim, fluiddram (fldr), fluidounce (floz), gill (gi), cup (cp), pint (pt), quart (qt), gallon (gal), beerbarrel (bbl), oilbarrel (obl), hogshead, drop (gtt)</td></tr>
+<tr><td>Angles</td><td>rad (radian), deg (degree), grad (gradian), cycle, arcsec (arcsecond), arcmin (arcminute)</td></tr>
+<tr><td>Time</td><td>second (s, secs, seconds), minute (min, mins, minutes), hour (h, hr, hrs, hours), day (days), week (weeks), month (months), year (years), decade (decades), century (centuries), millennium (millennia)</td></tr>
+<tr><td>Frequency</td><td>hertz (Hz)</td></tr>
+<tr><td>Mass</td><td>gram(g), tonne, ton, grain (gr), dram (dr), ounce (oz), poundmass (lbm, lb, lbs), hundredweight (cwt), stick, stone</td></tr>
+<tr><td>Electric</td><td>current	ampere (A)</td></tr>
+<tr><td>Temperature</td><td>kelvin (K), celsius (degC), fahrenheit (degF), rankine (degR)</td></tr>
+<tr><td>Amount</td><td>of substance	mole (mol)</td></tr>
+<tr><td>Luminous</td><td>intensity	candela (cd)</td></tr>
+<tr><td>Force</td><td>newton (N), dyne (dyn), poundforce (lbf), kip</td></tr>
+<tr><td>Energy</td><td>joule (J), erg, Wh, BTU, electronvolt (eV)</td></tr>
+<tr><td>Power</td><td>watt (W), hp</td></tr>
+<tr><td>Pressure</td><td>Pa, psi, atm, torr, bar, mmHg, mmH2O, cmH2O</td></tr>
+<tr><td>Electricity</td><td>and magnetism	ampere (A), coulomb (C), watt (W), volt (V), ohm, farad (F), weber (Wb), tesla (T), henry (H), siemens (S), electronvolt (eV)</td></tr>
+<tr><td>Binary</td><td>bits (b), bytes (B)</td></tr>
+</tbody></table>
+</div>
+<h2 id="prefixes"><a class="header" href="#prefixes">Prefixes</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Name</th><th>Abbreviation</th><th>Value</th></tr></thead><tbody>
+<tr><td>deca</td><td>da</td><td>1e1</td></tr>
+<tr><td>hecto</td><td>h</td><td>1e2</td></tr>
+<tr><td>kilo</td><td>k</td><td>1e3</td></tr>
+<tr><td>mega</td><td>M</td><td>1e6</td></tr>
+<tr><td>giga</td><td>G</td><td>1e9</td></tr>
+<tr><td>tera</td><td>T</td><td>1e12</td></tr>
+<tr><td>peta</td><td>P</td><td>1e15</td></tr>
+<tr><td>exa</td><td>E</td><td>1e18</td></tr>
+<tr><td>zetta</td><td>Z</td><td>1e21</td></tr>
+<tr><td>yotta</td><td>Y</td><td>1e24</td></tr>
+<tr><td>ronna</td><td>R</td><td>1e27</td></tr>
+<tr><td>quetta</td><td>Q</td><td>1e30</td></tr>
+</tbody></table>
+</div><div class="table-wrapper"><table><thead><tr><th>Name</th><th>Abbreviation</th><th>Value</th></tr></thead><tbody>
+<tr><td>deci</td><td>d</td><td>1e-1</td></tr>
+<tr><td>centi</td><td>c</td><td>1e-2</td></tr>
+<tr><td>milli</td><td>m</td><td>1e-3</td></tr>
+<tr><td>micro</td><td>u</td><td>1e-6</td></tr>
+<tr><td>nano</td><td>n</td><td>1e-9</td></tr>
+<tr><td>pico</td><td>p</td><td>1e-12</td></tr>
+<tr><td>femto</td><td>f</td><td>1e-15</td></tr>
+<tr><td>atto</td><td>a</td><td>1e-18</td></tr>
+<tr><td>zepto</td><td>z</td><td>1e-21</td></tr>
+<tr><td>yocto</td><td>y</td><td>1e-24</td></tr>
+<tr><td>ronto</td><td>r</td><td>1e-27</td></tr>
+<tr><td>quecto</td><td>q</td><td>1e-30</td></tr>
+</tbody></table>
+</div>
+<p>The following binary prefixes are available. They can be used with units bits (b) and bytes (B).</p>
+<div class="table-wrapper"><table><thead><tr><th>Name</th><th>Abbreviation</th><th>Value</th></tr></thead><tbody>
+<tr><td>kibi</td><td>Ki</td><td>1024</td></tr>
+<tr><td>mebi</td><td>Mi</td><td>1024^2</td></tr>
+<tr><td>gibi</td><td>Gi</td><td>1024^3</td></tr>
+<tr><td>tebi</td><td>Ti</td><td>1024^4</td></tr>
+<tr><td>pebi</td><td>Pi</td><td>1024^5</td></tr>
+<tr><td>exi</td><td>Ei</td><td>1024^6</td></tr>
+<tr><td>zebi</td><td>Zi</td><td>1024^7</td></tr>
+<tr><td>yobi</td><td>Yi</td><td>1024^8</td></tr>
+</tbody></table>
+</div><div class="table-wrapper"><table><thead><tr><th>Name</th><th>Abbreviation</th><th>Value</th></tr></thead><tbody>
+<tr><td>kilo</td><td>k</td><td>1e3</td></tr>
+<tr><td>mega</td><td>M</td><td>1e6</td></tr>
+<tr><td>giga</td><td>G</td><td>1e9</td></tr>
+<tr><td>tera</td><td>T</td><td>1e12</td></tr>
+<tr><td>peta</td><td>P</td><td>1e15</td></tr>
+<tr><td>exa</td><td>E</td><td>1e18</td></tr>
+<tr><td>zetta</td><td>Z</td><td>1e21</td></tr>
+<tr><td>yotta</td><td>Y</td><td>1e24</td></tr>
+</tbody></table>
+</div><div style="break-before: page; page-break-before: always;"></div><h2 id="040---2024-03-07"><a class="header" href="#040---2024-03-07">0.4.0 - 2024-03-07</a></h2>
+<h3 id="breaking-changes"><a class="header" href="#breaking-changes">Breaking Changes</a></h3>
+<ul>
+<li>Empty matrices or matrices with invalid content are now considered as a valid matrix instead of plain text, so the matrix editor can be used on them</li>
+<li>Syntax of Line References has been changed to <code>{3}</code> instead of {<code>&amp;[3]</code>} (the previous syntax caused ambiguity during matrix parsing)
+This change should not affect users, since they use ALT+up/down to select and insert Line References</li>
+<li>Matrix resizing now requires <code>alt+ctrl</code> keys instead of just <code>alt</code></li>
+<li>Autocompletion (ctrl space instead of tabs).</li>
+<li>Regions (paragraphs under different #Headers) are now have the same alignments across all the
+document</li>
+<li><code>sum</code> variable is not set to zero anymore at headers. You can do that explicitly by writing <code>sum = 0</code></li>
+<li><code>$</code> is now a prefix operator, so the expression <code>12$</code> is now invalid and should be written as <code>$12</code></li>
+</ul>
+<h3 id="features"><a class="header" href="#features">Features</a></h3>
+<ul>
+<li>#Headers appears in the Result area as well</li>
+<li>Name of the navigation tabs are now can be set: It gets the value of the first line if it is a <code>#Header</code></li>
+<li>Word selection by double click</li>
+<li>When it comes to binary operations, single row matrices now work as arrays, meaning that the operation is applied
+to all of their elements.
+<pre><code>[2  3  4] + 1  ---&gt; [3  4  5]
+</code></pre>
+<h4 id="usecase"><a class="header" href="#usecase">Usecase</a></h4>
+Let's say you want to compare job offers, so you make an array of offers (<code>daily rate</code>).<br />
+You calculate what those offers mean as a monthly income, including taxes etc.<br />
+In the <code>Comparison</code> part you can see the summary of your calculations, what
+offer would end up in what monthly salary, and how they compare to your current salary.<br />
+Now if you got a new offer, it is enough just to add that offer to the <code>daily rate</code> array,
+and all the information (monthly profit after taxes and comparison to your current salary) will
+appear to this new offer.
+<pre><code>daily rate = [$90  $100  $120]                    █ [    90 $     100 $     120 $]
+annual gross = (daily rate * 20) * 12             █ [21 600 $  24 000 $  28 800 $]
+tax free = $10k                                   █ 10 000 $
+tax base = annual gross - tax free                █ [11 600 $  14 000 $  18 800 $]
+tax = tax base * 40%                              █ [ 4 640 $   5 600 $   7 520 $]
+net = annual gross - tax                          █ [16 960 $  18 400 $  21 280 $]
+monthly net = net / 12                            █ [ 1 413 $   1 533 $   1 773 $]
+current monthly salary = $1000                    █  1 000 $
+                                                  █
+# Comparison                                      █
+daily rate                                        █ [   90 $    100 $    120 $]
+monthly net                                       █ [1 413 $  1 533 $  1 773 $]
+monthly net is what % on current monthly salary   █ [   41 %     53 %     77 %]
+
+</code></pre>
+All operators now work on Matrices when it makes sense.</li>
+<li>Percentage operators work on quantities now: <code>5m is 25% of what ==&gt; 20 m</code></li>
+<li>Pasting back Exported text to the editor chops down the Result part</li>
+<li>User defined functions
+<ul>
+<li>Pressing <code>ctrl-b</code> on a funtion invocation jumps to its definition (same as for Line References and variables)</li>
+</ul>
+</li>
+<li>Indent and Unindent lines (tab/shift+tab)
+<ul>
+<li>Better editor handling, which paves the road for multiple cursors</li>
+</ul>
+</li>
+<li>Better handling of period of times in calculations<br />
+So far every quantity was stored in the base unit (e.g. 10 years was stored as 315 576 000 seconds).<br />
+It caused precision problems in expressions like <code>(10k/year cost + 3k/month tax) * 10 years</code>,<br />
+resulting in a wrong output (<code>459 999.9</code> instead of <code>460 000</code>)</li>
+<li><code>&amp;</code>, <code>|</code> and <code>~</code> can be used as bitwise operators</li>
+<li>Smart output units e.g.: By default the result was in seconds for <code>500$ / 20$/hour</code>, now it is hours.</li>
+<li>Only the changed digits are pulsed when a result had changed (it helps to identify changes in a number when the user
+explores different scenarios, or helps to compare binary results )</li>
+<li>Performance impr: Result calculation occurs only when the user stops typing for 150 ms</li>
+<li>If there is not enough space for the editor content + its results, the user is allowed to
+move the right gutter wherever she wants (if there is enough space, NoteCalc will automatically align
+it to show both the editor and result contents)</li>
+<li>Typing closing parenthesis works similar to IntelliJ, if a closing Parentheses is already there,
+it will be overwritten.</li>
+<li>Settings modal window</li>
+<li>Smart indentation when typing Enter (it preserves the actual line's indentation)</li>
+<li>It is now possible to insert Line References inside matrices, however its rendering is still not supported (so e.g. <code>{23}</code> will appear instead of the value of LineRef 23).</li>
+<li>Function parameter hints</li>
+<li>If fractional decimals are missing due to low precision set by the user, trailing zeroes are not trimmed, which hopefully rings some bells to the user</li>
+<li>Added remainder operator (both <code>rem</code> and <code>mod</code> work)</li>
+<li>Line References can be copied and pasted</li>
+<li>Bool type (true, false)</li>
+<li>Conditional Expressions (<code>if &lt;expr&gt; then &lt;expr&gt; else &lt;expr&gt;</code>, e.g. <code>(if true then 2 else 3) + (if false then 4 else 5)</code> == 7)</li>
+<li>Comparison operators (<code>&lt;</code>, <code>&gt;</code>, <code>&lt;=</code>, <code>&gt;=</code>, <code>==</code>, <code>!=</code>)</li>
+<li>If multiple Assignments are selected, then pressing ctrl-space (autocompletion) brings up an action "Align", which aligns
+the lines on the '=' char</li>
+<li>Specifiers: 50km as number = 50, 0.2 as percent = 20%</li>
+<li>Headers <code>/sum</code>, show result, bold, sum etc
+Sum Headers create a variable implicitly</li>
+<li>"Copy as plain text" action in autocompletion</li>
+<li>If a line result is copied (by pressing ctrl-c without having a selection), the copied result is flashing to highligh what was copied</li>
+</ul>
+<h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
+<ul>
+<li>Beside <code>//</code>, the ` character behaves as a comment as well (explain that ' is used for ignoring single numbers, e.g. 12+3 '4, here the 4 is ignored)</li>
+<li>Clicking on a result on the Result Panel does not insert a reference to the result any more (it was easy to misclick and as not that useful feature)</li>
+<li><code>ctrl-b</code> (jumping to the definition line of the variable the cursor is standing on) now scrolls a little bit above the target line if it is out of the visible area</li>
+</ul>
+<h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
+<ul>
+<li>Thousand grouping was affected by the minus sign which resulted
+in wrong grouping when having multiple results, e.g.:
+<pre><code>  fuel     -40k   █   -40 000
+  vacation -100k  █ - 100 000 // there is an extra space after '-'
+  clothing -10k   █   -10 000
+</code></pre>
+</li>
+<li>Fix selecting complex expressions when stepped into matrix<br />
+When the user stepped into a matrix, the selected cell's content was determined by a primitive algorithm which did not take into account
+the AST, but naively parsed the string and looked for commas or semi colons for cell separators. Obviously this solution did not work
+when the cell content was a complex expressions with function calls etc inside.
+The new solution uses the AST to determine what is inside a matrix cell.</li>
+<li>Clicking into the result area did nothing so far, now it put the cursos into the clicked line</li>
+<li>Bin or Hex representation of a float is now an Error</li>
+<li>Referenced matrices were not visible due to the reference-highlighting covered them</li>
+<li>Referenced matrices were rendered outside the editor</li>
+<li>Empty matrices (<code>[]</code>) inside parenthesis were not evaluated correctly</li>
+<li>Added new rendering layers so rendered rectangles can be positioned better (e.g. where to put matrix editor background to not be hidden by cursor highlighter nor function bg color etc)</li>
+<li>Builtin variable <code>sum</code> was not parsed correctly if it was followed by some special chars</li>
+<li>Saving the content into the #hash of the URL does not create browser history entries anymore (does not work under chrome)</li>
+<li>Units can be applied to function results (e.g. <code>sin(pi() rad)</code> now works)</li>
+<li>Operator precedence were calculated wrongly when a quantity was involved in the expression (e.g. <code>2*3 + (4/g)*5g*6</code> was calculated as <code>((2*3) + (4/g)*5g)*6</code>)</li>
+<li>Line numbers were rendered even below the last physical line</li>
+<li>Variables did not require full name match (e.g. if variable <code>a</code> existed, the string <code>a_b</code> would have matched it)</li>
+<li>If value of a LineRef was 'Err' (aka the result of a referenced line was 'Err'), it was rendered even when was covered by the result panel</li>
+<li>Changing the vlaue of a LineRef caused pulsing even when the LineRef was not visible due to the result panel</li>
+<li>Line Reference pulsing was not moved when scrolling</li>
+<li>Line reference pulsing command was duplicated in the RenderBucket when cursor movement occurred due to mouse clicking</li>
+<li>If Line Reference Selector (alt + up/down) went out of screen, it did not move the scrollbar</li>
+<li>Modifying a LineReference source result by pasting (ctrl-v), it did not refresh the line reference pulsings' attributes</li>
+<li>Already rendered scrollbar were not cleared when a a text was inserted which had enough vertical space</li>
+<li>LineReferences were rendered without vertical alignment</li>
+<li>Fix an error when unit conversion happens between the same units but in different representation (ml*m ==&gt; m^4)</li>
+<li>Fraction numbers were not pulsed when changed</li>
+<li>Fix parsing expressions like '12 km is x% of...'</li>
+</ul>
+<h2 id="030---2020-12-21"><a class="header" href="#030---2020-12-21">[0.3.0] - 2020-12-21</a></h2>
+<h3 id="breaking-changes-1"><a class="header" href="#breaking-changes-1">Breaking Changes</a></h3>
+<ul>
+<li>Spaces are not allowed in hex numbers anymore but undorscores are.
+It caused problems since 0xAA B could not be unambiguously parsed (e.g. it can be 0xAAB or 0xAA B, where 'B' is a unit for 'bytes', so make it explicit by writing 0xAA_B).</li>
+</ul>
+<h3 id="features-1"><a class="header" href="#features-1">Features</a></h3>
+<ul>
+<li>
+<p>Dark Theme</p>
+</li>
+<li>
+<p>Render command optimizations, reducing render command count by around 40%
+(gutters, line number- and result backround
+are now rendered only once as a big rectangle and not line by line).</p>
+</li>
+<li>
+<p>Active references (variables and line refs in the cursor's row) are now just underlined
+and the referenced lines are not highlighted fully only their left and right gutter.
+(Look at the image below)</p>
+</li>
+<li>
+<p>Results where a denominator is a unit (e.g. 5 / year) are now rendered in a more user-friendly way (e.g. instead of <code>5 year^-1</code> it is <code>5 / year</code>)</p>
+</li>
+<li>
+<p>Automatic closing parenthesis/braces insertion when the opening one is typed</p>
+</li>
+<li>
+<p>Automatic closing parenthesis/braces deletion when the opening one is deleted</p>
+</li>
+<li>
+<p>Automatic parenthesis/braces wrapping around selected text if opening one is typed while
+a text is selected</p>
+</li>
+<li>
+<p>Matching parenthesis are highlighted if the cursor is inside them</p>
+</li>
+<li>
+<p>The note can be saved with <code>ctrl-s</code> (Though it is still saved automatically when there is no user interaction)</p>
+</li>
+<li>
+<p>It is possible to apply units directly on Line References or Variables, e.g.</p>
+<pre><code>var = 12
+var km
+</code></pre>
+<p>The result of the second line will be <code>12 km</code></p>
+</li>
+<li>
+<p>Parsing improvement: Now the parser are smarter in deciding what is an operator (e.g. 'in' in <code>12 m in cm</code>),
+a unit (<code>12 in</code> which is 12 inch), or a simple string (<code>I downloaded 12 GB in 3 seconds</code>).
+Now it is even possible to evaluate this string <code>12 in in in</code>, which is equivalent of <code>12 inch in inch</code></p>
+</li>
+<li>
+<p>Percentage calculations</p>
+</li>
+<li>
+<p>Max row count was increased from 128 to 256</p>
+</li>
+<li>
+<p>e (Euler's Number) was added, currently as a function (<code>e()</code>)</p>
+</li>
+<li>
+<p>Invalid argument types for functions are highlighted as errors (See image below)</p>
+</li>
+<li>
+<p>new functions:</p>
+<ul>
+<li>abs(num)</li>
+<li>ln(num)</li>
+<li>lg(num)</li>
+<li>log(num, num)</li>
+<li>sin(angle) -&gt; num</li>
+<li>cos(angle) -&gt; num</li>
+<li>tan(angle) -&gt; num</li>
+<li>asin(num) -&gt; angle</li>
+<li>acos(num) -&gt; angle</li>
+<li>atan(num) -&gt; angle</li>
+</ul>
+</li>
+</ul>
+<h3 id="changed-1"><a class="header" href="#changed-1">Changed</a></h3>
+<ul>
+<li>When opening a not empty note, the result panel now tries
+to be as close to the editor as possible to have a better
+overview about calculations and their results.</li>
+<li>GitHub and website links were added to the NoteCalc page</li>
+<li>Strings at the frontend are now rendered char by char. It is necessary
+to be able to place the cursor at the right place, since the text rendering
+does not guarantee that a single char takes exactly 'char-width' pixels.</li>
+<li>Overlay canvas (the canvas above the app canvas) was removed. It was used to draw
+overlay effects (e.g. pulsing), but it was problematic since it needed alpha blending,
+which wasn't always nice and console frontend support is limited.
+Now pulses are rendered above "BelowText" layer and below the "Text" layer.</li>
+<li>underscore is allowed in binary numbers (e.g. <code>0b11_00</code>)</li>
+<li>Parenthesis have different color than operators.</li>
+<li>Remove <code>Vec</code> and dynamic allocation from unit parsing and operations.</li>
+<li>Replaced all unit <code>RefCells</code> to <code>Rc</code>, it was a mistake to use <code>RefCells</code> in the first place.</li>
+<li>Matrices cannot be deleted anymore by <code>DEL</code> or <code>BACKSPACE</code>, ctrl is needed</li>
+</ul>
+<h3 id="fixed-1"><a class="header" href="#fixed-1">Fixed</a></h3>
+<ul>
+<li>Dead characters (e.g. '^' on a hungarian keyboard) were not possible to type</li>
+<li>Longest visible result length was calculated wrongly when there were multiple headers
+in a note, which affected the result panel size.</li>
+<li><code>sum</code> variable get emptied at #Headers</li>
+<li>Char width at the fonrend is now integer, ceiling upward. It caused issues
+with rendering (widths of recatngles were float as well and did not always fill up
+the required space)</li>
+<li>Underlines and line reference background rectangles were rendered even if they
+were outside of the editor area</li>
+<li><code>ctrl-x</code> did not copy the selected text</li>
+<li>Units in the denominator behaved buggy. now expressions like this works well
+<pre><code>tax A = 50 000/month
+tax B = 50 000/year
+(tax A + tax B) * (1 year)
+</code></pre>
+</li>
+<li>u64 values can be parsed correctly (e.g. 0xFFFFFFFFFFFFFFFF)</li>
+<li>Bitwise operations now work on u64 values</li>
+<li>Negative numbers can be presented in binary and hex form</li>
+<li>Line reference pulsing was called each time a cursor was pressed on the line ref's line, causing
+flickering</li>
+<li>'Line normalization' (the process where the referenced lines' id is normalized to the referenced line actual line number)
+could be undo with ctrl-z</li>
+<li>Bitwise shifting operators (<code>&lt;&lt;</code> and <code>&gt;&gt;</code>) used wrapping, resulted in unwanted situations. Now it is an error
+to use larger shift operands than the underlying integer representation (u64 currently)</li>
+</ul>
+<h2 id="020---2020-12-03"><a class="header" href="#020---2020-12-03">[0.2.0] - 2020-12-03</a></h2>
+<h3 id="breaking-changes-2"><a class="header" href="#breaking-changes-2">Breaking Changes</a></h3>
+<p><code>--</code> does not set the <code>sum</code> variable to zero, but every header does</p>
+<h3 id="features-2"><a class="header" href="#features-2">Features</a></h3>
+<ul>
+<li>Mobile support for index.html and notecalc itself
+<ul>
+<li>typing using the native virtual keyboard</li>
+<li>scrolling</li>
+</ul>
+</li>
+<li>High DPI rendering</li>
+<li>Headers (<code># Header</code>) and region-specific alignments (different regions
+under different headers can have different alignments, making the
+result output more ergonomic).</li>
+<li>Comments are supported (e.g. <code>12 + 3 // it should be 15</code>)</li>
+<li>Hovering effect for the scrollbar</li>
+<li>Cursor changes to 'w-resize' when above the right gutter to highlight that it is draggable</li>
+<li>Line count limitation was increased from 64 to 128</li>
+<li>Default precision limitation both from the result panel and from the inserted line references was removed.
+It caused problems since very small numbers could appear as "0" due to roundings.
+It might be inconvenient in some situations but will be fixed when rounding specifiers will be implemented.
+Though, NoteCalc tries its best to render a compact form (e.g. removes repetends etc)</li>
+</ul>
+<h3 id="changed-2"><a class="header" href="#changed-2">Changed</a></h3>
+<ul>
+<li>Tutorial is updated with the new features and now stored in GIT</li>
+<li>Leangains demo is updated</li>
+</ul>
+<h3 id="fixes"><a class="header" href="#fixes">Fixes</a></h3>
+<ul>
+<li>In case a line reference was rendered outside of the editor area, '...' did not appear at the edge of the editor</li>
+<li>Firefox tracking protection issue for webfont.js</li>
+<li>Variable-reference pulsing pulsed continously when the right gutter was dragged</li>
+<li>The result panel is automatically resizing now with respect to browser width, required space for results and required space for the editor panel's content</li>
+<li>The binary and hex representation gives Err for quantities and percentages</li>
+<li>Lines that are too long and are covered by the result panel renders dots ('...') on the panel.</li>
+<li>The dots for matrices are now rendered for all the matrix's rows</li>
+<li>'…' was not rendered correctly for Matrices</li>
+<li>Ctrl-t is not absorbed by the frontend anymore</li>
+<li>Undoing (Ctrl-z) a selection removal with DEL button was buggy and only the first line of the selection was
+reparsed</li>
+<li>Pulses (which highlights the usage places of variable/lineref under the cursor)
+appeared too slowly when navigating with cursor or mouse, making it more difficult
+for the user to notice it immediately.</li>
+<li>Space is automatically inserted in front of a just-inserted line reference</li>
+<li>Right gutter alignment was a render pass late to the input which caused it</li>
+<li>Cursor was not visible at the right edge of the editor</li>
+<li>Global static RESULT_BUFFER is now part of the lib and not of the frontend (introduces some unsafe code but less trouble with the borrow checker)</li>
+<li>Fixed error when variable name is empty</li>
+</ul>
+<h3 id="removed"><a class="header" href="#removed">Removed</a></h3>
+<ul>
+<li>local.html was removed, you can access now the debug functionality and local wasm file
+via <code>host/notecalc?debug</code></li>
+</ul>
+<h2 id="010---2020-11-19"><a class="header" href="#010---2020-11-19">[0.1.0] - 2020-11-19</a></h2>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+        <script>
+        window.addEventListener('load', function() {
+            window.setTimeout(window.print, 100);
+        });
+        </script>
+
+    </div>
+    </body>
+</html>

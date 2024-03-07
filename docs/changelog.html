@@ -1,0 +1,603 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Changelog - NoteCalc</title>
+
+
+        <!-- Custom HTML head -->
+        <style type="text/css">
+            @font-face {
+                font-family: "JetBrainsMono-Regular";
+                src: url("https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff/JetBrainsMono-Regular.woff") format("woff");
+            }
+        
+            @font-face {
+                font-family: "JetBrainsMono-ExtraBold";
+                src: url("https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff/JetBrainsMono-ExtraBold.woff") format("woff");
+            }
+            canvas {
+                border: 1px solid black;
+            }
+            .mykbd {
+                display: inline-block;
+                padding: 0.2rem 0.4rem;
+                font-size: 87.5%; 
+                font-weight: 700; 
+                line-height: 1; 
+                color: #fff; 
+                text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.25); 
+                background-color: #212529; 
+                border: 1px solid #4c4f53; 
+                border-radius: 0.2rem; 
+                box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.25); 
+            }
+            :root {
+              --content-max-width: 500px;
+            }
+        </style>
+        
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/webfont/1.6.28/webfontloader.js"></script>
+        <!-- <script src="assets/webfont_v1.6.26.js"></script> -->
+        <script src="assets/notecalc.js?v=0.3.0"></script>
+        <script src="assets/notecalc_instance.js?v=0.3.0"></script>
+        <script>
+            window.setTimeout(function () {
+                let print_btn = document.getElementsByClassName("right-buttons")[0];
+                print_btn.addEventListener('click', function(e) { 
+                    const str = wasm_bindgen.get_selected_rows_with_results(active_notecalc_editor.app_ptr);
+                    navigator.clipboard.writeText(str).then(function () {
+                        console.log('Async: Copying to clipboard was successful!');
+                    }, function (err) {
+                        console.error('Async: Could not copy text: ', err);
+                    });
+                    event.stopPropagation();
+                    event.preventDefault();
+                    return false;
+                }, false);
+            }, 2000)
+        </script>
+        
+        <!-- <style type="text/css">
+            @font-face {
+                font-family: "JetBrainsMono-Regular";
+                src: url("fonts/JetBrainsMono-Regular.woff") format("woff");
+            }
+        
+            @font-face {
+                font-family: "JetBrainsMono-ExtraBold";
+                src: url("fonts/JetBrainsMono-ExtraBold.woff") format("woff");
+            }
+        </style>
+         -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('light')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="home.html">Home</a></li><li class="chapter-item expanded affix "><li class="part-title">User Guide</li><li class="chapter-item expanded "><a href="guide.html"><strong aria-hidden="true">1.</strong> Introduction</a></li><li class="chapter-item expanded "><a href="headings_comments.html"><strong aria-hidden="true">2.</strong> Headers and Comments</a></li><li class="chapter-item expanded "><a href="variables.html"><strong aria-hidden="true">3.</strong> Variables</a></li><li class="chapter-item expanded "><a href="autocompletion.html"><strong aria-hidden="true">4.</strong> Autocompletion</a></li><li class="chapter-item expanded "><a href="line_refs.html"><strong aria-hidden="true">5.</strong> Line references</a></li><li class="chapter-item expanded "><a href="selection_actions.html"><strong aria-hidden="true">6.</strong> Actions on selections</a></li><li class="chapter-item expanded "><a href="conditional.html"><strong aria-hidden="true">7.</strong> Conditional expressions</a></li><li class="chapter-item expanded "><a href="matrices.html"><strong aria-hidden="true">8.</strong> Vectors and Matrices</a></li><li class="chapter-item expanded "><a href="functions.html"><strong aria-hidden="true">9.</strong> Functions</a></li><li class="chapter-item expanded "><a href="number_formats.html"><strong aria-hidden="true">10.</strong> Number formats</a></li><li class="chapter-item expanded "><a href="export.html"><strong aria-hidden="true">11.</strong> Copying & Exporting</a></li><li class="chapter-item expanded affix "><li class="part-title">Calculations</li><li class="chapter-item expanded "><div><strong aria-hidden="true">12.</strong> Operations</div></li><li class="chapter-item expanded "><a href="binary.html"><strong aria-hidden="true">13.</strong> Binary</a></li><li class="chapter-item expanded "><a href="percentages.html"><strong aria-hidden="true">14.</strong> Percentages</a></li><li class="chapter-item expanded "><a href="units.html"><strong aria-hidden="true">15.</strong> Units and Conversions</a></li><li class="spacer"></li><li class="chapter-item expanded affix "><a href="changelog.html" class="active">Changelog</a></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">NoteCalc</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h2 id="040---2024-03-07"><a class="header" href="#040---2024-03-07">0.4.0 - 2024-03-07</a></h2>
+<h3 id="breaking-changes"><a class="header" href="#breaking-changes">Breaking Changes</a></h3>
+<ul>
+<li>Empty matrices or matrices with invalid content are now considered as a valid matrix instead of plain text, so the matrix editor can be used on them</li>
+<li>Syntax of Line References has been changed to <code>{3}</code> instead of {<code>&amp;[3]</code>} (the previous syntax caused ambiguity during matrix parsing)
+This change should not affect users, since they use ALT+up/down to select and insert Line References</li>
+<li>Matrix resizing now requires <code>alt+ctrl</code> keys instead of just <code>alt</code></li>
+<li>Autocompletion (ctrl space instead of tabs).</li>
+<li>Regions (paragraphs under different #Headers) are now have the same alignments across all the
+document</li>
+<li><code>sum</code> variable is not set to zero anymore at headers. You can do that explicitly by writing <code>sum = 0</code></li>
+<li><code>$</code> is now a prefix operator, so the expression <code>12$</code> is now invalid and should be written as <code>$12</code></li>
+</ul>
+<h3 id="features"><a class="header" href="#features">Features</a></h3>
+<ul>
+<li>#Headers appears in the Result area as well</li>
+<li>Name of the navigation tabs are now can be set: It gets the value of the first line if it is a <code>#Header</code></li>
+<li>Word selection by double click</li>
+<li>When it comes to binary operations, single row matrices now work as arrays, meaning that the operation is applied
+to all of their elements.
+<pre><code>[2  3  4] + 1  ---&gt; [3  4  5]
+</code></pre>
+<h4 id="usecase"><a class="header" href="#usecase">Usecase</a></h4>
+Let's say you want to compare job offers, so you make an array of offers (<code>daily rate</code>).<br />
+You calculate what those offers mean as a monthly income, including taxes etc.<br />
+In the <code>Comparison</code> part you can see the summary of your calculations, what
+offer would end up in what monthly salary, and how they compare to your current salary.<br />
+Now if you got a new offer, it is enough just to add that offer to the <code>daily rate</code> array,
+and all the information (monthly profit after taxes and comparison to your current salary) will
+appear to this new offer.
+<pre><code>daily rate = [$90  $100  $120]                    █ [    90 $     100 $     120 $]
+annual gross = (daily rate * 20) * 12             █ [21 600 $  24 000 $  28 800 $]
+tax free = $10k                                   █ 10 000 $
+tax base = annual gross - tax free                █ [11 600 $  14 000 $  18 800 $]
+tax = tax base * 40%                              █ [ 4 640 $   5 600 $   7 520 $]
+net = annual gross - tax                          █ [16 960 $  18 400 $  21 280 $]
+monthly net = net / 12                            █ [ 1 413 $   1 533 $   1 773 $]
+current monthly salary = $1000                    █  1 000 $
+                                                  █
+# Comparison                                      █
+daily rate                                        █ [   90 $    100 $    120 $]
+monthly net                                       █ [1 413 $  1 533 $  1 773 $]
+monthly net is what % on current monthly salary   █ [   41 %     53 %     77 %]
+
+</code></pre>
+All operators now work on Matrices when it makes sense.</li>
+<li>Percentage operators work on quantities now: <code>5m is 25% of what ==&gt; 20 m</code></li>
+<li>Pasting back Exported text to the editor chops down the Result part</li>
+<li>User defined functions
+<ul>
+<li>Pressing <code>ctrl-b</code> on a funtion invocation jumps to its definition (same as for Line References and variables)</li>
+</ul>
+</li>
+<li>Indent and Unindent lines (tab/shift+tab)
+<ul>
+<li>Better editor handling, which paves the road for multiple cursors</li>
+</ul>
+</li>
+<li>Better handling of period of times in calculations<br />
+So far every quantity was stored in the base unit (e.g. 10 years was stored as 315 576 000 seconds).<br />
+It caused precision problems in expressions like <code>(10k/year cost + 3k/month tax) * 10 years</code>,<br />
+resulting in a wrong output (<code>459 999.9</code> instead of <code>460 000</code>)</li>
+<li><code>&amp;</code>, <code>|</code> and <code>~</code> can be used as bitwise operators</li>
+<li>Smart output units e.g.: By default the result was in seconds for <code>500$ / 20$/hour</code>, now it is hours.</li>
+<li>Only the changed digits are pulsed when a result had changed (it helps to identify changes in a number when the user
+explores different scenarios, or helps to compare binary results )</li>
+<li>Performance impr: Result calculation occurs only when the user stops typing for 150 ms</li>
+<li>If there is not enough space for the editor content + its results, the user is allowed to
+move the right gutter wherever she wants (if there is enough space, NoteCalc will automatically align
+it to show both the editor and result contents)</li>
+<li>Typing closing parenthesis works similar to IntelliJ, if a closing Parentheses is already there,
+it will be overwritten.</li>
+<li>Settings modal window</li>
+<li>Smart indentation when typing Enter (it preserves the actual line's indentation)</li>
+<li>It is now possible to insert Line References inside matrices, however its rendering is still not supported (so e.g. <code>{23}</code> will appear instead of the value of LineRef 23).</li>
+<li>Function parameter hints</li>
+<li>If fractional decimals are missing due to low precision set by the user, trailing zeroes are not trimmed, which hopefully rings some bells to the user</li>
+<li>Added remainder operator (both <code>rem</code> and <code>mod</code> work)</li>
+<li>Line References can be copied and pasted</li>
+<li>Bool type (true, false)</li>
+<li>Conditional Expressions (<code>if &lt;expr&gt; then &lt;expr&gt; else &lt;expr&gt;</code>, e.g. <code>(if true then 2 else 3) + (if false then 4 else 5)</code> == 7)</li>
+<li>Comparison operators (<code>&lt;</code>, <code>&gt;</code>, <code>&lt;=</code>, <code>&gt;=</code>, <code>==</code>, <code>!=</code>)</li>
+<li>If multiple Assignments are selected, then pressing ctrl-space (autocompletion) brings up an action "Align", which aligns
+the lines on the '=' char</li>
+<li>Specifiers: 50km as number = 50, 0.2 as percent = 20%</li>
+<li>Headers <code>/sum</code>, show result, bold, sum etc
+Sum Headers create a variable implicitly</li>
+<li>"Copy as plain text" action in autocompletion</li>
+<li>If a line result is copied (by pressing ctrl-c without having a selection), the copied result is flashing to highligh what was copied</li>
+</ul>
+<h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
+<ul>
+<li>Beside <code>//</code>, the ` character behaves as a comment as well (explain that ' is used for ignoring single numbers, e.g. 12+3 '4, here the 4 is ignored)</li>
+<li>Clicking on a result on the Result Panel does not insert a reference to the result any more (it was easy to misclick and as not that useful feature)</li>
+<li><code>ctrl-b</code> (jumping to the definition line of the variable the cursor is standing on) now scrolls a little bit above the target line if it is out of the visible area</li>
+</ul>
+<h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
+<ul>
+<li>Thousand grouping was affected by the minus sign which resulted
+in wrong grouping when having multiple results, e.g.:
+<pre><code>  fuel     -40k   █   -40 000
+  vacation -100k  █ - 100 000 // there is an extra space after '-'
+  clothing -10k   █   -10 000
+</code></pre>
+</li>
+<li>Fix selecting complex expressions when stepped into matrix<br />
+When the user stepped into a matrix, the selected cell's content was determined by a primitive algorithm which did not take into account
+the AST, but naively parsed the string and looked for commas or semi colons for cell separators. Obviously this solution did not work
+when the cell content was a complex expressions with function calls etc inside.
+The new solution uses the AST to determine what is inside a matrix cell.</li>
+<li>Clicking into the result area did nothing so far, now it put the cursos into the clicked line</li>
+<li>Bin or Hex representation of a float is now an Error</li>
+<li>Referenced matrices were not visible due to the reference-highlighting covered them</li>
+<li>Referenced matrices were rendered outside the editor</li>
+<li>Empty matrices (<code>[]</code>) inside parenthesis were not evaluated correctly</li>
+<li>Added new rendering layers so rendered rectangles can be positioned better (e.g. where to put matrix editor background to not be hidden by cursor highlighter nor function bg color etc)</li>
+<li>Builtin variable <code>sum</code> was not parsed correctly if it was followed by some special chars</li>
+<li>Saving the content into the #hash of the URL does not create browser history entries anymore (does not work under chrome)</li>
+<li>Units can be applied to function results (e.g. <code>sin(pi() rad)</code> now works)</li>
+<li>Operator precedence were calculated wrongly when a quantity was involved in the expression (e.g. <code>2*3 + (4/g)*5g*6</code> was calculated as <code>((2*3) + (4/g)*5g)*6</code>)</li>
+<li>Line numbers were rendered even below the last physical line</li>
+<li>Variables did not require full name match (e.g. if variable <code>a</code> existed, the string <code>a_b</code> would have matched it)</li>
+<li>If value of a LineRef was 'Err' (aka the result of a referenced line was 'Err'), it was rendered even when was covered by the result panel</li>
+<li>Changing the vlaue of a LineRef caused pulsing even when the LineRef was not visible due to the result panel</li>
+<li>Line Reference pulsing was not moved when scrolling</li>
+<li>Line reference pulsing command was duplicated in the RenderBucket when cursor movement occurred due to mouse clicking</li>
+<li>If Line Reference Selector (alt + up/down) went out of screen, it did not move the scrollbar</li>
+<li>Modifying a LineReference source result by pasting (ctrl-v), it did not refresh the line reference pulsings' attributes</li>
+<li>Already rendered scrollbar were not cleared when a a text was inserted which had enough vertical space</li>
+<li>LineReferences were rendered without vertical alignment</li>
+<li>Fix an error when unit conversion happens between the same units but in different representation (ml*m ==&gt; m^4)</li>
+<li>Fraction numbers were not pulsed when changed</li>
+<li>Fix parsing expressions like '12 km is x% of...'</li>
+</ul>
+<h2 id="030---2020-12-21"><a class="header" href="#030---2020-12-21">[0.3.0] - 2020-12-21</a></h2>
+<h3 id="breaking-changes-1"><a class="header" href="#breaking-changes-1">Breaking Changes</a></h3>
+<ul>
+<li>Spaces are not allowed in hex numbers anymore but undorscores are.
+It caused problems since 0xAA B could not be unambiguously parsed (e.g. it can be 0xAAB or 0xAA B, where 'B' is a unit for 'bytes', so make it explicit by writing 0xAA_B).</li>
+</ul>
+<h3 id="features-1"><a class="header" href="#features-1">Features</a></h3>
+<ul>
+<li>
+<p>Dark Theme</p>
+</li>
+<li>
+<p>Render command optimizations, reducing render command count by around 40%
+(gutters, line number- and result backround
+are now rendered only once as a big rectangle and not line by line).</p>
+</li>
+<li>
+<p>Active references (variables and line refs in the cursor's row) are now just underlined
+and the referenced lines are not highlighted fully only their left and right gutter.
+(Look at the image below)</p>
+</li>
+<li>
+<p>Results where a denominator is a unit (e.g. 5 / year) are now rendered in a more user-friendly way (e.g. instead of <code>5 year^-1</code> it is <code>5 / year</code>)</p>
+</li>
+<li>
+<p>Automatic closing parenthesis/braces insertion when the opening one is typed</p>
+</li>
+<li>
+<p>Automatic closing parenthesis/braces deletion when the opening one is deleted</p>
+</li>
+<li>
+<p>Automatic parenthesis/braces wrapping around selected text if opening one is typed while
+a text is selected</p>
+</li>
+<li>
+<p>Matching parenthesis are highlighted if the cursor is inside them</p>
+</li>
+<li>
+<p>The note can be saved with <code>ctrl-s</code> (Though it is still saved automatically when there is no user interaction)</p>
+</li>
+<li>
+<p>It is possible to apply units directly on Line References or Variables, e.g.</p>
+<pre><code>var = 12
+var km
+</code></pre>
+<p>The result of the second line will be <code>12 km</code></p>
+</li>
+<li>
+<p>Parsing improvement: Now the parser are smarter in deciding what is an operator (e.g. 'in' in <code>12 m in cm</code>),
+a unit (<code>12 in</code> which is 12 inch), or a simple string (<code>I downloaded 12 GB in 3 seconds</code>).
+Now it is even possible to evaluate this string <code>12 in in in</code>, which is equivalent of <code>12 inch in inch</code></p>
+</li>
+<li>
+<p>Percentage calculations</p>
+</li>
+<li>
+<p>Max row count was increased from 128 to 256</p>
+</li>
+<li>
+<p>e (Euler's Number) was added, currently as a function (<code>e()</code>)</p>
+</li>
+<li>
+<p>Invalid argument types for functions are highlighted as errors (See image below)</p>
+</li>
+<li>
+<p>new functions:</p>
+<ul>
+<li>abs(num)</li>
+<li>ln(num)</li>
+<li>lg(num)</li>
+<li>log(num, num)</li>
+<li>sin(angle) -&gt; num</li>
+<li>cos(angle) -&gt; num</li>
+<li>tan(angle) -&gt; num</li>
+<li>asin(num) -&gt; angle</li>
+<li>acos(num) -&gt; angle</li>
+<li>atan(num) -&gt; angle</li>
+</ul>
+</li>
+</ul>
+<h3 id="changed-1"><a class="header" href="#changed-1">Changed</a></h3>
+<ul>
+<li>When opening a not empty note, the result panel now tries
+to be as close to the editor as possible to have a better
+overview about calculations and their results.</li>
+<li>GitHub and website links were added to the NoteCalc page</li>
+<li>Strings at the frontend are now rendered char by char. It is necessary
+to be able to place the cursor at the right place, since the text rendering
+does not guarantee that a single char takes exactly 'char-width' pixels.</li>
+<li>Overlay canvas (the canvas above the app canvas) was removed. It was used to draw
+overlay effects (e.g. pulsing), but it was problematic since it needed alpha blending,
+which wasn't always nice and console frontend support is limited.
+Now pulses are rendered above "BelowText" layer and below the "Text" layer.</li>
+<li>underscore is allowed in binary numbers (e.g. <code>0b11_00</code>)</li>
+<li>Parenthesis have different color than operators.</li>
+<li>Remove <code>Vec</code> and dynamic allocation from unit parsing and operations.</li>
+<li>Replaced all unit <code>RefCells</code> to <code>Rc</code>, it was a mistake to use <code>RefCells</code> in the first place.</li>
+<li>Matrices cannot be deleted anymore by <code>DEL</code> or <code>BACKSPACE</code>, ctrl is needed</li>
+</ul>
+<h3 id="fixed-1"><a class="header" href="#fixed-1">Fixed</a></h3>
+<ul>
+<li>Dead characters (e.g. '^' on a hungarian keyboard) were not possible to type</li>
+<li>Longest visible result length was calculated wrongly when there were multiple headers
+in a note, which affected the result panel size.</li>
+<li><code>sum</code> variable get emptied at #Headers</li>
+<li>Char width at the fonrend is now integer, ceiling upward. It caused issues
+with rendering (widths of recatngles were float as well and did not always fill up
+the required space)</li>
+<li>Underlines and line reference background rectangles were rendered even if they
+were outside of the editor area</li>
+<li><code>ctrl-x</code> did not copy the selected text</li>
+<li>Units in the denominator behaved buggy. now expressions like this works well
+<pre><code>tax A = 50 000/month
+tax B = 50 000/year
+(tax A + tax B) * (1 year)
+</code></pre>
+</li>
+<li>u64 values can be parsed correctly (e.g. 0xFFFFFFFFFFFFFFFF)</li>
+<li>Bitwise operations now work on u64 values</li>
+<li>Negative numbers can be presented in binary and hex form</li>
+<li>Line reference pulsing was called each time a cursor was pressed on the line ref's line, causing
+flickering</li>
+<li>'Line normalization' (the process where the referenced lines' id is normalized to the referenced line actual line number)
+could be undo with ctrl-z</li>
+<li>Bitwise shifting operators (<code>&lt;&lt;</code> and <code>&gt;&gt;</code>) used wrapping, resulted in unwanted situations. Now it is an error
+to use larger shift operands than the underlying integer representation (u64 currently)</li>
+</ul>
+<h2 id="020---2020-12-03"><a class="header" href="#020---2020-12-03">[0.2.0] - 2020-12-03</a></h2>
+<h3 id="breaking-changes-2"><a class="header" href="#breaking-changes-2">Breaking Changes</a></h3>
+<p><code>--</code> does not set the <code>sum</code> variable to zero, but every header does</p>
+<h3 id="features-2"><a class="header" href="#features-2">Features</a></h3>
+<ul>
+<li>Mobile support for index.html and notecalc itself
+<ul>
+<li>typing using the native virtual keyboard</li>
+<li>scrolling</li>
+</ul>
+</li>
+<li>High DPI rendering</li>
+<li>Headers (<code># Header</code>) and region-specific alignments (different regions
+under different headers can have different alignments, making the
+result output more ergonomic).</li>
+<li>Comments are supported (e.g. <code>12 + 3 // it should be 15</code>)</li>
+<li>Hovering effect for the scrollbar</li>
+<li>Cursor changes to 'w-resize' when above the right gutter to highlight that it is draggable</li>
+<li>Line count limitation was increased from 64 to 128</li>
+<li>Default precision limitation both from the result panel and from the inserted line references was removed.
+It caused problems since very small numbers could appear as "0" due to roundings.
+It might be inconvenient in some situations but will be fixed when rounding specifiers will be implemented.
+Though, NoteCalc tries its best to render a compact form (e.g. removes repetends etc)</li>
+</ul>
+<h3 id="changed-2"><a class="header" href="#changed-2">Changed</a></h3>
+<ul>
+<li>Tutorial is updated with the new features and now stored in GIT</li>
+<li>Leangains demo is updated</li>
+</ul>
+<h3 id="fixes"><a class="header" href="#fixes">Fixes</a></h3>
+<ul>
+<li>In case a line reference was rendered outside of the editor area, '...' did not appear at the edge of the editor</li>
+<li>Firefox tracking protection issue for webfont.js</li>
+<li>Variable-reference pulsing pulsed continously when the right gutter was dragged</li>
+<li>The result panel is automatically resizing now with respect to browser width, required space for results and required space for the editor panel's content</li>
+<li>The binary and hex representation gives Err for quantities and percentages</li>
+<li>Lines that are too long and are covered by the result panel renders dots ('...') on the panel.</li>
+<li>The dots for matrices are now rendered for all the matrix's rows</li>
+<li>'…' was not rendered correctly for Matrices</li>
+<li>Ctrl-t is not absorbed by the frontend anymore</li>
+<li>Undoing (Ctrl-z) a selection removal with DEL button was buggy and only the first line of the selection was
+reparsed</li>
+<li>Pulses (which highlights the usage places of variable/lineref under the cursor)
+appeared too slowly when navigating with cursor or mouse, making it more difficult
+for the user to notice it immediately.</li>
+<li>Space is automatically inserted in front of a just-inserted line reference</li>
+<li>Right gutter alignment was a render pass late to the input which caused it</li>
+<li>Cursor was not visible at the right edge of the editor</li>
+<li>Global static RESULT_BUFFER is now part of the lib and not of the frontend (introduces some unsafe code but less trouble with the borrow checker)</li>
+<li>Fixed error when variable name is empty</li>
+</ul>
+<h3 id="removed"><a class="header" href="#removed">Removed</a></h3>
+<ul>
+<li>local.html was removed, you can access now the debug functionality and local wasm file
+via <code>host/notecalc?debug</code></li>
+</ul>
+<h2 id="010---2020-11-19"><a class="header" href="#010---2020-11-19">[0.1.0] - 2020-11-19</a></h2>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="units.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="units.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

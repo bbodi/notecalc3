@@ -1,0 +1,17 @@
+.feature-img {
+    width: 100%;
+    border: 2px solid #1b1e21;
+}
+
+.feature-container {
+    height: 100px;
+}
+
+.util_copy_clipboard_item {
+    cursor: pointer;
+    vertical-align: middle;
+}
+
+.util_copy_clipboard_item:hover {
+    background-color: yellow;
+}

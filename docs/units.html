@@ -1,0 +1,376 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Units and Conversions - NoteCalc</title>
+
+
+        <!-- Custom HTML head -->
+        <style type="text/css">
+            @font-face {
+                font-family: "JetBrainsMono-Regular";
+                src: url("https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff/JetBrainsMono-Regular.woff") format("woff");
+            }
+        
+            @font-face {
+                font-family: "JetBrainsMono-ExtraBold";
+                src: url("https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff/JetBrainsMono-ExtraBold.woff") format("woff");
+            }
+            canvas {
+                border: 1px solid black;
+            }
+            .mykbd {
+                display: inline-block;
+                padding: 0.2rem 0.4rem;
+                font-size: 87.5%; 
+                font-weight: 700; 
+                line-height: 1; 
+                color: #fff; 
+                text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.25); 
+                background-color: #212529; 
+                border: 1px solid #4c4f53; 
+                border-radius: 0.2rem; 
+                box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.25); 
+            }
+            :root {
+              --content-max-width: 500px;
+            }
+        </style>
+        
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/webfont/1.6.28/webfontloader.js"></script>
+        <!-- <script src="assets/webfont_v1.6.26.js"></script> -->
+        <script src="assets/notecalc.js?v=0.3.0"></script>
+        <script src="assets/notecalc_instance.js?v=0.3.0"></script>
+        <script>
+            window.setTimeout(function () {
+                let print_btn = document.getElementsByClassName("right-buttons")[0];
+                print_btn.addEventListener('click', function(e) { 
+                    const str = wasm_bindgen.get_selected_rows_with_results(active_notecalc_editor.app_ptr);
+                    navigator.clipboard.writeText(str).then(function () {
+                        console.log('Async: Copying to clipboard was successful!');
+                    }, function (err) {
+                        console.error('Async: Could not copy text: ', err);
+                    });
+                    event.stopPropagation();
+                    event.preventDefault();
+                    return false;
+                }, false);
+            }, 2000)
+        </script>
+        
+        <!-- <style type="text/css">
+            @font-face {
+                font-family: "JetBrainsMono-Regular";
+                src: url("fonts/JetBrainsMono-Regular.woff") format("woff");
+            }
+        
+            @font-face {
+                font-family: "JetBrainsMono-ExtraBold";
+                src: url("fonts/JetBrainsMono-ExtraBold.woff") format("woff");
+            }
+        </style>
+         -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('light')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="home.html">Home</a></li><li class="chapter-item expanded affix "><li class="part-title">User Guide</li><li class="chapter-item expanded "><a href="guide.html"><strong aria-hidden="true">1.</strong> Introduction</a></li><li class="chapter-item expanded "><a href="headings_comments.html"><strong aria-hidden="true">2.</strong> Headers and Comments</a></li><li class="chapter-item expanded "><a href="variables.html"><strong aria-hidden="true">3.</strong> Variables</a></li><li class="chapter-item expanded "><a href="autocompletion.html"><strong aria-hidden="true">4.</strong> Autocompletion</a></li><li class="chapter-item expanded "><a href="line_refs.html"><strong aria-hidden="true">5.</strong> Line references</a></li><li class="chapter-item expanded "><a href="selection_actions.html"><strong aria-hidden="true">6.</strong> Actions on selections</a></li><li class="chapter-item expanded "><a href="conditional.html"><strong aria-hidden="true">7.</strong> Conditional expressions</a></li><li class="chapter-item expanded "><a href="matrices.html"><strong aria-hidden="true">8.</strong> Vectors and Matrices</a></li><li class="chapter-item expanded "><a href="functions.html"><strong aria-hidden="true">9.</strong> Functions</a></li><li class="chapter-item expanded "><a href="number_formats.html"><strong aria-hidden="true">10.</strong> Number formats</a></li><li class="chapter-item expanded "><a href="export.html"><strong aria-hidden="true">11.</strong> Copying & Exporting</a></li><li class="chapter-item expanded affix "><li class="part-title">Calculations</li><li class="chapter-item expanded "><div><strong aria-hidden="true">12.</strong> Operations</div></li><li class="chapter-item expanded "><a href="binary.html"><strong aria-hidden="true">13.</strong> Binary</a></li><li class="chapter-item expanded "><a href="percentages.html"><strong aria-hidden="true">14.</strong> Percentages</a></li><li class="chapter-item expanded "><a href="units.html" class="active"><strong aria-hidden="true">15.</strong> Units and Conversions</a></li><li class="spacer"></li><li class="chapter-item expanded affix "><a href="changelog.html">Changelog</a></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">NoteCalc</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="units--conversions"><a class="header" href="#units--conversions">Units &amp; Conversions</a></h1>
+<p>You can convert from one unit of measurement to another using the <code>in</code> operator.</p>
+<pre data-notecalc-decimal-places='15' data-notecalc-visible-line-count="10" class="notecalc-instance" data-notecalc-font-size="14">
+3m in cm
+1024kB in megabytes
+3 years in months
+[1, 1000, 10000]cm in m
+
+101325 kg/(m*s^2)
+8.314 m^3*Pa/mol/K
+
+</pre>
+<h2 id="units"><a class="header" href="#units">Units</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Base</th><th>Unit</th></tr></thead><tbody>
+<tr><td>Length</td><td>meter (m), inch (in), foot (ft), yard (yd), mile (mi), link (li), rod (rd), chain (ch), angstrom, mil</td></tr>
+<tr><td>Surface</td><td>area	m2, sqin, sqft, sqyd, sqmi, sqrd, sqch, sqmil, acre, hectare</td></tr>
+<tr><td>Volume</td><td>m3, litre (l, L, lt, liter), cc, cuin, cuft, cuyd, teaspoon, tablespoon</td></tr>
+<tr><td>Liquid</td><td>volume	minim, fluiddram (fldr), fluidounce (floz), gill (gi), cup (cp), pint (pt), quart (qt), gallon (gal), beerbarrel (bbl), oilbarrel (obl), hogshead, drop (gtt)</td></tr>
+<tr><td>Angles</td><td>rad (radian), deg (degree), grad (gradian), cycle, arcsec (arcsecond), arcmin (arcminute)</td></tr>
+<tr><td>Time</td><td>second (s, secs, seconds), minute (min, mins, minutes), hour (h, hr, hrs, hours), day (days), week (weeks), month (months), year (years), decade (decades), century (centuries), millennium (millennia)</td></tr>
+<tr><td>Frequency</td><td>hertz (Hz)</td></tr>
+<tr><td>Mass</td><td>gram(g), tonne, ton, grain (gr), dram (dr), ounce (oz), poundmass (lbm, lb, lbs), hundredweight (cwt), stick, stone</td></tr>
+<tr><td>Electric</td><td>current	ampere (A)</td></tr>
+<tr><td>Temperature</td><td>kelvin (K), celsius (degC), fahrenheit (degF), rankine (degR)</td></tr>
+<tr><td>Amount</td><td>of substance	mole (mol)</td></tr>
+<tr><td>Luminous</td><td>intensity	candela (cd)</td></tr>
+<tr><td>Force</td><td>newton (N), dyne (dyn), poundforce (lbf), kip</td></tr>
+<tr><td>Energy</td><td>joule (J), erg, Wh, BTU, electronvolt (eV)</td></tr>
+<tr><td>Power</td><td>watt (W), hp</td></tr>
+<tr><td>Pressure</td><td>Pa, psi, atm, torr, bar, mmHg, mmH2O, cmH2O</td></tr>
+<tr><td>Electricity</td><td>and magnetism	ampere (A), coulomb (C), watt (W), volt (V), ohm, farad (F), weber (Wb), tesla (T), henry (H), siemens (S), electronvolt (eV)</td></tr>
+<tr><td>Binary</td><td>bits (b), bytes (B)</td></tr>
+</tbody></table>
+</div>
+<h2 id="prefixes"><a class="header" href="#prefixes">Prefixes</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Name</th><th>Abbreviation</th><th>Value</th></tr></thead><tbody>
+<tr><td>deca</td><td>da</td><td>1e1</td></tr>
+<tr><td>hecto</td><td>h</td><td>1e2</td></tr>
+<tr><td>kilo</td><td>k</td><td>1e3</td></tr>
+<tr><td>mega</td><td>M</td><td>1e6</td></tr>
+<tr><td>giga</td><td>G</td><td>1e9</td></tr>
+<tr><td>tera</td><td>T</td><td>1e12</td></tr>
+<tr><td>peta</td><td>P</td><td>1e15</td></tr>
+<tr><td>exa</td><td>E</td><td>1e18</td></tr>
+<tr><td>zetta</td><td>Z</td><td>1e21</td></tr>
+<tr><td>yotta</td><td>Y</td><td>1e24</td></tr>
+<tr><td>ronna</td><td>R</td><td>1e27</td></tr>
+<tr><td>quetta</td><td>Q</td><td>1e30</td></tr>
+</tbody></table>
+</div><div class="table-wrapper"><table><thead><tr><th>Name</th><th>Abbreviation</th><th>Value</th></tr></thead><tbody>
+<tr><td>deci</td><td>d</td><td>1e-1</td></tr>
+<tr><td>centi</td><td>c</td><td>1e-2</td></tr>
+<tr><td>milli</td><td>m</td><td>1e-3</td></tr>
+<tr><td>micro</td><td>u</td><td>1e-6</td></tr>
+<tr><td>nano</td><td>n</td><td>1e-9</td></tr>
+<tr><td>pico</td><td>p</td><td>1e-12</td></tr>
+<tr><td>femto</td><td>f</td><td>1e-15</td></tr>
+<tr><td>atto</td><td>a</td><td>1e-18</td></tr>
+<tr><td>zepto</td><td>z</td><td>1e-21</td></tr>
+<tr><td>yocto</td><td>y</td><td>1e-24</td></tr>
+<tr><td>ronto</td><td>r</td><td>1e-27</td></tr>
+<tr><td>quecto</td><td>q</td><td>1e-30</td></tr>
+</tbody></table>
+</div>
+<p>The following binary prefixes are available. They can be used with units bits (b) and bytes (B).</p>
+<div class="table-wrapper"><table><thead><tr><th>Name</th><th>Abbreviation</th><th>Value</th></tr></thead><tbody>
+<tr><td>kibi</td><td>Ki</td><td>1024</td></tr>
+<tr><td>mebi</td><td>Mi</td><td>1024^2</td></tr>
+<tr><td>gibi</td><td>Gi</td><td>1024^3</td></tr>
+<tr><td>tebi</td><td>Ti</td><td>1024^4</td></tr>
+<tr><td>pebi</td><td>Pi</td><td>1024^5</td></tr>
+<tr><td>exi</td><td>Ei</td><td>1024^6</td></tr>
+<tr><td>zebi</td><td>Zi</td><td>1024^7</td></tr>
+<tr><td>yobi</td><td>Yi</td><td>1024^8</td></tr>
+</tbody></table>
+</div><div class="table-wrapper"><table><thead><tr><th>Name</th><th>Abbreviation</th><th>Value</th></tr></thead><tbody>
+<tr><td>kilo</td><td>k</td><td>1e3</td></tr>
+<tr><td>mega</td><td>M</td><td>1e6</td></tr>
+<tr><td>giga</td><td>G</td><td>1e9</td></tr>
+<tr><td>tera</td><td>T</td><td>1e12</td></tr>
+<tr><td>peta</td><td>P</td><td>1e15</td></tr>
+<tr><td>exa</td><td>E</td><td>1e18</td></tr>
+<tr><td>zetta</td><td>Z</td><td>1e21</td></tr>
+<tr><td>yotta</td><td>Y</td><td>1e24</td></tr>
+</tbody></table>
+</div>
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="percentages.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="changelog.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="percentages.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="changelog.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>
