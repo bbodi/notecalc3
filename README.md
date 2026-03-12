@@ -12,7 +12,7 @@ Honestly, it just tries to be a free Soulver alternative in your browser.
 
 [Features](https://bbodi.github.io/notecalc3/)
 
-[Try out](https://bbodi.github.io/notecalc3/notecalc#)
+[Try out](https://bbodi.github.io/notecalc3/)
 
 ## Roadmap
 - [ ] User-defined functions (0.4.0)
